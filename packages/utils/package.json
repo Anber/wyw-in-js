@@ -1,6 +1,6 @@
 {
   "name": "@wyw-in-js/utils",
-  "version": "1.0.0",
+  "version": "0.0.1",
   "dependencies": {
     "debug": "^4.3.4",
     "minimatch": "^9.0.3"

@@ -1,7 +1,7 @@
 {
   "name": "wyw-in-js",
   "description": "",
-  "version": "1.0.0",
+  "version": "0.0.1",
   "author": "Anton Evzhakov",
   "bugs": "https://github.com/Anber/wyw-in-js/issues",
   "devDependencies": {
@@ -44,11 +44,11 @@
   "scripts": {
     "build": "turbo run build:esm build:lib build:types",
     "clean": "del 'packages/*/{coverage,dist,esm,lib,types,tsconfig.tsbuildinfo}'",
-    "lint": "turbo run lint",
+    "check": "turbo run lint test",
+    "release": "pnpm build && pnpm changeset publish",
     "sp:check": "syncpack",
     "sp:fix": "syncpack format && syncpack fix-mismatches",
     "sp:format": "syncpack format",
-    "sp:list": "syncpack list-mismatches",
-    "test": "turbo run test"
+    "sp:list": "syncpack list-mismatches"
   }
 }

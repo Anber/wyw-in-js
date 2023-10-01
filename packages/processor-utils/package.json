@@ -1,6 +1,6 @@
 {
   "name": "@wyw-in-js/processor-utils",
-  "version": "1.0.0",
+  "version": "0.0.1",
   "dependencies": {
     "@babel/generator": "^7.23.0",
     "@wyw-in-js/utils": "workspace:*"
