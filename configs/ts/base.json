@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "compilerOptions": {
+    "allowSyntheticDefaultImports": true,
+    "composite": true,
+    "declaration": true,
+    "esModuleInterop": true,
+    "emitDeclarationOnly": true,
+    "forceConsistentCasingInFileNames": true,
+    "jsx": "react",
+    "lib": [
+      "es6",
+      "es2017",
+      "es2018",
+      "es2022",
+      "ES2019.Array",
+      "esnext.disposable",
+      "dom"
+    ],
+    "module": "es6",
+    "moduleResolution": "node",
+    "preserveWatchOutput": true,
+    "skipDefaultLibCheck": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "target": "es2022"
+  },
+  "display": "Base config"
+}

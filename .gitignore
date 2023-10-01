@@ -1,0 +1,10 @@
+.idea
+node_modules
+
+.turbo
+build
+dist
+esm
+lib
+tsconfig.tsbuildinfo
+types

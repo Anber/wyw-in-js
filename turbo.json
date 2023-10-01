@@ -1,0 +1,21 @@
+{
+  "$schema": "https://turborepo.org/schema.json",
+  "globalDependencies": ["tsconfig.json"],
+  "extends": ["//"],
+  "pipeline": {
+    "build:esm": {
+      "dependsOn": ["^build:esm"],
+      "outputs": ["esm/**"]
+    },
+    "build:lib": {
+      "dependsOn": ["^build:lib"],
+      "outputs": ["lib/**"]
+    },
+    "build:types": {
+      "dependsOn": ["^build:types"],
+      "outputs": ["types/**"]
+    },
+    "lint": {},
+    "test": {}
+  }
+}

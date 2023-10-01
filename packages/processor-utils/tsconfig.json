@@ -1,0 +1,11 @@
+{
+  "extends": "@wyw-in-js/ts-config/node.json",
+  "include": ["src/**/*"],
+  "exclude": ["src/**/__tests__/*"],
+  "compilerOptions": {
+    "module": "CommonJS",
+    "moduleResolution": "node",
+    "outDir": "types",
+    "rootDir": "src/"
+  }
+}

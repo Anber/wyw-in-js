@@ -1,0 +1,40 @@
+{
+  "name": "@wyw-in-js/utils",
+  "version": "1.0.0",
+  "dependencies": {
+    "debug": "^4.3.4",
+    "minimatch": "^9.0.3"
+  },
+  "devDependencies": {
+    "@babel/types": "^7.23.0",
+    "@types/babel__core": "^7.20.2",
+    "@types/debug": "^4.1.9",
+    "@types/node": "^16.18.55",
+    "@wyw-in-js/babel-config": "workspace:*",
+    "@wyw-in-js/eslint-config": "workspace:*",
+    "@wyw-in-js/ts-config": "workspace:*",
+    "typescript": "^5.2.2"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  },
+  "files": [
+    "esm/",
+    "lib/",
+    "types/"
+  ],
+  "license": "MIT",
+  "main": "lib/index.js",
+  "module": "esm/index.js",
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build:esm": "babel src --out-dir esm --extensions '.js,.jsx,.ts,.tsx' --source-maps --delete-dir-on-start",
+    "build:lib": "cross-env NODE_ENV=legacy babel src --out-dir lib --extensions '.js,.jsx,.ts,.tsx' --source-maps --delete-dir-on-start",
+    "build:types": "tsc",
+    "lint": "eslint --ext .js,.ts .",
+    "test": "jest --config ./jest.config.js --rootDir src"
+  },
+  "types": "types/index.d.ts"
+}
