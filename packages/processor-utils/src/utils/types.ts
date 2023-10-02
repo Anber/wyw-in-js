@@ -1,6 +1,6 @@
 import type { TransformOptions } from '@babel/core';
 
-import type { ClassNameFn, VariableNameFn } from '@wyw-in-js/utils';
+import type { ClassNameFn, VariableNameFn } from '@wyw-in-js/shared';
 
 export interface IOptions {
   classNameSlug?: string | ClassNameFn;

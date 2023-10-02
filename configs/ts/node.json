@@ -2,13 +2,13 @@
   "$schema": "https://json.schemastore.org/tsconfig",
   "compilerOptions": {
     "lib": [
-      "es2018",
-      "es7",
-      "es6"
+      "DOM",
+      "ESNext",
+      "esnext.disposable"
     ],
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
-    "target": "ES2021"
+    "target": "es2022"
   },
   "display": "Node Next",
   "extends": "./base.json"

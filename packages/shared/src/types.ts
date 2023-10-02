@@ -53,10 +53,10 @@ export type ConstValue = {
 
 export type ExpressionValue = LazyValue | FunctionValue | ConstValue;
 
-export type WYWMeta = {
+export type WYWEvalMeta = {
   __wyw_meta: {
     className: string;
-    extends: WYWMeta;
+    extends: WYWEvalMeta;
   };
 };
 
@@ -71,3 +71,17 @@ export type Replacement = {
 };
 
 export type Replacements = Array<Replacement>;
+
+/**
+ * CSS-related types
+ */
+
+export interface ICSSRule {
+  atom?: boolean;
+  className: string;
+  cssText: string;
+  displayName: string;
+  start: Location | null | undefined;
+}
+
+export type Rules = Record<string, ICSSRule>;

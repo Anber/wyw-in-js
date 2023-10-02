@@ -1,4 +1,4 @@
-import { isBoxedPrimitive } from '@wyw-in-js/utils';
+import { isBoxedPrimitive } from '@wyw-in-js/shared';
 
 import type { CSSPropertyValue, CSSable } from '../types';
 

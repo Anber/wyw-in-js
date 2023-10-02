@@ -6,8 +6,8 @@
 
 import type { TemplateElement, SourceLocation } from '@babel/types';
 
-import type { ExpressionValue, Replacements } from '@wyw-in-js/utils';
-import { hasMeta, ValueType } from '@wyw-in-js/utils';
+import type { ExpressionValue, Replacements } from '@wyw-in-js/shared';
+import { hasEvalMeta, ValueType } from '@wyw-in-js/shared';
 
 import type { TaggedTemplateProcessor } from '../TaggedTemplateProcessor';
 import type { ValueCache, Rules } from '../types';
@@ -121,7 +121,7 @@ export default function templateProcessor(
           continue;
         }
 
-        if (hasMeta(value)) {
+        if (hasEvalMeta(value)) {
           // If it's a React component wrapped in styled, get the class name
           // Useful for interpolating components
           cssText += `.${value.__wyw_meta.className}`;

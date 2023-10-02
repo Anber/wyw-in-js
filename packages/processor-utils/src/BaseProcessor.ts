@@ -8,8 +8,8 @@ import type {
   MemberExpression,
 } from '@babel/types';
 
-import type { Artifact, ExpressionValue } from '@wyw-in-js/utils';
-import { hasMeta } from '@wyw-in-js/utils';
+import type { Artifact, ExpressionValue } from '@wyw-in-js/shared';
+import { hasEvalMeta } from '@wyw-in-js/shared';
 
 import type { IInterpolation, Params, Value, ValueCache } from './types';
 import getClassNameAndSlug from './utils/getClassNameAndSlug';
@@ -102,7 +102,9 @@ export abstract class BaseProcessor {
   public abstract get value(): Expression;
 
   public isValidValue(value: unknown): value is Value {
-    return typeof value === 'function' || isCSSable(value) || hasMeta(value);
+    return (
+      typeof value === 'function' || isCSSable(value) || hasEvalMeta(value)
+    );
   }
 
   public toString(): string {

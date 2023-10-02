@@ -10,7 +10,7 @@
       "path": "./packages/processor-utils"
     },
     {
-      "path": "./packages/utils"
+      "path": "./packages/shared"
     }
   ]
 }

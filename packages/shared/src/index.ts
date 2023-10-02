@@ -1,6 +1,7 @@
 export { Debugger } from 'debug';
 
-export { hasMeta } from './hasMeta';
+export { asyncResolveFallback, syncResolve } from './asyncResolveFallback';
+export { hasEvalMeta } from './hasEvalMeta';
 export { isBoxedPrimitive } from './isBoxedPrimitive';
 export { enableDebug, logger } from './logger';
 export { isFeatureEnabled } from './options/isFeatureEnabled';
@@ -24,8 +25,11 @@ export type {
   ConstValue,
   ExpressionValue,
   FunctionValue,
+  ICSSRule,
   LazyValue,
   Location,
+  Replacement,
   Replacements,
-  WYWMeta,
+  Rules,
+  WYWEvalMeta,
 } from './types';

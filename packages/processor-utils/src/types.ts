@@ -5,7 +5,7 @@ import type {
   MemberExpression,
 } from '@babel/types';
 
-import type { ExpressionValue, Location, WYWMeta } from '@wyw-in-js/utils';
+import type { ExpressionValue, Location, WYWEvalMeta } from '@wyw-in-js/shared';
 
 export type CSSPropertyValue = string | number;
 
@@ -18,7 +18,7 @@ export type ObjectWithSelectors = {
 
 export type CSSable = ObjectWithSelectors[string];
 
-export type Value = (() => void) | WYWMeta | CSSable;
+export type Value = (() => void) | WYWEvalMeta | CSSable;
 
 export type ValueCache = Map<string | number | boolean | null, unknown>;
 
