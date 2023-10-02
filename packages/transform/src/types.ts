@@ -2,7 +2,7 @@ import type { BabelFile, PluginPass } from '@babel/core';
 import type { NodePath } from '@babel/traverse';
 import type { File, Program } from '@babel/types';
 import type { RawSourceMap } from 'source-map';
-import type { WYWTransformMetadata } from 'utils/transformMetadata';
+import type { WYWTransformMetadata } from 'utils/TransformMetadata';
 
 import type { BaseProcessor } from '@wyw-in-js/processor-utils';
 import type {

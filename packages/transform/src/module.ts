@@ -103,7 +103,7 @@ function resolve(
   return resolved;
 }
 
-class Module {
+export class Module {
   public readonly callstack: string[] = [];
 
   public readonly debug: Debugger;

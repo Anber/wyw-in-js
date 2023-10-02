@@ -7,7 +7,7 @@ import type { Core } from '../babel';
 import type { TransformCacheCollection } from '../cache';
 import type { Options, ITransformFileResult } from '../types';
 import type { EventEmitter } from '../utils/EventEmitter';
-import type { WYWTransformMetadata } from '../utils/transformMetadata';
+import type { WYWTransformMetadata } from '../utils/TransformMetadata';
 
 import type { Entrypoint } from './Entrypoint';
 import type { LoadAndParseFn, IEntrypointDependency } from './Entrypoint.types';

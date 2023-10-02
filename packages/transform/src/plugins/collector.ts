@@ -13,9 +13,9 @@ import type { StrictOptions } from '@wyw-in-js/shared';
 
 import type { Core } from '../babel';
 import type { IPluginState } from '../types';
+import type { WYWTransformMetadata } from '../utils/TransformMetadata';
 import { processTemplateExpression } from '../utils/processTemplateExpression';
 import { removeWithRelated } from '../utils/scopeHelpers';
-import type { WYWTransformMetadata } from '../utils/transformMetadata';
 import { invalidateTraversalCache } from '../utils/traversalCache';
 
 export const filename = __filename;

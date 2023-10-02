@@ -21,7 +21,7 @@ export type PreevalOptions = Pick<
   'classNameSlug' | 'displayName' | 'evaluate' | 'features'
 > & { eventEmitter: EventEmitter };
 
-export default function preeval(
+export function preeval(
   babel: Core,
   { eventEmitter = EventEmitter.dummy, ...options }: PreevalOptions
 ): PluginObj<IPluginState & { onFinish: () => void }> {
@@ -106,3 +106,5 @@ export default function preeval(
     },
   };
 }
+
+export default preeval;

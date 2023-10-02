@@ -10,9 +10,9 @@ import type { EvaluatorConfig, StrictOptions } from '@wyw-in-js/shared';
 import type { Core } from '../../babel';
 import { buildOptions } from '../../options/buildOptions';
 import type { EventEmitter } from '../../utils/EventEmitter';
+import type { WYWTransformMetadata } from '../../utils/TransformMetadata';
+import { getTransformMetadata } from '../../utils/TransformMetadata';
 import { getPluginKey } from '../../utils/getPluginKey';
-import type { WYWTransformMetadata } from '../../utils/transformMetadata';
-import { getTransformMetadata } from '../../utils/transformMetadata';
 import type { Entrypoint } from '../Entrypoint';
 import type {
   ITransformAction,

@@ -4,8 +4,8 @@ export { default as preeval } from './plugins/preeval';
 export {
   getTransformMetadata,
   withTransformMetadata,
-} from './utils/transformMetadata';
-export type { WYWTransformMetadata } from './utils/transformMetadata';
+} from './utils/TransformMetadata';
+export type { WYWTransformMetadata } from './utils/TransformMetadata';
 export { default as Module, DefaultModuleImplementation } from './module';
 export { default as transform } from './transform';
 export {

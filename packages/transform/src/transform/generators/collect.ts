@@ -2,7 +2,7 @@ import type { PluginItem } from '@babel/core';
 
 import { buildOptions } from '../../options/buildOptions';
 import { filename as collectorPlugin } from '../../plugins/collector';
-import { getTransformMetadata } from '../../utils/transformMetadata';
+import { getTransformMetadata } from '../../utils/TransformMetadata';
 import type { ICollectAction, SyncScenarioForAction } from '../types';
 
 /**
