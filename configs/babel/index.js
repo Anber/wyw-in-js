@@ -3,7 +3,7 @@ const commonJSTargets = {
   node: '12',
 };
 
-module.exports = {
+const config = {
   env: {
     legacy: {
       presets: [
@@ -70,3 +70,9 @@ module.exports = {
   plugins: ['@babel/plugin-proposal-explicit-resource-management'],
   presets: ['@babel/preset-typescript'],
 };
+
+if (process.env.NODE_ENV !== 'test') {
+  config.ignore = ["**/__tests__/**"];
+}
+
+module.exports = config;

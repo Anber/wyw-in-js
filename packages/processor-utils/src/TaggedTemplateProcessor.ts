@@ -1,7 +1,7 @@
 import type { TemplateElement, Expression, SourceLocation } from '@babel/types';
 
-import type { ExpressionValue } from '@wyw-in-js/utils';
-import { ValueType } from '@wyw-in-js/utils';
+import type { ExpressionValue } from '@wyw-in-js/shared';
+import { ValueType } from '@wyw-in-js/shared';
 
 import type { TailProcessorParams } from './BaseProcessor';
 import { BaseProcessor } from './BaseProcessor';

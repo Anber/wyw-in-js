@@ -1,0 +1,63 @@
+{
+  "name": "@wyw-in-js/transform",
+  "version": "0.0.1",
+  "dependencies": {
+    "@babel/core": "^7.23.0",
+    "@babel/helper-module-imports": "^7.22.15",
+    "@babel/generator": "^7.23.0",
+    "@babel/template": "^7.22.15",
+    "@babel/plugin-transform-modules-commonjs": "^7.23.0",
+    "@babel/traverse": "^7.23.0",
+    "@babel/types": "^7.23.0",
+    "@wyw-in-js/processor-utils": "workspace:*",
+    "@wyw-in-js/shared": "workspace:*",
+    "babel-merge": "^3.0.0",
+    "cosmiconfig": "^8.0.0",
+    "find-up": "^5.0.0",
+    "happy-dom": "^12.5.0",
+    "source-map": "^0.7.4",
+    "stylis": "^3.5.4",
+    "ts-invariant": "^0.10.3"
+  },
+  "devDependencies": {
+    "@babel/plugin-syntax-typescript": "^7.22.5",
+    "@babel/types": "^7.23.0",
+    "@swc/core": "1.3.20",
+    "@types/babel__core": "^7.20.2",
+    "@types/babel__generator": "^7.6.5",
+    "@types/babel__helper-module-imports": "^7.18.1",
+    "@types/babel__template": "^7.4.2",
+    "@types/babel__traverse": "^7.20.2",
+    "@types/debug": "^4.1.9",
+    "@types/node": "^16.18.55",
+    "@wyw-in-js/babel-config": "workspace:*",
+    "@wyw-in-js/eslint-config": "workspace:*",
+    "@wyw-in-js/ts-config": "workspace:*",
+    "dedent": "^1.5.1",
+    "esbuild": "^0.15.16",
+    "strip-ansi": "^5.2.0",
+    "typescript": "^5.2.2"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  },
+  "files": [
+    "esm/",
+    "lib/",
+    "types/"
+  ],
+  "license": "MIT",
+  "main": "lib/index.js",
+  "module": "esm/index.js",
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build:esm": "babel src --out-dir esm --extensions '.js,.jsx,.ts,.tsx' --source-maps --delete-dir-on-start",
+    "build:lib": "cross-env NODE_ENV=legacy babel src --out-dir lib --extensions '.js,.jsx,.ts,.tsx' --source-maps --delete-dir-on-start",
+    "build:types": "tsc",
+    "lint": "eslint --ext .js,.ts .",
+    "test": "jest --config ./jest.config.js --rootDir src"
+  },
+  "types": "types/index.d.ts"
+}

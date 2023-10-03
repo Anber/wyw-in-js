@@ -1,7 +1,7 @@
 import { basename, dirname, extname, relative, sep, posix } from 'path';
 
-import type { ClassNameSlugVars } from '@wyw-in-js/utils';
-import { logger, slugify } from '@wyw-in-js/utils';
+import type { ClassNameSlugVars } from '@wyw-in-js/shared';
+import { logger, slugify } from '@wyw-in-js/shared';
 
 import { buildSlug } from './buildSlug';
 import { toValidCSSIdentifier } from './toValidCSSIdentifier';

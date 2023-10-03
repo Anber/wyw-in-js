@@ -2,5 +2,8 @@
   "name": "@wyw-in-js/ts-config",
   "version": "0.0.1",
   "license": "MIT",
-  "private": true
+  "private": true,
+  "scripts": {
+    "check": "echo \"Configs have been changed\""
+  }
 }

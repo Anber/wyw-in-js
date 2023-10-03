@@ -149,6 +149,13 @@ module.exports = {
   globals: {
     JSX: 'readonly',
   },
+  ignorePatterns: [
+    "/esm",
+    "/lib",
+    "/types",
+    "**/__fixtures__/**",
+    "**/node_modules/**",
+  ],
   overrides: [
     {
       extends: [

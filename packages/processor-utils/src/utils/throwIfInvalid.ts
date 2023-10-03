@@ -1,4 +1,4 @@
-import type { BuildCodeFrameErrorFn } from '@wyw-in-js/utils';
+import type { BuildCodeFrameErrorFn } from '@wyw-in-js/shared';
 
 const isLikeError = (value: unknown): value is Error =>
   typeof value === 'object' &&

@@ -3,7 +3,7 @@
   "version": "0.0.1",
   "dependencies": {
     "@babel/generator": "^7.23.0",
-    "@wyw-in-js/utils": "workspace:*"
+    "@wyw-in-js/shared": "workspace:*"
   },
   "devDependencies": {
     "@babel/types": "^7.23.0",

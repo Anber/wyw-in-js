@@ -1,4 +1,4 @@
-import type { Location } from '@wyw-in-js/utils';
+import type { Location } from '@wyw-in-js/shared';
 
 // Stripping away the new lines ensures that we preserve line numbers
 // This is useful in case of tools such as the stylelint pre-processor
