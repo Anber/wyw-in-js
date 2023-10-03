@@ -1,5 +1,6 @@
 {
   "name": "@wyw-in-js/template-tag-syntax",
+  "private": true,
   "version": "0.0.1",
   "dependencies": {
     "@wyw-in-js/processor-utils": "workspace:*"
@@ -54,7 +55,7 @@
   "scripts": {
     "build:esm": "babel src --out-dir esm --extensions '.js,.jsx,.ts,.tsx' --source-maps --delete-dir-on-start",
     "build:lib": "cross-env NODE_ENV=legacy babel src --out-dir lib --extensions '.js,.jsx,.ts,.tsx' --source-maps --delete-dir-on-start",
-    "build:types": "tsc",
+    "build:types": "tsc --project ./tsconfig.lib.json --baseUrl . --rootDir ./src",
     "lint": "eslint --ext .js,.ts .",
     "test": "jest --config ./jest.config.js --rootDir src"
   },

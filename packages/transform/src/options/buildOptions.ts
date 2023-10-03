@@ -1,3 +1,6 @@
+// eslint-disable-next-line @typescript-eslint/triple-slash-reference
+/// <reference path="./babel-merge.d.ts" />
+
 import type { TransformOptions } from '@babel/core';
 import babelMerge from 'babel-merge';
 
