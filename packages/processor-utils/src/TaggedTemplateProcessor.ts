@@ -14,11 +14,7 @@ export abstract class TaggedTemplateProcessor extends BaseProcessor {
 
   protected constructor(params: Params, ...args: TailProcessorParams) {
     // Should have at least two params and the first one should be a callee.
-    validateParams(
-      params,
-      ['callee', '*', '...'],
-      TaggedTemplateProcessor.SKIP
-    );
+    validateParams(params, ['callee', '...'], TaggedTemplateProcessor.SKIP);
 
     validateParams(
       params,

@@ -46,7 +46,7 @@
     "build": "turbo run build:esm build:lib build:types",
     "check": "turbo run lint test",
     "clean": "del 'packages/*/{coverage,dist,esm,lib,types,tsconfig.tsbuildinfo}'",
-    "idea-exclude:artifacts": "idea-exclude artifacts \"packages/*/{.turbo,esm,lib,types}\"",
+    "idea-exclude:artifacts": "idea-exclude artifacts \"{configs,examples,packages}/*/{.turbo,esm,lib,types}\"",
     "idea-exclude:nm": "idea-exclude node_modules \"**/node_modules\"",
     "release": "pnpm build && pnpm changeset publish",
     "sp:check": "syncpack",
