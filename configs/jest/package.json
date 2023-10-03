@@ -1,0 +1,10 @@
+{
+  "name": "@wyw-in-js/jest-preset",
+  "version": "0.0.1",
+  "license": "MIT",
+  "main": "index.js",
+  "private": true,
+  "scripts": {
+    "check": "echo \"Configs have been changed\""
+  }
+}

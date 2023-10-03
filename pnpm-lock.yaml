@@ -94,6 +94,8 @@ importers:
 
   configs/eslint: {}
 
+  configs/jest: {}
+
   configs/ts: {}
 
   examples/object-syntax:
@@ -129,6 +131,9 @@ importers:
       '@wyw-in-js/eslint-config':
         specifier: workspace:*
         version: link:../../configs/eslint
+      '@wyw-in-js/jest-preset':
+        specifier: workspace:*
+        version: link:../../configs/jest
       '@wyw-in-js/shared':
         specifier: workspace:*
         version: link:../../packages/shared
@@ -172,6 +177,9 @@ importers:
       '@wyw-in-js/eslint-config':
         specifier: workspace:*
         version: link:../../configs/eslint
+      '@wyw-in-js/jest-preset':
+        specifier: workspace:*
+        version: link:../../configs/jest
       '@wyw-in-js/shared':
         specifier: workspace:*
         version: link:../../packages/shared
@@ -212,6 +220,9 @@ importers:
       '@wyw-in-js/eslint-config':
         specifier: workspace:*
         version: link:../../configs/eslint
+      '@wyw-in-js/jest-preset':
+        specifier: workspace:*
+        version: link:../../configs/jest
       '@wyw-in-js/ts-config':
         specifier: workspace:*
         version: link:../../configs/ts
@@ -246,6 +257,9 @@ importers:
       '@wyw-in-js/eslint-config':
         specifier: workspace:*
         version: link:../../configs/eslint
+      '@wyw-in-js/jest-preset':
+        specifier: workspace:*
+        version: link:../../configs/jest
       '@wyw-in-js/ts-config':
         specifier: workspace:*
         version: link:../../configs/ts
@@ -337,6 +351,9 @@ importers:
       '@wyw-in-js/eslint-config':
         specifier: workspace:*
         version: link:../../configs/eslint
+      '@wyw-in-js/jest-preset':
+        specifier: workspace:*
+        version: link:../../configs/jest
       '@wyw-in-js/ts-config':
         specifier: workspace:*
         version: link:../../configs/ts
@@ -371,6 +388,9 @@ importers:
       '@wyw-in-js/eslint-config':
         specifier: workspace:*
         version: link:../../configs/eslint
+      '@wyw-in-js/jest-preset':
+        specifier: workspace:*
+        version: link:../../configs/jest
       '@wyw-in-js/ts-config':
         specifier: workspace:*
         version: link:../../configs/ts

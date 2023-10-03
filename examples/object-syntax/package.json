@@ -15,50 +15,22 @@
     "@types/node": "^16.18.55",
     "@wyw-in-js/babel-config": "workspace:*",
     "@wyw-in-js/eslint-config": "workspace:*",
+    "@wyw-in-js/jest-preset": "workspace:*",
     "@wyw-in-js/shared": "workspace:*",
     "@wyw-in-js/transform": "workspace:*",
     "@wyw-in-js/ts-config": "workspace:*",
     "dedent": "^1.5.1"
-  },
-  "engines": {
-    "node": ">=16.0.0"
-  },
-  "exports": {
-    "./package.json": "./package.json",
-    ".": {
-      "types": "./types/index.d.ts",
-      "import": "./esm/index.js",
-      "default": "./lib/index.js"
-    },
-    "./*": {
-      "types": "./types/*.d.ts",
-      "import": "./esm/*.js",
-      "default": "./lib/*.js"
-    }
-  },
-  "files": [
-    "esm/",
-    "lib/",
-    "processors/",
-    "types/"
-  ],
-  "license": "MIT",
-  "wyw-in-js": {
-    "tags": {
-      "makeStyles": "./lib/processors/makeStyles.js"
-    }
-  },
-  "main": "lib/index.js",
-  "module": "esm/index.js",
-  "publishConfig": {
-    "access": "public"
   },
   "scripts": {
     "build:esm": "babel src --out-dir esm --extensions '.js,.jsx,.ts,.tsx' --source-maps --delete-dir-on-start",
     "build:lib": "cross-env NODE_ENV=legacy babel src --out-dir lib --extensions '.js,.jsx,.ts,.tsx' --source-maps --delete-dir-on-start",
     "build:types": "tsc",
     "lint": "eslint --ext .js,.ts .",
-    "test": "jest --config ./jest.config.js --rootDir src"
+    "test": "jest --config ./jest.config.js"
   },
-  "types": "types/index.d.ts"
+  "wyw-in-js": {
+    "tags": {
+      "makeStyles": "./src/processors/makeStyles.ts"
+    }
+  }
 }
