@@ -1,5 +1,7 @@
 export { slugify } from '@wyw-in-js/shared';
 
+export { createFileReporter } from './debug/fileReporter';
+export type { IFileReporterOptions } from './debug/fileReporter';
 export { default as preeval } from './plugins/preeval';
 export {
   getTransformMetadata,
@@ -28,6 +30,7 @@ export {
 export { loadLinariaOptions } from './transform/helpers/loadLinariaOptions';
 export { withDefaultServices } from './transform/helpers/withDefaultServices';
 export type { Services } from './transform/types';
+export type { EventEmitter } from './utils/EventEmitter';
 export { isNode } from './utils/isNode';
 export { getTagProcessor } from './utils/getTagProcessor';
 export { getVisitorKeys } from './utils/getVisitorKeys';

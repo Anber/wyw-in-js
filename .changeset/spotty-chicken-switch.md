@@ -8,4 +8,4 @@
 'wyw-in-js': minor
 ---
 
-@linaria/babel-preset and @linaria/shaker have been merged into @wyw-in-js/transform.
+`@linaria/babel-preset` and `@linaria/shaker` have been merged into `@wyw-in-js/transform`.
