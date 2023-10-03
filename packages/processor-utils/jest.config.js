@@ -1,13 +1,17 @@
-/** @type {import('ts-jest/dist/types').InitialOptionsTsJest} */
+// @ts-check
+
+/**
+ * @type {import('@jest/types').Config.InitialOptions}
+ */
 module.exports = {
-  preset: 'ts-jest',
-  testEnvironment: 'node',
-  testMatch: ['**/__tests__/**/*.test.ts'],
+  displayName: 'processor-utils',
+  preset: '@wyw-in-js/jest-preset',
   transform: {
     '^.+\\.ts$': [
       'ts-jest',
       {
-        tsconfig: 'tsconfig.spec.json',
+        tsconfig: '<rootDir>/tsconfig.spec.json',
+        isolatedModules: true,
       },
     ],
   },
