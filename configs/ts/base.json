@@ -2,10 +2,8 @@
   "$schema": "https://json.schemastore.org/tsconfig",
   "compilerOptions": {
     "allowSyntheticDefaultImports": true,
-    "composite": true,
     "declaration": true,
     "esModuleInterop": true,
-    "emitDeclarationOnly": true,
     "forceConsistentCasingInFileNames": true,
     "jsx": "react",
     "lib": [
@@ -25,5 +23,7 @@
     "strict": true,
     "target": "es2022"
   },
-  "display": "Base config"
+  "exclude": ["node_modules"],
+  "display": "Base config",
+  "extends": "../../tsconfig.aliases.json"
 }
