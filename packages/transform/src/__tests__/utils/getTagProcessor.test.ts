@@ -43,11 +43,25 @@ function tagToString(processor: BaseProcessor | null): string | undefined {
   return processor.toString();
 }
 
+describe('getTagProcessor', () => {
+  it('import from unknown package', () => {
+    const result = run(
+      dedent`
+      import { css } from 'unknown-package';
+
+      export const Square = css.div\`\`;
+    `
+    );
+
+    expect(result).toBeNull();
+  });
+});
+
 /**
  * it's impossible to run this tests without implementing a custom processor
  * FIXME: create dummy processor for this tests
  */
-xdescribe('getTagProcessor', () => {
+xdescribe('getTagProcessor-old', () => {
   it('should find correct import', () => {
     const result = run(
       dedent`

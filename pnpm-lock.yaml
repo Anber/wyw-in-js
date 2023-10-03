@@ -96,6 +96,49 @@ importers:
 
   configs/ts: {}
 
+  examples/template-tag-syntax:
+    dependencies:
+      '@wyw-in-js/processor-utils':
+        specifier: workspace:*
+        version: link:../../packages/processor-utils
+    devDependencies:
+      '@babel/core':
+        specifier: ^7.23.0
+        version: 7.23.0
+      '@babel/traverse':
+        specifier: ^7.23.0
+        version: 7.23.0
+      '@babel/types':
+        specifier: ^7.23.0
+        version: 7.23.0
+      '@types/babel__core':
+        specifier: ^7.20.2
+        version: 7.20.2
+      '@types/babel__traverse':
+        specifier: ^7.20.2
+        version: 7.20.2
+      '@types/node':
+        specifier: ^16.18.55
+        version: 16.18.55
+      '@wyw-in-js/babel-config':
+        specifier: workspace:*
+        version: link:../../configs/babel
+      '@wyw-in-js/eslint-config':
+        specifier: workspace:*
+        version: link:../../configs/eslint
+      '@wyw-in-js/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
+      '@wyw-in-js/transform':
+        specifier: workspace:*
+        version: link:../../packages/transform
+      '@wyw-in-js/ts-config':
+        specifier: workspace:*
+        version: link:../../configs/ts
+      dedent:
+        specifier: ^1.5.1
+        version: 1.5.1
+
   packages/processor-utils:
     dependencies:
       '@babel/generator':
