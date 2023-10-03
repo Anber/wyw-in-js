@@ -59,16 +59,16 @@ describe('getTagProcessor', () => {
     });
   });
 
-  it('renamedCss``', () => {
+  it('renamed``', () => {
     const result = run(
       dedent`
-        import { css as renamedCss } from "@wyw-in-js/template-tag-syntax";
+        import { css as renamed } from "@wyw-in-js/template-tag-syntax";
 
-        export const Square = renamedCss\`\`;
+        export const Square = renamed\`\`;
       `
     );
 
-    expect(tagToString(result)).toBe('renamedCss`…`');
+    expect(tagToString(result)).toBe('renamed`…`');
     expect(result?.tagSource).toEqual({
       imported: 'css',
       source: '@wyw-in-js/template-tag-syntax',
