@@ -6,8 +6,8 @@ export {
   withTransformMetadata,
 } from './utils/TransformMetadata';
 export type { WYWTransformMetadata } from './utils/TransformMetadata';
-export { default as Module, DefaultModuleImplementation } from './module';
-export { default as transform } from './transform';
+export { Module, DefaultModuleImplementation } from './module';
+export { transform } from './transform';
 export {
   isUnprocessedEntrypointError,
   UnprocessedEntrypointError,

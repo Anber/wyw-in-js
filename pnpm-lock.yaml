@@ -71,6 +71,9 @@ importers:
       eslint-plugin-prettier:
         specifier: ^5.0.0
         version: 5.0.0(eslint-config-prettier@9.0.0)(eslint@8.50.0)(prettier@3.0.3)
+      idea-exclude:
+        specifier: ^1.2.1
+        version: 1.2.1
       jest:
         specifier: ^29.7.0
         version: 29.7.0
@@ -3430,6 +3433,10 @@ packages:
     engines: {node: '>=8'}
     dev: true
 
+  /diary@0.1.6:
+    resolution: {integrity: sha512-5xoYu+2Lbv4mQ5rnAFMYJrX9zpsT8sS2U5ihzDpCwUzgHvN3jwov077wGvIxxAL+zt5S/6A3OWUYls2pMcPixg==}
+    dev: true
+
   /diff-sequences@29.6.3:
     resolution: {integrity: sha512-EjePK1srD3P08o2j4f0ExnylqRs5B9tJjcp9t1krH2qRi8CCdsYfwe9JgSLurFBWwq4uOlipzfk5fHNvwFKr8Q==}
     engines: {node: ^14.15.0 || ^16.10.0 || >=18.0.0}
@@ -4582,6 +4589,16 @@ packages:
       safer-buffer: 2.1.2
     dev: false
 
+  /idea-exclude@1.2.1:
+    resolution: {integrity: sha512-W6iIPUOu+zsy9WHyJwoB9eEuF89ZA5xKM1qivD4GeBPjxJnF5jOsrKX+VASs3Li/sdpEljCg2mzB7R99fmq/mg==}
+    hasBin: true
+    dependencies:
+      diary: 0.1.6
+      glob: 7.2.3
+      sade: 1.8.1
+      search-trie: 2.1.0
+    dev: true
+
   /ieee754@1.2.1:
     resolution: {integrity: sha512-dcyqhDvX1C46lXZcVqCpK+FtMRQVdIMN6/Df5js2zouUsqG7I6sFxitIC+7KYK29KdXOLHdu9zL4sFnoVQnqaA==}
     dev: true
@@ -5733,6 +5750,11 @@ packages:
     engines: {node: '>= 8.0.0'}
     dev: true
 
+  /mri@1.2.0:
+    resolution: {integrity: sha512-tzzskb3bG8LvYGFF/mDTpq3jpI6Q9wc3LEmBaghu+DdCssd1FakN7Bc0hVNmEyGq1bq3RgfkCb3cmQLpNPOroA==}
+    engines: {node: '>=4'}
+    dev: true
+
   /ms@2.1.2:
     resolution: {integrity: sha512-sGkPx+VjMtmA6MX27oA4FBFELFCZZ4S4XqeGOXCv68tT+jb3vk/RyaKWP0PTKyWtmLSM0b+adUTEvbs1PEaH2w==}
 
@@ -6384,6 +6406,13 @@ packages:
       queue-microtask: 1.2.3
     dev: true
 
+  /sade@1.8.1:
+    resolution: {integrity: sha512-xal3CZX1Xlo/k4ApwCFrHVACi9fBqJ7V+mwhBsuf/1IOKbBy098Fex+Wa/5QMubw09pSZ/u8EY8PWgevJsXp1A==}
+    engines: {node: '>=6'}
+    dependencies:
+      mri: 1.2.0
+    dev: true
+
   /safe-array-concat@1.0.1:
     resolution: {integrity: sha512-6XbUAseYE2KtOuGueyeobCySj9L4+66Tn6KQMOPQJrAJEowYKW/YR/MGJZl7FdydUdaFu4LYyDZjxf4/Nmo23Q==}
     engines: {node: '>=0.4'}
@@ -6408,6 +6437,13 @@ packages:
 
   /safer-buffer@2.1.2:
     resolution: {integrity: sha512-YZo3K82SD7Riyi0E1EQPojLz7kpepnSQI9IyPbHHg1XXXevb5dJI7tpyN2ADxGcQbHG7vcyRHk0cbwqcQriUtg==}
+
+  /search-trie@2.1.0:
+    resolution: {integrity: sha512-56R2OMiWHPb2kfmoUwWpbSeJ+lil1pDMbbNs6saIgaya3SpYBCTh6ISGemTwVBoRdUm1bBddfB4WAfmvvolKUw==}
+    engines: {node: '>=10'}
+    dependencies:
+      tslib: 1.14.1
+    dev: true
 
   /semver@5.7.2:
     resolution: {integrity: sha512-cBznnQ9KjJqU67B52RMC65CMarK2600WFnbkcaiwWq3xy/5haFJlshgnpjovMVJ+Hff49d8GEn0b87C5pDQ10g==}
@@ -6869,6 +6905,10 @@ packages:
       json5: 1.0.2
       minimist: 1.2.8
       strip-bom: 3.0.0
+    dev: true
+
+  /tslib@1.14.1:
+    resolution: {integrity: sha512-Xni35NKzjgMrwevysHTCArtLDpPvye8zV/0E4EyYn43P7/7qvQwPh9BGkHewbMulVntbigmcT7rdX3BNo9wRJg==}
     dev: true
 
   /tslib@2.6.2:

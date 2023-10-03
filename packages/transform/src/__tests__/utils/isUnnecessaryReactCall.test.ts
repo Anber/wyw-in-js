@@ -5,8 +5,8 @@ import type { NodePath } from '@babel/core';
 import type { Program } from '@babel/types';
 import dedent from 'dedent';
 
-import type { MissedBabelCoreTypes } from '@linaria/babel-preset';
-import { isUnnecessaryReactCall } from '@linaria/utils';
+import type { MissedBabelCoreTypes } from '../../types';
+import { isUnnecessaryReactCall } from '../../utils/isUnnecessaryReactCall';
 
 const { File } = babel as typeof babel & MissedBabelCoreTypes;
 

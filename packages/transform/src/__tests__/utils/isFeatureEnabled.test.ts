@@ -1,5 +1,5 @@
-import type { FeatureFlag } from '@linaria/utils';
-import { isFeatureEnabled } from '@linaria/utils';
+import type { FeatureFlag } from '@wyw-in-js/shared';
+import { isFeatureEnabled } from '@wyw-in-js/shared';
 
 describe('isFeatureEnabled', () => {
   interface IFeatures {

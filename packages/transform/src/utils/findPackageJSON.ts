@@ -1,6 +1,6 @@
 import { dirname, isAbsolute } from 'path';
 
-import { findUpSync } from 'find-up';
+import findUp from 'find-up';
 
 const cache = new Map<string, string | undefined>();
 
@@ -17,7 +17,7 @@ export function findPackageJSON(
             filename ? { paths: [dirname(filename)] } : {}
           );
     if (!cache.has(pkgPath)) {
-      cache.set(pkgPath, findUpSync('package.json', { cwd: pkgPath }));
+      cache.set(pkgPath, findUp.sync('package.json', { cwd: pkgPath }));
     }
 
     return cache.get(pkgPath);

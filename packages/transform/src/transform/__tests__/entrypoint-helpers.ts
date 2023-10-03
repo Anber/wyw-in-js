@@ -1,9 +1,8 @@
 import * as babel from '@babel/core';
 import type { File } from '@babel/types';
 
-import { EventEmitter } from '@wyw-in-js/shared';
-
 import { TransformCacheCollection } from '../../cache';
+import { EventEmitter } from '../../utils/EventEmitter';
 import { Entrypoint } from '../Entrypoint';
 import type { LoadAndParseFn } from '../Entrypoint.types';
 import { rootLog } from '../rootLog';

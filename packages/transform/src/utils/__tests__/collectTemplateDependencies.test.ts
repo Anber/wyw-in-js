@@ -4,9 +4,8 @@ import generate from '@babel/generator';
 import dedent from 'dedent';
 import stripAnsi from 'strip-ansi';
 
-import { extractExpression } from '@wyw-in-js/shared';
-
 import type { MissedBabelCoreTypes } from '../../types';
+import { extractExpression } from '../collectTemplateDependencies';
 
 const { File } = babel as typeof babel & MissedBabelCoreTypes;
 

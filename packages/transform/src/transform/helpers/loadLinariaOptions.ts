@@ -2,6 +2,7 @@ import { cosmiconfigSync } from 'cosmiconfig';
 
 import type { FeatureFlags, StrictOptions } from '@wyw-in-js/shared';
 
+import shaker from '../../shaker';
 import type { PluginOptions } from '../../types';
 
 const searchPlaces = [
@@ -62,7 +63,7 @@ export function loadLinariaOptions(
     extensions: ['.cjs', '.cts', '.js', '.jsx', '.mjs', '.mts', '.ts', '.tsx'],
     rules: rules ?? [
       {
-        action: require.resolve('@linaria/shaker'),
+        action: shaker,
       },
       {
         // The old `ignore` option is used as a default value for `ignore` rule.
@@ -79,7 +80,7 @@ export function loadLinariaOptions(
           // If a file contains `export` or `import` keywords, we assume it's an ES-module
           return /(?:^|\*\/|;)\s*(?:export|import)\s/m.test(code);
         },
-        action: require.resolve('@linaria/shaker'),
+        action: shaker,
       },
     ],
     babelOptions,

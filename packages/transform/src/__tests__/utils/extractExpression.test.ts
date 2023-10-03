@@ -5,8 +5,8 @@ import * as babel from '@babel/core';
 import generator from '@babel/generator';
 import dedent from 'dedent';
 
-import type { MissedBabelCoreTypes } from '@linaria/babel-preset';
-import { extractExpression } from '@linaria/utils';
+import type { MissedBabelCoreTypes } from '../../types';
+import { extractExpression } from '../../utils/collectTemplateDependencies';
 
 const { File } = babel as typeof babel & MissedBabelCoreTypes;
 

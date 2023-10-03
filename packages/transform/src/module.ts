@@ -466,5 +466,3 @@ export class Module {
     return new Module(this.services, entrypoint, this, this.moduleImpl);
   }
 }
-
-export default Module;

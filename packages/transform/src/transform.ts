@@ -108,7 +108,7 @@ export function transformSync(
   }
 }
 
-export default async function transform(
+export async function transform(
   partialServices: PartialServices,
   originalCode: string,
   asyncResolve: (
