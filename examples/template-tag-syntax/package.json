@@ -41,7 +41,7 @@
     "types/"
   ],
   "license": "MIT",
-  "linaria": {
+  "wyw-in-js": {
     "tags": {
       "css": "./lib/processors/css.js"
     }

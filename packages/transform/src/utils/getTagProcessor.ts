@@ -90,7 +90,7 @@ const getDefinedTagsFromPackage = (
   const packageDir = dirname(packageJSONPath);
   const packageJSON = JSON.parse(readFileSync(packageJSONPath, 'utf8'));
   const definedTags: Record<string, string> | undefined =
-    packageJSON.linaria?.tags;
+    packageJSON['wyw-in-js']?.tags;
 
   const normalizedTags = definedTags
     ? Object.entries(definedTags).reduce(

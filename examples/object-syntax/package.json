@@ -43,7 +43,7 @@
     "types/"
   ],
   "license": "MIT",
-  "linaria": {
+  "wyw-in-js": {
     "tags": {
       "makeStyles": "./lib/processors/makeStyles.js"
     }
