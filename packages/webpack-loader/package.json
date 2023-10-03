@@ -1,0 +1,40 @@
+{
+  "name": "@wyw-in-js/webpack-loader",
+  "version": "0.0.1",
+  "dependencies": {
+    "@wyw-in-js/transform": "workspace:*",
+    "@wyw-in-js/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^16.18.55",
+    "@wyw-in-js/babel-config": "workspace:*",
+    "@wyw-in-js/eslint-config": "workspace:*",
+    "@wyw-in-js/ts-config": "workspace:*",
+    "source-map": "^0.7.4",
+    "webpack": "^5.76.0"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  },
+  "files": [
+    "esm/",
+    "lib/",
+    "types/"
+  ],
+  "license": "MIT",
+  "main": "lib/index.js",
+  "module": "esm/index.js",
+  "peerDependencies": {
+    "webpack": "^5.76.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build:esm": "babel src --out-dir esm --extensions '.js,.jsx,.ts,.tsx' --source-maps --delete-dir-on-start",
+    "build:lib": "cross-env NODE_ENV=legacy babel src --out-dir lib --extensions '.js,.jsx,.ts,.tsx' --source-maps --delete-dir-on-start",
+    "build:types": "tsc",
+    "lint": "eslint --ext .js,.ts ."
+  },
+  "types": "types/index.d.ts"
+}
