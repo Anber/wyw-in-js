@@ -96,6 +96,52 @@ importers:
 
   configs/ts: {}
 
+  examples/object-syntax:
+    dependencies:
+      '@griffel/core':
+        specifier: 1.5.0
+        version: 1.5.0
+      '@wyw-in-js/processor-utils':
+        specifier: workspace:*
+        version: link:../../packages/processor-utils
+    devDependencies:
+      '@babel/core':
+        specifier: ^7.23.0
+        version: 7.23.0
+      '@babel/traverse':
+        specifier: ^7.23.0
+        version: 7.23.0
+      '@babel/types':
+        specifier: ^7.23.0
+        version: 7.23.0
+      '@types/babel__core':
+        specifier: ^7.20.2
+        version: 7.20.2
+      '@types/babel__traverse':
+        specifier: ^7.20.2
+        version: 7.20.2
+      '@types/node':
+        specifier: ^16.18.55
+        version: 16.18.55
+      '@wyw-in-js/babel-config':
+        specifier: workspace:*
+        version: link:../../configs/babel
+      '@wyw-in-js/eslint-config':
+        specifier: workspace:*
+        version: link:../../configs/eslint
+      '@wyw-in-js/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
+      '@wyw-in-js/transform':
+        specifier: workspace:*
+        version: link:../../packages/transform
+      '@wyw-in-js/ts-config':
+        specifier: workspace:*
+        version: link:../../configs/ts
+      dedent:
+        specifier: ^1.5.1
+        version: 1.5.1
+
   examples/template-tag-syntax:
     dependencies:
       '@wyw-in-js/processor-utils':
@@ -1616,7 +1662,6 @@ packages:
     engines: {node: '>=6.9.0'}
     dependencies:
       regenerator-runtime: 0.14.0
-    dev: true
 
   /@babel/template@7.22.15:
     resolution: {integrity: sha512-QPErUVm4uyJa60rkI73qneDacvdvzxshT3kksGqlGWYdOTIUOwJ7RDUL8sGqslY1uXWSL6xMFKEXDS3ox2uF0w==}
@@ -1872,6 +1917,10 @@ packages:
       fast-check: 3.13.1
     dev: true
 
+  /@emotion/hash@0.8.0:
+    resolution: {integrity: sha512-kBJtf7PH6aWwZ6fka3zQ0p6SBYzx4fl1LoZXE2RrnYST9Xljm7WfKJrU4g/Xr3Beg72MLrp1AWNUmuYJTL7Cow==}
+    dev: false
+
   /@esbuild/android-arm@0.15.18:
     resolution: {integrity: sha512-5GT+kcs2WVGjVs7+boataCkO5Fg0y4kCjzkB5bAip7H4jfnOS3dA6KPiww9W1OEKTKeAcUVhdZGvgI65OXmUnw==}
     engines: {node: '>=12'}
@@ -1926,6 +1975,16 @@ packages:
     resolution: {integrity: sha512-NCC3zz2+nvYd+Ckfh87rA47zfu2QsQpvc6k1yzTk+b9KzRj0wkGa8LSoGOXN6Zv4lRf/EIoZ80biDh9HOI+RNQ==}
     engines: {node: ^12.22.0 || ^14.17.0 || >=16.0.0}
     dev: true
+
+  /@griffel/core@1.5.0:
+    resolution: {integrity: sha512-NC0J3k4qxQq7fLicrlbbPIC85Gw7LgTUm0c9SWGRv7dsj1tXE6y2+eHAhJwA5230KkUvACPgwJRCaBikFxv+4Q==}
+    dependencies:
+      '@emotion/hash': 0.8.0
+      csstype: 3.1.2
+      rtl-css-js: 1.16.1
+      stylis: 4.3.0
+      tslib: 2.6.2
+    dev: false
 
   /@humanwhocodes/config-array@0.11.11:
     resolution: {integrity: sha512-N2brEuAadi0CcdeMXUkhbZB84eskAc8MEX1By6qEchoVywSgXPIjou4rYsl0V3Hj0ZnuGycGCjdNgockbzeWNA==}
@@ -3492,6 +3551,10 @@ packages:
 
   /css.escape@1.5.1:
     resolution: {integrity: sha512-YUifsXXuknHlUsmlgyY0PKzgPOr7/FjCePfHNt0jxm83wHZi44VDMQ7/fGNkjY3/jV1MC+1CmZbaHzugyeRtpg==}
+    dev: false
+
+  /csstype@3.1.2:
+    resolution: {integrity: sha512-I7K1Uu0MBPzaFKg4nI5Q7Vs2t+3gWWW648spaF+Rg7pI9ds18Ugn+lvg4SHczUdKlHI5LWBXyqfS8+DufyBsgQ==}
     dev: false
 
   /csv-generate@3.4.3:
@@ -6581,7 +6644,6 @@ packages:
 
   /regenerator-runtime@0.14.0:
     resolution: {integrity: sha512-srw17NI0TUWHuGa5CFGGmhfNIeja30WMBfbslPNhf6JrqQlLN5gcrvig1oqPxiVaXb0oW0XRKtH6Nngs5lKCIA==}
-    dev: true
 
   /regenerator-transform@0.15.2:
     resolution: {integrity: sha512-hfMp2BoF0qOk3uc5V20ALGDS2ddjQaLrdl7xrGXvAIow7qeWRM2VA2HuCHkUKk9slq3VwEwLNK3DFBqDfPGYtg==}
@@ -6684,6 +6746,12 @@ packages:
     dependencies:
       glob: 7.2.3
     dev: true
+
+  /rtl-css-js@1.16.1:
+    resolution: {integrity: sha512-lRQgou1mu19e+Ya0LsTvKrVJ5TYUbqCVPAiImX3UfLTenarvPUl1QFdvu5Z3PYmHT9RCcwIfbjRQBntExyj3Zg==}
+    dependencies:
+      '@babel/runtime': 7.23.1
+    dev: false
 
   /run-applescript@5.0.0:
     resolution: {integrity: sha512-XcT5rBksx1QdIhlFOCtgZkB99ZEouFZ1E2Kc2LHqNW13U3/74YGdkQRmThTwxy4QIyookibDKYZOPqX//6BlAg==}
@@ -7036,6 +7104,10 @@ packages:
 
   /stylis@3.5.4:
     resolution: {integrity: sha512-8/3pSmthWM7lsPBKv7NXkzn2Uc9W7NotcwGNpJaa3k7WMM1XDCA4MgT5k/8BIexd5ydZdboXtU90XH9Ec4Bv/Q==}
+    dev: false
+
+  /stylis@4.3.0:
+    resolution: {integrity: sha512-E87pIogpwUsUwXw7dNyU4QDjdgVMy52m+XEOPEKUn161cCzWjjhPSQhByfd1CcNvrOLnXQ6OnnZDwnJrz/Z4YQ==}
     dev: false
 
   /supports-color@5.5.0:
