@@ -34,8 +34,7 @@
     "build:esm": "babel src --out-dir esm --extensions '.js,.jsx,.ts,.tsx' --source-maps --delete-dir-on-start",
     "build:lib": "cross-env NODE_ENV=legacy babel src --out-dir lib --extensions '.js,.jsx,.ts,.tsx' --source-maps --delete-dir-on-start",
     "build:types": "tsc",
-    "lint": "eslint --ext .js,.ts .",
-    "test": "jest --config ./jest.config.js --rootDir src"
+    "lint": "eslint --ext .js,.ts ."
   },
   "types": "types/index.d.ts"
 }
