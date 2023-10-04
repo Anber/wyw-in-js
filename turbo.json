@@ -18,6 +18,8 @@
     "lint": {
       "dependsOn": ["@wyw-in-js/eslint-config#check"]
     },
-    "test": {}
+    "test": {
+      "dependsOn": ["@wyw-in-js/jest-preset#check"]
+    }
   }
 }
