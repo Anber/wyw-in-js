@@ -1,0 +1,22 @@
+# Usage with Webpack
+
+### Installation
+
+```sh npm2yarn
+npm i -D @wyw-in-js/webpack-loader
+```
+
+### Configuration
+
+```js
+module.exports = {
+  module: {
+    rules: [
+      {
+        test: /\.js/,
+        use: [{ loader: '@wyw-in-js/webpack-loader' }],
+      },
+    ],
+  },
+};
+```
