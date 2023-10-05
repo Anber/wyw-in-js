@@ -52,6 +52,7 @@
     "sp:check": "syncpack",
     "sp:fix": "syncpack format && syncpack fix-mismatches",
     "sp:format": "syncpack format",
-    "sp:list": "syncpack list-mismatches"
+    "sp:list": "syncpack list-mismatches",
+    "website": "pnpm run --filter @wyw-in-js/website deploy"
   }
 }
