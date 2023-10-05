@@ -4,8 +4,8 @@
  * returns transformed code without template literals and attaches generated source maps
  */
 
-import fs from 'fs';
-import path from 'path';
+import { readFileSync } from 'fs';
+import { basename, dirname, isAbsolute, join, parse, posix } from 'path';
 
 import type { Plugin, TransformOptions, Loader } from 'esbuild';
 import { transformSync } from 'esbuild';
@@ -34,7 +34,7 @@ export default function wywInJS({
   let options = esbuildOptions;
   const cache = new TransformCacheCollection();
   return {
-    name: 'linaria',
+    name: 'wyw-in-js',
     setup(build) {
       const cssLookup = new Map<string, string>();
 
@@ -42,9 +42,9 @@ export default function wywInJS({
         token: string,
         importer: string
       ): Promise<string> => {
-        const context = path.isAbsolute(importer)
-          ? path.dirname(importer)
-          : path.join(process.cwd(), path.dirname(importer));
+        const context = isAbsolute(importer)
+          ? dirname(importer)
+          : join(process.cwd(), dirname(importer));
 
         const result = await build.resolve(token, {
           resolveDir: context,
@@ -55,7 +55,7 @@ export default function wywInJS({
           throw new Error(`Cannot resolve ${token}`);
         }
 
-        return result.path.replace(/\\/g, path.posix.sep);
+        return result.path.replace(/\\/g, posix.sep);
       };
 
       build.onResolve({ filter: /\.linaria\.css$/ }, (args) => {
@@ -69,13 +69,13 @@ export default function wywInJS({
         return {
           contents: cssLookup.get(args.path),
           loader: 'css',
-          resolveDir: path.basename(args.path),
+          resolveDir: basename(args.path),
         };
       });
 
       build.onLoad({ filter: /\.(js|jsx|ts|tsx)$/ }, async (args) => {
-        const rawCode = fs.readFileSync(args.path, 'utf8');
-        const { ext, name: filename } = path.parse(args.path);
+        const rawCode = readFileSync(args.path, 'utf8');
+        const { ext, name: filename } = parse(args.path);
         const loader = ext.replace(/^\./, '') as Loader;
 
         if (nodeModulesRegex.test(args.path)) {
@@ -124,7 +124,7 @@ export default function wywInJS({
           return {
             contents: code,
             loader,
-            resolveDir: path.dirname(args.path),
+            resolveDir: dirname(args.path),
           };
         }
 
@@ -149,7 +149,7 @@ export default function wywInJS({
         return {
           contents,
           loader,
-          resolveDir: path.dirname(args.path),
+          resolveDir: dirname(args.path),
         };
       });
     },
