@@ -48,5 +48,5 @@ jobs:
         uses: JamesIves/github-pages-deploy-action@v4
         with:
           branch: gh-pages
-          folder: app/website/dist
+          folder: apps/website/dist
           clean: true
