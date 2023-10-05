@@ -32,6 +32,7 @@ export { withDefaultServices } from './transform/helpers/withDefaultServices';
 export type { Services } from './transform/types';
 export type { EventEmitter } from './utils/EventEmitter';
 export { isNode } from './utils/isNode';
+export { getFileIdx } from './utils/getFileIdx';
 export { getTagProcessor } from './utils/getTagProcessor';
 export { getVisitorKeys } from './utils/getVisitorKeys';
 export type { VisitorKeys } from './utils/getVisitorKeys';
