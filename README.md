@@ -3,15 +3,15 @@
   <p>A Toolkit for Zero-Runtime CSS-in-JS Libraries</p>
 </div>
 
-## Introduction
+# Introduction
 
 wyw-in-js, short for "Whatever-you-want-in-JS," is the world's first toolkit for creating various zero-runtime CSS(and more)-in-JS libraries. In essence, it empowers developers to build their own solutions with arbitrary syntax and functionality, offering complete independence from specific implementations.
 
-## Origins
+### Origins
 
 This library evolved from the CSS-in-JS library [Linaria][1], with the aim of decoupling from a specific implementation and providing developers with a comprehensive toolkit for crafting their own solutions with custom syntax and features.
 
-## Key Features
+### Key Features
 
 - Provides an API for creating custom processors (e.g., `css` and `styled` in [Linaria][1] or `makeStyles` in [Griffel][2]).
 - Supports a wide range of syntaxes, including tagged templates, function calls, and object literals.
