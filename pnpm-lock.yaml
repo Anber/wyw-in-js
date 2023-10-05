@@ -218,6 +218,34 @@ importers:
         specifier: ^1.5.1
         version: 1.5.1
 
+  packages/esbuild:
+    dependencies:
+      '@wyw-in-js/shared':
+        specifier: workspace:*
+        version: link:../shared
+      '@wyw-in-js/transform':
+        specifier: workspace:*
+        version: link:../transform
+    devDependencies:
+      '@types/node':
+        specifier: ^16.18.55
+        version: 16.18.55
+      '@wyw-in-js/babel-config':
+        specifier: workspace:*
+        version: link:../../configs/babel
+      '@wyw-in-js/eslint-config':
+        specifier: workspace:*
+        version: link:../../configs/eslint
+      '@wyw-in-js/jest-preset':
+        specifier: workspace:*
+        version: link:../../configs/jest
+      '@wyw-in-js/ts-config':
+        specifier: workspace:*
+        version: link:../../configs/ts
+      esbuild:
+        specifier: ^0.15.16
+        version: 0.15.18
+
   packages/processor-utils:
     dependencies:
       '@babel/generator':
