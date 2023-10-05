@@ -1,0 +1,21 @@
+{
+  "name": "@wyw-in-js/website",
+  "private": true,
+  "version": "0.0.1",
+  "dependencies": {
+    "next": "^13.5.4",
+    "nextra": "^2.13.1",
+    "nextra-theme-docs": "^2.13.1",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
+  },
+  "devDependencies": {
+    "@wyw-in-js/eslint-config": "workspace:*",
+    "@wyw-in-js/ts-config": "workspace:*"
+  },
+  "scripts": {
+    "deploy": "next build && next export --outdir dist",
+    "lint": "eslint --ext .js,.ts .",
+    "start": "next dev"
+  }
+}
