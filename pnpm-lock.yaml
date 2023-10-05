@@ -107,6 +107,9 @@ importers:
       react-dom:
         specifier: ^18.2.0
         version: 18.2.0(react@18.2.0)
+      wyw-in-js:
+        specifier: workspace:*
+        version: link:../..
     devDependencies:
       '@wyw-in-js/eslint-config':
         specifier: workspace:*

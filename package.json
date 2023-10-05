@@ -37,6 +37,9 @@
     "node": ">=16.0.0",
     "pnpm": "^8.0.0"
   },
+  "exports": {
+    "./*.md": "./*.md"
+  },
   "homepage": "https://github.com/Anber/wyw-in-js#readme",
   "keywords": [],
   "license": "MIT",
