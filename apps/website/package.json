@@ -1,7 +1,6 @@
 {
   "name": "@wyw-in-js/website",
-  "private": true,
-  "version": "0.0.1",
+  "version": "0.1.0",
   "dependencies": {
     "next": "^13.5.4",
     "nextra": "^2.13.1",
@@ -14,6 +13,7 @@
     "@wyw-in-js/eslint-config": "workspace:*",
     "@wyw-in-js/ts-config": "workspace:*"
   },
+  "private": true,
   "scripts": {
     "deploy": "next build && next export --outdir dist && touch ./dist/.nojekyll",
     "lint": "eslint --ext .js,.ts .",

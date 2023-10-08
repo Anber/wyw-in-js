@@ -1,15 +1,13 @@
-name: Release
+name: Validate versions
 
 on:
   push:
     branches:
-      - main
-
-concurrency: ${{ github.workflow }}-${{ github.ref }}
+      - changeset-release/main
 
 jobs:
   release:
-    name: Release
+    name: Validate versions
     runs-on: ubuntu-latest
 
     env:
@@ -47,12 +45,5 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile --strict-peer-dependencies
 
-      - name: Create Release Pull Request or Publish to npm
-        id: changesets
-        uses: changesets/action@v1
-        with:
-          version: pnpm run version
-          publish: pnpm release
-        env:
-          GITHUB_TOKEN: ${{ secrets.ANBER_GITHUB_TOKEN }}
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Validate versions
+        run: pnpm validate-versions >> $GITHUB_OUTPUT

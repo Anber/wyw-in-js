@@ -2,9 +2,9 @@
   "name": "@wyw-in-js/rollup",
   "version": "0.1.0",
   "dependencies": {
+    "@rollup/pluginutils": "^5.0.4",
     "@wyw-in-js/shared": "workspace:*",
-    "@wyw-in-js/transform": "workspace:*",
-    "@rollup/pluginutils": "^5.0.4"
+    "@wyw-in-js/transform": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^16.18.55",
@@ -18,17 +18,17 @@
   "engines": {
     "node": ">=16.0.0"
   },
+  "exports": {
+    "import": "./esm/index.js",
+    "require": "./lib/index.js",
+    "types": "./types/index.d.ts"
+  },
   "files": [
     "esm/",
     "lib/",
     "types/"
   ],
   "license": "MIT",
-  "exports": {
-    "import": "./esm/index.js",
-    "require": "./lib/index.js",
-    "types": "./types/index.d.ts"
-  },
   "main": "lib/index.js",
   "module": "esm/index.js",
   "peerDependencies": {

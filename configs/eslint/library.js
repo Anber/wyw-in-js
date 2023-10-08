@@ -186,8 +186,6 @@ module.exports = {
         // TODO
         'import/extensions': 0,
         'import/no-dynamic-require': 0,
-        'import/no-unresolved': noUnresolved,
-        'import/order': importOrder,
         'import/prefer-default-export': 0,
         'no-plusplus': ['error', {allowForLoopAfterthoughts: true}],
         'no-restricted-syntax': noRestrictedSyntax,
@@ -220,7 +218,6 @@ module.exports = {
             ],
           },
         ],
-        'import/no-unresolved': noUnresolved,
       },
     },
     {
@@ -267,6 +264,7 @@ module.exports = {
       },
     ],
     'import/no-unresolved': noUnresolved,
+    'import/order': importOrder,
     'max-len': [
       'error',
       150,

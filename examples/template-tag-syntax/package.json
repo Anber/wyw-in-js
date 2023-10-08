@@ -1,6 +1,5 @@
 {
   "name": "@wyw-in-js/template-tag-syntax",
-  "private": true,
   "version": "0.1.0",
   "dependencies": {
     "@wyw-in-js/processor-utils": "workspace:*"
@@ -20,6 +19,7 @@
     "@wyw-in-js/ts-config": "workspace:*",
     "dedent": "^1.5.1"
   },
+  "private": true,
   "scripts": {
     "build:esm": "babel src --out-dir esm --extensions '.js,.jsx,.ts,.tsx' --source-maps --delete-dir-on-start",
     "build:lib": "cross-env NODE_ENV=legacy babel src --out-dir lib --extensions '.js,.jsx,.ts,.tsx' --source-maps --delete-dir-on-start",

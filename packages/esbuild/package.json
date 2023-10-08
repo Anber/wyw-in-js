@@ -16,17 +16,17 @@
   "engines": {
     "node": ">=16.0.0"
   },
+  "exports": {
+    "import": "./esm/index.js",
+    "require": "./lib/index.js",
+    "types": "./types/index.d.ts"
+  },
   "files": [
     "esm/",
     "lib/",
     "types/"
   ],
   "license": "MIT",
-  "exports": {
-    "import": "./esm/index.js",
-    "require": "./lib/index.js",
-    "types": "./types/index.d.ts"
-  },
   "main": "lib/index.js",
   "module": "esm/index.js",
   "peerDependencies": {
