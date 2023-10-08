@@ -1,5 +1,14 @@
 # wyw-in-js
 
+## 0.1.1
+
+### Patch Changes
+
+- 334833c: Plugin for Vite.
+- 6f8ae08: Plugin for Rollup.
+- 45c0206: https://wyw-in-js.dev/
+- 6166aa6: Plugin for esbuild.
+
 ## 0.1.0
 
 ### Minor Changes
