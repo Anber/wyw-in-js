@@ -34,6 +34,8 @@
     "@wyw-in-js/eslint-config": "workspace:*",
     "@wyw-in-js/jest-preset": "workspace:*",
     "@wyw-in-js/ts-config": "workspace:*",
+    "babel-plugin-istanbul": "^6.1.1",
+    "babel-plugin-module-resolver": "^4.1.0",
     "dedent": "^1.5.1",
     "esbuild": "^0.15.16",
     "strip-ansi": "^5.2.0",

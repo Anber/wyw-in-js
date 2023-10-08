@@ -18,11 +18,4 @@ module.exports = {
       },
     ],
   },
-  ignorePatterns: [
-    'apps/',
-    'configs/',
-    'examples/',
-    'node_modules/',
-    'packages/',
-  ],
 };

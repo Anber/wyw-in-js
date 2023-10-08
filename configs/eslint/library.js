@@ -150,6 +150,8 @@ module.exports = {
     JSX: 'readonly',
   },
   ignorePatterns: [
+    "/.next",
+    "/dist",
     "/esm",
     "/lib",
     "/types",
