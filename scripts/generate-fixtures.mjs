@@ -12,6 +12,7 @@ import packageJSON from 'package-json';
 import semver from 'semver';
 
 import { configs } from './helpers/generators-configs.mjs';
+import { readPackage } from './helpers/readPackage.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -92,6 +93,16 @@ const formatCode = (code) => {
     .join('\n');
 };
 
+const installOptions = {
+  confirmModulesPurge: false,
+  dir: tempDir,
+  hooks: { readPackage },
+  lockfileDir: tempDir,
+  pkgRoot: tempDir,
+  storeController: controller.ctrl,
+  storeDir: storeDir,
+};
+
 console.log(`Total environments: ${environments.length}`);
 
 for (const { name, transformers, version } of environments) {
@@ -106,14 +117,9 @@ for (const { name, transformers, version } of environments) {
     private: true,
     devDependencies: version
       ? {
-          '@babel/preset-env': '^7.12.1',
-          '@babel/preset-typescript': '^7.12.1',
           [name]: version,
         }
-      : {
-          '@babel/preset-env': '^7.12.1',
-          '@babel/preset-typescript': '^7.12.1',
-        },
+      : {},
   };
 
   writeFileSync(
@@ -121,37 +127,54 @@ for (const { name, transformers, version } of environments) {
     JSON.stringify(manifest, null, 2)
   );
 
-  try {
-    await install(manifest, {
-      confirmModulesPurge: false,
-      dir: tempDir,
-      lockfileDir: tempDir,
-      pkgRoot: tempDir,
-      storeController: controller.ctrl,
-      storeDir: storeDir,
-    });
-  } catch (e) {
-    console.error(e);
-    continue;
-  }
-
   for (const transformer of transformers) {
-    const { fn, deps } =
-      typeof transformer === 'object'
-        ? transformer
-        : { fn: transformer, deps: [] };
+    const deps = transformer.deps ?? [];
+
+    console.log(`Installing dependencies for ${transformer.name} …`);
+
+    const depsObject = deps.reduce((acc, dep) => {
+      const [name, version] = dep.split(':');
+      acc[name] = version;
+      return acc;
+    }, {});
+
+    try {
+      await install(
+        {
+          ...manifest,
+          devDependencies: {
+            ...manifest.devDependencies,
+            ...depsObject,
+          },
+        },
+        installOptions
+      );
+    } catch (e) {
+      if (e.code === 'ERR_PNPM_PEER_DEP_ISSUES') {
+        console.log(
+          'ERR_PNPM_PEER_DEP_ISSUES',
+          JSON.stringify(e.issuesByProjects['.'], null, 2)
+        );
+        process.exit(1);
+      } else {
+        console.error(e);
+      }
+
+      continue;
+    }
+
     const source = `
       const process = require('node:process');
       const { readFileSync } = require('fs');
-      const transform = ${fn.toString()};
+      const transform = ${transformer.toString()};
       const source = readFileSync(process.argv[2], 'utf8');
       console.log(transform(source));
     `;
     writeFileSync(join(tempDir, 'transform.js'), source);
 
     const transformerName = version
-      ? `${fn.name}-${versionToPath(version)}`
-      : fn.name;
+      ? `${transformer.name}-${versionToPath(version)}`
+      : transformer.name;
     const startTime = performance.now();
     console.log(`Running ${transformerName} …`);
 
@@ -168,10 +191,13 @@ for (const { name, transformers, version } of environments) {
           `node ${tempDir}/transform.js "${inputFixture}"`,
           {
             cwd: tempDir,
+            env: {
+              BROWSERSLIST_IGNORE_OLD_DATA: 1,
+            },
           }
         );
 
-        const code = result.toString();
+        const code = result.toString().trim();
 
         if (resultsForFixture.has(code)) {
           console.log(
@@ -183,7 +209,7 @@ for (const { name, transformers, version } of environments) {
           resultsForFixture.set(code, transformerName);
           const outputDir = inputFixture.replace(/\.input\.[jt]s/, '');
           mkdirSync(outputDir, { recursive: true });
-          writeFileSync(join(outputDir, `${transformerName}.input.js`), result);
+          writeFileSync(join(outputDir, `${transformerName}.input.js`), code);
 
           console.log(
             `\tResult for ${transformerName}@${fixtureName}:\n${formatCode(

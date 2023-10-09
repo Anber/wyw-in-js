@@ -2,7 +2,7 @@ function asIs(source) {
   return source;
 }
 
-function babelCommonJS(source) {
+function babelCommonJSWithLastCoreAndTSC(source) {
   const babel = require('@babel/core');
 
   const result = babel.transformSync(source, {
@@ -11,7 +11,7 @@ function babelCommonJS(source) {
     filename: __dirname + '/source.ts',
     presets: [
       [
-        require.resolve('@babel/preset-env'),
+        '@babel/preset-env',
         {
           targets: 'ie 11',
         },
@@ -22,6 +22,37 @@ function babelCommonJS(source) {
 
   return result?.code ?? '';
 }
+
+babelCommonJSWithLastCoreAndTSC.deps = [
+  '@babel/core:7.23.0',
+  '@babel/preset-typescript:7.23.0',
+];
+
+function babelCommonJSWithOldCoreAndTSC(source) {
+  const babel = require('@babel/core');
+
+  const result = babel.transformSync(source, {
+    babelrc: false,
+    configFile: false,
+    filename: __dirname + '/source.ts',
+    presets: [
+      [
+        '@babel/preset-env',
+        {
+          targets: 'ie 11',
+        },
+      ],
+      '@babel/preset-typescript',
+    ],
+  });
+
+  return result?.code ?? '';
+}
+
+babelCommonJSWithOldCoreAndTSC.deps = [
+  '@babel/core:7.13.0',
+  '@babel/preset-typescript:7.13.0',
+];
 
 function babelNode16(source) {
   const babel = require('@babel/core');
@@ -41,6 +72,8 @@ function babelNode16(source) {
 
   return result?.code ?? '';
 }
+
+babelNode16.deps = ['@babel/core:7.13.0', '@babel/preset-typescript:7.13.0'];
 
 function esbuildCommonJS(source) {
   const esbuildTransformSync = require('esbuild').transformSync;
@@ -108,16 +141,11 @@ export const configs = [
     transformers: [asIs],
   },
   {
-    name: '@babel/core',
+    name: '@babel/preset-env',
     transformers: [
-      {
-        fn: babelCommonJS,
-        deps: ['@babel/preset-env:7.12.1', '@babel/preset-typescript:7.12.1'],
-      },
-      {
-        fn: babelNode16,
-        deps: ['@babel/preset-typescript:7.12.1'],
-      },
+      babelCommonJSWithLastCoreAndTSC,
+      babelCommonJSWithOldCoreAndTSC,
+      babelNode16,
     ],
     version: '>=7',
   },
