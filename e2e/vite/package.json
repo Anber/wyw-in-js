@@ -1,0 +1,19 @@
+{
+  "name": "@wyw-in-js/e2e-vite",
+  "version": "0.1.1",
+  "dependencies": {
+    "@wyw-in-js/template-tag-syntax": "workspace:*"
+  },
+  "devDependencies": {
+    "@wyw-in-js/ts-config": "workspace:*",
+    "@wyw-in-js/vite": "workspace:*",
+    "picocolors": "^1.0.0",
+    "tsconfig-paths": "^4.2.0",
+    "ts-node": "^10.2.9",
+    "vite": "^5.0.9"
+  },
+  "private": true,
+  "scripts": {
+    "test": "node -r ts-node/register ./scripts/test.cjs"
+  }
+}
