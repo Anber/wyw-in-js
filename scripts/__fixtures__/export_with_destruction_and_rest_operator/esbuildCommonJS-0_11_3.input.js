@@ -2,7 +2,8 @@ var __defProp = Object.defineProperty;
 var __hasOwnProp = Object.prototype.hasOwnProperty;
 var __getOwnPropSymbols = Object.getOwnPropertySymbols;
 var __propIsEnum = Object.prototype.propertyIsEnumerable;
-var __markAsModule = (target) => __defProp(target, "__esModule", {value: true});
+var __markAsModule = (target) =>
+  __defProp(target, '__esModule', { value: true });
 var __rest = (source, exclude) => {
   var target = {};
   for (var prop in source)
@@ -17,12 +18,13 @@ var __rest = (source, exclude) => {
 };
 var __export = (target, all) => {
   for (var name in all)
-    __defProp(target, name, {get: all[name], enumerable: true});
+    __defProp(target, name, { get: all[name], enumerable: true });
 };
 __markAsModule(exports);
 __export(exports, {
   a: () => a,
-  rest: () => rest
+  rest: () => rest,
 });
-const obj = {a: 1, b: 2};
-const {a} = obj, rest = __rest(obj, ["a"]);
+const obj = { a: 1, b: 2 };
+const { a } = obj,
+  rest = __rest(obj, ['a']);

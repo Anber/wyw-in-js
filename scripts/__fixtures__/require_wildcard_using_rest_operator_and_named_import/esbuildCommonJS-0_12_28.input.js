@@ -1,9 +1,12 @@
 var __getOwnPropSymbols = Object.getOwnPropertySymbols;
 var __hasOwnProp = Object.prototype.hasOwnProperty;
 var __propIsEnum = Object.prototype.propertyIsEnumerable;
-var __require = typeof require !== "undefined" ? require : (x) => {
-  throw new Error('Dynamic require of "' + x + '" is not supported');
-};
+var __require =
+  typeof require !== 'undefined'
+    ? require
+    : (x) => {
+        throw new Error('Dynamic require of "' + x + '" is not supported');
+      };
 var __objRest = (source, exclude) => {
   var target = {};
   for (var prop in source)
@@ -16,5 +19,7 @@ var __objRest = (source, exclude) => {
     }
   return target;
 };
-const _a = require("unknown-package"), { named } = _a, fullNamespace = __objRest(_a, ["named"]);
+const _a = require('unknown-package'),
+  { named } = _a,
+  fullNamespace = __objRest(_a, ['named']);
 console.log(fullNamespace, named);

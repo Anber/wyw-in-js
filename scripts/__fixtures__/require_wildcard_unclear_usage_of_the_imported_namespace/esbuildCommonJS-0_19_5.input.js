@@ -1,2 +1,2 @@
-const fullNamespace = require("unknown-package");
+const fullNamespace = require('unknown-package');
 console.log(fullNamespace);

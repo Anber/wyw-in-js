@@ -1,7 +1,5 @@
 const module = (() => {
-  const {
-    dep
-  } = require('unknown-package');
+  const { dep } = require('unknown-package');
 
   return result;
 })();

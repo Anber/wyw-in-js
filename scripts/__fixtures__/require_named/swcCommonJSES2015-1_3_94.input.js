@@ -1,3 +1,3 @@
-"use strict";
+'use strict';
 const namedDefault = require('unknown-package').named;
 console.log(namedDefault);

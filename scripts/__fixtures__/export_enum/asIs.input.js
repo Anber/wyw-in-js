@@ -1,1 +1,5 @@
-export enum E { A, B, C }
+export enum E {
+  A,
+  B,
+  C,
+}

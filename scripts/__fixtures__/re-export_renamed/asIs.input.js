@@ -1,1 +1,1 @@
-export { token as renamed } from "unknown-package";
+export { token as renamed } from 'unknown-package';

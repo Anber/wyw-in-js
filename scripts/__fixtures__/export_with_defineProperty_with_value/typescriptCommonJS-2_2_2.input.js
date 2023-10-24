@@ -1,5 +1,5 @@
-"use strict";
+'use strict';
 exports.__esModule = true;
 Object.defineProperty(exports, 'a', {
-    value: 1
+  value: 1,
 });

@@ -1,4 +1,4 @@
-"use strict";
+'use strict';
 exports.__esModule = true;
-var ns = require("unknown-package");
+var ns = require('unknown-package');
 console.log(ns);

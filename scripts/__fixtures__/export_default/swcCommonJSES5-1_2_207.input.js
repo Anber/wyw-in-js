@@ -1,11 +1,11 @@
-"use strict";
-Object.defineProperty(exports, "__esModule", {
-    value: true
+'use strict';
+Object.defineProperty(exports, '__esModule', {
+  value: true,
 });
-Object.defineProperty(exports, "default", {
-    get: function() {
-        return _default;
-    },
-    enumerable: true
+Object.defineProperty(exports, 'default', {
+  get: function () {
+    return _default;
+  },
+  enumerable: true,
 });
-var _default = "value";
+var _default = 'value';

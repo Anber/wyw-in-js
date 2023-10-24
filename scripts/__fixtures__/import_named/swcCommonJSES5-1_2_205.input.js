@@ -1,3 +1,3 @@
-"use strict";
-var _unknownPackage = require("unknown-package");
+'use strict';
+var _unknownPackage = require('unknown-package');
 console.log(_unknownPackage.named);

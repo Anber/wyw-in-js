@@ -1,4 +1,6 @@
-"use strict";
+'use strict';
 Object.defineProperty(exports, 'a', {
-    get: function () { return 1; }
+  get: function () {
+    return 1;
+  },
 });

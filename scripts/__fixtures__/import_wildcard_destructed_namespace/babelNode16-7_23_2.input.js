@@ -1,5 +1,3 @@
 import * as ns from 'unknown-package';
-const {
-  named
-} = ns;
+const { named } = ns;
 console.log(named);

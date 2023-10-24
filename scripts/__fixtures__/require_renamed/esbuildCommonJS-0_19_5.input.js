@@ -1,2 +1,2 @@
-const { named: renamed } = require("unknown-package");
+const { named: renamed } = require('unknown-package');
 console.log(renamed);

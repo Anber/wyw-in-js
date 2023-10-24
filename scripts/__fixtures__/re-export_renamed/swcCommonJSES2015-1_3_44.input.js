@@ -1,9 +1,9 @@
-"use strict";
-Object.defineProperty(exports, "__esModule", {
-    value: true
+'use strict';
+Object.defineProperty(exports, '__esModule', {
+  value: true,
 });
-Object.defineProperty(exports, "renamed", {
-    enumerable: true,
-    get: ()=>_unknownPackage.token
+Object.defineProperty(exports, 'renamed', {
+  enumerable: true,
+  get: () => _unknownPackage.token,
 });
-const _unknownPackage = require("unknown-package");
+const _unknownPackage = require('unknown-package');

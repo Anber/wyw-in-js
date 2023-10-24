@@ -13,5 +13,5 @@ var __rest = (source, exclude) => {
     }
   return target;
 };
-const fullNamespace = __rest(require("unknown-package"), []);
+const fullNamespace = __rest(require('unknown-package'), []);
 console.log(fullNamespace);

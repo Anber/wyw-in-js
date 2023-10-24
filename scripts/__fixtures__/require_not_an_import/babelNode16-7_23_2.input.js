@@ -1,9 +1,7 @@
 const notModule = (() => {
   const require = () => ({});
 
-  const {
-    dep
-  } = require('unknown-package');
+  const { dep } = require('unknown-package');
 
   return result;
 })();

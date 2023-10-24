@@ -15,5 +15,7 @@ var __objRest = (source, exclude) => {
     }
   return target;
 };
-const _a = require("unknown-package"), { named } = _a, fullNamespace = __objRest(_a, ["named"]);
+const _a = require('unknown-package'),
+  { named } = _a,
+  fullNamespace = __objRest(_a, ['named']);
 console.log(fullNamespace, named);

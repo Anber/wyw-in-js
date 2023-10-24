@@ -1,7 +1,6 @@
-"use strict";
-Object.defineProperty(exports, "__esModule", {
-    value: true
+'use strict';
+Object.defineProperty(exports, '__esModule', {
+  value: true,
 });
-class Foo {
-}
+class Foo {}
 exports.Foo = Foo;

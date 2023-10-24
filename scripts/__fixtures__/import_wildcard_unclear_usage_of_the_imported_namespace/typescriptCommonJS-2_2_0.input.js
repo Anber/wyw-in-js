@@ -1,3 +1,3 @@
-"use strict";
-var ns = require("unknown-package");
+'use strict';
+var ns = require('unknown-package');
 console.log(ns);

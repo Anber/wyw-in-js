@@ -1,8 +1,5 @@
 const obj = {
   a: 1,
-  b: 2
+  b: 2,
 };
-export const {
-  a,
-  ...rest
-} = obj;
+export const { a, ...rest } = obj;

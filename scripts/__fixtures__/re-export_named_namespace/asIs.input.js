@@ -1,1 +1,1 @@
-export * as ns from "unknown-package";
+export * as ns from 'unknown-package';

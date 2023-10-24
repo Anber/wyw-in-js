@@ -1,7 +1,6 @@
-"use strict";
+'use strict';
 var Foo = (function () {
-    function Foo() {
-    }
-    return Foo;
-}());
+  function Foo() {}
+  return Foo;
+})();
 exports.Foo = Foo;

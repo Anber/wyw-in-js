@@ -1,3 +1,3 @@
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.ns = require("unknown-package");
+'use strict';
+Object.defineProperty(exports, '__esModule', { value: true });
+exports.ns = require('unknown-package');

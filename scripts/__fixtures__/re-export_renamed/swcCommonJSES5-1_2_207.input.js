@@ -1,11 +1,11 @@
-"use strict";
-Object.defineProperty(exports, "__esModule", {
-    value: true
+'use strict';
+Object.defineProperty(exports, '__esModule', {
+  value: true,
 });
-Object.defineProperty(exports, "renamed", {
-    get: function() {
-        return _unknownPackage.token;
-    },
-    enumerable: true
+Object.defineProperty(exports, 'renamed', {
+  get: function () {
+    return _unknownPackage.token;
+  },
+  enumerable: true,
 });
-var _unknownPackage = require("unknown-package");
+var _unknownPackage = require('unknown-package');

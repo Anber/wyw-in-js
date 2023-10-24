@@ -1,18 +1,18 @@
-"use strict";
-Object.defineProperty(exports, "__esModule", {
-    value: true
+'use strict';
+Object.defineProperty(exports, '__esModule', {
+  value: true,
 });
-_export_star(require("unknown-package"), exports);
+_export_star(require('unknown-package'), exports);
 function _export_star(from, to) {
-    Object.keys(from).forEach(function(k) {
-        if (k !== "default" && !Object.prototype.hasOwnProperty.call(to, k)) {
-            Object.defineProperty(to, k, {
-                enumerable: true,
-                get: function() {
-                    return from[k];
-                }
-            });
-        }
-    });
-    return from;
+  Object.keys(from).forEach(function (k) {
+    if (k !== 'default' && !Object.prototype.hasOwnProperty.call(to, k)) {
+      Object.defineProperty(to, k, {
+        enumerable: true,
+        get: function () {
+          return from[k];
+        },
+      });
+    }
+  });
+  return from;
 }

@@ -1,7 +1,7 @@
 {
-    Named;
+  Named;
 }
 from;
-'unknown-package';
+('unknown-package');
 var value = 'value';
 console.log(value);

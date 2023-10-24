@@ -13,5 +13,7 @@ var __rest = (source, exclude) => {
     }
   return target;
 };
-const _a = require("unknown-package"), {named} = _a, fullNamespace = __rest(_a, ["named"]);
+const _a = require('unknown-package'),
+  { named } = _a,
+  fullNamespace = __rest(_a, ['named']);
 console.log(fullNamespace, named);

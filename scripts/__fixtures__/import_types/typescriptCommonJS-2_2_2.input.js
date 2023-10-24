@@ -1,9 +1,9 @@
-"use strict";
+'use strict';
 exports.__esModule = true;
 {
-    Named;
+  Named;
 }
 from;
-'unknown-package';
+('unknown-package');
 var value = 'value';
 console.log(value);

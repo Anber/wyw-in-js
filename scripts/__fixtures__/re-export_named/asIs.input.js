@@ -1,1 +1,1 @@
-export { token } from "unknown-package";
+export { token } from 'unknown-package';

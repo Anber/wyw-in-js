@@ -1,1 +1,1 @@
-export * from "unknown-package";
+export * from 'unknown-package';

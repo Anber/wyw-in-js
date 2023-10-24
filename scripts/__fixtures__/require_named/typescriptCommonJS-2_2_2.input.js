@@ -1,4 +1,4 @@
-"use strict";
+'use strict';
 exports.__esModule = true;
 var namedDefault = require('unknown-package').named;
 console.log(namedDefault);

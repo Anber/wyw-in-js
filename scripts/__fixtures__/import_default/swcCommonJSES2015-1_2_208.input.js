@@ -1,11 +1,13 @@
-"use strict";
-Object.defineProperty(exports, "__esModule", {
-    value: true
+'use strict';
+Object.defineProperty(exports, '__esModule', {
+  value: true,
 });
-const _unknownPackage = _interopRequireDefault(require("unknown-package"));
+const _unknownPackage = _interopRequireDefault(require('unknown-package'));
 function _interopRequireDefault(obj) {
-    return obj && obj.__esModule ? obj : {
-        default: obj
-    };
+  return obj && obj.__esModule
+    ? obj
+    : {
+        default: obj,
+      };
 }
 console.log(_unknownPackage.default);

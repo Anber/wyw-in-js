@@ -1,4 +1,4 @@
-"use strict";
+'use strict';
 
 var tslib_1 = require('tslib');
 

@@ -1,2 +1,2 @@
-"use strict";
-require("unknown-package");
+'use strict';
+require('unknown-package');

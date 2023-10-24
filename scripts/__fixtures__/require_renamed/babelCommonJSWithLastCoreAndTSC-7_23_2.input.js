@@ -1,4 +1,4 @@
-"use strict";
+'use strict';
 
 var _require = require('unknown-package'),
   renamed = _require.named;

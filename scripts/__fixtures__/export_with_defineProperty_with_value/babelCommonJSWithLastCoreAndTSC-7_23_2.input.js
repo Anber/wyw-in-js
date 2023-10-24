@@ -1,5 +1,5 @@
-"use strict";
+'use strict';
 
 Object.defineProperty(exports, 'a', {
-  value: 1
+  value: 1,
 });
