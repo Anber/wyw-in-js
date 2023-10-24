@@ -23,6 +23,7 @@
     "@wyw-in-js/eslint-config": "workspace:*",
     "@wyw-in-js/ts-config": "workspace:*",
     "babel-jest": "^29.7.0",
+    "commander": "^11.1.0",
     "cross-env": "^7.0.3",
     "del-cli": "^5.1.0",
     "eslint": "^8.48.0",
