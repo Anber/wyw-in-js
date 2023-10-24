@@ -78,7 +78,7 @@ export function loadLinariaOptions(
           }
 
           // If a file contains `export` or `import` keywords, we assume it's an ES-module
-          return /(?:^|\*\/|;)\s*(?:export|import)\s/m.test(code);
+          return /(?:^|\*\/|;|})\s*(?:export|import)\s/m.test(code);
         },
         action: shaker,
       },
