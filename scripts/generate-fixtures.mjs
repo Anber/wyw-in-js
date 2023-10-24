@@ -9,6 +9,7 @@ import { createOrConnectStoreController } from '@pnpm/store-connection-manager';
 import { finishWorkers } from '@pnpm/worker';
 import { globSync } from 'glob';
 import packageJSON from 'package-json';
+import * as prettier from 'prettier';
 import semver from 'semver';
 
 import { configs } from './helpers/generators-configs.mjs';
@@ -82,6 +83,8 @@ const controller = await createOrConnectStoreController({
 
 const inputFixturesDir = join(__dirname, '__fixtures__');
 const inputFixtures = globSync(`${inputFixturesDir}/*.input.*`);
+
+const prettierOptions = await prettier.resolveConfig(inputFixturesDir);
 
 const results = new Map();
 
@@ -197,7 +200,10 @@ for (const { name, transformers, version } of environments) {
           }
         );
 
-        const code = result.toString().trim();
+        const code = await prettier.format(result.toString(), {
+          ...prettierOptions,
+          filepath: inputFixture,
+        });
 
         if (resultsForFixture.has(code)) {
           console.log(

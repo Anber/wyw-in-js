@@ -101,6 +101,9 @@ importers:
       package-json:
         specifier: ^8.1.1
         version: 8.1.1
+      prettier:
+        specifier: ^3.0.3
+        version: 3.0.3
       semver:
         specifier: ^7.5.4
         version: 7.5.4
