@@ -162,6 +162,6 @@ export const configs = [
   {
     name: 'typescript',
     transformers: [typescriptCommonJS, typescriptES2022],
-    version: '>=2.0',
+    version: '>=2.2', // 2.1 generates broken code for destructuring assignments
   },
 ];

@@ -386,6 +386,7 @@ function getImportExportTypeByInteropFunction(
 
   if (
     name.startsWith('_interopRequireDefault') ||
+    name.startsWith('_interop_require_default') ||
     name.startsWith('__importDefault')
   ) {
     return 'default';
@@ -393,16 +394,22 @@ function getImportExportTypeByInteropFunction(
 
   if (
     name.startsWith('_interopRequireWildcard') ||
+    name.startsWith('_interop_require_wildcard') ||
     name.startsWith('__importStar') ||
-    name.startsWith('__toESM')
+    name.startsWith('__toESM') || // esbuild since 0.14.7
+    name.startsWith('__toModule') // esbuild before 0.14.7
   ) {
     return 'import:*';
   }
 
   if (
+    name.startsWith('_extends') ||
     name.startsWith('__rest') ||
     name.startsWith('__objRest') ||
-    name.startsWith('_objectDestructuringEmpty')
+    name.startsWith('_objectWithoutProperties') ||
+    name.startsWith('_object_without_properties') || // swc since 1.3.94
+    name.startsWith('_objectDestructuringEmpty') ||
+    name.startsWith('_object_destructuring_empty') // swc since 1.3.94
   ) {
     return 'import:*';
   }
@@ -765,8 +772,7 @@ function collectFromExports(
       return;
     }
 
-    const { name } = property.node;
-    if (name === '__esModule') {
+    if (exportName === '__esModule') {
       // eslint-disable-next-line no-param-reassign
       state.isEsModule = true;
       return;
@@ -853,7 +859,12 @@ function unfoldNamespaceImport(
   if (!binding?.referenced) {
     // Imported namespace is not referenced and probably not used,
     // but it can have side effects, so we should keep it as is
-    return [importItem];
+    return [
+      {
+        ...importItem,
+        imported: 'side-effect',
+      },
+    ];
   }
 
   for (const referencePath of binding?.referencePaths ?? []) {
@@ -1101,8 +1112,10 @@ function collectFromAssignmentExpression(
 
   if (left.isMemberExpression() && isExports(left.get('object'))) {
     const property = left.get('property');
-    if (property.isIdentifier()) {
+    if (!left.node.computed && property.isIdentifier()) {
       exported = property.node.name;
+    } else if (left.node.computed && property.isStringLiteral()) {
+      exported = property.node.value;
     }
   } else if (isExports(left)) {
     // module.exports = ...
@@ -1112,6 +1125,12 @@ function collectFromAssignmentExpression(
   }
 
   if (!exported) return;
+
+  if (exported === '__esModule') {
+    // eslint-disable-next-line no-param-reassign
+    state.isEsModule = true;
+    return;
+  }
 
   if (!right.isCallExpression() || !isRequire(right.get('callee'))) {
     // eslint-disable-next-line no-param-reassign
@@ -1166,6 +1185,29 @@ function collectFromExportStarCall(
   path.skip();
 }
 
+function collectFromOldExportStarCall(
+  path: NodePath<CallExpression>,
+  state: ILocalState
+) {
+  const [requireCall] = path.get('arguments');
+  if (!requireCall.isCallExpression()) return;
+  const callee = requireCall.get('callee');
+  const sourcePath = requireCall.get('arguments')?.[0];
+  if (!isRequire(callee) || !sourcePath.isStringLiteral()) return;
+
+  const source = sourcePath.node.value;
+  if (!source) return;
+
+  state.reexports.push({
+    exported: '*',
+    imported: '*',
+    local: path,
+    source,
+  });
+
+  path.skip();
+}
+
 function collectFromMap(map: NodePath<ObjectExpression>, state: ILocalState) {
   const properties = map.get('properties');
   properties.forEach((property) => {
@@ -1190,7 +1232,14 @@ function collectFromEsbuildExportCall(
   state: ILocalState
 ) {
   const [sourceExports, map] = path.get('arguments');
-  if (!sourceExports.isIdentifier({ name: 'source_exports' })) return;
+
+  // before esbuild 0.14.26 it was just `exports`, not it is `source_exports`
+  const validObjNames = ['source_exports', 'exports'];
+
+  if (validObjNames.every((name) => !sourceExports.isIdentifier({ name }))) {
+    return;
+  }
+
   if (!map.isObjectExpression()) return;
 
   collectFromMap(map, state);
@@ -1252,8 +1301,17 @@ function collectFromCallExpression(
     return;
   }
 
+  // TypeScript <=3.8.3
+  if (name === '__export' && path.node.arguments.length === 1) {
+    const firstArg = path.get('arguments')[0];
+    if (firstArg.isCallExpression() && isRequire(firstArg.get('callee'))) {
+      collectFromOldExportStarCall(path, state);
+      return;
+    }
+  }
+
   // swc
-  if (name === '_exportStar') {
+  if (name === '_exportStar' || name === '_export_star') {
     collectFromExportStarCall(path, state);
   }
 
