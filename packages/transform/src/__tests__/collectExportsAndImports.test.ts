@@ -133,6 +133,100 @@ const expectations: Record<
   string,
   Partial<IRunResults> | ((results: IRunResults) => void)
 > = {
+  export_class: {
+    exports: [
+      {
+        exported: 'Foo',
+      },
+    ],
+  },
+
+  export_default: {
+    exports: [
+      {
+        exported: 'default',
+      },
+    ],
+  },
+
+  export_enum: {
+    exports: [
+      {
+        exported: 'E',
+      },
+    ],
+  },
+
+  export_module_exports_eq: {
+    exports: [
+      {
+        exported: 'default',
+      },
+    ],
+  },
+
+  export_named: {
+    exports: [
+      {
+        exported: 'named',
+      },
+    ],
+  },
+
+  export_with_declaration: {
+    exports: [
+      {
+        exported: 'a',
+      },
+      {
+        exported: 'b',
+      },
+    ],
+  },
+
+  export_with_defineProperty_with_getter: {
+    exports: [
+      {
+        exported: 'a',
+      },
+    ],
+  },
+
+  export_with_defineProperty_with_value: {
+    exports: [
+      {
+        exported: 'a',
+      },
+    ],
+  },
+
+  export_with_destruction: {
+    exports: [
+      {
+        exported: 'a',
+      },
+      {
+        exported: 'b',
+      },
+    ],
+  },
+
+  export_with_destruction_and_rest_operator: (results) => {
+    expect(
+      results.exports.filter((i) => {
+        // Esbuild, why?
+        return i.exported !== '_a';
+      })
+    ).toMatchObject([
+      {
+        exported: 'a',
+      },
+      {
+        exported: 'rest',
+      },
+    ]);
+  },
+
   import_default: {
     imports: [
       {
@@ -160,10 +254,6 @@ const expectations: Record<
     ],
   },
 
-  import_types: {
-    imports: [],
-  },
-
   'import_side-effects': {
     imports: [
       {
@@ -173,31 +263,8 @@ const expectations: Record<
     ],
   },
 
-  import_wildcard_unclear_usage_of_the_imported_namespace: {
-    imports: [
-      {
-        source: 'unknown-package',
-        imported: '*',
-      },
-    ],
-  },
-
-  import_wildcard_dynamic_usage_of_the_imported_namespace: {
-    imports: [
-      {
-        source: 'unknown-package',
-        imported: '*',
-      },
-    ],
-  },
-
-  import_wildcard_destructed_namespace: {
-    imports: [
-      {
-        source: 'unknown-package',
-        imported: 'named',
-      },
-    ],
+  import_types: {
+    imports: [],
   },
 
   import_wildcard_clear_usage_of_the_imported_namespace: {
@@ -213,6 +280,33 @@ const expectations: Record<
     ],
   },
 
+  import_wildcard_destructed_namespace: {
+    imports: [
+      {
+        source: 'unknown-package',
+        imported: 'named',
+      },
+    ],
+  },
+
+  import_wildcard_dynamic_usage_of_the_imported_namespace: {
+    imports: [
+      {
+        source: 'unknown-package',
+        imported: '*',
+      },
+    ],
+  },
+
+  import_wildcard_unclear_usage_of_the_imported_namespace: {
+    imports: [
+      {
+        source: 'unknown-package',
+        imported: '*',
+      },
+    ],
+  },
+
   import_wildcard_unevaluable_usage: {
     imports: [
       {
@@ -222,287 +316,36 @@ const expectations: Record<
     ],
   },
 
-  require_default: {
-    imports: [
-      {
-        source: 'unknown-package',
-        imported: 'default',
-      },
-    ],
-  },
-
-  require_named: {
-    imports: [
-      {
-        source: 'unknown-package',
-        imported: 'named',
-      },
-    ],
-  },
-
-  require_renamed: {
-    imports: [
-      {
-        source: 'unknown-package',
-        imported: 'named',
-      },
-    ],
-  },
-
-  require_deep: {
-    imports: [
-      {
-        source: 'unknown-package',
-        imported: 'very',
-      },
-    ],
-  },
-
-  require_two_tokens: (results) => {
-    // Different compilers may resolve this case to one or two tokens
-    results.imports.forEach((item) => {
-      expect(item).toMatchObject({
-        source: 'unknown-package',
-        imported: 'very',
-      });
-    });
-  },
-
-  require_not_an_import: {
-    imports: [],
-  },
-
-  require_not_in_a_root_scope: {
-    imports: [
-      {
-        source: 'unknown-package',
-        imported: 'dep',
-      },
-    ],
-  },
-
-  require_wildcard_using_rest_operator_and_named_import: {
-    imports: [
-      {
-        source: 'unknown-package',
-        imported: '*',
-      },
-      {
-        source: 'unknown-package',
-        imported: 'named',
-      },
-    ],
-  },
-
-  require_wildcard_using_rest_operator: {
-    imports: [
-      {
-        source: 'unknown-package',
-        imported: '*',
-      },
-    ],
-  },
-
-  require_wildcard_unclear_usage_of_the_imported_namespace: {
-    imports: [
-      {
-        source: 'unknown-package',
-        imported: '*',
-      },
-    ],
-  },
-
-  require_wildcard_clear_usage_of_the_imported_namespace: {
-    imports: [
-      {
-        source: 'unknown-package',
-        imported: 'foo',
-      },
-    ],
-  },
-
-  export_with_destruction_and_rest_operator: (results) => {
-    expect(
-      results.exports.filter((i) => {
-        // Esbuild, why?
-        return i.exported !== '_a';
-      })
-    ).toMatchObject([
-      {
-        exported: 'a',
-      },
-      {
-        exported: 'rest',
-      },
-    ]);
-  },
-
-  export_with_destruction: {
-    exports: [
-      {
-        exported: 'a',
-      },
-      {
-        exported: 'b',
-      },
-    ],
-  },
-
-  export_with_defineProperty_with_value: {
-    exports: [
-      {
-        exported: 'a',
-      },
-    ],
-  },
-
-  export_with_defineProperty_with_getter: {
-    exports: [
-      {
-        exported: 'a',
-      },
-    ],
-  },
-
-  export_with_declaration: {
-    exports: [
-      {
-        exported: 'a',
-      },
-      {
-        exported: 'b',
-      },
-    ],
-  },
-
-  export_named: {
-    exports: [
-      {
-        exported: 'named',
-      },
-    ],
-  },
-
-  export_module_exports_eq: {
-    exports: [
-      {
-        exported: 'default',
-      },
-    ],
-  },
-
-  export_enum: {
-    exports: [
-      {
-        exported: 'E',
-      },
-    ],
-  },
-
-  export_default: {
-    exports: [
-      {
-        exported: 'default',
-      },
-    ],
-  },
-
-  export_class: {
-    exports: [
-      {
-        exported: 'Foo',
-      },
-    ],
-  },
-
-  're-export_named': ({ exports, imports, reexports }) => {
-    expect(reexports.map(withoutLocal)).toMatchObject([
-      {
-        imported: 'token',
-        exported: 'token',
-        source: 'unknown-package',
-      },
-    ]);
-    expect(exports).toHaveLength(0);
-    if (imports.length) {
-      expect(imports).toMatchObject([
-        {
-          source: 'unknown-package',
-          imported: 'token',
-        },
-      ]);
-    }
-  },
-
-  're-export_renamed': ({ exports, imports, reexports }) => {
-    expect(reexports.map(withoutLocal)).toMatchObject([
-      {
-        imported: 'token',
-        exported: 'renamed',
-        source: 'unknown-package',
-      },
-    ]);
-    expect(exports).toHaveLength(0);
-    if (imports.length) {
-      expect(imports).toMatchObject([
-        {
-          source: 'unknown-package',
-          imported: 'token',
-        },
-      ]);
-    }
-  },
-
-  're-export_named_namespace': ({ exports, imports, reexports }) => {
-    if (reexports.length) {
-      expect(reexports.map(withoutLocal)).toMatchObject([
-        {
-          imported: '*',
-          exported: 'ns',
-          source: 'unknown-package',
-        },
-      ]);
-      expect(exports).toHaveLength(0);
-      expect(imports).toHaveLength(0);
-    } else {
-      expect(reexports).toHaveLength(0);
-      expect(exports).toMatchObject([
-        {
-          exported: 'ns',
-        },
-      ]);
-      expect(imports).toMatchObject([
-        {
-          source: 'unknown-package',
-          imported: '*',
-        },
-      ]);
-    }
-  },
-
-  're-export_multiple_export_all': ({ exports, imports, reexports }) => {
+  're-export___exportStar': ({ exports, imports, reexports }) => {
     expect(reexports.map(withoutLocal)).toMatchObject([
       {
         imported: '*',
         exported: '*',
-        source: 'unknown-package-1',
-      },
-      {
-        imported: '*',
-        exported: '*',
-        source: 'unknown-package-2',
+        source: './moduleA1',
       },
     ]);
     expect(exports).toHaveLength(0);
+    expect(imports).toMatchObject([
+      {
+        source: 'tslib',
+        imported: '__exportStar',
+      },
+    ]);
+  },
 
+  're-export_export_all': ({ exports, imports, reexports }) => {
+    expect(reexports.map(withoutLocal)).toMatchObject([
+      {
+        imported: '*',
+        exported: '*',
+        source: 'unknown-package',
+      },
+    ]);
+    expect(exports).toHaveLength(0);
     if (imports.length) {
       expect(imports).toMatchObject([
         {
-          source: 'unknown-package-1',
-          imported: '*',
-        },
-        {
-          source: 'unknown-package-2',
+          source: 'unknown-package',
           imported: '*',
         },
       ]);
@@ -567,16 +410,72 @@ const expectations: Record<
     }
   },
 
-  're-export_export_all': ({ exports, imports, reexports }) => {
+  're-export_multiple_export_all': ({ exports, imports, reexports }) => {
     expect(reexports.map(withoutLocal)).toMatchObject([
       {
         imported: '*',
         exported: '*',
+        source: 'unknown-package-1',
+      },
+      {
+        imported: '*',
+        exported: '*',
+        source: 'unknown-package-2',
+      },
+    ]);
+    expect(exports).toHaveLength(0);
+
+    if (imports.length) {
+      expect(imports).toMatchObject([
+        {
+          source: 'unknown-package-1',
+          imported: '*',
+        },
+        {
+          source: 'unknown-package-2',
+          imported: '*',
+        },
+      ]);
+    }
+  },
+
+  're-export_named': ({ exports, imports, reexports }) => {
+    expect(reexports.map(withoutLocal)).toMatchObject([
+      {
+        imported: 'token',
+        exported: 'token',
         source: 'unknown-package',
       },
     ]);
     expect(exports).toHaveLength(0);
     if (imports.length) {
+      expect(imports).toMatchObject([
+        {
+          source: 'unknown-package',
+          imported: 'token',
+        },
+      ]);
+    }
+  },
+
+  're-export_named_namespace': ({ exports, imports, reexports }) => {
+    if (reexports.length) {
+      expect(reexports.map(withoutLocal)).toMatchObject([
+        {
+          imported: '*',
+          exported: 'ns',
+          source: 'unknown-package',
+        },
+      ]);
+      expect(exports).toHaveLength(0);
+      expect(imports).toHaveLength(0);
+    } else {
+      expect(reexports).toHaveLength(0);
+      expect(exports).toMatchObject([
+        {
+          exported: 'ns',
+        },
+      ]);
       expect(imports).toMatchObject([
         {
           source: 'unknown-package',
@@ -586,21 +485,122 @@ const expectations: Record<
     }
   },
 
-  're-export___exportStar': ({ exports, imports, reexports }) => {
+  're-export_renamed': ({ exports, imports, reexports }) => {
     expect(reexports.map(withoutLocal)).toMatchObject([
       {
-        imported: '*',
-        exported: '*',
-        source: './moduleA1',
+        imported: 'token',
+        exported: 'renamed',
+        source: 'unknown-package',
       },
     ]);
     expect(exports).toHaveLength(0);
-    expect(imports).toMatchObject([
+    if (imports.length) {
+      expect(imports).toMatchObject([
+        {
+          source: 'unknown-package',
+          imported: 'token',
+        },
+      ]);
+    }
+  },
+
+  require_deep: {
+    imports: [
       {
-        source: 'tslib',
-        imported: '__exportStar',
+        source: 'unknown-package',
+        imported: 'very',
       },
-    ]);
+    ],
+  },
+
+  require_default: {
+    imports: [
+      {
+        source: 'unknown-package',
+        imported: 'default',
+      },
+    ],
+  },
+
+  require_named: {
+    imports: [
+      {
+        source: 'unknown-package',
+        imported: 'named',
+      },
+    ],
+  },
+
+  require_not_an_import: {
+    imports: [],
+  },
+
+  require_not_in_a_root_scope: {
+    imports: [
+      {
+        source: 'unknown-package',
+        imported: 'dep',
+      },
+    ],
+  },
+
+  require_renamed: {
+    imports: [
+      {
+        source: 'unknown-package',
+        imported: 'named',
+      },
+    ],
+  },
+
+  require_two_tokens: (results) => {
+    // Different compilers may resolve this case to one or two tokens
+    results.imports.forEach((item) => {
+      expect(item).toMatchObject({
+        source: 'unknown-package',
+        imported: 'very',
+      });
+    });
+  },
+
+  require_wildcard_clear_usage_of_the_imported_namespace: {
+    imports: [
+      {
+        source: 'unknown-package',
+        imported: 'foo',
+      },
+    ],
+  },
+
+  require_wildcard_unclear_usage_of_the_imported_namespace: {
+    imports: [
+      {
+        source: 'unknown-package',
+        imported: '*',
+      },
+    ],
+  },
+
+  require_wildcard_using_rest_operator: {
+    imports: [
+      {
+        source: 'unknown-package',
+        imported: '*',
+      },
+    ],
+  },
+
+  require_wildcard_using_rest_operator_and_named_import: {
+    imports: [
+      {
+        source: 'unknown-package',
+        imported: '*',
+      },
+      {
+        source: 'unknown-package',
+        imported: 'named',
+      },
+    ],
   },
 };
 
