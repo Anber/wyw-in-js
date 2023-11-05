@@ -38,6 +38,7 @@
     "babel-plugin-module-resolver": "^4.1.0",
     "dedent": "^1.5.1",
     "esbuild": "^0.15.16",
+    "glob": "^10.3.10",
     "strip-ansi": "^5.2.0",
     "typescript": "^5.2.2"
   },
