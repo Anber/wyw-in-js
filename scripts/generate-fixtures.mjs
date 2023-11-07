@@ -71,7 +71,7 @@ program
     }
 
     environments.sort((a, b) =>
-      a.version && b.version ? -semver.compare(a.version, b.version) : 0
+      a.version && b.version ? semver.compare(a.version, b.version) : 0
     );
 
     const tempDir = mkdtempSync(join(tmpdir(), 'fixtures-'));

@@ -3,6 +3,7 @@
 
 import type { NodePath } from '@babel/traverse';
 import type {
+  ArrayExpression,
   AssignmentExpression,
   BlockStatement,
   CallExpression,
@@ -371,38 +372,70 @@ function getCalleeName(path: NodePath<CallExpression>): string | undefined {
   return undefined;
 }
 
-function getImportExportTypeByInteropFunction(
-  path: NodePath<CallExpression>
-): 'import:*' | 're-export:*' | 'default' | undefined {
-  const name = getCalleeName(path);
+type MatchRule = [
+  name: string,
+  ...args: (NodePath | '*' | ((p: NodePath) => boolean))[],
+];
+
+const matchCall = (p: NodePath<CallExpression>, rules: MatchRule[]) => {
+  const name = getCalleeName(p);
 
   if (name === undefined) {
-    return undefined;
+    return false;
   }
 
-  if (name.startsWith('__exportStar')) {
+  return rules.some(([n, ...args]) => {
+    if (name !== n) return false;
+    const fnArgs = p.get('arguments');
+    if (fnArgs.length !== args.length) return false;
+    return args.every((arg, i) => {
+      if (arg === '*') return true;
+      if (typeof arg === 'function') return arg(fnArgs[i]);
+      return arg === fnArgs[i];
+    });
+  });
+};
+
+function getImportExportTypeByInteropFunction(
+  path: NodePath<CallExpression>,
+  argPath: NodePath
+): 'import:*' | 're-export:*' | 'default' | undefined {
+  if (matchCall(path, [['__exportStar', argPath, (p) => isExports(p)]])) {
     return 're-export:*';
   }
 
   if (
-    name.startsWith('_interopRequireDefault') ||
-    name.startsWith('__importDefault')
+    matchCall(path, [
+      ['_interopRequireDefault', argPath], // babel and swc <1.3.50
+      ['_interop_require_default', argPath], // swc >=1.3.50
+      ['__importDefault', argPath], // ?
+    ])
   ) {
     return 'default';
   }
 
   if (
-    name.startsWith('_interopRequireWildcard') ||
-    name.startsWith('__importStar') ||
-    name.startsWith('__toESM')
+    matchCall(path, [
+      ['_interopRequireWildcard', argPath], // babel and swc <1.3.50
+      ['_interop_require_wildcard', argPath], // swc >=1.3.50
+      ['__importStar', argPath], // ?
+      ['__toESM', argPath], // esbuild >=0.14.7
+      ['__toModule', argPath], // esbuild <0.14.7
+    ])
   ) {
     return 'import:*';
   }
 
   if (
-    name.startsWith('__rest') ||
-    name.startsWith('__objRest') ||
-    name.startsWith('_objectDestructuringEmpty')
+    matchCall(path, [
+      ['_extends', isEmptyObject, argPath], // babel and swc
+      ['__rest', argPath, isArrayExpression], // tsc and esbuild <=0.11.3
+      ['__objRest', argPath, isArrayExpression], // esbuild >0.11.3
+      ['_objectWithoutProperties', argPath, isArrayExpression], // babel and swc <1.3.50
+      ['_object_without_properties', argPath, isArrayExpression], // swc >=1.3.50
+      ['_objectDestructuringEmpty', argPath], // swc <1.3.50
+      ['_object_destructuring_empty', argPath], // swc >=1.3.50
+    ])
   ) {
     return 'import:*';
   }
@@ -420,6 +453,43 @@ function isAlreadyProcessed(path: NodePath): boolean {
   }
 
   return false;
+}
+
+function isRequireCall(path: NodePath): path is NodePath<CallExpression> {
+  return path.isCallExpression() && isRequire(path.get('callee'));
+}
+
+function isEmptyObject(path: NodePath): path is NodePath<ObjectExpression> {
+  return path.isObjectExpression() && path.node.properties.length === 0;
+}
+
+function isArrayExpression(path: NodePath): path is NodePath<ArrayExpression> {
+  return path.isArrayExpression();
+}
+
+function isCallExpression(path: NodePath): path is NodePath<CallExpression>;
+function isCallExpression(
+  calleeName: string
+): (path: NodePath) => path is NodePath<CallExpression>;
+function isCallExpression(pathOrName: NodePath | string) {
+  if (typeof pathOrName === 'string') {
+    return (p: NodePath) =>
+      p.isCallExpression() &&
+      p.get('callee').isIdentifier({ name: pathOrName });
+  }
+
+  return pathOrName.isCallExpression();
+}
+
+function isObjectExpression(
+  path: NodePath
+): path is NodePath<ObjectExpression> {
+  return path.isObjectExpression();
+}
+
+function isIdentifier(name: string) {
+  return (path: NodePath): path is NodePath<Identifier> =>
+    path.isIdentifier({ name });
 }
 
 function collectFromRequire(
@@ -449,10 +519,13 @@ function collectFromRequire(
 
   const { parentPath: container, key } = callExpression;
 
-  if (container.isCallExpression() && key === 0) {
+  if (container.isCallExpression()) {
     // It may be transpiled import such as
     // `var _atomic = _interopRequireDefault(require("@linaria/atomic"));`
-    const imported = getImportExportTypeByInteropFunction(container);
+    const imported = getImportExportTypeByInteropFunction(
+      container,
+      callExpression
+    );
     if (!imported) {
       // It's not a transpiled import.
       // TODO: Can we guess that it's a namespace import?
@@ -765,8 +838,7 @@ function collectFromExports(
       return;
     }
 
-    const { name } = property.node;
-    if (name === '__esModule') {
+    if (exportName === '__esModule') {
       // eslint-disable-next-line no-param-reassign
       state.isEsModule = true;
       return;
@@ -853,7 +925,12 @@ function unfoldNamespaceImport(
   if (!binding?.referenced) {
     // Imported namespace is not referenced and probably not used,
     // but it can have side effects, so we should keep it as is
-    return [importItem];
+    return [
+      {
+        ...importItem,
+        imported: 'side-effect',
+      },
+    ];
   }
 
   for (const referencePath of binding?.referencePaths ?? []) {
@@ -905,7 +982,10 @@ function unfoldNamespaceImport(
       referencePath.listKey === 'arguments'
     ) {
       // The defined variable is used as a function argument. Let's try to figure out what is imported.
-      const importType = getImportExportTypeByInteropFunction(parentPath);
+      const importType = getImportExportTypeByInteropFunction(
+        parentPath,
+        referencePath
+      );
 
       if (!importType) {
         // Imported value is used as an unknown function argument,
@@ -1101,8 +1181,10 @@ function collectFromAssignmentExpression(
 
   if (left.isMemberExpression() && isExports(left.get('object'))) {
     const property = left.get('property');
-    if (property.isIdentifier()) {
+    if (!left.node.computed && property.isIdentifier()) {
       exported = property.node.name;
+    } else if (left.node.computed && property.isStringLiteral()) {
+      exported = property.node.value;
     }
   } else if (isExports(left)) {
     // module.exports = ...
@@ -1113,9 +1195,25 @@ function collectFromAssignmentExpression(
 
   if (!exported) return;
 
-  if (!right.isCallExpression() || !isRequire(right.get('callee'))) {
+  if (exported === '__esModule') {
     // eslint-disable-next-line no-param-reassign
-    state.exports[exported] = right;
+    state.isEsModule = true;
+    return;
+  }
+
+  if (!isRequireCall(right)) {
+    const relatedImport = state.imports.find((imp) => imp.local === right);
+    if (relatedImport) {
+      state.reexports.push({
+        exported,
+        ...relatedImport,
+      });
+    } else {
+      // eslint-disable-next-line no-param-reassign
+      state.exports[exported] = right;
+    }
+
+    path.skip();
     return;
   }
 
@@ -1142,12 +1240,13 @@ function collectFromAssignmentExpression(
   path.skip();
 }
 
-function collectFromExportStarCall(
+function collectAllFromCall(
   path: NodePath<CallExpression>,
+  require: number | NodePath,
   state: ILocalState
 ) {
-  const [requireCall, exports] = path.get('arguments');
-  if (!isExports(exports)) return;
+  const requireCall =
+    typeof require === 'number' ? path.get('arguments')[require] : require;
   if (!requireCall.isCallExpression()) return;
   const callee = requireCall.get('callee');
   const sourcePath = requireCall.get('arguments')?.[0];
@@ -1185,12 +1284,12 @@ function collectFromMap(map: NodePath<ObjectExpression>, state: ILocalState) {
   });
 }
 
-function collectFromEsbuildExportCall(
+function collectMapFromCall(
   path: NodePath<CallExpression>,
+  mapPosition: number,
   state: ILocalState
 ) {
-  const [sourceExports, map] = path.get('arguments');
-  if (!sourceExports.isIdentifier({ name: 'source_exports' })) return;
+  const map = path.get('arguments')[mapPosition];
   if (!map.isObjectExpression()) return;
 
   collectFromMap(map, state);
@@ -1202,13 +1301,31 @@ function collectFromEsbuildReExportCall(
   path: NodePath<CallExpression>,
   state: ILocalState
 ) {
-  const [sourceExports, requireCall, exports] = path.get('arguments');
-  if (!sourceExports.isIdentifier({ name: 'source_exports' })) return;
-  if (!requireCall.isCallExpression()) return;
-  if (!isExports(exports)) return;
+  const [sourceExports, someCall, exports] = path.get('arguments');
+  if (
+    !sourceExports.isIdentifier({ name: 'source_exports' }) &&
+    !isExports(sourceExports)
+  )
+    return;
+  if (!someCall.isCallExpression()) return;
 
-  const callee = requireCall.get('callee');
-  if (!isRequire(callee)) return;
+  let requireCall = someCall;
+  while (!isRequire(requireCall.get('callee'))) {
+    const args = requireCall.get('arguments');
+    if (args.length !== 1) {
+      return;
+    }
+
+    const firstArg = args[0];
+    if (!firstArg.isCallExpression()) {
+      return;
+    }
+
+    requireCall = firstArg;
+  }
+
+  if (exports !== undefined && !isExports(exports)) return;
+
   const sourcePath = requireCall.get('arguments')?.[0];
   if (!sourcePath.isStringLiteral()) return;
 
@@ -1222,19 +1339,6 @@ function collectFromEsbuildReExportCall(
   path.skip();
 }
 
-function collectFromSwcExportCall(
-  path: NodePath<CallExpression>,
-  state: ILocalState
-) {
-  const [exports, map] = path.get('arguments');
-  if (!isExports(exports)) return;
-  if (!map.isObjectExpression()) return;
-
-  collectFromMap(map, state);
-
-  path.skip();
-}
-
 function collectFromCallExpression(
   path: NodePath<CallExpression>,
   state: ILocalState
@@ -1244,29 +1348,69 @@ function collectFromCallExpression(
     return;
   }
 
-  const { name } = maybeExportStart.node;
+  if (
+    matchCall(path, [
+      ['__exportStar', isExports, isCallExpression('__toModule')],
+    ])
+  ) {
+    // __exportStar(exports, __toModule(require('…')));
 
-  // TypeScript
-  if (name.startsWith('__exportStar')) {
-    collectFromExportStarCall(path, state);
+    const secondArg = path.get('arguments')[1] as NodePath<CallExpression>;
+    collectAllFromCall(path, secondArg.get('arguments')[0], state);
     return;
   }
 
-  // swc
-  if (name === '_exportStar') {
-    collectFromExportStarCall(path, state);
+  // TypeScript & swc
+  if (
+    matchCall(path, [
+      ['__exportStart', isRequireCall, isExports],
+      ['_exportStar', isRequireCall, isExports],
+      ['_export_star', isRequireCall, isExports],
+      ['__export', isRequireCall], // TypeScript <=3.8.3
+    ])
+  ) {
+    collectAllFromCall(path, 0, state);
+    return;
   }
 
-  if (name === '_export') {
-    collectFromSwcExportCall(path, state);
+  if (matchCall(path, [['_export', isExports, isObjectExpression]])) {
+    collectMapFromCall(path, 1, state);
+    return;
+  }
+
+  if (
+    matchCall(path, [
+      ['_extends', isEmptyObject, isRequireCall], // swc <=1.3.16
+    ])
+  ) {
+    collectAllFromCall(path, 1, state);
+    return;
   }
 
   // esbuild
-  if (name === '__export') {
-    collectFromEsbuildExportCall(path, state);
+  if (
+    matchCall(path, [
+      ['__export', isExports, isObjectExpression],
+      ['__export', isIdentifier('source_exports'), isObjectExpression],
+    ])
+  ) {
+    collectMapFromCall(path, 1, state);
+    return;
   }
 
-  if (name === '__reExport') {
+  if (
+    matchCall(path, [
+      // Different variants of re-exports in esbuild
+      [
+        '__reExport',
+        isIdentifier('source_exports'),
+        isCallExpression,
+        isExports,
+      ],
+      ['__reExport', isIdentifier('source_exports'), isCallExpression],
+      ['__reExport', isExports, isCallExpression],
+    ])
+  ) {
     collectFromEsbuildReExportCall(path, state);
   }
 }

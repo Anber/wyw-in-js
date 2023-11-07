@@ -120,8 +120,19 @@ function swcCommonJSES2015(source) {
 function typescriptCommonJS(source) {
   const ts = require('typescript');
   const result = ts.transpileModule(source, {
-    compilerOptions: { module: ts.ModuleKind.CommonJS },
+    reportDiagnostics: true,
+    compilerOptions: {
+      module: ts.ModuleKind.CommonJS,
+    },
   });
+
+  const errors = result.diagnostics.filter(
+    (i) => [1005].includes(i.code) // Fatal errors
+  );
+
+  if (errors.length > 0) {
+    throw new Error('Cannot be compiled');
+  }
 
   return result.outputText;
 }
@@ -129,8 +140,17 @@ function typescriptCommonJS(source) {
 function typescriptES2022(source) {
   const ts = require('typescript');
   const result = ts.transpileModule(source, {
+    reportDiagnostics: true,
     compilerOptions: { module: ts.ModuleKind.ES2022 },
   });
+
+  const errors = result.diagnostics.filter(
+    (i) => [1005].includes(i.code) // Fatal errors
+  );
+
+  if (errors.length > 0) {
+    throw new Error('Cannot be compiled');
+  }
 
   return result.outputText;
 }
@@ -162,6 +182,6 @@ export const configs = [
   {
     name: 'typescript',
     transformers: [typescriptCommonJS, typescriptES2022],
-    version: '>=2.0',
+    version: '>=2.2', // 2.1 generates broken code for destructuring assignments
   },
 ];
