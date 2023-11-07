@@ -1,6 +1,6 @@
 /* eslint-env jest */
 import { readFileSync } from 'fs';
-import { join, sep } from 'path';
+import { join, relative, sep } from 'path';
 
 import * as babel from '@babel/core';
 import type { NodePath } from '@babel/core';
@@ -19,7 +19,9 @@ const fixturesFolder = join(
   'collectExportsAndImports'
 );
 
-const inputs = globSync(join(fixturesFolder, '*', '*.js'))
+const inputMask = join(fixturesFolder, '*', '*.js').replaceAll(sep, '/');
+
+const inputs = globSync(inputMask)
   .map((filename) => {
     const [testName, compiler] = filename
       .substring(fixturesFolder.length + 1)
@@ -604,18 +606,26 @@ const expectations: Record<
   },
 };
 
+const testCases = Object.keys(inputs);
+
 describe('collectExportsAndImports', () => {
-  describe.each(Object.keys(inputs))('%s', (testName) => {
-    it.each(inputs[testName])('$compiler', ({ filename }) => {
-      const code = readFileSync(filename, 'utf-8');
-      const results = runCompiled(code);
-      expect(expectations).toHaveProperty(testName);
-      const expectation = expectations[testName];
-      if (typeof expectation === 'function') {
-        expectation(results);
-      } else {
-        expect(results).toMatchObject(expectation);
-      }
+  if (testCases.length) {
+    describe.each(testCases)('%s', (testName) => {
+      it.each(inputs[testName])('$compiler', ({ filename }) => {
+        const code = readFileSync(filename, 'utf-8');
+        const results = runCompiled(code);
+        expect(expectations).toHaveProperty(testName);
+        const expectation = expectations[testName];
+        if (typeof expectation === 'function') {
+          expectation(results);
+        } else {
+          expect(results).toMatchObject(expectation);
+        }
+      });
     });
-  });
+  } else {
+    it(`${relative(__dirname, inputMask)} has been resolved to 0 cases`, () => {
+      expect(true).toBe(false);
+    });
+  }
 });
