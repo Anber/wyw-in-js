@@ -16,7 +16,7 @@
     "find-up": "^5.0.0",
     "happy-dom": "^12.5.0",
     "source-map": "^0.7.4",
-    "stylis": "^3.5.4",
+    "stylis": "^4.3.0",
     "ts-invariant": "^0.10.3"
   },
   "devDependencies": {
@@ -30,6 +30,7 @@
     "@types/babel__traverse": "^7.20.2",
     "@types/debug": "^4.1.9",
     "@types/node": "^16.18.55",
+    "@types/stylis": "^4.2.4",
     "@wyw-in-js/babel-config": "workspace:*",
     "@wyw-in-js/eslint-config": "workspace:*",
     "@wyw-in-js/jest-preset": "workspace:*",
