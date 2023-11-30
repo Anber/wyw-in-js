@@ -2,7 +2,7 @@ import type { ValueCache } from '@wyw-in-js/processor-utils';
 
 import type { IEvaluateResult } from '../../evaluators';
 import evaluate from '../../evaluators';
-import hasLinariaPreval from '../../utils/hasLinariaPreval';
+import hasWywPreval from '../../utils/hasWywPreval';
 import { isUnprocessedEntrypointError } from '../actions/UnprocessedEntrypointError';
 import type { IEvalAction, SyncScenarioForAction } from '../types';
 
@@ -25,7 +25,7 @@ export function* evalFile(
   const { entrypoint } = this;
   const { log } = entrypoint;
 
-  log(`>> evaluate __linariaPreval`);
+  log(`>> evaluate __wywPreval`);
 
   let evaluated: IEvaluateResult | undefined;
 
@@ -44,21 +44,21 @@ export function* evalFile(
     }
   }
 
-  const linariaPreval = hasLinariaPreval(evaluated.value)
-    ? evaluated.value.__linariaPreval
+  const wywPreval = hasWywPreval(evaluated.value)
+    ? evaluated.value.__wywPreval
     : undefined;
 
-  if (!linariaPreval) {
+  if (!wywPreval) {
     return null;
   }
 
   const valueCache: ValueCache = new Map();
-  Object.entries(linariaPreval).forEach(([key, lazyValue]) => {
+  Object.entries(wywPreval).forEach(([key, lazyValue]) => {
     const value = wrap(lazyValue);
     valueCache.set(key, value);
   });
 
-  log(`<< evaluated __linariaPreval %O`, valueCache);
+  log(`<< evaluated __wywPreval %O`, valueCache);
 
   return [valueCache, evaluated.dependencies];
 }

@@ -197,12 +197,12 @@ export default function shakerPlugin(
         }
       });
 
-      const hasLinariaPreval = exports.__linariaPreval !== undefined;
+      const hasWywPreval = exports.__wywPreval !== undefined;
       const hasDefault = exports.default !== undefined;
 
-      // If __linariaPreval is not exported, we can remove it from onlyExports
-      if (onlyExportsSet.has('__linariaPreval') && !hasLinariaPreval) {
-        onlyExportsSet.delete('__linariaPreval');
+      // If __wywPreval is not exported, we can remove it from onlyExports
+      if (onlyExportsSet.has('__wywPreval') && !hasWywPreval) {
+        onlyExportsSet.delete('__wywPreval');
       }
 
       if (onlyExportsSet.size === 0) {
@@ -426,7 +426,7 @@ export default function shakerPlugin(
       log('end', `remaining imports: %O`, imports);
 
       // eslint-disable-next-line no-param-reassign
-      (file.metadata as IMetadata).linariaEvaluator = {
+      (file.metadata as IMetadata).wywEvaluator = {
         imports,
       };
 

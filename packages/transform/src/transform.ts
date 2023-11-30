@@ -1,14 +1,17 @@
 /**
- * This file exposes transform function that:
+ * This file exposes sync and async transform functions that:
  * - parse the passed code to AST
- * - transforms the AST using Linaria babel preset ('./babel/index.js) and additional config defined in Linaria config file or passed to bundler configuration.
- * - runs generated CSS files through default of user-defined preprocessor
- * - generates source maps for CSS files
- * - return transformed code (without Linaria template literals), generated CSS, source maps and babel metadata from transform step.
+ * - builds a dependency graph for the file
+ * - shakes each dependency and removes unused code
+ * - runs generated code in a sandbox
+ * - collects artifacts
+ * - returns transformed code (without WYW template literals), generated CSS, source maps and babel metadata from transform step.
  */
 
 import { isFeatureEnabled } from '@wyw-in-js/shared';
 
+import type { PartialOptions } from './transform/helpers/loadWywOptions';
+import { loadWywOptions } from './transform/helpers/loadWywOptions';
 import { TransformCacheCollection } from './cache';
 import { Entrypoint } from './transform/Entrypoint';
 import {
@@ -20,8 +23,6 @@ import {
   asyncResolveImports,
   syncResolveImports,
 } from './transform/generators/resolveImports';
-import type { PartialOptions } from './transform/helpers/loadLinariaOptions';
-import { loadLinariaOptions } from './transform/helpers/loadLinariaOptions';
 import { withDefaultServices } from './transform/helpers/withDefaultServices';
 import type {
   Handlers,
@@ -45,7 +46,7 @@ export function transformSync(
   customHandlers: Partial<AllHandlers<'sync'>> = {}
 ): Result {
   const { options } = partialServices;
-  const pluginOptions = loadLinariaOptions(options.pluginOptions);
+  const pluginOptions = loadWywOptions(options.pluginOptions);
   const services = withDefaultServices({
     ...partialServices,
     options: {
@@ -64,7 +65,7 @@ export function transformSync(
   const entrypoint = Entrypoint.createRoot(
     services,
     options.filename,
-    ['__linariaPreval'],
+    ['__wywPreval'],
     originalCode
   );
 
@@ -119,7 +120,7 @@ export async function transform(
   customHandlers: Partial<AllHandlers<'sync'>> = {}
 ): Promise<Result> {
   const { options } = partialServices;
-  const pluginOptions = loadLinariaOptions(options.pluginOptions);
+  const pluginOptions = loadWywOptions(options.pluginOptions);
   const services = withDefaultServices({
     ...partialServices,
     options: {
@@ -146,7 +147,7 @@ export async function transform(
   const entrypoint = Entrypoint.createRoot(
     services,
     options.filename,
-    ['__linariaPreval'],
+    ['__wywPreval'],
     originalCode
   );
 

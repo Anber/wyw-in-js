@@ -24,7 +24,7 @@ export function loadBabelOptions(
       ...overrides,
       filename,
       caller: {
-        name: 'linaria',
+        name: 'wyw-in-js',
 
         // Indicates for @babel/preset-env to support all ESM syntax and avoid transforms before it's needed
         supportsStaticESM: true,

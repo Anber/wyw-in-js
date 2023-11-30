@@ -3,11 +3,11 @@ import { join } from 'path';
 
 import * as babel from '@babel/core';
 
+import { loadWywOptions } from '../transform/helpers/loadWywOptions';
 import shaker from '../shaker';
 import { Entrypoint } from '../transform/Entrypoint';
 import { parseFile } from '../transform/Entrypoint.helpers';
 import { prepareCode } from '../transform/generators/transform';
-import { loadLinariaOptions } from '../transform/helpers/loadLinariaOptions';
 import { withDefaultServices } from '../transform/helpers/withDefaultServices';
 
 const testCasesDir = join(__dirname, '__fixtures__', 'prepare-code-test-cases');
@@ -23,7 +23,7 @@ const rules = [
   },
 ];
 
-const pluginOptions = loadLinariaOptions({
+const pluginOptions = loadWywOptions({
   configFile: false,
   rules,
   babelOptions: {

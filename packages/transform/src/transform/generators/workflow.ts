@@ -39,10 +39,10 @@ export function* workflow(
   const originalCode = entrypoint.loadedAndParsed.code ?? '';
 
   // File is ignored or does not contain any tags. Return original code.
-  if (!entrypoint.hasLinariaMetadata()) {
+  if (!entrypoint.hasWywMetadata()) {
     if (entrypoint.generation === 1) {
-      // 1st generation here means that it's __linariaPreval entrypoint
-      // without __linariaPreval, so we don't need it cached
+      // 1st generation here means that it's __wywPreval entrypoint
+      // without __wywPreval, so we don't need it cached
       cache.delete('entrypoints', entrypoint.name);
     }
 

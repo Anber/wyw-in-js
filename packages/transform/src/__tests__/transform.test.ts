@@ -10,7 +10,7 @@ import shaker from '../shaker';
 import { transform } from '../transform';
 import { transformUrl } from '../transform/generators/extract';
 
-const outputFilename = './.linaria-cache/test.css';
+const outputFilename = './.wyw-cache/test.css';
 
 const rules = [
   {
@@ -27,12 +27,12 @@ describe('transformUrl', () => {
   const dataset: Record<string, TransformUrlArgs> = {
     '../assets/test.jpg': [
       './assets/test.jpg',
-      './.linaria-cache/test.css',
+      './.wyw-cache/test.css',
       './test.js',
     ],
     '../a/b/test.jpg': [
       '../a/b/test.jpg',
-      './.linaria-cache/test.css',
+      './.wyw-cache/test.css',
       './a/test.js',
     ],
   };
@@ -69,7 +69,7 @@ it.skip('rewrites a relative path in url() declarations', async () => {
     {
       options: {
         filename: './test.js',
-        outputFilename: './.linaria-cache/test.css',
+        outputFilename: './.wyw-cache/test.css',
         pluginOptions: {
           rules,
         },

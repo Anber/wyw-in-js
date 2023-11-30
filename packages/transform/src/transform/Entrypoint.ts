@@ -50,7 +50,7 @@ export class Entrypoint extends BaseEntrypoint {
     Map<unknown, BaseAction<ActionQueueItem>>
   > = new Map();
 
-  #hasLinariaMetadata: boolean = false;
+  #hasWywMetadata: boolean = false;
 
   #supersededWith: Entrypoint | null = null;
 
@@ -342,8 +342,8 @@ export class Entrypoint extends BaseEntrypoint {
     return this.resolveTasks.get(name);
   }
 
-  public hasLinariaMetadata() {
-    return this.#hasLinariaMetadata;
+  public hasWywMetadata() {
+    return this.#hasWywMetadata;
   }
 
   public onSupersede(callback: (newEntrypoint: Entrypoint) => void) {
@@ -363,7 +363,7 @@ export class Entrypoint extends BaseEntrypoint {
   }
 
   public setTransformResult(res: ITransformFileResult | null) {
-    this.#hasLinariaMetadata = Boolean(res?.metadata);
+    this.#hasWywMetadata = Boolean(res?.metadata);
     this.#transformResultCode = res?.code ?? null;
 
     this.services.eventEmitter.entrypointEvent(this.seqId, {

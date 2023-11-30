@@ -19,7 +19,8 @@ export function findPackageJSON(
         ? filename
         : require.resolve(
             pkgName,
-            filename && !skipPathsOptions ? { paths: [dirname(filename)] } : {}
+            filename ? { paths: [dirname(filename)] } : {}
+            // filename && !skipPathsOptions ? { paths: [dirname(filename)] } : {}
           );
     if (!cache.has(pkgPath)) {
       cache.set(pkgPath, findUp.sync('package.json', { cwd: pkgPath }));

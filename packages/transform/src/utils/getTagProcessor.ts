@@ -19,6 +19,7 @@ import type {
   IFileContext,
   TagSource,
 } from '@wyw-in-js/processor-utils';
+import { findPackageJSON } from '@wyw-in-js/shared';
 import type { ExpressionValue, StrictOptions } from '@wyw-in-js/shared';
 
 import type { IImport } from './collectExportsAndImports';
@@ -30,7 +31,6 @@ import {
   collectTemplateDependencies,
   extractExpression,
 } from './collectTemplateDependencies';
-import { findPackageJSON } from './findPackageJSON';
 import { getSource } from './getSource';
 import { isNotNull } from './isNotNull';
 import { mutate } from './scopeHelpers';

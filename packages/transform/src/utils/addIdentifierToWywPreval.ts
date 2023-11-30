@@ -11,19 +11,17 @@ import type {
 import { createId } from './createId';
 import { reference } from './scopeHelpers';
 
-export function getOrAddLinariaPreval(
-  scope: Scope
-): NodePath<ObjectExpression> {
+export function getOrAddWywPreval(scope: Scope): NodePath<ObjectExpression> {
   const rootScope = scope.getProgramParent();
   const programPath = rootScope.path as NodePath<Program>;
 
-  let object = programPath.getData('__linariaPreval');
+  let object = programPath.getData('__wywPreval');
   if (object) {
     return object;
   }
 
   if (programPath.node.sourceType === 'script') {
-    // CJS exports.__linariaPreval = {};
+    // CJS exports.__wywPreval = {};
     const prevalExport: ExpressionStatement = {
       expression: {
         type: 'AssignmentExpression',
@@ -31,7 +29,7 @@ export function getOrAddLinariaPreval(
         left: {
           computed: false,
           object: createId('exports'),
-          property: createId('__linariaPreval'),
+          property: createId('__wywPreval'),
           type: 'MemberExpression',
         },
         right: {
@@ -45,12 +43,12 @@ export function getOrAddLinariaPreval(
     const [inserted] = programPath.pushContainer('body', [prevalExport]);
     object = inserted.get('expression.right') as NodePath<ObjectExpression>;
   } else {
-    // ESM export const __linariaPreval = {};
+    // ESM export const __wywPreval = {};
     const prevalExport: ExportNamedDeclaration = {
       declaration: {
         declarations: [
           {
-            id: createId('__linariaPreval'),
+            id: createId('__wywPreval'),
             init: {
               properties: [],
               type: 'ObjectExpression',
@@ -71,13 +69,13 @@ export function getOrAddLinariaPreval(
     ) as NodePath<ObjectExpression>;
   }
 
-  programPath.setData('__linariaPreval', object);
+  programPath.setData('__wywPreval', object);
   return object;
 }
 
-export function addIdentifierToLinariaPreval(scope: Scope, name: string) {
+export function addIdentifierToWywPreval(scope: Scope, name: string) {
   const rootScope = scope.getProgramParent();
-  const object = getOrAddLinariaPreval(rootScope);
+  const object = getOrAddWywPreval(rootScope);
   const newProperty: ObjectProperty = {
     type: 'ObjectProperty',
     key: createId(name),

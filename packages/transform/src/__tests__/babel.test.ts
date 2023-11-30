@@ -14,7 +14,7 @@ import { TransformCacheCollection } from '../cache';
 import shaker from '../shaker';
 import { transform as linariaTransform } from '../transform';
 import { Entrypoint } from '../transform/Entrypoint';
-import { loadLinariaOptions } from '../transform/helpers/loadLinariaOptions';
+import { loadWywOptions } from '../transform/helpers/loadWywOptions';
 import type { PluginOptions, Stage } from '../types';
 import type {
   EntrypointEvent,
@@ -66,11 +66,11 @@ const getPresets = (extension: 'js' | 'ts' | 'jsx' | 'tsx') => {
 
 const getLinariaConfig = (
   evaluator: Evaluator,
-  linariaConfig: PartialOptions,
+  wywConfig: PartialOptions,
   presets: PluginItem[],
   stage?: Stage
 ): PluginOptions =>
-  loadLinariaOptions({
+  loadWywOptions({
     babelOptions: {
       presets,
       plugins: [],
@@ -94,7 +94,7 @@ const getLinariaConfig = (
       softErrors: false,
     },
     stage,
-    ...linariaConfig,
+    ...wywConfig,
   });
 
 async function transform(

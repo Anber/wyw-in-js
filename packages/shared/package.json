@@ -3,11 +3,12 @@
   "version": "0.1.1",
   "dependencies": {
     "debug": "^4.3.4",
+    "find-up": "^5.0.0",
     "minimatch": "^9.0.3"
   },
   "devDependencies": {
-    "@babel/types": "^7.23.0",
-    "@types/babel__core": "^7.20.2",
+    "@babel/types": "^7.23.5",
+    "@types/babel__core": "^7.20.5",
     "@types/debug": "^4.1.9",
     "@types/node": "^16.18.55",
     "@wyw-in-js/babel-config": "workspace:*",
