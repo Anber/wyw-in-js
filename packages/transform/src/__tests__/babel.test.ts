@@ -768,7 +768,8 @@ xdescribe('strategy shaker', () => {
       width: calc(2 * ${'${props => props.width}'}vw);
       height: ${'${props => { if (true) { return props.height } else { return 200 } }}'}px;
       grid-template-columns: ${'${unit}'}fr 1fr 1fr ${'${unit}'}fr;
-      border-radius: ${'${function(props) { return 200 }}'}px
+      border-radius: ${'${function(props) { return 200 }}'}px;
+      padding: ${'${padding}'}px;
     \`;
     `,
       [evaluator]

@@ -1457,7 +1457,8 @@ CSS:
   width: calc(2 * var(--t13jq05-3));
   height: var(--t13jq05-4);
   grid-template-columns: var(--t13jq05-5) 1fr 1fr var(--t13jq05-5);
-  border-radius: var(--t13jq05-6)
+  border-radius: var(--t13jq05-6);
+  padding: 10px;
 }
 
 Dependencies: NA
@@ -1947,7 +1948,7 @@ exports[`strategy shaker non-hoistable identifiers 1`] = `
     - loop,
   because it cannot be statically determined in which context you use them.
   That's why some variables may be not defined during evaluation.
-      
+
    7 | export const Title = styled.h1\`
    8 |   &:before {
 >  9 |     content: "\${days}"
@@ -2861,7 +2862,7 @@ exports[`strategy shaker throws codeframe error when evaluation fails 1`] = `
     - loop,
   because it cannot be statically determined in which context you use them.
   That's why some variables may be not defined during evaluation.
-      
+
   4 |
   5 | export const Title = styled.h1\`
 > 6 |   font-size: \${foo()}px;
