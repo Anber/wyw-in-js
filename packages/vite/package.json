@@ -19,7 +19,7 @@
     "node": ">=16.0.0"
   },
   "exports": {
-    "import": "./esm/index.js",
+    "import": "./esm/index.mjs",
     "require": "./lib/index.js",
     "types": "./types/index.d.ts"
   },
@@ -30,7 +30,7 @@
   ],
   "license": "MIT",
   "main": "lib/index.js",
-  "module": "esm/index.js",
+  "module": "esm/index.mjs",
   "peerDependencies": {
     "vite": ">=3.2.7"
   },
@@ -38,7 +38,7 @@
     "access": "public"
   },
   "scripts": {
-    "build:esm": "babel src --out-dir esm --extensions '.js,.jsx,.ts,.tsx' --source-maps --delete-dir-on-start",
+    "build:esm": "babel src --out-dir esm --out-file-extension .mjs --extensions '.js,.jsx,.ts,.tsx' --source-maps --delete-dir-on-start",
     "build:lib": "cross-env NODE_ENV=legacy babel src --out-dir lib --extensions '.js,.jsx,.ts,.tsx' --source-maps --delete-dir-on-start",
     "build:types": "tsc --project ./tsconfig.lib.json --baseUrl . --rootDir ./src",
     "lint": "eslint --ext .js,.ts ."

@@ -2,6 +2,7 @@ export { slugify } from '@wyw-in-js/shared';
 
 export { createFileReporter } from './debug/fileReporter';
 export type { IFileReporterOptions } from './debug/fileReporter';
+export { default as babelTransformPlugin } from './plugins/babel-transform';
 export { default as preeval } from './plugins/preeval';
 export {
   getTransformMetadata,
