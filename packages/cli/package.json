@@ -6,7 +6,11 @@
   },
   "dependencies": {
     "@wyw-in-js/shared": "workspace:*",
-    "@wyw-in-js/transform": "workspace:*"
+    "@wyw-in-js/transform": "workspace:*",
+    "glob": "^10.3.10",
+    "mkdirp": "^0.5.1",
+    "normalize-path": "^3.0.0",
+    "yargs": "^17.5.0"
   },
   "devDependencies": {
     "@babel/core": "^7.23.5",
@@ -16,11 +20,7 @@
     "@types/yargs": "^17.0.10",
     "@wyw-in-js/babel-config": "workspace:*",
     "@wyw-in-js/eslint-config": "workspace:*",
-    "@wyw-in-js/ts-config": "workspace:*",
-    "glob": "^10.3.10",
-    "mkdirp": "^0.5.1",
-    "normalize-path": "^3.0.0",
-    "yargs": "^17.5.0"
+    "@wyw-in-js/ts-config": "workspace:*"
   },
   "engines": {
     "node": ">=16.0.0"
