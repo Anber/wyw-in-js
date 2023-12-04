@@ -1,5 +1,15 @@
 # wyw-in-js
 
+## 0.2.0
+
+### Minor Changes
+
+- ca5c2e7: All Linaria-related things were renamed.
+
+### Patch Changes
+
+- 4b869aa: Fixtures generator and enhanced support of different transpilers.
+
 ## 0.1.1
 
 ### Patch Changes
