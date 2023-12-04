@@ -1,0 +1,46 @@
+{
+  "name": "@wyw-in-js/cli",
+  "version": "0.1.1",
+  "bin": {
+    "wyw-in-js": "bin/wyw-in-js.js"
+  },
+  "dependencies": {
+    "@wyw-in-js/shared": "workspace:*",
+    "@wyw-in-js/transform": "workspace:*"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.23.5",
+    "@types/glob": "^7.2.0",
+    "@types/mkdirp": "^0.5.2",
+    "@types/normalize-path": "^3.0.0",
+    "@types/yargs": "^17.0.10",
+    "@wyw-in-js/babel-config": "workspace:*",
+    "@wyw-in-js/eslint-config": "workspace:*",
+    "@wyw-in-js/ts-config": "workspace:*",
+    "glob": "^10.3.10",
+    "mkdirp": "^0.5.1",
+    "normalize-path": "^3.0.0",
+    "yargs": "^17.5.0"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  },
+  "files": [
+    "esm/",
+    "lib/",
+    "types/"
+  ],
+  "license": "MIT",
+  "main": "lib/wyw-in-js.js",
+  "module": "esm/wyw-in-js.js",
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build:esm": "babel src --out-dir esm --extensions '.js,.jsx,.ts,.tsx' --source-maps --delete-dir-on-start",
+    "build:lib": "cross-env NODE_ENV=legacy babel src --out-dir lib --extensions '.js,.jsx,.ts,.tsx' --source-maps --delete-dir-on-start",
+    "build:types": "tsc --project ./tsconfig.lib.json --baseUrl . --rootDir ./src",
+    "lint": "eslint --ext .js,.ts ."
+  },
+  "types": "types/wyw-in-js.d.ts"
+}
