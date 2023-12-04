@@ -73,7 +73,7 @@ const shaker: Evaluator = (
   const transformOptions: TransformOptions = {
     ...evalConfig,
     caller: {
-      name: 'linaria',
+      name: 'wyw-in-js',
     },
     plugins,
   };
@@ -87,7 +87,7 @@ const shaker: Evaluator = (
   return [
     transformed.ast!,
     transformed.code ?? '',
-    transformed.metadata.linariaEvaluator.imports,
+    transformed.metadata.wywEvaluator.imports,
   ];
 };
 

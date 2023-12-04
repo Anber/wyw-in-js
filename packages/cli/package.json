@@ -1,21 +1,26 @@
 {
-  "name": "@wyw-in-js/shared",
+  "name": "@wyw-in-js/cli",
   "version": "0.1.1",
+  "bin": {
+    "wyw-in-js": "bin/wyw-in-js.js"
+  },
   "dependencies": {
-    "debug": "^4.3.4",
-    "find-up": "^5.0.0",
-    "minimatch": "^9.0.3"
+    "@wyw-in-js/shared": "workspace:*",
+    "@wyw-in-js/transform": "workspace:*",
+    "glob": "^10.3.10",
+    "mkdirp": "^0.5.1",
+    "normalize-path": "^3.0.0",
+    "yargs": "^17.5.0"
   },
   "devDependencies": {
-    "@babel/types": "^7.23.5",
-    "@types/babel__core": "^7.20.5",
-    "@types/debug": "^4.1.9",
-    "@types/node": "^16.18.55",
+    "@babel/core": "^7.23.5",
+    "@types/glob": "^7.2.0",
+    "@types/mkdirp": "^0.5.2",
+    "@types/normalize-path": "^3.0.0",
+    "@types/yargs": "^17.0.10",
     "@wyw-in-js/babel-config": "workspace:*",
     "@wyw-in-js/eslint-config": "workspace:*",
-    "@wyw-in-js/jest-preset": "workspace:*",
-    "@wyw-in-js/ts-config": "workspace:*",
-    "typescript": "^5.2.2"
+    "@wyw-in-js/ts-config": "workspace:*"
   },
   "engines": {
     "node": ">=16.0.0"
@@ -26,8 +31,8 @@
     "types/"
   ],
   "license": "MIT",
-  "main": "lib/index.js",
-  "module": "esm/index.js",
+  "main": "lib/wyw-in-js.js",
+  "module": "esm/wyw-in-js.js",
   "publishConfig": {
     "access": "public"
   },
@@ -35,8 +40,7 @@
     "build:esm": "babel src --out-dir esm --extensions '.js,.jsx,.ts,.tsx' --source-maps --delete-dir-on-start",
     "build:lib": "cross-env NODE_ENV=legacy babel src --out-dir lib --extensions '.js,.jsx,.ts,.tsx' --source-maps --delete-dir-on-start",
     "build:types": "tsc --project ./tsconfig.lib.json --baseUrl . --rootDir ./src",
-    "lint": "eslint --ext .js,.ts .",
-    "test": "jest --config ./jest.config.js"
+    "lint": "eslint --ext .js,.ts ."
   },
-  "types": "types/index.d.ts"
+  "types": "types/wyw-in-js.d.ts"
 }

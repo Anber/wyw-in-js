@@ -51,9 +51,9 @@ export function collector(
     return processors;
   }
 
-  // We can remove __linariaPreval export and all related code
+  // We can remove __wywPreval export and all related code
   const prevalExport = (
-    file.path.scope.getData('__linariaPreval') as NodePath | undefined
+    file.path.scope.getData('__wywPreval') as NodePath | undefined
   )?.findParent((p) => p.isExpressionStatement());
   if (prevalExport) {
     removeWithRelated([prevalExport]);
@@ -76,11 +76,11 @@ export default function collectorPlugin(
       const processors = collector(file, options, values);
 
       if (processors.length === 0) {
-        // We didn't find any Linaria template literals.
+        // We didn't find any wyw-in-js template literals.
         return;
       }
 
-      this.file.metadata.linaria = {
+      this.file.metadata.wywInJS = {
         processors,
         replacements: [],
         rules: {},

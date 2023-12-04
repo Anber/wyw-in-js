@@ -54,7 +54,7 @@ function runPreevalStage(
 
   const transformConfig = buildOptions({
     ...evalConfig,
-    envName: 'linaria',
+    envName: 'wyw-in-js',
     plugins,
   });
 
@@ -105,11 +105,7 @@ export const prepareCode = (
 
   const transformMetadata = getTransformMetadata(preevalStageResult.metadata);
 
-  if (
-    only.length === 1 &&
-    only[0] === '__linariaPreval' &&
-    !transformMetadata
-  ) {
+  if (only.length === 1 && only[0] === '__wywPreval' && !transformMetadata) {
     log('[evaluator:end] no metadata');
     return [preevalStageResult.code!, null, null];
   }

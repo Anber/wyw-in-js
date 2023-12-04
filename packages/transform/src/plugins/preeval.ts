@@ -10,7 +10,7 @@ import { isFeatureEnabled, logger } from '@wyw-in-js/shared';
 import type { Core } from '../babel';
 import type { IPluginState } from '../types';
 import { EventEmitter } from '../utils/EventEmitter';
-import { addIdentifierToLinariaPreval } from '../utils/addIdentifierToLinariaPreval';
+import { addIdentifierToWywPreval } from '../utils/addIdentifierToWywPreval';
 import { getFileIdx } from '../utils/getFileIdx';
 import { processTemplateExpression } from '../utils/processTemplateExpression';
 import { removeDangerousCode } from '../utils/removeDangerousCode';
@@ -43,7 +43,7 @@ export function preeval(
             processTemplateExpression(p, file.opts, options, (processor) => {
               processor.dependencies.forEach((dependency) => {
                 if (dependency.ex.type === 'Identifier') {
-                  addIdentifierToLinariaPreval(rootScope, dependency.ex.name);
+                  addIdentifierToWywPreval(rootScope, dependency.ex.name);
                 }
               });
 
@@ -72,37 +72,37 @@ export function preeval(
       invalidateTraversalCache(file.path);
 
       if (this.processors.length === 0) {
-        log('end', "We didn't find any Linaria template literals");
+        log('end', "We didn't find any wyw-in-js template literals");
 
-        // We didn't find any Linaria template literals.
+        // We didn't find any wyw-in-js template literals.
         return;
       }
 
-      this.file.metadata.linaria = {
+      this.file.metadata.wywInJS = {
         processors: this.processors,
         replacements: [],
         rules: {},
         dependencies: [],
       };
 
-      const linariaPreval = file.path.getData('__linariaPreval');
-      if (!linariaPreval) {
-        // Event if there is no dependencies, we still need to add __linariaPreval
-        const linariaExport = t.expressionStatement(
+      const wywPreval = file.path.getData('__wywPreval');
+      if (!wywPreval) {
+        // Event if there is no dependencies, we still need to add __wywPreval
+        const wywExport = t.expressionStatement(
           t.assignmentExpression(
             '=',
             t.memberExpression(
               t.identifier('exports'),
-              t.identifier('__linariaPreval')
+              t.identifier('__wywPreval')
             ),
             t.objectExpression([])
           )
         );
 
-        file.path.pushContainer('body', linariaExport);
+        file.path.pushContainer('body', wywExport);
       }
 
-      log('end', '__linariaPreval has been added');
+      log('end', '__wywPreval has been added');
     },
   };
 }

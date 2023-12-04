@@ -2,10 +2,10 @@ import type { BabelFile, PluginObj } from '@babel/core';
 
 import { logger, syncResolve } from '@wyw-in-js/shared';
 
+import { loadWywOptions } from '../transform/helpers/loadWywOptions';
 import type { Core } from '../babel';
 import { TransformCacheCollection } from '../cache';
 import { transformSync } from '../transform';
-import { loadLinariaOptions } from '../transform/helpers/loadLinariaOptions';
 import type { ICollectAction, SyncScenarioForAction } from '../transform/types';
 import type { IPluginState, PluginOptions } from '../types';
 
@@ -42,7 +42,7 @@ export default function babelTransform(
 
       debug('start %s', file.opts.filename);
 
-      const pluginOptions = loadLinariaOptions(options);
+      const pluginOptions = loadWywOptions(options);
 
       transformSync(
         {

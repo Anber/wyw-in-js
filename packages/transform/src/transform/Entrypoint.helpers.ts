@@ -124,9 +124,9 @@ function buildConfigs(
     if (!moduleResolverWarned) {
       // eslint-disable-next-line no-console
       console.warn(
-        `[linaria] ${name} has a module-resolver plugin in its babelrc, but it is not present ` +
-          `in the babelOptions for the linaria plugin. This works for now but will be an error in the future. ` +
-          `Please add the module-resolver plugin to the babelOptions for the linaria plugin.`
+        `[wyw-in-js] ${name} has a module-resolver plugin in its babelrc, but it is not present ` +
+          `in the babelOptions for the wyw-in-js plugin. This works for now but will be an error in the future. ` +
+          `Please add the module-resolver plugin to the babelOptions for the wyw-in-js plugin.`
       );
 
       moduleResolverWarned = true;

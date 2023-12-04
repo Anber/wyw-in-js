@@ -32,7 +32,7 @@ export interface IPluginState extends PluginPass {
   dependencies: Dependencies;
   file: BabelFile & {
     metadata: {
-      linaria?: WYWTransformMetadata;
+      wywInJS?: WYWTransformMetadata;
     };
   };
   processors: BaseProcessor[];

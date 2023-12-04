@@ -33,7 +33,6 @@ const run = (code: TemplateStringsArray) => {
 
   return {
     code: transformed.code,
-    // metadata: transformed.metadata.__linariaShaker,
   };
 };
 

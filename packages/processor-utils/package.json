@@ -2,13 +2,13 @@
   "name": "@wyw-in-js/processor-utils",
   "version": "0.1.1",
   "dependencies": {
-    "@babel/generator": "^7.23.0",
+    "@babel/generator": "^7.23.5",
     "@wyw-in-js/shared": "workspace:*"
   },
   "devDependencies": {
-    "@babel/types": "^7.23.0",
-    "@types/babel__core": "^7.20.2",
-    "@types/babel__generator": "^7.6.5",
+    "@babel/types": "^7.23.5",
+    "@types/babel__core": "^7.20.5",
+    "@types/babel__generator": "^7.6.7",
     "@types/node": "^16.18.55",
     "@wyw-in-js/babel-config": "workspace:*",
     "@wyw-in-js/eslint-config": "workspace:*",

@@ -1,7 +1,7 @@
 /* eslint @typescript-eslint/no-use-before-define: ["error", { "functions": false }] */
 
 /**
- * This file is a visitor that checks TaggedTemplateExpressions and look for Linaria css or styled templates.
+ * This file is a visitor that checks TaggedTemplateExpressions and look for WYW template literals.
  * For each template it makes a list of dependencies, try to evaluate expressions, and if it is not possible, mark them as lazy dependencies.
  */
 
@@ -151,7 +151,7 @@ function hoistIdentifier(idPath: NodePath<Identifier>): void {
 
 /**
  * Only an expression that can be evaluated in the root scope can be
- * used in a Linaria template. This function tries to hoist the expression.
+ * used in a WYW template. This function tries to hoist the expression.
  * @param ex The expression to hoist.
  * @param evaluate If true, we try to statically evaluate the expression.
  * @param imports All the imports of the file.

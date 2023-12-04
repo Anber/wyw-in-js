@@ -2,6 +2,7 @@ export { slugify } from '@wyw-in-js/shared';
 
 export { createFileReporter } from './debug/fileReporter';
 export type { IFileReporterOptions } from './debug/fileReporter';
+export { default as babelTransformPlugin } from './plugins/babel-transform';
 export { default as preeval } from './plugins/preeval';
 export {
   getTransformMetadata,
@@ -9,6 +10,7 @@ export {
 } from './utils/TransformMetadata';
 export type { WYWTransformMetadata } from './utils/TransformMetadata';
 export { Module, DefaultModuleImplementation } from './module';
+export { default as shaker } from './shaker';
 export { transform } from './transform';
 export {
   isUnprocessedEntrypointError,
@@ -27,10 +29,16 @@ export {
   asyncResolveImports,
   syncResolveImports,
 } from './transform/generators/resolveImports';
-export { loadLinariaOptions } from './transform/helpers/loadLinariaOptions';
+export { loadWywOptions } from './transform/helpers/loadWywOptions';
 export { withDefaultServices } from './transform/helpers/withDefaultServices';
 export type { Services } from './transform/types';
-export type { EventEmitter } from './utils/EventEmitter';
+export { EventEmitter } from './utils/EventEmitter';
+export type {
+  EntrypointEvent,
+  OnEvent,
+  OnActionStartArgs,
+  OnActionFinishArgs,
+} from './utils/EventEmitter';
 export { isNode } from './utils/isNode';
 export { getFileIdx } from './utils/getFileIdx';
 export { getTagProcessor } from './utils/getTagProcessor';

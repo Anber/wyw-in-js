@@ -3,10 +3,10 @@ export interface IShakerMetadata {
 }
 
 export interface IMetadata {
-  linariaEvaluator: IShakerMetadata;
+  wywEvaluator: IShakerMetadata;
 }
 
 export const hasShakerMetadata = (
   metadata: object | undefined
 ): metadata is IMetadata =>
-  metadata !== undefined && 'linariaEvaluator' in metadata;
+  metadata !== undefined && 'wywEvaluator' in metadata;

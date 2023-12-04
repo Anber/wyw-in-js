@@ -58,14 +58,14 @@ export default function wywInJS({
         return result.path.replace(/\\/g, posix.sep);
       };
 
-      build.onResolve({ filter: /\.linaria\.css$/ }, (args) => {
+      build.onResolve({ filter: /\.wyw\.css$/ }, (args) => {
         return {
-          namespace: 'linaria',
+          namespace: 'wyw-in-js',
           path: args.path,
         };
       });
 
-      build.onLoad({ filter: /.*/, namespace: 'linaria' }, (args) => {
+      build.onLoad({ filter: /.*/, namespace: 'wyw-in-js' }, (args) => {
         return {
           contents: cssLookup.get(args.path),
           loader: 'css',
@@ -131,17 +131,17 @@ export default function wywInJS({
         let { cssText } = result;
 
         const slug = slugify(cssText);
-        const cssFilename = `${filename}_${slug}.linaria.css`;
+        const cssFilename = `${filename}_${slug}.wyw.css`;
 
         let contents = `import ${JSON.stringify(cssFilename)}; ${result.code}`;
 
         if (sourceMap && result.cssSourceMapText) {
           const map = Buffer.from(result.cssSourceMapText).toString('base64');
           cssText += `/*# sourceMappingURL=data:application/json;base64,${map}*/`;
-          const linariaMap = Buffer.from(
-            JSON.stringify(result.sourceMap)
-          ).toString('base64');
-          contents += `/*# sourceMappingURL=data:application/json;base64,${linariaMap}*/`;
+          const wywMap = Buffer.from(JSON.stringify(result.sourceMap)).toString(
+            'base64'
+          );
+          contents += `/*# sourceMappingURL=data:application/json;base64,${wywMap}*/`;
         }
 
         cssLookup.set(cssFilename, cssText);

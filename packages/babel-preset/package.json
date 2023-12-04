@@ -1,27 +1,18 @@
 {
-  "name": "@wyw-in-js/rollup",
+  "name": "@wyw-in-js/babel-preset",
   "version": "0.1.1",
   "dependencies": {
-    "@rollup/pluginutils": "^5.0.4",
-    "@wyw-in-js/shared": "workspace:*",
+    "@babel/core": "^7.23.5",
     "@wyw-in-js/transform": "workspace:*"
   },
   "devDependencies": {
-    "@types/node": "^16.18.55",
+    "@types/babel__core": "^7.20.5",
     "@wyw-in-js/babel-config": "workspace:*",
     "@wyw-in-js/eslint-config": "workspace:*",
-    "@wyw-in-js/jest-preset": "workspace:*",
-    "@wyw-in-js/ts-config": "workspace:*",
-    "rollup": "^3.11.0",
-    "source-map": "^0.7.4"
+    "@wyw-in-js/ts-config": "workspace:*"
   },
   "engines": {
     "node": ">=16.0.0"
-  },
-  "exports": {
-    "import": "./esm/index.mjs",
-    "require": "./lib/index.js",
-    "types": "./types/index.d.ts"
   },
   "files": [
     "esm/",
@@ -30,15 +21,12 @@
   ],
   "license": "MIT",
   "main": "lib/index.js",
-  "module": "esm/index.mjs",
-  "peerDependencies": {
-    "rollup": "1.20.0||^2.0.0||^3.0.0"
-  },
+  "module": "esm/index.js",
   "publishConfig": {
     "access": "public"
   },
   "scripts": {
-    "build:esm": "babel src --out-dir esm --out-file-extension .mjs --extensions '.js,.jsx,.ts,.tsx' --source-maps --delete-dir-on-start",
+    "build:esm": "babel src --out-dir esm --extensions '.js,.jsx,.ts,.tsx' --source-maps --delete-dir-on-start",
     "build:lib": "cross-env NODE_ENV=legacy babel src --out-dir lib --extensions '.js,.jsx,.ts,.tsx' --source-maps --delete-dir-on-start",
     "build:types": "tsc --project ./tsconfig.lib.json --baseUrl . --rootDir ./src",
     "lint": "eslint --ext .js,.ts ."

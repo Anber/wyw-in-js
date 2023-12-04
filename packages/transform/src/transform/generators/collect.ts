@@ -33,7 +33,7 @@ export function* collect(
   ];
 
   const transformConfig = buildOptions({
-    envName: 'linaria',
+    envName: 'wyw-in-js',
     plugins: transformPlugins,
     sourceMaps: true,
     sourceFileName: name,

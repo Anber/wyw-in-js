@@ -6,23 +6,23 @@ import shaker from '../../shaker';
 import type { PluginOptions } from '../../types';
 
 const searchPlaces = [
-  `.linariarc`,
-  `.linariarc.json`,
-  `.linariarc.yaml`,
-  `.linariarc.yml`,
-  `.linariarc.js`,
-  `.linariarc.cjs`,
-  `.config/linariarc`,
-  `.config/linariarc.json`,
-  `.config/linariarc.yaml`,
-  `.config/linariarc.yml`,
-  `.config/linariarc.js`,
-  `.config/linariarc.cjs`,
-  `linaria.config.js`,
-  `linaria.config.cjs`,
+  `.wyw-in-jsrc`,
+  `.wyw-in-jsrc.json`,
+  `.wyw-in-jsrc.yaml`,
+  `.wyw-in-jsrc.yml`,
+  `.wyw-in-jsrc.js`,
+  `.wyw-in-jsrc.cjs`,
+  `.config/wyw-in-jsrc`,
+  `.config/wyw-in-jsrc.json`,
+  `.config/wyw-in-jsrc.yaml`,
+  `.config/wyw-in-jsrc.yml`,
+  `.config/wyw-in-jsrc.js`,
+  `.config/wyw-in-jsrc.cjs`,
+  `wyw-in-js.config.js`,
+  `wyw-in-js.config.cjs`,
 ];
 
-const explorerSync = cosmiconfigSync('linaria', { searchPlaces });
+const explorerSync = cosmiconfigSync('wyw-in-js', { searchPlaces });
 
 export type PartialOptions = Partial<Omit<PluginOptions, 'features'>> & {
   features?: Partial<FeatureFlags>;
@@ -32,7 +32,7 @@ const cache = new WeakMap<Partial<PartialOptions>, StrictOptions>();
 const defaultOverrides = {};
 const nodeModulesRegExp = /[\\/]node_modules[\\/]/;
 
-export function loadLinariaOptions(
+export function loadWywOptions(
   overrides: PartialOptions = defaultOverrides
 ): StrictOptions {
   if (cache.has(overrides)) {
@@ -78,7 +78,7 @@ export function loadLinariaOptions(
           }
 
           // If a file contains `export` or `import` keywords, we assume it's an ES-module
-          return /(?:^|\*\/|;|})\s*(?:export|import)\s/m.test(code);
+          return /(?:^|\*\/|;|})\s*(?:export|import)[\s{]/m.test(code);
         },
         action: shaker,
       },
