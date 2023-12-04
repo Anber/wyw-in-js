@@ -1,5 +1,11 @@
 # @wyw-in-js/babel-config
 
+## 0.2.0
+
+### Minor Changes
+
+- ca5c2e7: All Linaria-related things were renamed.
+
 ## 0.1.1
 
 ### Patch Changes

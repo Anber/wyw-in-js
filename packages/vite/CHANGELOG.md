@@ -1,5 +1,19 @@
 # @wyw-in-js/vite
 
+## 0.2.0
+
+### Minor Changes
+
+- ca5c2e7: All Linaria-related things were renamed.
+
+### Patch Changes
+
+- e3b1583: docs: add README file
+- Updated dependencies [4b869aa]
+- Updated dependencies [ca5c2e7]
+  - @wyw-in-js/transform@0.2.0
+  - @wyw-in-js/shared@0.2.0
+
 ## 0.1.1
 
 ### Patch Changes
