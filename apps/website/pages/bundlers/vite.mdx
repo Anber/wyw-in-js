@@ -1,0 +1,41 @@
+# Usage with Vite
+
+### Installation
+
+~~Since Vite supports Rollup plugin~~ Since Vite provides more features and flexibility, WyW-in-JS has a separate plugin for it `@wyw-in-js/vite`. Vite handles CSS by itself, you don't need a css plugin.
+
+```sh npm2yarn
+npm i -D @wyw-in-js/vite
+```
+
+### Configuration
+
+```js
+import { defineConfig } from 'vite';
+import wyw from '@wyw-in-js/vite';
+
+export default defineConfig(() => ({
+  // ...
+  plugins: [wyw()],
+}));
+```
+
+If you are using language features that requires a babel transform (such as typescript), ensure the proper babel presets or plugins are passed to wyw.
+
+```js
+import { defineConfig } from 'vite';
+import wyw from '@wyw-in-js/vite';
+
+// example to support typescript syntax:
+export default defineConfig(() => ({
+  // ...
+  plugins: [
+    wyw({
+      include: ['**/*.{ts,tsx}'],
+      babelOptions: {
+        presets: ['@babel/preset-typescript', '@babel/preset-react'],
+      },
+    }),
+  ],
+}));
+```

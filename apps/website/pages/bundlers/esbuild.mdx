@@ -1,0 +1,30 @@
+# Usage with esbuild
+
+### Installation
+
+```sh npm2yarn
+npm i -D @wyw-in-js/esbuild
+```
+
+### Configuration
+
+```js
+import wyw from '@wyw-in-js/esbuild';
+import esbuild from 'esbuild';
+
+const prod = process.env.NODE_ENV === 'production';
+
+esbuild
+  .build({
+    entryPoints: ['src/index.ts'],
+    outdir: 'dist',
+    bundle: true,
+    minify: prod,
+    plugins: [
+      wyw({
+        sourceMap: prod,
+      }),
+    ],
+  })
+  .catch(() => process.exit(1));
+```
