@@ -1,0 +1,48 @@
+# Usage with Rollup
+
+### Installation
+
+To use WyW-in-JS with Rollup, you need to use it together with a plugin which handles CSS files, such as `rollup-plugin-css-only`:
+
+```sh npm2yarn
+npm i -D rollup-plugin-css-only @wyw-in-js/rollup
+```
+
+### Configuration
+
+```js
+import wyw from '@wyw-in-js/rollup';
+import css from 'rollup-plugin-css-only';
+
+export default {
+  plugins: [
+    wyw({
+      sourceMap: process.env.NODE_ENV !== 'production',
+    }),
+    css({
+      output: 'styles.css',
+    }),
+  ],
+};
+```
+
+If you are using [@rollup/plugin-babel](https://github.com/rollup/plugins/tree/master/packages/babel) as well, ensure the wyw plugin is declared earlier in the `plugins` array than your babel plugin.
+
+```js
+import wyw from '@wyw-in-js/rollup';
+import css from 'rollup-plugin-css-only';
+import babel from '@rollup/plugin-babel';
+
+export default {
+  plugins: [
+    wyw({
+      sourceMap: process.env.NODE_ENV !== 'production',
+    }),
+    css({
+      output: 'styles.css',
+    }),
+    babel({}),
+    /* rest of your plugins */
+  ],
+};
+```
