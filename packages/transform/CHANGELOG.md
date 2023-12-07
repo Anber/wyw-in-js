@@ -1,5 +1,16 @@
 # @wyw-in-js/transform
 
+## 0.2.2
+
+### Patch Changes
+
+- e1701d5: Fix the regression from callstack/linaria#1373 that messed up with namespaces in CSS.
+- 740e336: Fix regression from #19 that kills some exports.
+- a8e5da0: Improved shaker strategy for exports fixes some of `undefined` errors.
+- Updated dependencies
+  - @wyw-in-js/shared@0.2.2
+  - @wyw-in-js/processor-utils@0.2.2
+
 ## 0.2.1
 
 ### Patch Changes
