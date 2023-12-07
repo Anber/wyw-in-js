@@ -348,6 +348,11 @@ export function findActionForNode(
   }
 
   if (parent.isAssignmentExpression()) {
+    if (path.isAssignmentExpression()) {
+      // `foo = bar = 42` should be replaced with `foo = 42`
+      return ['replace', path, path.node.right];
+    }
+
     return findActionForNode(parent);
   }
 
@@ -396,6 +401,17 @@ export function findActionForNode(
   }
 
   if (parent.isVariableDeclarator()) {
+    if (path.key === 'init' && path.isAssignmentExpression()) {
+      // We are removing `bar` in `var foo = bar = 42`. Path should be replaced with `var foo = 42`
+      return ['replace', path, path.node.right];
+    }
+
+    const init = parent.get('init');
+    if (path.key === 'id' && init.isAssignmentExpression()) {
+      // We are removing `foo` in `var foo = bar = 42`. Ignore it.
+      return null;
+    }
+
     return findActionForNode(parent);
   }
 

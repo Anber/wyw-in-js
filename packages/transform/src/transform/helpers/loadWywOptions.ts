@@ -2,7 +2,7 @@ import { cosmiconfigSync } from 'cosmiconfig';
 
 import type { FeatureFlags, StrictOptions } from '@wyw-in-js/shared';
 
-import shaker from '../../shaker';
+import { shaker } from '../../shaker';
 import type { PluginOptions } from '../../types';
 
 const searchPlaces = [

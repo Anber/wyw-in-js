@@ -2,14 +2,7 @@ import path from 'path';
 
 import type { Mapping } from 'source-map';
 import { SourceMapGenerator } from 'source-map';
-import {
-  compile,
-  serialize,
-  stringify,
-  middleware,
-  prefixer,
-  namespace,
-} from 'stylis';
+import { compile, serialize, stringify, middleware, prefixer } from 'stylis';
 
 import type { Replacements, Rules } from '@wyw-in-js/shared';
 

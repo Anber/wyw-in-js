@@ -9,9 +9,9 @@ Object.defineProperty(exports, "__esModule", {
 });
 exports.activeClass = void 0;
 _activeClass = "s1gxjcbn";
+exports.activeClass = _activeClass;
 const _exp = /*#__PURE__*/() => _activeClass;
 exports.__wywPreval = {
   _exp: _exp
-};
-exports.activeClass = _activeClass;"
+};"
 `;

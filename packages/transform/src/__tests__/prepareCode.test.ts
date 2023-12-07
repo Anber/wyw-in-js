@@ -4,7 +4,7 @@ import { join } from 'path';
 import * as babel from '@babel/core';
 
 import { loadWywOptions } from '../transform/helpers/loadWywOptions';
-import shaker from '../shaker';
+import { shaker } from '../shaker';
 import { Entrypoint } from '../transform/Entrypoint';
 import { parseFile } from '../transform/Entrypoint.helpers';
 import { prepareCode } from '../transform/generators/transform';

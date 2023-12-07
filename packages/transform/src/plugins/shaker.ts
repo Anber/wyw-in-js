@@ -113,30 +113,39 @@ function rearrangeExports(
 
     rootScope.registerDeclaration(declaration);
 
+    const constantViolations: NodePath<Identifier>[] = [];
     // Replace every reference with defined variable
     refs.forEach((ref) => {
       const [replaced] = ref.replaceWith(t.identifier(uid));
       if (replaced.isBindingIdentifier()) {
-        rootScope.registerConstantViolation(replaced);
-        if (replaced.parentPath?.parentPath?.isVariableDeclarator()) {
-          // This is `const foo = exports.foo = "value"` case
-          reference(replaced, replaced, true);
-        }
+        constantViolations.push(replaced);
       } else {
         reference(replaced);
       }
     });
 
-    // Assign defined variable to the export
-    const [pushed] = root.pushContainer('body', [
-      t.expressionStatement(
-        t.assignmentExpression(
-          '=',
-          t.memberExpression(t.identifier('exports'), t.identifier(name)),
-          t.identifier(uid)
-        )
-      ),
-    ]);
+    constantViolations.forEach((id) => {
+      rootScope.registerConstantViolation(id);
+    });
+
+    const assigmentToExport = t.expressionStatement(
+      t.assignmentExpression(
+        '=',
+        t.memberExpression(t.identifier('exports'), t.identifier(name)),
+        t.identifier(uid)
+      )
+    );
+
+    // export.foo = _foo will be inserted either after the last _foo assigment or in the end of the file
+    const body = root.get('body');
+    const lastViolation =
+      constantViolations[constantViolations.length - 1] ??
+      body[body.length - 1];
+    const pathInRoot = root
+      .get('body')
+      .find((n) => lastViolation.isDescendant(n))!;
+
+    const [pushed] = pathInRoot.insertAfter(assigmentToExport);
 
     const local = pushed.get('expression.right') as NodePath<Identifier>;
     reference(local);
@@ -375,6 +384,21 @@ export default function shakerPlugin(
           });
 
           dereferenced = [];
+
+          // Find and mark for deleting all unreferenced variables
+          const unreferenced = Object.values(
+            file.scope.getAllBindings()
+          ).filter((i) => !i.referenced);
+
+          for (const binding of unreferenced) {
+            if (
+              binding.path.isVariableDeclarator() &&
+              !forDeleting.includes(binding.path.get('id'))
+            ) {
+              forDeleting.push(binding.path.get('id'));
+              changed = true;
+            }
+          }
         }
       }
 
