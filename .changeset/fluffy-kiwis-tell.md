@@ -3,4 +3,4 @@
 'wyw-in-js': patch
 ---
 
-Fix the regression from linaria#1373 that messed up with namespaces in CSS.
+Fix the regression from callstack/linaria#1373 that messed up with namespaces in CSS.
