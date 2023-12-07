@@ -40,8 +40,9 @@ export function transformUrl(
 
 function createStylisPreprocessor(options: Options) {
   function stylisPreprocess(selector: string, text: string): string {
+    const compiled = compile(`${selector} {${text}}\n`);
     return serialize(
-      compile(`${selector} {${text}}\n`),
+      compiled,
       middleware([
         (element: { return: string; type: string; value: string }) => {
           const { outputFilename } = options;
@@ -56,7 +57,6 @@ function createStylisPreprocessor(options: Options) {
             );
           }
         },
-        namespace,
         prefixer,
         stringify,
       ])
