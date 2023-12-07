@@ -12,7 +12,7 @@ import {
   TransformCacheCollection,
   transform,
 } from '@wyw-in-js/transform';
-import glob from 'glob';
+import { globSync } from 'glob';
 import mkdirp from 'mkdirp';
 import normalize from 'normalize-path';
 import yargs from 'yargs';
@@ -129,7 +129,7 @@ async function processFiles(files: (number | string)[], options: Options) {
   const resolvedFiles = files.reduce(
     (acc, pattern) => [
       ...acc,
-      ...glob.sync(pattern.toString(), {
+      ...globSync(pattern.toString(), {
         absolute: true,
         ignore: options.ignore,
       }),
