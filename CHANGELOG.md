@@ -1,5 +1,14 @@
 # wyw-in-js
 
+## 0.2.2
+
+### Patch Changes
+
+- e1701d5: Fix the regression from callstack/linaria#1373 that messed up with namespaces in CSS.
+- 740e336: Fix regression from #19 that kills some exports.
+- a8e5da0: Improved shaker strategy for exports fixes some of `undefined` errors.
+- 3b91afe: CLI didn't work because of the wrong glob version.
+
 ## 0.2.1
 
 ### Patch Changes

@@ -1,5 +1,11 @@
 # @wyw-in-js/jest-preset
 
+## 0.2.2
+
+### Patch Changes
+
+- Bump versions
+
 ## 0.2.1
 
 ### Patch Changes
