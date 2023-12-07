@@ -20,7 +20,7 @@ const safeResolve = (id: string, paths: (string | null)[]): string | null => {
   }
 };
 
-const shaker: Evaluator = (
+export const shaker: Evaluator = (
   evalConfig,
   ast,
   code,

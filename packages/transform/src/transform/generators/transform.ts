@@ -112,6 +112,7 @@ export const prepareCode = (
 
   log('[preeval] metadata %O', transformMetadata);
   log('[evaluator:start] using %s', evaluator.name);
+  log.extend('source')('%s', preevalStageResult.code!);
 
   const evaluatorConfig: EvaluatorConfig = {
     onlyExports: only,

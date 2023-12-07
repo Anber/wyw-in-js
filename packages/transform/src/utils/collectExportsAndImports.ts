@@ -794,6 +794,19 @@ function addExport(path: NodePath, exported: string, state: ILocalState): void {
   }
 }
 
+const saveRef = (
+  state: ILocalState,
+  exportName: string,
+  memberExpression: NodePath<MemberExpression>
+) => {
+  // Save all export.____ usages for later
+  if (!state.exportRefs.has(exportName)) {
+    state.exportRefs.set(exportName, []);
+  }
+
+  state.exportRefs.get(exportName)!.push(memberExpression);
+};
+
 function collectFromExports(
   path: NodePath<Identifier>,
   state: ILocalState
@@ -810,15 +823,6 @@ function collectFromExports(
 
     const exportName = property.node.name;
 
-    const saveRef = () => {
-      // Save all export.____ usages for later
-      if (!state.exportRefs.has(exportName)) {
-        state.exportRefs.set(exportName, []);
-      }
-
-      state.exportRefs.get(exportName)!.push(memberExpression);
-    };
-
     const assignmentExpression = memberExpression.parentPath;
 
     if (
@@ -827,7 +831,7 @@ function collectFromExports(
       })
     ) {
       // If it's not `exports.prop = …`. Just save it.
-      saveRef();
+      saveRef(state, exportName, memberExpression);
       return;
     }
 
@@ -844,7 +848,7 @@ function collectFromExports(
       return;
     }
 
-    saveRef();
+    saveRef(state, exportName, memberExpression);
     // eslint-disable-next-line no-param-reassign
     state.exports[property.node.name] = right;
 
@@ -1179,7 +1183,9 @@ function collectFromAssignmentExpression(
 
   let exported: IReexport['exported'] | undefined;
 
-  if (left.isMemberExpression() && isExports(left.get('object'))) {
+  const isExportRef =
+    left.isMemberExpression() && isExports(left.get('object'));
+  if (isExportRef) {
     const property = left.get('property');
     if (!left.node.computed && property.isIdentifier()) {
       exported = property.node.name;
@@ -1211,6 +1217,10 @@ function collectFromAssignmentExpression(
     } else {
       // eslint-disable-next-line no-param-reassign
       state.exports[exported] = right;
+    }
+
+    if (isExportRef) {
+      saveRef(state, exported, left);
     }
 
     path.skip();

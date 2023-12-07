@@ -1,0 +1,17 @@
+// Jest Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`shaker should carefully shake used exports 1`] = `
+""use strict";
+
+var _activeClass;
+Object.defineProperty(exports, "__esModule", {
+  value: true
+});
+exports.activeClass = void 0;
+_activeClass = "s1gxjcbn";
+const _exp = /*#__PURE__*/() => _activeClass;
+exports.__wywPreval = {
+  _exp: _exp
+};
+exports.activeClass = _activeClass;"
+`;
