@@ -1,6 +1,9 @@
 {
   "$schema": "https://json.schemastore.org/tsconfig",
   "compilerOptions": {
+    "rootDir": "../..",
+    "baseUrl": "../..",
+
     "allowSyntheticDefaultImports": true,
     "declaration": true,
     "esModuleInterop": true,
@@ -25,5 +28,5 @@
   },
   "exclude": ["node_modules"],
   "display": "Base config",
-  "extends": "../../tsconfig.aliases.json"
+  "extends": "./aliases.json"
 }

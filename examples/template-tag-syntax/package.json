@@ -19,6 +19,7 @@
     "@wyw-in-js/ts-config": "workspace:*",
     "dedent": "^1.5.1"
   },
+  "main": "src/index.ts",
   "private": true,
   "scripts": {
     "build:esm": "babel src --out-dir esm --extensions '.js,.jsx,.ts,.tsx' --source-maps --delete-dir-on-start",
