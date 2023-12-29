@@ -21,12 +21,13 @@ export { WYWinJSDebugPlugin } from './WYWinJSDebugPlugin';
 
 const outputCssLoader = require.resolve('./outputCssLoader');
 
-type Loader = RawLoaderDefinitionFunction<{
+export type LoaderOptions = {
   cacheProvider?: string | ICache;
   extension?: string;
   preprocessor?: Preprocessor;
   sourceMap?: boolean;
-}>;
+};
+type Loader = RawLoaderDefinitionFunction<LoaderOptions>;
 
 const cache = new TransformCacheCollection();
 
