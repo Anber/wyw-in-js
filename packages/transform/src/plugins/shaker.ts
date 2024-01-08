@@ -395,6 +395,7 @@ export default function shakerPlugin(
               binding.path.isVariableDeclarator() &&
               !forDeleting.includes(binding.path.get('id'))
             ) {
+              forDeleting.push(...binding.constantViolations);
               forDeleting.push(binding.path.get('id'));
               changed = true;
             }
