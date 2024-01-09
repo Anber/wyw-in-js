@@ -1,0 +1,14 @@
+{
+  "extends": "@wyw-in-js/ts-config/node.json",
+  "files": [],
+  "compilerOptions": {
+    "allowJs": true,
+    "rootDir": "../..",
+    "baseUrl": "../.."
+  },
+  "include": ["./src/*", "./scripts/*"],
+  "ts-node": {
+    "transpileOnly": true,
+    "require": ["tsconfig-paths/register"]
+  }
+}
