@@ -1,62 +1,11 @@
-import path from 'path';
-
 import type { Mapping } from 'source-map';
 import { SourceMapGenerator } from 'source-map';
-import { compile, serialize, stringify, middleware, prefixer } from 'stylis';
 
 import type { Replacements, Rules } from '@wyw-in-js/shared';
 
 import type { Options, PreprocessorFn } from '../../types';
 import type { IExtractAction, SyncScenarioForAction } from '../types';
-
-const posixSep = path.posix.sep;
-
-export function transformUrl(
-  url: string,
-  outputFilename: string,
-  sourceFilename: string,
-  platformPath: typeof path = path
-) {
-  // Replace asset path with new path relative to the output CSS
-  const relative = platformPath.relative(
-    platformPath.dirname(outputFilename),
-    // Get the absolute path to the asset from the path relative to the JS file
-    platformPath.resolve(platformPath.dirname(sourceFilename), url)
-  );
-
-  if (platformPath.sep === posixSep) {
-    return relative;
-  }
-
-  return relative.split(platformPath.sep).join(posixSep);
-}
-
-function createStylisPreprocessor(options: Options) {
-  function stylisPreprocess(selector: string, text: string): string {
-    const compiled = compile(`${selector} {${text}}\n`);
-    return serialize(
-      compiled,
-      middleware([
-        (element: { return: string; type: string; value: string }) => {
-          const { outputFilename } = options;
-          if (element.type === 'decl' && outputFilename) {
-            // When writing to a file, we need to adjust the relative paths inside url(..) expressions.
-            // It'll allow css-loader to resolve an imported asset properly.
-            // eslint-disable-next-line no-param-reassign
-            element.return = element.value.replace(
-              /\b(url\((["']?))(\.[^)]+?)(\2\))/g,
-              (match, p1, p2, p3, p4) =>
-                p1 + transformUrl(p3, outputFilename, options.filename) + p4
-            );
-          }
-        },
-        prefixer,
-        stringify,
-      ])
-    );
-  }
-  return stylisPreprocess;
-}
+import { createStylisPreprocessor } from './createStylisPreprocessor';
 
 function extractCssFromAst(
   rules: Rules,

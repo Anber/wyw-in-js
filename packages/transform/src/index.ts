@@ -24,7 +24,7 @@ export type { LoadAndParseFn } from './transform/Entrypoint.types';
 export { baseHandlers } from './transform/generators';
 export { prepareCode } from './transform/generators/transform';
 export { Entrypoint } from './transform/Entrypoint';
-export { transformUrl } from './transform/generators/extract';
+export { transformUrl } from './transform/generators/createStylisPreprocessor';
 export {
   asyncResolveImports,
   syncResolveImports,
