@@ -1,5 +1,15 @@
 # @wyw-in-js/rollup
 
+## 0.2.3
+
+### Patch Changes
+
+- Updated dependencies
+- Updated dependencies [ec051b7]
+- Updated dependencies [769653f]
+  - @wyw-in-js/shared@0.2.3
+  - @wyw-in-js/transform@0.2.3
+
 ## 0.2.2
 
 ### Patch Changes
