@@ -1,5 +1,15 @@
 # @wyw-in-js/transform
 
+## 0.2.3
+
+### Patch Changes
+
+- ec051b7: feat: add stylis plugin to handle ":global()"
+- 769653f: Sometimes, usages of variables survive the shaker even when their bindings are removed. Fixed.
+- Updated dependencies
+  - @wyw-in-js/shared@0.2.3
+  - @wyw-in-js/processor-utils@0.2.3
+
 ## 0.2.2
 
 ### Patch Changes

@@ -1,5 +1,16 @@
 # @wyw-in-js/webpack-loader
 
+## 0.2.3
+
+### Patch Changes
+
+- b98eae3: feat: export LoaderOptions
+- Updated dependencies
+- Updated dependencies [ec051b7]
+- Updated dependencies [769653f]
+  - @wyw-in-js/shared@0.2.3
+  - @wyw-in-js/transform@0.2.3
+
 ## 0.2.2
 
 ### Patch Changes
