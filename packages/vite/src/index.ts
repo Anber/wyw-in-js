@@ -163,7 +163,23 @@ export default function wywInJS({
 
       let { cssText, dependencies } = result;
 
-      if (!cssText) return;
+      // Heads up, there are three cases:
+      // 1. cssText is undefined, it means that file was not transformed
+      // 2. cssText is empty, it means that file was transformed, but it does not contain any styles
+      // 3. cssText is not empty, it means that file was transformed and it contains styles
+
+      if (typeof cssText === 'undefined') {
+        return;
+      }
+
+      if (cssText === '') {
+        /* eslint-disable-next-line consistent-return */
+        return {
+          code: result.code,
+          map: result.sourceMap,
+        };
+      }
+
       dependencies ??= [];
 
       const slug = slugify(cssText);
