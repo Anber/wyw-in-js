@@ -47,3 +47,4 @@ export type { VisitorKeys } from './utils/getVisitorKeys';
 export { peek } from './utils/peek';
 export { processTemplateExpression } from './utils/processTemplateExpression';
 export { TransformCacheCollection } from './cache';
+export { findIdentifiers } from './utils/findIdentifiers';
