@@ -1,5 +1,16 @@
 # @wyw-in-js/website
 
+## 0.3.0
+
+### Minor Changes
+
+- Bump versions
+
+### Patch Changes
+
+- Updated dependencies
+  - wyw-in-js@0.3.0
+
 ## 0.2.3
 
 ### Patch Changes

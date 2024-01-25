@@ -1,5 +1,17 @@
 # @wyw-in-js/transform
 
+## 0.3.0
+
+### Minor Changes
+
+- e2c567a: Export findIdentifiers in main index file
+
+### Patch Changes
+
+- Updated dependencies
+  - @wyw-in-js/shared@0.3.0
+  - @wyw-in-js/processor-utils@0.3.0
+
 ## 0.2.3
 
 ### Patch Changes
