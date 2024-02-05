@@ -96,6 +96,10 @@ describe('stylisGlobalPlugin', () => {
       expect(
         compileRule('.component & :global() { .global { color: red } }')
       ).toMatchInlineSnapshot(`".global .component {color:red;}"`);
+
+      expect(
+        compileRule(':global() { body { .someClassName { color: red; } } }')
+      ).toMatchInlineSnapshot(`"body .someClassName {color:red;}"`);
     });
 
     it('multiple selectors', () => {
