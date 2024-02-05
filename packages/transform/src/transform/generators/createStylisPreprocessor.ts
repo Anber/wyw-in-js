@@ -8,7 +8,7 @@ import {
   tokenize,
   RULESET,
 } from 'stylis';
-import type { Middleware } from 'stylis';
+import type { Middleware, Element } from 'stylis';
 
 import type { Options } from '../../types';
 
@@ -34,11 +34,36 @@ export function transformUrl(
   return relative.split(platformPath.sep).join(POSIX_SEP);
 }
 
+interface IGlobalSelectorModifiers {
+  includeBaseSelector: boolean;
+  includeSpaceDelimiter: boolean;
+}
+
+const ORIGINAL_VALUE_KEY = Symbol('originalValue');
+
+const getOriginalElementValue = (
+  element: (Element & { [ORIGINAL_VALUE_KEY]?: string }) | null
+) => {
+  return element ? element[ORIGINAL_VALUE_KEY] ?? element.value : '';
+};
+
 /**
  * Stylis plugin that mimics :global() selector behavior from Stylis v3.
  */
 export const stylisGlobalPlugin: Middleware = (element) => {
-  function getGlobalSelectorModifiers(value: string) {
+  function getGlobalSelectorModifiers(el: Element): IGlobalSelectorModifiers {
+    const { parent } = el;
+
+    const value = getOriginalElementValue(el);
+    const parentValue = getOriginalElementValue(parent);
+
+    if (
+      (parent?.children.length === 0 && parentValue.includes(':global(')) ||
+      (parent && !value.includes(':global('))
+    ) {
+      return getGlobalSelectorModifiers(parent);
+    }
+
     const match = value.match(/(&\f( )?)?:global\(/);
 
     if (match === null) {
@@ -73,26 +98,20 @@ export const stylisGlobalPlugin: Middleware = (element) => {
 
       Object.assign(element, {
         props: element.props.map((cssSelector) => {
+          // The value can be changed by other middlewares, but we need an original one with `&`
+          Object.assign(element, { [ORIGINAL_VALUE_KEY]: element.value });
+
           // Avoids calling tokenize() on every string
           if (!cssSelector.includes(':global(')) {
             return cssSelector;
           }
 
           if (element.children.length === 0) {
-            Object.assign(element, {
-              global: getGlobalSelectorModifiers(element.value),
-            });
             return cssSelector;
           }
 
           const { includeBaseSelector, includeSpaceDelimiter } =
-            (
-              element.parent as unknown as
-                | (Element & {
-                    global: ReturnType<typeof getGlobalSelectorModifiers>;
-                  })
-                | undefined
-            )?.global || getGlobalSelectorModifiers(element.value);
+            getGlobalSelectorModifiers(element);
 
           const tokens = tokenize(cssSelector);
           let selector = '';
