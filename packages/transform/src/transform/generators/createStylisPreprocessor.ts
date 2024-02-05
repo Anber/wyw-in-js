@@ -39,10 +39,12 @@ interface IGlobalSelectorModifiers {
   includeSpaceDelimiter: boolean;
 }
 
+const ORIGINAL_VALUE_KEY = Symbol('originalValue');
+
 const getOriginalElementValue = (
-  element: (Element & { originalValue?: string }) | null
+  element: (Element & { [ORIGINAL_VALUE_KEY]?: string }) | null
 ) => {
-  return element ? element.originalValue ?? element.value : '';
+  return element ? element[ORIGINAL_VALUE_KEY] ?? element.value : '';
 };
 
 /**
@@ -97,7 +99,7 @@ export const stylisGlobalPlugin: Middleware = (element) => {
       Object.assign(element, {
         props: element.props.map((cssSelector) => {
           // The value can be changed by other middlewares, but we need an original one with `&`
-          Object.assign(element, { originalValue: element.value });
+          Object.assign(element, { [ORIGINAL_VALUE_KEY]: element.value });
 
           // Avoids calling tokenize() on every string
           if (!cssSelector.includes(':global(')) {
