@@ -96,6 +96,14 @@ describe('stylisGlobalPlugin', () => {
       expect(
         compileRule('.component & :global() { .global { color: red } }')
       ).toMatchInlineSnapshot(`".global .component {color:red;}"`);
+    });
+
+    it('multi-level nested selector', () => {
+      expect(
+        compileRule(
+          '.component :global() { .global { .nested { color: red } } }'
+        )
+      ).toMatchInlineSnapshot(`".global .nested {color:red;}"`);
 
       expect(
         compileRule(':global() { body { .someClassName { color: red; } } }')

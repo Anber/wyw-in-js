@@ -39,9 +39,10 @@ interface IGlobalSelectorModifiers {
   includeSpaceDelimiter: boolean;
 }
 
-const originalElementValues = new WeakMap<Element, string>();
-const getOriginalElementValue = (element: Element | null) => {
-  return element ? originalElementValues.get(element) ?? element.value : '';
+const getOriginalElementValue = (
+  element: (Element & { originalValue?: string }) | null
+) => {
+  return element ? element.originalValue ?? element.value : '';
 };
 
 /**
@@ -96,7 +97,7 @@ export const stylisGlobalPlugin: Middleware = (element) => {
       Object.assign(element, {
         props: element.props.map((cssSelector) => {
           // The value can be changed by other middlewares, but we need an original one with `&`
-          originalElementValues.set(element, element.value);
+          Object.assign(element, { originalValue: element.value });
 
           // Avoids calling tokenize() on every string
           if (!cssSelector.includes(':global(')) {
