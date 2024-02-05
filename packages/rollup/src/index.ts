@@ -133,13 +133,5 @@ export default function wywInJS({
     getOwnPropertyDescriptor(target, prop) {
       return Object.getOwnPropertyDescriptor(target, prop as keyof Plugin);
     },
-
-    ownKeys() {
-      // Rollup doesn't ask config about its own keys, so it is Vite.
-
-      throw new Error(
-        'You are trying to use @wyw-in-js/rollup with Vite. Please use @wyw-in-js/vite instead.'
-      );
-    },
   });
 }
