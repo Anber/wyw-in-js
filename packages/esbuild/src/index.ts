@@ -19,6 +19,7 @@ import {
 
 type EsbuildPluginOptions = {
   esbuildOptions?: TransformOptions;
+  filter?: RegExp | string;
   preprocessor?: Preprocessor;
   sourceMap?: boolean;
 } & Partial<PluginOptions>;
@@ -29,6 +30,7 @@ export default function wywInJS({
   sourceMap,
   preprocessor,
   esbuildOptions,
+  filter = /\.(js|jsx|ts|tsx)$/,
   ...rest
 }: EsbuildPluginOptions = {}): Plugin {
   let options = esbuildOptions;
@@ -73,7 +75,10 @@ export default function wywInJS({
         };
       });
 
-      build.onLoad({ filter: /\.(js|jsx|ts|tsx)$/ }, async (args) => {
+      const filterRegexp =
+        typeof filter === 'string' ? new RegExp(filter) : filter;
+
+      build.onLoad({ filter: filterRegexp }, async (args) => {
         const rawCode = readFileSync(args.path, 'utf8');
         const { ext, name: filename } = parse(args.path);
         const loader = ext.replace(/^\./, '') as Loader;
