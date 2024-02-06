@@ -87,12 +87,12 @@ export class Entrypoint extends BaseEntrypoint {
       services.cache.invalidateIfChanged(name, this.loadedAndParsed.code);
     }
 
-    this.log.extend('source')(
-      'created %s (%o)\n%s',
-      name,
-      only,
-      this.originalCode || EMPTY_FILE
-    );
+    const code =
+      this.loadedAndParsed.evaluator === 'ignored'
+        ? '[IGNORED]'
+        : this.originalCode || EMPTY_FILE;
+
+    this.log.extend('source')('created %s (%o)\n%s', name, only, code);
   }
 
   public get ignored() {
