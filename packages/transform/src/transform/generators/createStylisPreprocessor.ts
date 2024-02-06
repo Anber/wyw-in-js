@@ -7,6 +7,8 @@ import {
   stringify,
   tokenize,
   RULESET,
+  KEYFRAMES,
+  DECLARATION,
 } from 'stylis';
 import type { Middleware, Element } from 'stylis';
 
@@ -169,25 +171,110 @@ export function createStylisUrlReplacePlugin(
       // eslint-disable-next-line no-param-reassign
       element.return = element.value.replace(
         /\b(url\((["']?))(\.[^)]+?)(\2\))/g,
-        (match, p1, p2, p3, p4) =>
+        (_match, p1, _p2, p3, p4) =>
           p1 + transformUrl(p3, outputFilename, filename) + p4
       );
     }
   };
 }
 
-export function createStylisPreprocessor(options: Options) {
+export const keyframeSuffixerPlugin: Middleware = (element: Element) => {
+  const elementToSuffix = (el: Element | null): string =>
+    el?.value.replaceAll(/[^a-zA-Z0-9_-]/g, '') ?? '';
+
+  if (
+    element.type === KEYFRAMES &&
+    element.parent &&
+    Array.isArray(element.props)
+  ) {
+    const suffix = elementToSuffix(element.parent);
+
+    const replaceFn = (
+      _match: string,
+      prefix: string,
+      globalMatch: string,
+      scopedMatch: string
+    ): string => {
+      if (globalMatch) {
+        return `${prefix}${globalMatch}`;
+      }
+
+      return `${prefix}${scopedMatch}-${suffix}`;
+    };
+    Object.assign(element, {
+      props: element.props.map((prop) => {
+        return prop.replace(/^(\s*):global\(([\w_-]+)\)|([\w_-]+)$/, replaceFn);
+      }),
+      value: element.value.replace(
+        /^(@(?:-(?:webkit|moz|ms|o)-)?keyframes\s+)(?::global\(([\w_-]+)\)|([\w_-]+))$/,
+        replaceFn
+      ),
+    });
+
+    return;
+  }
+
+  if (
+    element.type === DECLARATION &&
+    typeof element.props === 'string' &&
+    typeof element.children === 'string'
+  ) {
+    const { children, props } = element;
+    const propRegExp = /^(?:-(?:webkit|moz|ms|o)-)?animation(?:-name)?$/i;
+    if (!propRegExp.test(props)) {
+      return;
+    }
+
+    if (children.startsWith(':global(')) {
+      const globalCall = children.substring(0, children.indexOf(')') + 1);
+      const replacement = `${globalCall.substring(8, globalCall.length - 1)} `;
+      Object.assign(element, {
+        children: children.replace(globalCall, replacement),
+        return: element.return.replace(globalCall, replacement),
+        value: element.value.replace(globalCall, replacement),
+      });
+
+      return;
+    }
+
+    const suffix = elementToSuffix(element.root);
+    Object.assign(element, {
+      children: children.replace(/^([\w_-]+)\b/, `$1-${suffix}`),
+      return: element.return.replace(
+        /^((?:-(?:webkit|moz|ms|o)-)?animation(?:-name)?:\s*[\w_-]+)\b/,
+        `$1-${suffix}`
+      ),
+      value: element.value.replace(
+        /^((?:-(?:webkit|moz|ms|o)-)?animation(?:-name)?:\s*[\w_-]+)\b/,
+        `$1-${suffix}`
+      ),
+    });
+  }
+};
+
+const isMiddleware = (obj: Middleware | null): obj is Middleware =>
+  obj !== null;
+
+export function createStylisPreprocessor(
+  options: Options & { prefixer?: boolean }
+) {
   function stylisPreprocess(selector: string, text: string): string {
     const compiled = compile(`${selector} {${text}}\n`);
 
     return serialize(
       compiled,
-      middleware([
-        createStylisUrlReplacePlugin(options.filename, options.outputFilename),
-        stylisGlobalPlugin,
-        prefixer,
-        stringify,
-      ])
+      middleware(
+        [
+          createStylisUrlReplacePlugin(
+            options.filename,
+            options.outputFilename
+          ),
+          stylisGlobalPlugin,
+          options.prefixer === false ? null : prefixer,
+          keyframeSuffixerPlugin,
+          stringify,
+        ].filter(isMiddleware)
+      )
     );
   }
 

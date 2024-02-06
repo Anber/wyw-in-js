@@ -2,9 +2,51 @@ import dedent from 'dedent';
 import { compile, middleware, serialize, stringify } from 'stylis';
 
 import {
+  createStylisPreprocessor,
   createStylisUrlReplacePlugin,
   stylisGlobalPlugin,
 } from '../createStylisPreprocessor';
+
+describe('createStylisPreprocessor', () => {
+  const preprocessor = createStylisPreprocessor({
+    filename: '/path/to/src/file.js',
+    outputFilename: '/path/to/assets/file.css',
+  });
+
+  const compileRule = (rule: string) => preprocessor('.foo', rule);
+
+  it('should understand namespace ref', () => {
+    expect(compileRule('&:not(.bar) { color: red }')).toMatchInlineSnapshot(
+      `".foo:not(.bar){color:red;}"`
+    );
+
+    expect(compileRule(':not(.bar)>& { color: red }')).toMatchInlineSnapshot(
+      `":not(.bar)>.foo{color:red;}"`
+    );
+  });
+
+  describe('keyframes', () => {
+    it('should add suffix', () => {
+      expect(
+        compileRule(
+          '& { animation: bar 0s forwards; } @keyframes bar { from { color: red } }'
+        )
+      ).toMatchInlineSnapshot(
+        `".foo{animation:bar-foo 0s forwards;}@-webkit-keyframes bar-foo{from{color:red;}}@keyframes bar-foo{from{color:red;}}"`
+      );
+    });
+
+    it('should ignore global', () => {
+      expect(
+        compileRule(
+          '@keyframes :global(bar) { from { color: red } } & { animation: :global(bar) 0s forwards; }'
+        )
+      ).toMatchInlineSnapshot(
+        `"@-webkit-keyframes bar{from{color:red;}}@keyframes bar{from{color:red;}}.foo{animation:bar 0s forwards;}"`
+      );
+    });
+  });
+});
 
 describe('stylisUrlReplacePlugin', () => {
   const filename = '/path/to/src/file.js';
