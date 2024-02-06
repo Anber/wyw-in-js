@@ -16,6 +16,7 @@ const prod = process.env.NODE_ENV === 'production';
 
 esbuild
   .build({
+    filter: /\.(js|jsx|ts|tsx)$/,
     entryPoints: ['src/index.ts'],
     outdir: 'dist',
     bundle: true,
