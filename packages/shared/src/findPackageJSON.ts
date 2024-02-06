@@ -27,15 +27,26 @@ export function findPackageJSON(
 
     return cache.get(pkgPath);
   } catch (er: unknown) {
-    if (
-      typeof er === 'object' &&
-      er !== null &&
-      (er as { code?: unknown }).code === 'MODULE_NOT_FOUND'
-    ) {
+    const code =
+      typeof er === 'object' && er !== null && 'code' in er
+        ? er.code
+        : undefined;
+
+    if (code === 'MODULE_NOT_FOUND') {
       if (skipPathsOptions && filename) {
         return findPackageJSON(pkgName, null);
       }
 
+      return undefined;
+    }
+
+    if (code === 'ERR_PACKAGE_PATH_NOT_EXPORTED') {
+      // See https://github.com/Anber/wyw-in-js/issues/43
+      // `require` can't resolve ESM-only packages. We can use the `resolve`
+      // package here, but it does not solve all cases because `pkgName`
+      // can be an alias and should be resolved by a bundler. However, we can't use
+      // `resolve` from a bundler because it is async. The good news is that in that
+      // specific case, we can just ignore those packages. For now.
       return undefined;
     }
 
