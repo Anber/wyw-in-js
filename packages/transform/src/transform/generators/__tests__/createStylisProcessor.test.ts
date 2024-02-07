@@ -26,7 +26,15 @@ describe('createStylisPreprocessor', () => {
   });
 
   describe('keyframes', () => {
-    it('should add suffix', () => {
+    it('should add suffix to @keyframes', () => {
+      expect(
+        compileRule('@keyframes bar { from { color: red } }')
+      ).toMatchInlineSnapshot(
+        `"@-webkit-keyframes bar-foo{from{color:red;}}@keyframes bar-foo{from{color:red;}}"`
+      );
+    });
+
+    it('should add suffix to animation', () => {
       expect(
         compileRule(
           '& { animation: bar 0s forwards; } @keyframes bar { from { color: red } }'
@@ -36,14 +44,42 @@ describe('createStylisPreprocessor', () => {
       );
     });
 
-    it('should ignore global', () => {
+    it('should add suffix to animation-name', () => {
       expect(
         compileRule(
-          '@keyframes :global(bar) { from { color: red } } & { animation: :global(bar) 0s forwards; }'
+          '& { animation-name: bar; } @keyframes bar { from { color: red } }'
         )
       ).toMatchInlineSnapshot(
-        `"@-webkit-keyframes bar{from{color:red;}}@keyframes bar{from{color:red;}}.foo{animation:bar 0s forwards;}"`
+        `".foo{animation-name:bar-foo;}@-webkit-keyframes bar-foo{from{color:red;}}@keyframes bar-foo{from{color:red;}}"`
       );
+    });
+
+    it('should ignore unknown keyframes', () => {
+      expect(compileRule('& { animation-name: bar; }')).toMatchInlineSnapshot(
+        `".foo{animation-name:bar;}"`
+      );
+    });
+
+    describe('should unwrap global', () => {
+      it('in @keyframes', () => {
+        expect(
+          compileRule('@keyframes :global(bar) { from { color: red } }')
+        ).toMatchInlineSnapshot(
+          `"@-webkit-keyframes bar{from{color:red;}}@keyframes bar{from{color:red;}}"`
+        );
+      });
+
+      it('in animation', () => {
+        expect(
+          compileRule('& { animation: :global(bar) 0s forwards; }')
+        ).toMatchInlineSnapshot(`".foo{animation:bar 0s forwards;}"`);
+      });
+
+      it('in animation-name', () => {
+        expect(
+          compileRule('& { animation-name: :global(bar); }')
+        ).toMatchInlineSnapshot(`".foo{animation-name:bar;}"`);
+      });
     });
   });
 });
