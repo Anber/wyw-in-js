@@ -1,5 +1,11 @@
 # @wyw-in-js/babel-config
 
+## 0.4.0
+
+### Minor Changes
+
+- Bump versions
+
 ## 0.3.0
 
 ### Minor Changes

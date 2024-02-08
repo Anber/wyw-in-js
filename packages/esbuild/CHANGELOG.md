@@ -1,5 +1,23 @@
 # @wyw-in-js/esbuild
 
+## 0.4.0
+
+### Minor Changes
+
+- Bump versions
+
+### Patch Changes
+
+- a31fca3: Use mjs extensions in esm build of esbuild.
+- cef295c: The new `filter` options for the esbuild plugin that allows to process only specific files, e.g. `.styles.ts`.
+- Updated dependencies [edf8c81]
+- Updated dependencies [c1a83e4]
+- Updated dependencies
+- Updated dependencies [8eca477]
+- Updated dependencies [0af626b]
+  - @wyw-in-js/transform@0.4.0
+  - @wyw-in-js/shared@0.4.0
+
 ## 0.3.0
 
 ### Minor Changes

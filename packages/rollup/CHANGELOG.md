@@ -1,5 +1,22 @@
 # @wyw-in-js/rollup
 
+## 0.4.0
+
+### Minor Changes
+
+- Bump versions
+
+### Patch Changes
+
+- c4cc522: Remove outdated "is it Vite?" check. Fixes #38.
+- Updated dependencies [edf8c81]
+- Updated dependencies [c1a83e4]
+- Updated dependencies
+- Updated dependencies [8eca477]
+- Updated dependencies [0af626b]
+  - @wyw-in-js/transform@0.4.0
+  - @wyw-in-js/shared@0.4.0
+
 ## 0.3.0
 
 ### Minor Changes

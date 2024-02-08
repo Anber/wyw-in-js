@@ -1,5 +1,15 @@
 # wyw-in-js
 
+## 0.4.0
+
+### Minor Changes
+
+- Bump versions
+
+### Patch Changes
+
+- 0af626b: Removed `<reference types="node" />` from `@wyw-in-js/shared`. Fixes #33.
+
 ## 0.3.0
 
 ### Minor Changes

@@ -1,5 +1,16 @@
 # @wyw-in-js/object-syntax
 
+## 0.4.0
+
+### Minor Changes
+
+- Bump versions
+
+### Patch Changes
+
+- Updated dependencies
+  - @wyw-in-js/processor-utils@0.4.0
+
 ## 0.3.0
 
 ### Minor Changes
