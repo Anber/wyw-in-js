@@ -1,5 +1,18 @@
 # @wyw-in-js/website
 
+## 0.4.0
+
+### Minor Changes
+
+- Bump versions
+
+### Patch Changes
+
+- cef295c: The new `filter` options for the esbuild plugin that allows to process only specific files, e.g. `.styles.ts`.
+- Updated dependencies
+- Updated dependencies [0af626b]
+  - wyw-in-js@0.4.0
+
 ## 0.3.0
 
 ### Minor Changes

@@ -1,5 +1,20 @@
 # @wyw-in-js/transform
 
+## 0.4.0
+
+### Minor Changes
+
+- 8eca477: Keyframes are now scoped by default. This behaviour can be changed by `:global()`: `@keyframes :global(bar) {…}`, `animation-name: :global(bar);`.
+
+### Patch Changes
+
+- edf8c81: Fix support of :global() selector in nested rules (fixes #42)
+- Updated dependencies [c1a83e4]
+- Updated dependencies
+- Updated dependencies [0af626b]
+  - @wyw-in-js/shared@0.4.0
+  - @wyw-in-js/processor-utils@0.4.0
+
 ## 0.3.0
 
 ### Minor Changes
