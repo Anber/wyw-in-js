@@ -2,9 +2,87 @@ import dedent from 'dedent';
 import { compile, middleware, serialize, stringify } from 'stylis';
 
 import {
+  createStylisPreprocessor,
   createStylisUrlReplacePlugin,
   stylisGlobalPlugin,
 } from '../createStylisPreprocessor';
+
+describe('createStylisPreprocessor', () => {
+  const preprocessor = createStylisPreprocessor({
+    filename: '/path/to/src/file.js',
+    outputFilename: '/path/to/assets/file.css',
+  });
+
+  const compileRule = (rule: string) => preprocessor('.foo', rule);
+
+  it('should understand namespace ref', () => {
+    expect(compileRule('&:not(.bar) { color: red }')).toMatchInlineSnapshot(
+      `".foo:not(.bar){color:red;}"`
+    );
+
+    expect(compileRule(':not(.bar)>& { color: red }')).toMatchInlineSnapshot(
+      `":not(.bar)>.foo{color:red;}"`
+    );
+  });
+
+  describe('keyframes', () => {
+    it('should add suffix to @keyframes', () => {
+      expect(
+        compileRule('@keyframes bar { from { color: red } }')
+      ).toMatchInlineSnapshot(
+        `"@-webkit-keyframes bar-foo{from{color:red;}}@keyframes bar-foo{from{color:red;}}"`
+      );
+    });
+
+    it('should add suffix to animation', () => {
+      expect(
+        compileRule(
+          '& { animation: bar 0s forwards; } @keyframes bar { from { color: red } }'
+        )
+      ).toMatchInlineSnapshot(
+        `".foo{animation:bar-foo 0s forwards;}@-webkit-keyframes bar-foo{from{color:red;}}@keyframes bar-foo{from{color:red;}}"`
+      );
+    });
+
+    it('should add suffix to animation-name', () => {
+      expect(
+        compileRule(
+          '& { animation-name: bar; } @keyframes bar { from { color: red } }'
+        )
+      ).toMatchInlineSnapshot(
+        `".foo{animation-name:bar-foo;}@-webkit-keyframes bar-foo{from{color:red;}}@keyframes bar-foo{from{color:red;}}"`
+      );
+    });
+
+    it('should ignore unknown keyframes', () => {
+      expect(compileRule('& { animation-name: bar; }')).toMatchInlineSnapshot(
+        `".foo{animation-name:bar;}"`
+      );
+    });
+
+    describe('should unwrap global', () => {
+      it('in @keyframes', () => {
+        expect(
+          compileRule('@keyframes :global(bar) { from { color: red } }')
+        ).toMatchInlineSnapshot(
+          `"@-webkit-keyframes bar{from{color:red;}}@keyframes bar{from{color:red;}}"`
+        );
+      });
+
+      it('in animation', () => {
+        expect(
+          compileRule('& { animation: :global(bar) 0s forwards; }')
+        ).toMatchInlineSnapshot(`".foo{animation:bar 0s forwards;}"`);
+      });
+
+      it('in animation-name', () => {
+        expect(
+          compileRule('& { animation-name: :global(bar); }')
+        ).toMatchInlineSnapshot(`".foo{animation-name:bar;}"`);
+      });
+    });
+  });
+});
 
 describe('stylisUrlReplacePlugin', () => {
   const filename = '/path/to/src/file.js';
