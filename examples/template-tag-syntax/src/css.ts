@@ -1,6 +1,6 @@
-import type { WYWEvalMeta } from '@wyw-in-js/shared';
-
 import type { CSSProperties } from './CSSProperties';
+
+type WYWEvalMeta = { __wyw_meta: unknown }; // simplified version of WYWEvalMeta from @wyw-in-js/shared
 
 type CSS = (
   strings: TemplateStringsArray,

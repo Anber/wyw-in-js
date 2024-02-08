@@ -269,9 +269,6 @@ importers:
       '@wyw-in-js/jest-preset':
         specifier: workspace:*
         version: link:../../configs/jest
-      '@wyw-in-js/shared':
-        specifier: workspace:*
-        version: link:../../packages/shared
       '@wyw-in-js/transform':
         specifier: workspace:*
         version: link:../../packages/transform
