@@ -1,10 +1,11 @@
-import type { Context as VmContext } from 'vm';
-
 import type { TransformOptions } from '@babel/core';
 import type { File } from '@babel/types';
 
 import type { IVariableContext } from '../IVariableContext';
 import type { Core } from '../babel';
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type VmContext = Record<string, any>; // It's Context from `vm`
 
 export type ClassNameSlugVars = {
   dir: string;
