@@ -10,14 +10,20 @@ import { basename, dirname, isAbsolute, join, parse, posix } from 'path';
 import type { Plugin, TransformOptions, Loader } from 'esbuild';
 import { transformSync } from 'esbuild';
 
-import type { PluginOptions, Preprocessor } from '@wyw-in-js/transform';
+import type {
+  PluginOptions,
+  Preprocessor,
+  IFileReporterOptions,
+} from '@wyw-in-js/transform';
 import {
   slugify,
   transform,
   TransformCacheCollection,
+  createFileReporter,
 } from '@wyw-in-js/transform';
 
 type EsbuildPluginOptions = {
+  debug?: IFileReporterOptions | false | null | undefined;
   esbuildOptions?: TransformOptions;
   filter?: RegExp | string;
   preprocessor?: Preprocessor;
@@ -27,6 +33,7 @@ type EsbuildPluginOptions = {
 const nodeModulesRegex = /^(?:.*[\\/])?node_modules(?:[\\/].*)?$/;
 
 export default function wywInJS({
+  debug,
   sourceMap,
   preprocessor,
   esbuildOptions,
@@ -39,6 +46,8 @@ export default function wywInJS({
     name: 'wyw-in-js',
     setup(build) {
       const cssLookup = new Map<string, string>();
+
+      const { emitter, onDone } = createFileReporter(debug ?? false);
 
       const asyncResolve = async (
         token: string,
@@ -59,6 +68,10 @@ export default function wywInJS({
 
         return result.path.replace(/\\/g, posix.sep);
       };
+
+      build.onEnd(() => {
+        onDone(process.cwd());
+      });
 
       build.onResolve({ filter: /\.wyw\.css$/ }, (args) => {
         return {
@@ -121,6 +134,7 @@ export default function wywInJS({
             pluginOptions: rest,
           },
           cache,
+          eventEmitter: emitter,
         };
 
         const result = await transform(transformServices, code, asyncResolve);
