@@ -89,6 +89,7 @@ function buildConfigs(
 
   const commonOptions = {
     ast: true,
+    compact: true,
     filename: name,
     inputSourceMap: options.inputSourceMap,
     root: options.root,

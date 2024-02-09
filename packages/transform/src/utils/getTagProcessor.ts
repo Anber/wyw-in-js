@@ -315,8 +315,7 @@ function getBuilderForIdentifier(
     });
   };
 
-  const astService = {
-    ...t,
+  const importHelpers = {
     addDefaultImport: (importedSource: string, nameHint?: string) =>
       addDefault(path, importedSource, { nameHint }),
     addNamedImport: (
@@ -325,6 +324,18 @@ function getBuilderForIdentifier(
       nameHint: string = name
     ) => addNamed(path, name, importedSource, { nameHint }),
   };
+
+  type AstService = typeof t & typeof importHelpers;
+
+  const astService = new Proxy<AstService>(t as AstService, {
+    get(target, prop, receiver) {
+      if (prop in importHelpers) {
+        return importHelpers[prop as keyof typeof importHelpers];
+      }
+
+      return Reflect.get(target, prop, receiver);
+    },
+  });
 
   return (...args: BuilderArgs) =>
     new Processor(
