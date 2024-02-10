@@ -34,6 +34,12 @@ const argv = yargs
     requiresArg: true,
     coerce: path.resolve,
   })
+  .option('debug', {
+    alias: 'd',
+    type: 'string',
+    description: 'Path for debug output',
+    coerce: path.resolve,
+  })
   .option('out-dir', {
     alias: 'o',
     type: 'string',
@@ -96,6 +102,7 @@ const argv = yargs
 
 type Options = {
   configFile?: string;
+  debug?: string;
   ignore?: string;
   insertCssRequires?: string;
   modules: (typeof modulesOptions)[number];
@@ -124,7 +131,9 @@ function resolveOutputFilename(
 }
 
 async function processFiles(files: (number | string)[], options: Options) {
-  const { emitter, onDone } = createFileReporter();
+  const { emitter, onDone } = createFileReporter(
+    options.debug ? { dir: options.debug, print: true } : false
+  );
 
   const resolvedFiles = files.reduce(
     (acc, pattern) => [
@@ -264,6 +273,7 @@ async function processFiles(files: (number | string)[], options: Options) {
 
 processFiles(argv._, {
   configFile: argv.config,
+  debug: argv.debug,
   ignore: argv.ignore,
   insertCssRequires: argv['insert-css-requires'],
   modules: argv.modules,
