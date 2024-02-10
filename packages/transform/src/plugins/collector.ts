@@ -5,16 +5,16 @@
 
 import type { BabelFile, PluginObj } from '@babel/core';
 import type { NodePath } from '@babel/traverse';
-import type { Identifier } from '@babel/types';
 
 import type { ValueCache } from '@wyw-in-js/processor-utils';
 import { logger } from '@wyw-in-js/shared';
 import type { StrictOptions } from '@wyw-in-js/shared';
 
+import { EventEmitter } from '../utils/EventEmitter';
+import { applyProcessors } from '../utils/getTagProcessor';
 import type { Core } from '../babel';
 import type { IPluginState } from '../types';
 import type { WYWTransformMetadata } from '../utils/TransformMetadata';
-import { processTemplateExpression } from '../utils/processTemplateExpression';
 import { removeWithRelated } from '../utils/scopeHelpers';
 import { invalidateTraversalCache } from '../utils/traversalCache';
 
@@ -25,21 +25,14 @@ export function collector(
   options: Pick<
     StrictOptions,
     'classNameSlug' | 'displayName' | 'evaluate' | 'tagResolver'
-  >,
+  > & { eventEmitter?: EventEmitter },
   values: ValueCache
 ) {
+  const eventEmitter = options.eventEmitter ?? EventEmitter.dummy;
   const processors: WYWTransformMetadata['processors'] = [];
 
-  const identifiers: NodePath<Identifier>[] = [];
-  file.path.traverse({
-    Identifier: (p) => {
-      identifiers.push(p);
-    },
-  });
-
-  // TODO: process transformed literals
-  identifiers.forEach((p) => {
-    processTemplateExpression(p, file.opts, options, (processor) => {
+  eventEmitter.perf('transform:collector:processTemplate', () => {
+    applyProcessors(file.path, file.opts, options, (processor) => {
       processor.build(values);
       processor.doRuntimeReplacement();
       processors.push(processor);
@@ -64,7 +57,7 @@ export function collector(
 
 export default function collectorPlugin(
   babel: Core,
-  options: StrictOptions & { values?: ValueCache }
+  options: StrictOptions & { eventEmitter?: EventEmitter; values?: ValueCache }
 ): PluginObj<IPluginState> {
   const values = options.values ?? new Map<string, unknown>();
   const debug = logger.extend('collector');

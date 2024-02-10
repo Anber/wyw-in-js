@@ -41,10 +41,9 @@ export type {
 } from './utils/EventEmitter';
 export { isNode } from './utils/isNode';
 export { getFileIdx } from './utils/getFileIdx';
-export { getTagProcessor } from './utils/getTagProcessor';
+export { applyProcessors } from './utils/getTagProcessor';
 export { getVisitorKeys } from './utils/getVisitorKeys';
 export type { VisitorKeys } from './utils/getVisitorKeys';
 export { peek } from './utils/peek';
-export { processTemplateExpression } from './utils/processTemplateExpression';
 export { TransformCacheCollection } from './cache';
 export { findIdentifiers } from './utils/findIdentifiers';

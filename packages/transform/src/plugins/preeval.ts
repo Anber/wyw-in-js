@@ -7,25 +7,26 @@ import type { BabelFile, PluginObj } from '@babel/core';
 import type { StrictOptions } from '@wyw-in-js/shared';
 import { isFeatureEnabled, logger } from '@wyw-in-js/shared';
 
+import { applyProcessors } from '../utils/getTagProcessor';
 import type { Core } from '../babel';
 import type { IPluginState } from '../types';
 import { EventEmitter } from '../utils/EventEmitter';
 import { addIdentifierToWywPreval } from '../utils/addIdentifierToWywPreval';
 import { getFileIdx } from '../utils/getFileIdx';
-import { processTemplateExpression } from '../utils/processTemplateExpression';
 import { removeDangerousCode } from '../utils/removeDangerousCode';
 import { invalidateTraversalCache } from '../utils/traversalCache';
 
 export type PreevalOptions = Pick<
   StrictOptions,
-  'classNameSlug' | 'displayName' | 'evaluate' | 'features'
-> & { eventEmitter: EventEmitter };
+  'classNameSlug' | 'displayName' | 'evaluate' | 'features' | 'tagResolver'
+> & { eventEmitter?: EventEmitter };
 
 export function preeval(
   babel: Core,
-  { eventEmitter = EventEmitter.dummy, ...options }: PreevalOptions
+  options: PreevalOptions
 ): PluginObj<IPluginState & { onFinish: () => void }> {
   const { types: t } = babel;
+  const eventEmitter = options.eventEmitter ?? EventEmitter.dummy;
   return {
     name: '@wyw-in-js/transform/preeval',
     pre(file: BabelFile) {
@@ -38,19 +39,15 @@ export function preeval(
       this.processors = [];
 
       eventEmitter.perf('transform:preeval:processTemplate', () => {
-        file.path.traverse({
-          Identifier: (p) => {
-            processTemplateExpression(p, file.opts, options, (processor) => {
-              processor.dependencies.forEach((dependency) => {
-                if (dependency.ex.type === 'Identifier') {
-                  addIdentifierToWywPreval(rootScope, dependency.ex.name);
-                }
-              });
+        applyProcessors(file.path, file.opts, options, (processor) => {
+          processor.dependencies.forEach((dependency) => {
+            if (dependency.ex.type === 'Identifier') {
+              addIdentifierToWywPreval(rootScope, dependency.ex.name);
+            }
+          });
 
-              processor.doEvaltimeReplacement();
-              this.processors.push(processor);
-            });
-          },
+          processor.doEvaltimeReplacement();
+          this.processors.push(processor);
         });
       });
 
