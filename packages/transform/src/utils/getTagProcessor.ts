@@ -6,10 +6,10 @@ import { addDefault, addNamed } from '@babel/helper-module-imports';
 import type { NodePath } from '@babel/traverse';
 import type {
   Expression,
-  SourceLocation,
   Identifier,
   MemberExpression,
   Program,
+  SourceLocation,
 } from '@babel/types';
 
 import { BaseProcessor } from '@wyw-in-js/processor-utils';
@@ -49,7 +49,10 @@ type BuilderArgs = ConstructorParameters<typeof BaseProcessor> extends [
 
 type Builder = (...args: BuilderArgs) => BaseProcessor;
 
-type ProcessorClass = new (
+type DefinedProcessor = [ProcessorClass, TagSource];
+type DefinedProcessors = Map<string, DefinedProcessor>;
+
+export type ProcessorClass = new (
   ...args: ConstructorParameters<typeof BaseProcessor>
 ) => BaseProcessor;
 
@@ -141,95 +144,31 @@ function getProcessorFromFile(processorPath: string): ProcessorClass | null {
   return Processor;
 }
 
-function getProcessorForIdentifier(
-  path: NodePath<Identifier>,
-  imports: IImport[],
+export function getProcessorForImport(
+  { imported, source }: IImport,
   filename: string | null | undefined,
-  options: Pick<
-    StrictOptions,
-    'classNameSlug' | 'displayName' | 'evaluate' | 'tagResolver'
-  >
-):
-  | [ProcessorClass, TagSource, NodePath<Identifier | MemberExpression>]
-  | [null, null, null] {
-  const pathBinding = path.scope.getBinding(path.node.name);
-  if (!pathBinding) {
-    // It's not a binding, so it's not a tag
-    return [null, null, null];
-  }
-
+  options: Pick<StrictOptions, 'tagResolver'>
+): [ProcessorClass | null, TagSource] {
   const tagResolver = options.tagResolver ?? (() => null);
 
-  // FIXME: can be simplified
-  const relatedImports = imports
-    .map(
-      (i): [IImport, NodePath<Identifier | MemberExpression> | null] | null => {
-        const { local } = i;
-
-        if (local === path) {
-          return [i, null];
-        }
-
-        if (!local.isIdentifier()) {
-          if (path.isDescendant(local)) {
-            return [i, local];
-          }
-
-          return null;
-        }
-
-        const binding = local.scope.getBinding(local.node.name);
-        if (pathBinding === binding) {
-          return [i, path];
-        }
-
-        return null;
-      }
-    )
-    .filter(isNotNull)
-    .filter((i) => i[1] === null || i[1].isExpression());
-
-  if (relatedImports.length === 0) {
-    return [null, null, null];
-  }
-
-  const [Processor = null, tagSource = null, tagPath = null] =
-    relatedImports
-      .map(
-        ([{ imported, source }, p]): [
-          ProcessorClass | null,
-          TagSource,
-          NodePath<Identifier | MemberExpression> | null,
-        ] => {
-          const customFile = tagResolver(source, imported);
-          const processor = customFile
-            ? getProcessorFromFile(customFile)
-            : getProcessorFromPackage(source, imported, filename);
-          return [processor, { imported, source }, p];
-        }
-      )
-      .find(([proc]) => proc) ?? [];
-
-  return Processor === null || tagSource === null || tagPath === null
-    ? [null, null, null]
-    : [Processor, tagSource, tagPath];
+  const customFile = tagResolver(source, imported);
+  const processor = customFile
+    ? getProcessorFromFile(customFile)
+    : getProcessorFromPackage(source, imported, filename);
+  return [processor, { imported, source }];
 }
 
 function getBuilderForIdentifier(
+  definedProcessor: DefinedProcessor,
   path: NodePath<Identifier>,
   imports: IImport[],
-  filename: string | null | undefined,
-  options: Pick<
-    StrictOptions,
-    'classNameSlug' | 'displayName' | 'evaluate' | 'tagResolver'
-  >
+  options: Pick<StrictOptions, 'evaluate'>
 ): Builder | null {
-  const [Processor, tagSource, tagPath] = getProcessorForIdentifier(
-    path,
-    imports,
-    filename,
-    options
-  );
+  const [Processor, tagSource] = definedProcessor;
+  let tagPath: NodePath<Identifier | MemberExpression> = path;
+  if (tagPath.parentPath?.isMemberExpression({ property: tagPath.node })) {
+    tagPath = tagPath.parentPath;
+  }
 
   if (!Processor || !tagSource || !tagPath) {
     return null;
@@ -448,7 +387,60 @@ const getNextIndex = (state: IFileContext) => {
   return counter;
 };
 
-export function getTagProcessor(
+export function getDefinedProcessors(
+  imports: IImport[],
+  path: NodePath<Program>,
+  filename: string | null | undefined,
+  options: Pick<StrictOptions, 'tagResolver'>
+): DefinedProcessors {
+  const cache = getTraversalCache<DefinedProcessors, NodePath<Program>>(
+    path,
+    'getDefinedProcessors'
+  );
+
+  if (!cache.has(path)) {
+    const defined: DefinedProcessors = new Map();
+
+    imports.forEach((i) => {
+      const [processor, tagSource] = getProcessorForImport(
+        i,
+        filename,
+        options
+      );
+      const { local } = i;
+      if (!processor) {
+        return;
+      }
+
+      let name: string | null = null;
+      if (local.isIdentifier()) {
+        name = local.node.name;
+      }
+
+      if (name === null && local.isMemberExpression()) {
+        const property = local.get('property');
+        const object = local.get('object');
+        if (property.isIdentifier() && object.isIdentifier()) {
+          name = `${object.node.name}.${property.node.name}`;
+        }
+      }
+
+      if (name === null) {
+        return;
+      }
+
+      defined.set(name, [processor, tagSource]);
+    });
+
+    cache.set(path, defined);
+  }
+
+  return cache.get(path)!;
+}
+
+function createProcessorInstance(
+  definedProcessor: [ProcessorClass, TagSource],
+  imports: IImport[],
   path: NodePath<Identifier>,
   fileContext: IFileContext,
   options: Pick<
@@ -458,17 +450,15 @@ export function getTagProcessor(
 ): BaseProcessor | null {
   const cache = getTraversalCache<BaseProcessor | null, Identifier>(
     path,
-    'getTagProcessor'
+    'createProcessorInstance'
   );
 
   if (!cache.has(path.node)) {
-    const root = path.scope.getProgramParent().path as NodePath<Program>;
-    const { imports } = collectExportsAndImports(root);
     try {
       const builder = getBuilderForIdentifier(
+        definedProcessor,
         path,
-        imports.filter(explicitImport),
-        fileContext.filename,
+        imports,
         options
       );
       if (builder) {
@@ -506,4 +496,92 @@ export function getTagProcessor(
   }
 
   return cache.get(path.node) ?? null;
+}
+
+export function applyProcessors(
+  path: NodePath<Program>,
+  fileContext: IFileContext,
+  options: Pick<
+    StrictOptions,
+    'classNameSlug' | 'displayName' | 'evaluate' | 'tagResolver'
+  >,
+  callback: (processor: BaseProcessor) => void
+) {
+  const imports = collectExportsAndImports(path).imports.filter(explicitImport);
+
+  const definedProcessors = getDefinedProcessors(
+    imports,
+    path,
+    fileContext.filename,
+    options
+  );
+
+  const usages: {
+    identifier: NodePath<Identifier>;
+    processor: DefinedProcessor;
+  }[] = [];
+
+  definedProcessors.forEach((processor, idName) => {
+    if (idName.includes('.')) {
+      // It's a member expression
+      const [object, property] = idName.split('.');
+      const objBinding = path.scope.getBinding(object);
+      if (!objBinding) {
+        return;
+      }
+
+      objBinding.referencePaths.forEach((p) => {
+        const parent = p.parentPath;
+        if (!parent?.isMemberExpression()) {
+          return;
+        }
+
+        const identifier = parent.get('property');
+        if (identifier.isIdentifier({ name: property })) {
+          usages.push({
+            identifier,
+            processor,
+          });
+        }
+      });
+
+      return;
+    }
+
+    path.scope.getBinding(idName)?.referencePaths.forEach((identifier) => {
+      if (identifier.isIdentifier()) {
+        usages.push({
+          identifier,
+          processor,
+        });
+      }
+    });
+  });
+
+  // The same order, the same slugs
+  usages.sort(
+    (a, b) => (a.identifier.node.start ?? 0) - (b.identifier.node.start ?? 0)
+  );
+
+  usages.forEach((usage) => {
+    const definedProcessor = usage.processor;
+
+    if (!definedProcessor) {
+      return;
+    }
+
+    const instance = createProcessorInstance(
+      definedProcessor,
+      imports,
+      usage.identifier,
+      fileContext,
+      options
+    );
+
+    if (instance === null) {
+      return;
+    }
+
+    callback(instance);
+  });
 }

@@ -5,7 +5,7 @@ import traverse from '@babel/traverse';
 import dedent from 'dedent';
 
 import type { BaseProcessor } from '@wyw-in-js/processor-utils';
-import { getTagProcessor } from '@wyw-in-js/transform';
+import { applyProcessors } from '@wyw-in-js/transform';
 
 interface IRunOptions {
   ts?: boolean;
@@ -22,15 +22,18 @@ const run = (code: string, options: IRunOptions = {}): BaseProcessor | null => {
   const rootNode = parseSync(code, opts)!;
   let result: BaseProcessor | null = null;
   traverse(rootNode, {
-    Identifier(path) {
-      const processor = getTagProcessor(path, opts, {
-        displayName: true,
-        evaluate: true,
-      });
-
-      if (processor) {
-        result = processor;
-      }
+    Program(path) {
+      applyProcessors(
+        path,
+        opts,
+        {
+          displayName: true,
+          evaluate: true,
+        },
+        (p) => {
+          result = p;
+        }
+      );
     },
   });
 
@@ -42,7 +45,7 @@ function tagToString(processor: BaseProcessor | null): string | undefined {
   return processor.toString();
 }
 
-describe('getTagProcessor', () => {
+describe('applyProcessors', () => {
   it('should find correct import', () => {
     const result = run(
       dedent`
