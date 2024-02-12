@@ -1,5 +1,16 @@
 # @wyw-in-js/esbuild
 
+## 0.4.1
+
+### Patch Changes
+
+- c6c5801: Debug mode for esbuild.
+- Updated dependencies
+- Updated dependencies [399d5b4]
+- Updated dependencies [3a494ef]
+  - @wyw-in-js/shared@0.4.1
+  - @wyw-in-js/transform@0.4.1
+
 ## 0.4.0
 
 ### Minor Changes

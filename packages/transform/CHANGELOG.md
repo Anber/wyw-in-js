@@ -1,5 +1,15 @@
 # @wyw-in-js/transform
 
+## 0.4.1
+
+### Patch Changes
+
+- 399d5b4: Optimised processing. Up to 2 times faster detection of template literals.
+- 3a494ef: Found out that an object spread can be extremely slow. getTagProcessor now works 10 times faster.
+- Updated dependencies
+  - @wyw-in-js/shared@0.4.1
+  - @wyw-in-js/processor-utils@0.4.1
+
 ## 0.4.0
 
 ### Minor Changes
