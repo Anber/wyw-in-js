@@ -20,273 +20,283 @@ module.exports = {
 
 - `evaluate: boolean` (default: `true`):
 
-Enabling this will evaluate dynamic expressions in the CSS. You need to enable this if you want to use imported variables in the CSS or interpolate other components. Enabling this also ensures that your styled components wrapping other styled components will have the correct specificity and override styles properly.
+  Enabling this will evaluate dynamic expressions in the CSS. You need to enable this if you want to use imported variables in the CSS or interpolate other components. Enabling this also ensures that your styled components wrapping other styled components will have the correct specificity and override styles properly.
 
 - `displayName: boolean` (default: `false`):
 
-Enabling this will add a display name to generated class names, e.g. `.Title_abcdef` instead of `.abcdef'. It is disabled by default to generate smaller CSS files.
+  Enabling this will add a display name to generated class names, e.g. `.Title_abcdef` instead of `.abcdef'. It is disabled by default to generate smaller CSS files.
 
 - `variableNameConfig: "var" | "dashes" | "raw"` (default: `var`):
 
-Configures how the variable will be formatted in final CSS.
+  Configures how the variable will be formatted in final CSS.
 
-### Possible values
+  Possible values
 
-#### `var`
-Use full css variable structure. This is default behavior.
+  - `var`
 
-```js
-import { styled } from "@linaria/react";
+    Use full css variable structure. This is default behavior.
 
-export const MyComponent = styled.div`
-  color: ${(props) => props.color};
-`;
-  ```
+    ```js
+    import { styled } from '@linaria/react';
 
-In CSS you will see full variable declaration
+    export const MyComponent = styled.div`
+      color: ${(props) => props.color};
+    `;
+    ```
 
-```css
-.MyComponent_m1cus5as {
-  color: var(--m1cus5as-0);
-}
-  ```
+    In CSS you will see full variable declaration
 
-#### `dashes`
-Removes `var()` around the variable name. It is useful when you want to control the variable on your own. For example you can set default value for CSS variable.
+    ```css
+    .MyComponent_m1cus5as {
+      color: var(--m1cus5as-0);
+    }
+    ```
 
-```js
-import { styled } from "@linaria/react";
+  - `dashes`
 
-export const Theme = styled.div`
-  --font-color: red;
-`;
+    Removes `var()` around the variable name. It is useful when you want to control the variable on your own. For example you can set default value for CSS variable.
 
-export const MyComponent = styled.div`
-  // Returning empty string is mandatory
-  // Otherwise you will have "undefined" in css variable value
-  color: var(${(props) => props.color ?? ""}, var(--font-color));
-`;
+    ```js
+    import { styled } from '@linaria/react';
 
-function App() {
-  return (
-    <Theme>
-      <MyComponent>Text with red color</MyComponent>
-      <MyComponent color="blue">Text with blue color</MyComponent>
-    </Theme>
-  );
-}
-  ```
+    export const Theme = styled.div`
+      --font-color: red;
+    `;
 
-In CSS you will see generated variable name and your default value.
+    export const MyComponent = styled.div`
+      // Returning empty string is mandatory
+      // Otherwise you will have "undefined" in css variable value
+      color: var(${(props) => props.color ?? ''}, var(--font-color));
+    `;
 
-```css
-.Theme_t1cus5as {
-  --font-color: red;
-}
+    function App() {
+      return (
+        <Theme>
+          <MyComponent>Text with red color</MyComponent>
+          <MyComponent color="blue">Text with blue color</MyComponent>
+        </Theme>
+      );
+    }
+    ```
 
-.MyComponent_mc195ga {
-  color: var(--mc195ga-0, var(--font-color));
-}
-  ```
+    In CSS you will see generated variable name and your default value.
 
-#### `raw`
-Use only variable name without dashes and `var()` wrapper.
+    ```css
+    .Theme_t1cus5as {
+      --font-color: red;
+    }
 
-```js
-import { styled } from "@linaria/react";
+    .MyComponent_mc195ga {
+      color: var(--mc195ga-0, var(--font-color));
+    }
+    ```
 
-export const MyComponent = styled.div`
-  color: ${(props) => props.color};
-`;
-  ```
+  - `raw`
 
-In CSS you will see just the variable name. This is not valid value for css property.
+    Use only variable name without dashes and `var()` wrapper.
 
-```css
-.MyComponent_mc195ga {
-  color: mc195ga-0;
-}
-  ```
+    ```js
+    import { styled } from '@linaria/react';
 
-You will have to make it valid:
+    export const MyComponent = styled.div`
+      color: ${(props) => props.color};
+    `;
+    ```
 
-```js
-export const MyComponent = styled.div`
-  color: var(--${(props) => props.color});
-`;
-  ```
+    In CSS you will see just the variable name. This is not valid value for css property.
+
+    ```css
+    .MyComponent_mc195ga {
+      color: mc195ga-0;
+    }
+    ```
+
+    You will have to make it valid:
+
+    ```js
+    export const MyComponent = styled.div`
+      color: var(--${(props) => props.color});
+    `;
+    ```
 
 - `classNameSlug: string | ((hash: string, title: string, args: ClassNameSlugVars) => string)` (default: `default`):
 
-Using this will provide an interface to customize the output of the CSS class name. Example:
+  Using this will provide an interface to customize the output of the CSS class name. Example:
 
-    classNameSlug: '[title]',
-
-Would generate a class name such as `.header` instead of the default `.header_absdjfsdf` which includes a hash.
-
-You may also use a function to define the slug. The function will be evaluated at build time and must return a string:
-
-    classNameSlug: (hash, title) => `${hash}__${7 * 6}__${title}`,
-
-Would generate the class name `.absdjfsdf__42__header`.
-
-Last argument `args` is an object that contains following properties: `title`, `hash`, `dir`, `ext`, `file`, `name`. These properties
-are useful when you want to generate your own hash:
-
-```js
-const sha1 = require("sha1");
-
-module.exports = {
-  classNameSlug: (hash, title, args) => sha1(`${args.name}-${title}`)
-};
+  ```js
+  classNameSlug: '[title]',
   ```
 
-**note** invalid characters will be replaced with an underscore (`_`).
+  Would generate a class name such as `.header` instead of the default `.header_absdjfsdf` which includes a hash.
 
-### Variables
+  You may also use a function to define the slug. The function will be evaluated at build time and must return a string:
 
-- `hash`: The hash of the content.
-- `title`: The name of the class.
+  ```js
+  classNameSlug: (hash, title) => `${hash}__${7 * 6}__${title}`,
+  ```
+
+  Would generate the class name `.absdjfsdf__42__header`.
+
+  Last argument `args` is an object that contains following properties: `title`, `hash`, `dir`, `ext`, `file`, `name`. These properties
+  are useful when you want to generate your own hash:
+
+  ```js
+  const sha1 = require('sha1');
+
+  module.exports = {
+    classNameSlug: (hash, title, args) => sha1(`${args.name}-${title}`),
+  };
+  ```
+
+  **note** invalid characters will be replaced with an underscore (`_`).
+
+  Variables
+
+  - `hash`: The hash of the content.
+  - `title`: The name of the class.
 
 - `variableNameSlug: string | ((context: IVariableContext) => string)` (default: `default`):
 
-Using this will provide an interface to customize the output of the CSS variable name. Example:
+  Using this will provide an interface to customize the output of the CSS variable name. Example:
 
-    variableNameSlug: '[componentName]-[valueSlug]-[index]',
+  ```js
+  variableNameSlug: '[componentName]-[valueSlug]-[index]',
+  ```
 
-Would generate a variable name such as `--Title-absdjfsdf-0` instead of the `@react/styled`'s default `--absdjfsdf-0`.
+  Would generate a variable name such as `--Title-absdjfsdf-0` instead of the `@react/styled`'s default `--absdjfsdf-0`.
 
-You may also use a function to define the slug. The function will be evaluated at build time and must return a string:
+  You may also use a function to define the slug. The function will be evaluated at build time and must return a string:
 
-    variableNameSlug: (context) => `${context.valueSlug}__${context.componentName}__${context.precedingCss.match(/([\w-]+)\s*:\s*$/)[1]}`,
+  ```js
+  variableNameSlug: (context) => `${context.valueSlug}__${context.componentName}__${context.precedingCss.match(/([\w-]+)\s*:\s*$/)[1]}`,
+  ```
 
-Would generate the variable name `--absdjfsdf__Title__flex-direction`.
+  Would generate the variable name `--absdjfsdf__Title__flex-direction`.
 
-**note** invalid characters will be replaced with an underscore (`_`).
+  **note** invalid characters will be replaced with an underscore (`_`).
 
-### Variables
+  Variables
 
-- `componentName` - the displayName of the component.
-- `componentSlug` - the component slug.
-- `index` - the index of the css variable in the current component.
-- `precedingCss` - the preceding part of the css for the variable, i.e. `flex: 1; flex-direction: `.
-- `preprocessor` - the preprocessor used to process the tag (e.g. 'StyledProcessor' or 'AtomicStyledProcessor').
-- `source` - the string source of the css property value.
-- `unit` - the unit.
-- `valueSlug` - the value slug.
-
+  - `componentName` - the displayName of the component.
+  - `componentSlug` - the component slug.
+  - `index` - the index of the css variable in the current component.
+  - `precedingCss` - the preceding part of the css for the variable, i.e. `flex: 1; flex-direction: `.
+  - `preprocessor` - the preprocessor used to process the tag (e.g. 'StyledProcessor' or 'AtomicStyledProcessor').
+  - `source` - the string source of the css property value.
+  - `unit` - the unit.
+  - `valueSlug` - the value slug.
 
 - `overrideContext: (context: Partial<vm.Context>, filename: string) => Partial<vm.Context>`
 
-A custom function to override the context used to evaluate modules. This can be used to add custom globals or override the default ones.
+  A custom function to override the context used to evaluate modules. This can be used to add custom globals or override the default ones.
 
-```js
-module.exports = {
-  overrideContext: (context, filename) => ({
-    ...context,
-    HighLevelAPI: () => "I'm a high level API",
-  }),
-};
+  ```js
+  module.exports = {
+    overrideContext: (context, filename) => ({
+      ...context,
+      HighLevelAPI: () => "I'm a high level API",
+    }),
+  };
   ```
 
 - `rules: EvalRule[]`
 
-The set of rules that defines how the matched files will be transformed during the evaluation.
-`EvalRule` is an object with two fields:
+  The set of rules that defines how the matched files will be transformed during the evaluation.
+  `EvalRule` is an object with two fields:
 
-- `test` is a regular expression or a function `(path: string) => boolean`;
-- `action` is an `Evaluator` function, `"ignore"` or a name of the module that exports `Evaluator` function as a default export.
+  - `test` is a regular expression or a function `(path: string) => boolean`;
+  - `action` is an `Evaluator` function, `"ignore"` or a name of the module that exports `Evaluator` function as a default export.
 
-If `test` is omitted, the rule is applicable for all the files.
+  If `test` is omitted, the rule is applicable for all the files.
 
-The last matched rule is used for transformation. If the last matched action for a file is `"ignore"` the file will be evaluated as is, so that file must not contain any js code that cannot be executed in nodejs environment (it's usually true for any lib in `node_modules`).
+  The last matched rule is used for transformation. If the last matched action for a file is `"ignore"` the file will be evaluated as is, so that file must not contain any js code that cannot be executed in nodejs environment (it's usually true for any lib in `node_modules`).
 
-If you need to compile certain modules under `/node_modules/` (which can be the case in monorepo projects), it's recommended to do it on a module by module basis for faster transforms, e.g. `ignore: /node_modules[\/\\](?!some-module|other-module)/`. Example is using Regular Expressions negative lookahead.
+  If you need to compile certain modules under `/node_modules/` (which can be the case in monorepo projects), it's recommended to do it on a module by module basis for faster transforms, e.g. `ignore: /node_modules[\/\\](?!some-module|other-module)/`. Example is using Regular Expressions negative lookahead.
 
-The Information about `Evaluator`, its default setting and custom implementations can be founded it [evaluators section of How it works docs](/how-it-works#evaluators)
+  The Information about `Evaluator`, its default setting and custom implementations can be founded it [evaluators section of How it works docs](/how-it-works#evaluators)
 
-The default setup is:
+  The default setup is:
 
-```js
-import { shaker } from '@wyw-in-js/transform';
+  ```js
+  import { shaker } from '@wyw-in-js/transform';
 
-[
-  {
-    action: shaker,
-  },
-  {
-    test: /[\\/]node_modules[\\/]/,
-    action: 'ignore',
-  },
-  {
-    test: (filename, code) => {
-      if (!/[\\/]node_modules[\\/]/.test(filename)) {
-        return false;
-      }
-
-      return /(?:^|\*\/|;|})\s*(?:export|import)[\s{]/m.test(code);
+  [
+    {
+      action: shaker,
     },
-    action: shaker,
-  }
-];
+    {
+      test: /[\\/]node_modules[\\/]/,
+      action: 'ignore',
+    },
+    {
+      test: (filename, code) => {
+        if (!/[\\/]node_modules[\\/]/.test(filename)) {
+          return false;
+        }
+
+        return /(?:^|\*\/|;|})\s*(?:export|import)[\s{]/m.test(code);
+      },
+      action: shaker,
+    },
+  ];
   ```
 
 - `tagResolver: (source, tag) => string`
 
-A custom function to use when resolving template tags.
+  A custom function to use when resolving template tags.
 
-By default, linaria APIs like `css` and `styled` **must** be imported directly from the package – this is because babel needs to be able to recognize the API's to do static style extraction. `tagResolver` allows `css` and `styled` APIs to be imported from other files too.
+  By default, linaria APIs like `css` and `styled` **must** be imported directly from the package – this is because babel needs to be able to recognize the API's to do static style extraction. `tagResolver` allows `css` and `styled` APIs to be imported from other files too.
 
-`tagResolver` takes the path for the source module (eg. `@linaria/core`) and the name of imported tag (eg. `css`), and returns the full path to the related processor. If `tagResolver` returns `null`, the default tag processor will be used.
+  `tagResolver` takes the path for the source module (eg. `@linaria/core`) and the name of imported tag (eg. `css`), and returns the full path to the related processor. If `tagResolver` returns `null`, the default tag processor will be used.
 
-For example, we can use this to map `@linaria/core` , `@linaria/react` or `@linaria/atomic` where we re-export the module.
+  For example, we can use this to map `@linaria/core` , `@linaria/react` or `@linaria/atomic` where we re-export the module.
 
- ```js
- {
-   tagResolver: (source, tag) => {
-     const pathToLocalFile = join(__dirname, './my-local-folder/linaria.js');
-     if (source === pathToLocalFile) {
-       if (tag === 'css') {
-         return require.resolve('@linaria/core/processors/css');
-       }
+  ```js
+  {
+    tagResolver: (source, tag) => {
+      const pathToLocalFile = join(__dirname, './my-local-folder/linaria.js');
+      if (source === pathToLocalFile) {
+        if (tag === 'css') {
+          return require.resolve('@linaria/core/processors/css');
+        }
 
-       if (tag === 'styled') {
-         return require.resolve('@linaria/react/processors/styled');
-       }
-     }
+        if (tag === 'styled') {
+          return require.resolve('@linaria/react/processors/styled');
+        }
+      }
 
-     return null;
-   };
- }
-   ```
+      return null;
+    };
+  }
+  ```
 
-We can then re-export and use linaria API's from `./my-local-folder`:
+  We can then re-export and use linaria API's from `./my-local-folder`:
 
- ```js
- // my-file.js
- import { css, styled } from './my-local-folder/linaria';
+  ```js
+  // my-file.js
+  import { css, styled } from './my-local-folder/linaria';
 
- export const MyComponent = styled.div`
+  export const MyComponent = styled.div`
     color: red;
- `;
+  `;
 
- export default css`
-   border: 1px solid black;
- `;
-   ```
+  export default css`
+    border: 1px solid black;
+  `;
+  ```
 
- ```js
- // ./my-local-folder/core.js
- export * from '@linaria/core';
-   ```
+  ```js
+  // ./my-local-folder/core.js
+  export * from '@linaria/core';
+  ```
 
 - `babelOptions: Object`
 
-If you need to specify custom babel configuration, you can pass them here. These babel options will be used by Linaria when parsing and evaluating modules.
+  If you need to specify custom babel configuration, you can pass them here. These babel options will be used by Linaria when parsing and evaluating modules.
 
 - `features: Record<string, FeatureFlag>`
 
-A map of feature flags to enable/disable. See [Feature Flags](/feature-flags) for more information.
+  A map of feature flags to enable/disable. See [Feature Flags](/feature-flags) for more information.
 
 ## `@wyw-in-js/babel-preset`
 
