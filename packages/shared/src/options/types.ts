@@ -12,6 +12,7 @@ export type ClassNameSlugVars = {
   ext: string;
   file: string;
   hash: string;
+  index: number;
   name: string;
   title: string;
 };

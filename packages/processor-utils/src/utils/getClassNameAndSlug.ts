@@ -33,6 +33,7 @@ export default function getClassNameAndSlug(
   const slugVars: ClassNameSlugVars = {
     hash: slug,
     title: displayName,
+    index: idx,
     file: relativeFilename,
     ext,
     name: basename(relativeFilename, ext),
