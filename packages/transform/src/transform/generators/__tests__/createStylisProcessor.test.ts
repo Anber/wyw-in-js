@@ -45,12 +45,22 @@ describe('createStylisPreprocessor', () => {
     });
 
     it('should add suffix to animation-name', () => {
+      // Usage before definition
       expect(
         compileRule(
           '& { animation-name: bar; } @keyframes bar { from { color: red } }'
         )
       ).toMatchInlineSnapshot(
         `".foo{animation-name:bar-foo;}@-webkit-keyframes bar-foo{from{color:red;}}@keyframes bar-foo{from{color:red;}}"`
+      );
+
+      // Usage after definition
+      expect(
+        compileRule(
+          '@keyframes bar { from { color: red } } & { animation-name: bar; }'
+        )
+      ).toMatchInlineSnapshot(
+        `"@-webkit-keyframes bar-foo{from{color:red;}}@keyframes bar-foo{from{color:red;}}.foo{animation-name:bar-foo;}"`
       );
     });
 
@@ -79,6 +89,24 @@ describe('createStylisPreprocessor', () => {
         expect(
           compileRule('& { animation-name: :global(bar); }')
         ).toMatchInlineSnapshot(`".foo{animation-name:bar;}"`);
+      });
+
+      it('in @keyframes and animation-name simultaneously', () => {
+        expect(
+          compileRule(
+            '@keyframes :global(bar) { from { color: red } } & { animation-name: :global(bar); }'
+          )
+        ).toMatchInlineSnapshot(
+          `"@-webkit-keyframes bar{from{color:red;}}@keyframes bar{from{color:red;}}.foo{animation-name:bar;}"`
+        );
+
+        expect(
+          compileRule(
+            '& { animation-name: :global(bar); } @keyframes :global(bar) { from { color: red } }'
+          )
+        ).toMatchInlineSnapshot(
+          `".foo{animation-name:bar;}@-webkit-keyframes bar{from{color:red;}}@keyframes bar{from{color:red;}}"`
+        );
       });
     });
   });
