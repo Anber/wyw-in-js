@@ -43,6 +43,7 @@ interface IGlobalSelectorModifiers {
 }
 
 const DEFINED_KEYFRAMES = Symbol('definedKeyframes');
+const ORIGINAL_KEYFRAME_NAME = Symbol('originalKeyframeName');
 const ORIGINAL_VALUE_KEY = Symbol('originalValue');
 const IS_GLOBAL_KEYFRAMES = Symbol('isGlobalKeyframes');
 
@@ -276,7 +277,10 @@ export function createKeyframeSuffixerPlugin(): Middleware {
   const getDefinedKeyframes = (
     element: Element & {
       [DEFINED_KEYFRAMES]?: Set<string>;
-      siblings?: (Element & { [IS_GLOBAL_KEYFRAMES]?: boolean })[];
+      siblings?: (Element & {
+        [IS_GLOBAL_KEYFRAMES]?: boolean;
+        [ORIGINAL_KEYFRAME_NAME]?: string;
+      })[];
     }
   ): Set<string> => {
     if (element[DEFINED_KEYFRAMES]) {
@@ -289,7 +293,17 @@ export function createKeyframeSuffixerPlugin(): Middleware {
 
     const keyframes = new Set<string>();
     for (const sibling of element.siblings ?? []) {
-      if (!isKeyframes(sibling) || sibling[IS_GLOBAL_KEYFRAMES] === true) {
+      if (sibling[ORIGINAL_KEYFRAME_NAME]) {
+        keyframes.add(sibling[ORIGINAL_KEYFRAME_NAME]);
+        continue;
+      }
+
+      const name = sibling.props[0];
+      if (
+        !isKeyframes(sibling) ||
+        sibling[IS_GLOBAL_KEYFRAMES] === true ||
+        name?.startsWith(':global(')
+      ) {
         continue;
       }
 
@@ -311,9 +325,12 @@ export function createKeyframeSuffixerPlugin(): Middleware {
         scopedMatch: string
       ): string => globalMatch || `${scopedMatch}-${suffix}`;
 
+      const originalName = element.props[0];
+      const isGlobal = originalName?.startsWith(':global(') ?? false;
+
       Object.assign(element, {
-        [IS_GLOBAL_KEYFRAMES]:
-          element.props[0]?.startsWith(':global(') ?? false,
+        [ORIGINAL_KEYFRAME_NAME]: isGlobal ? undefined : originalName,
+        [IS_GLOBAL_KEYFRAMES]: isGlobal,
         props: element.props.map(
           getReplacer(/^\s*/, animationNameRegexp, replaceFn)
         ),
