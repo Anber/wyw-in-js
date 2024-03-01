@@ -1,5 +1,11 @@
 # @wyw-in-js/shared
 
+## 0.5.0
+
+### Minor Changes
+
+- aa1ca75: Add `index` to ClassNameSlugVars
+
 ## 0.4.1
 
 ### Patch Changes

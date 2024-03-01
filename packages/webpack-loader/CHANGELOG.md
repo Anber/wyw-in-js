@@ -1,5 +1,19 @@
 # @wyw-in-js/webpack-loader
 
+## 0.5.0
+
+### Minor Changes
+
+- Bump versions
+
+### Patch Changes
+
+- Updated dependencies [aa1ca75]
+- Updated dependencies [9d7cb05]
+- Updated dependencies
+  - @wyw-in-js/shared@0.5.0
+  - @wyw-in-js/transform@0.5.0
+
 ## 0.4.1
 
 ### Patch Changes

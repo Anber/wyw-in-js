@@ -1,5 +1,16 @@
 # @wyw-in-js/e2e-vite
 
+## 0.5.0
+
+### Minor Changes
+
+- Bump versions
+
+### Patch Changes
+
+- Updated dependencies
+  - @wyw-in-js/template-tag-syntax@0.5.0
+
 ## 0.4.1
 
 ### Patch Changes
