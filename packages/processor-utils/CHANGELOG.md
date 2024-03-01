@@ -1,5 +1,16 @@
 # @wyw-in-js/processor-utils
 
+## 0.5.0
+
+### Minor Changes
+
+- aa1ca75: Add `index` to ClassNameSlugVars
+
+### Patch Changes
+
+- Updated dependencies [aa1ca75]
+  - @wyw-in-js/shared@0.5.0
+
 ## 0.4.1
 
 ### Patch Changes

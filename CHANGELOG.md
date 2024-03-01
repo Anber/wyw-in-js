@@ -1,5 +1,15 @@
 # wyw-in-js
 
+## 0.5.0
+
+### Minor Changes
+
+- Bump versions
+
+### Patch Changes
+
+- 9d7cb05: Fix an issue when some animation names are not suffixed.
+
 ## 0.4.1
 
 ### Patch Changes

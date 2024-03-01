@@ -1,5 +1,18 @@
 # @wyw-in-js/transform
 
+## 0.5.0
+
+### Minor Changes
+
+- Bump versions
+
+### Patch Changes
+
+- 9d7cb05: Fix an issue when some animation names are not suffixed.
+- Updated dependencies [aa1ca75]
+  - @wyw-in-js/processor-utils@0.5.0
+  - @wyw-in-js/shared@0.5.0
+
 ## 0.4.1
 
 ### Patch Changes
