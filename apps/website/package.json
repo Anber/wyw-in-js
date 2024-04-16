@@ -1,6 +1,6 @@
 {
   "name": "@wyw-in-js/website",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "dependencies": {
     "next": "^13.5.4",
     "nextra": "^2.13.1",
