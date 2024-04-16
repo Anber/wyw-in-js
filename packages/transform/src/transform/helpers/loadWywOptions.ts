@@ -55,6 +55,7 @@ export function loadWywOptions(
     happyDOM: true,
     softErrors: false,
     useBabelConfigs: true,
+    useWeakRefInEval: true,
   };
 
   const options: StrictOptions = {

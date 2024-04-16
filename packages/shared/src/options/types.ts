@@ -58,6 +58,7 @@ type AllFeatureFlags = {
   happyDOM: FeatureFlag;
   softErrors: FeatureFlag;
   useBabelConfigs: FeatureFlag;
+  useWeakRefInEval: FeatureFlag;
 };
 
 export type FeatureFlags<

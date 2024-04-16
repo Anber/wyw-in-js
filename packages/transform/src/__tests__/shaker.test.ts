@@ -26,6 +26,7 @@ const run = (only: string[]) => (code: TemplateStringsArray) => {
         happyDOM: false,
         softErrors: false,
         useBabelConfigs: false,
+        useWeakRefInEval: true,
       },
       highPriorityPlugins: [],
       onlyExports: only,

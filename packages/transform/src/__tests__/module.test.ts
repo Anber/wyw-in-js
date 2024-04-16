@@ -25,6 +25,7 @@ const options: StrictOptions = {
     happyDOM: true,
     softErrors: false,
     useBabelConfigs: true,
+    useWeakRefInEval: true,
   },
   highPriorityPlugins: [],
   overrideContext: (context) => ({

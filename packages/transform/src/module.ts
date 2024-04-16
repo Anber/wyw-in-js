@@ -18,7 +18,7 @@ import vm from 'vm';
 
 import { invariant } from 'ts-invariant';
 
-import type { Debugger } from '@wyw-in-js/shared';
+import { isFeatureEnabled, type Debugger } from '@wyw-in-js/shared';
 
 import './utils/dispose-polyfill';
 import type { TransformCacheCollection } from './cache';
@@ -192,7 +192,7 @@ export class Module {
 
   private cache: TransformCacheCollection;
 
-  #entrypointRef: WeakRef<Entrypoint>;
+  #entrypointRef: WeakRef<Entrypoint> | Entrypoint;
 
   constructor(
     private services: Services,
@@ -201,7 +201,13 @@ export class Module {
     private moduleImpl: HiddenModuleMembers = DefaultModuleImplementation
   ) {
     this.cache = services.cache;
-    this.#entrypointRef = new WeakRef(entrypoint);
+    this.#entrypointRef = isFeatureEnabled(
+      services.options.pluginOptions.features,
+      'useWeakRefInEval',
+      entrypoint.name
+    )
+      ? new WeakRef(entrypoint)
+      : entrypoint;
     this.idx = entrypoint.idx;
     this.id = entrypoint.name;
     this.filename = entrypoint.name;
@@ -232,7 +238,10 @@ export class Module {
   }
 
   protected get entrypoint(): Entrypoint {
-    const entrypoint = this.#entrypointRef.deref();
+    const entrypoint =
+      this.#entrypointRef instanceof WeakRef
+        ? this.#entrypointRef.deref()
+        : this.#entrypointRef;
     invariant(entrypoint, `Module ${this.idx} is disposed`);
     return entrypoint;
   }
