@@ -597,9 +597,6 @@ importers:
 
   packages/vite:
     dependencies:
-      '@rollup/pluginutils':
-        specifier: ^5.0.4
-        version: 5.0.4(rollup@3.29.4)
       '@wyw-in-js/shared':
         specifier: workspace:*
         version: link:../shared
