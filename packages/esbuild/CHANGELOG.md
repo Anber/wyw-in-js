@@ -1,5 +1,14 @@
 # @wyw-in-js/esbuild
 
+## 0.5.1
+
+### Patch Changes
+
+- Updated dependencies
+- Updated dependencies [cd7b7f0]
+  - @wyw-in-js/shared@0.5.1
+  - @wyw-in-js/transform@0.5.1
+
 ## 0.5.0
 
 ### Minor Changes

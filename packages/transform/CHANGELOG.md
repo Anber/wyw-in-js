@@ -1,5 +1,14 @@
 # @wyw-in-js/transform
 
+## 0.5.1
+
+### Patch Changes
+
+- cd7b7f0: Allow conditional usage of WeakRef in Module evalutation through a new feature flag `useWeakRefInEval`
+- Updated dependencies
+  - @wyw-in-js/shared@0.5.1
+  - @wyw-in-js/processor-utils@0.5.1
+
 ## 0.5.0
 
 ### Minor Changes
