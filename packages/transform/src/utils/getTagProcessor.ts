@@ -250,7 +250,9 @@ function getBuilderForIdentifier(
     isPure: boolean
   ) => {
     mutate(prev, (p) => {
-      p.replaceWith(typeof replacement === 'function' ? replacement(p) : p);
+      p.replaceWith(
+        typeof replacement === 'function' ? replacement(p) : replacement
+      );
       if (isPure) {
         p.addComment('leading', '#__PURE__');
       }
