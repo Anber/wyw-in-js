@@ -24,7 +24,7 @@ export function collector(
   file: BabelFile,
   options: Pick<
     StrictOptions,
-    'classNameSlug' | 'displayName' | 'evaluate' | 'tagResolver'
+    'classNameSlug' | 'displayName' | 'extensions' | 'evaluate' | 'tagResolver'
   > & { eventEmitter?: EventEmitter },
   values: ValueCache
 ) {

@@ -450,7 +450,7 @@ function createProcessorInstance(
   fileContext: IFileContext,
   options: Pick<
     StrictOptions,
-    'classNameSlug' | 'displayName' | 'evaluate' | 'tagResolver'
+    'classNameSlug' | 'displayName' | 'extensions' | 'evaluate' | 'tagResolver'
   >
 ): BaseProcessor | null {
   const cache = getTraversalCache<BaseProcessor | null, Identifier>(
@@ -508,7 +508,7 @@ export function applyProcessors(
   fileContext: IFileContext,
   options: Pick<
     StrictOptions,
-    'classNameSlug' | 'displayName' | 'evaluate' | 'tagResolver'
+    'classNameSlug' | 'displayName' | 'extensions' | 'evaluate' | 'tagResolver'
   >,
   callback: (processor: BaseProcessor) => void
 ) {
