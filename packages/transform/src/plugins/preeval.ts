@@ -18,7 +18,12 @@ import { invalidateTraversalCache } from '../utils/traversalCache';
 
 export type PreevalOptions = Pick<
   StrictOptions,
-  'classNameSlug' | 'displayName' | 'evaluate' | 'features' | 'tagResolver'
+  | 'classNameSlug'
+  | 'displayName'
+  | 'extensions'
+  | 'evaluate'
+  | 'features'
+  | 'tagResolver'
 > & { eventEmitter?: EventEmitter };
 
 export function preeval(
