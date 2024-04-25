@@ -1,5 +1,11 @@
 # @wyw-in-js/babel-preset
 
+## 0.5.2
+
+### Patch Changes
+
+- @wyw-in-js/transform@0.5.2
+
 ## 0.5.1
 
 ### Patch Changes

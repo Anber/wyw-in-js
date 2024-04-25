@@ -1,5 +1,12 @@
 # @wyw-in-js/template-tag-syntax
 
+## 0.5.2
+
+### Patch Changes
+
+- Updated dependencies [9096ba1]
+  - @wyw-in-js/processor-utils@0.5.2
+
 ## 0.5.1
 
 ### Patch Changes

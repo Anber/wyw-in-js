@@ -1,5 +1,11 @@
 # @wyw-in-js/e2e-vite
 
+## 0.5.2
+
+### Patch Changes
+
+- @wyw-in-js/template-tag-syntax@0.5.2
+
 ## 0.5.1
 
 ### Patch Changes

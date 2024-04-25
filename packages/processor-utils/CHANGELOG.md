@@ -1,5 +1,13 @@
 # @wyw-in-js/processor-utils
 
+## 0.5.2
+
+### Patch Changes
+
+- 9096ba1: feat: support `replacement` as a function
+- Updated dependencies
+  - @wyw-in-js/shared@0.5.2
+
 ## 0.5.1
 
 ### Patch Changes
