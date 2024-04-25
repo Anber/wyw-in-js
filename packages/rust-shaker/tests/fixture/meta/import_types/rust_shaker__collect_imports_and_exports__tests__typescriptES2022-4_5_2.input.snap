@@ -1,0 +1,10 @@
+---
+source: src/collect_imports_and_exports.rs
+assertion_line: 1068
+description: "var value = 'value';\nconsole.log(value);\nexport {};\n"
+input_file: tests/fixture/meta/import_types/typescriptES2022-4_5_2.input.js
+---
+Meta {
+    imports: [],
+    exports: [],
+}

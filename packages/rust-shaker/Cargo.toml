@@ -1,0 +1,33 @@
+[package]
+name = "rust-shaker"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[profile.release]
+lto = true
+
+[dependencies]
+serde = "1"
+swc_core = { version = "0.90.*", features = ["ecma_plugin_transform"] }
+swc_common = "0.33.19"
+swc_ecmascript = "0.239.15"
+swc_ecma_ast = "0.112.5"
+log = "0.4.21"
+serde_json = "1.0.114"
+oxc = "0.29.0"
+oxc_traverse = "0.29.0"
+oxc_semantic = "0.29.0"
+glob = "0.3.1"
+
+[dev-dependencies]
+insta = { version = "1.40.0", features = ["yaml"] }
+swc_ecma_parser = { version = "0.143.5" }
+swc_ecma_transforms_testing = { version = "0.140.10" }
+testing = { version = "0.35.19" }
+
+# .cargo/config defines few alias to build plugin.
+# cargo build-wasi generates wasm-wasi32 binary
+# cargo build-wasm32 generates wasm32-unknown-unknown binary.

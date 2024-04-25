@@ -75,7 +75,7 @@ function runCompiled(code: string): IRunResults {
 
   const file = new File({ filename }, { code, ast });
 
-  const collected = collectExportsAndImports(file.path);
+  const collected = collectExportsAndImports(file.path, 'disabled');
 
   const sortImports = (
     a: { imported: string | null; source: string },
@@ -622,6 +622,25 @@ describe('collectExportsAndImports', () => {
           expect(results).toMatchObject(expectation);
         }
       });
+    });
+
+    it('performance', () => {
+      const fixtures = globSync(inputMask).map((filename) => {
+        return readFileSync(filename, 'utf-8');
+      });
+
+      const N = 1;
+
+      // Run the parser N times for each file and measure the time
+      const start = Date.now();
+      let count = 0;
+      for (let i = 0; i < N; i++) {
+        fixtures.forEach(runCompiled);
+        count += fixtures.length;
+      }
+      const end = Date.now();
+
+      console.log('Parsed %d files in %dms', count, end - start);
     });
   } else {
     it(`${relative(__dirname, inputMask)} has been resolved to 0 cases`, () => {

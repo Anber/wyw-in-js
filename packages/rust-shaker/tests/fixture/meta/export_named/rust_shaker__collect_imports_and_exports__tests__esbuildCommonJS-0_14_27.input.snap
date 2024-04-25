@@ -1,0 +1,22 @@
+---
+source: src/collect_imports_and_exports.rs
+description: "var __defProp = Object.defineProperty;\nvar __getOwnPropDesc = Object.getOwnPropertyDescriptor;\nvar __getOwnPropNames = Object.getOwnPropertyNames;\nvar __hasOwnProp = Object.prototype.hasOwnProperty;\nvar __export = (target, all) => {\n  for (var name in all)\n    __defProp(target, name, { get: all[name], enumerable: true });\n};\nvar __copyProps = (to, from, except, desc) => {\n  if ((from && typeof from === 'object') || typeof from === 'function') {\n    for (let key of __getOwnPropNames(from))\n      if (!__hasOwnProp.call(to, key) && key !== except)\n        __defProp(to, key, {\n          get: () => from[key],\n          enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable,\n        });\n  }\n  return to;\n};\nvar __toCommonJS = (mod) =>\n  __copyProps(__defProp({}, '__esModule', { value: true }), mod);\nvar source_exports = {};\n__export(source_exports, {\n  named: () => a,\n});\nmodule.exports = __toCommonJS(source_exports);\nconst a = 1;\n"
+input_file: tests/fixture/meta/export_named/esbuildCommonJS-0_14_27.input.js
+---
+Meta {
+    imports: [],
+    exports: [
+        Named {
+            local: BooleanLiteral(
+                true,
+            ),
+            exported: "__esModule",
+        },
+        Named {
+            local: Identifier(
+                "a",
+            ),
+            exported: "named",
+        },
+    ],
+}

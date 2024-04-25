@@ -1,0 +1,23 @@
+---
+source: src/collect_imports_and_exports.rs
+assertion_line: 1310
+description: "var __defProp = Object.defineProperty;\nvar __hasOwnProp = Object.prototype.hasOwnProperty;\nvar __getOwnPropSymbols = Object.getOwnPropertySymbols;\nvar __propIsEnum = Object.prototype.propertyIsEnumerable;\nvar __markAsModule = (target) =>\n  __defProp(target, '__esModule', { value: true });\nvar __rest = (source, exclude) => {\n  var target = {};\n  for (var prop in source)\n    if (__hasOwnProp.call(source, prop) && exclude.indexOf(prop) < 0)\n      target[prop] = source[prop];\n  if (source != null && __getOwnPropSymbols)\n    for (var prop of __getOwnPropSymbols(source)) {\n      if (exclude.indexOf(prop) < 0 && __propIsEnum.call(source, prop))\n        target[prop] = source[prop];\n    }\n  return target;\n};\nvar __export = (target, all) => {\n  for (var name in all)\n    __defProp(target, name, { get: all[name], enumerable: true });\n};\n__markAsModule(exports);\n__export(exports, {\n  a: () => a,\n  rest: () => rest,\n});\nconst obj = { a: 1, b: 2 };\nconst { a } = obj,\n  rest = __rest(obj, ['a']);\n"
+input_file: tests/fixture/meta/export_with_destruction_and_rest_operator/esbuildCommonJS-0_8_43.input.js
+---
+Meta {
+    imports: [],
+    exports: [
+        Named {
+            local: Identifier(
+                "a",
+            ),
+            exported: "a",
+        },
+        Named {
+            local: Identifier(
+                "rest",
+            ),
+            exported: "rest",
+        },
+    ],
+}

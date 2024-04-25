@@ -1,0 +1,15 @@
+---
+source: src/collect_imports_and_exports.rs
+assertion_line: 1106
+description: "'use strict';\nvar ns = _interopRequireWildcard(require('unknown-package'));\nfunction _getRequireWildcardCache() {\n  if (typeof WeakMap !== 'function') return null;\n  var cache = new WeakMap();\n  _getRequireWildcardCache = function () {\n    return cache;\n  };\n  return cache;\n}\nfunction _interopRequireWildcard(obj) {\n  if (obj && obj.__esModule) {\n    return obj;\n  }\n  if (obj === null || (typeof obj !== 'object' && typeof obj !== 'function')) {\n    return {\n      default: obj,\n    };\n  }\n  var cache = _getRequireWildcardCache();\n  if (cache && cache.has(obj)) {\n    return cache.get(obj);\n  }\n  var newObj = {};\n  var hasPropertyDescriptor =\n    Object.defineProperty && Object.getOwnPropertyDescriptor;\n  for (var key1 in obj) {\n    if (Object.prototype.hasOwnProperty.call(obj, key1)) {\n      var desc = hasPropertyDescriptor\n        ? Object.getOwnPropertyDescriptor(obj, key1)\n        : null;\n      if (desc && (desc.get || desc.set)) {\n        Object.defineProperty(newObj, key1, desc);\n      } else {\n        newObj[key1] = obj[key1];\n      }\n    }\n  }\n  newObj.default = obj;\n  if (cache) {\n    cache.set(obj, newObj);\n  }\n  return newObj;\n}\nvar key = Math.random() > 0.5 ? 'a' : 'b';\nconsole.log(ns[key]);\n"
+input_file: tests/fixture/meta/import_wildcard_dynamic_usage_of_the_imported_namespace/swcCommonJSES5-1_2_174.input.js
+---
+Meta {
+    imports: [
+        Namespace {
+            source: "unknown-package",
+            local: "ns",
+        },
+    ],
+    exports: [],
+}

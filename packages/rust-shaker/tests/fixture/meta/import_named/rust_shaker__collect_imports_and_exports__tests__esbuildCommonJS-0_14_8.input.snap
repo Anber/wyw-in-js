@@ -1,0 +1,18 @@
+---
+source: src/collect_imports_and_exports.rs
+description: "var import_unknown_package = require('unknown-package');\nconsole.log(import_unknown_package.named);\n"
+input_file: tests/fixture/meta/import_named/esbuildCommonJS-0_14_8.input.js
+---
+Meta {
+    imports: [
+        Named {
+            source: "unknown-package",
+            imported: "named",
+            local: MemberExpression(
+                "import_unknown_package",
+                "named",
+            ),
+        },
+    ],
+    exports: [],
+}

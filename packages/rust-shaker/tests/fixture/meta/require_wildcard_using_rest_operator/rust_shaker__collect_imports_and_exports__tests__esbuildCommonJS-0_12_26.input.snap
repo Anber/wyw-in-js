@@ -1,0 +1,15 @@
+---
+source: src/collect_imports_and_exports.rs
+assertion_line: 1106
+description: "var __getOwnPropSymbols = Object.getOwnPropertySymbols;\nvar __hasOwnProp = Object.prototype.hasOwnProperty;\nvar __propIsEnum = Object.prototype.propertyIsEnumerable;\nvar __require =\n  typeof require !== 'undefined'\n    ? require\n    : (x) => {\n        throw new Error('Dynamic require of \"' + x + '\" is not supported');\n      };\nvar __objRest = (source, exclude) => {\n  var target = {};\n  for (var prop in source)\n    if (__hasOwnProp.call(source, prop) && exclude.indexOf(prop) < 0)\n      target[prop] = source[prop];\n  if (source != null && __getOwnPropSymbols)\n    for (var prop of __getOwnPropSymbols(source)) {\n      if (exclude.indexOf(prop) < 0 && __propIsEnum.call(source, prop))\n        target[prop] = source[prop];\n    }\n  return target;\n};\nconst fullNamespace = __objRest(require('unknown-package'), []);\nconsole.log(fullNamespace);\n"
+input_file: tests/fixture/meta/require_wildcard_using_rest_operator/esbuildCommonJS-0_12_26.input.js
+---
+Meta {
+    imports: [
+        Namespace {
+            source: "unknown-package",
+            local: "fullNamespace",
+        },
+    ],
+    exports: [],
+}

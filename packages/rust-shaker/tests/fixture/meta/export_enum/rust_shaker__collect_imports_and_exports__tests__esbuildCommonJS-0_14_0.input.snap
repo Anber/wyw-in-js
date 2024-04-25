@@ -1,0 +1,17 @@
+---
+source: src/collect_imports_and_exports.rs
+assertion_line: 1289
+description: "var __defProp = Object.defineProperty;\nvar __markAsModule = (target) =>\n  __defProp(target, '__esModule', { value: true });\nvar __export = (target, all) => {\n  __markAsModule(target);\n  for (var name in all)\n    __defProp(target, name, { get: all[name], enumerable: true });\n};\n__export(exports, {\n  E: () => E,\n});\nvar E = /* @__PURE__ */ ((E2) => {\n  E2[(E2['A'] = 0)] = 'A';\n  E2[(E2['B'] = 1)] = 'B';\n  E2[(E2['C'] = 2)] = 'C';\n  return E2;\n})(E || {});\n"
+input_file: tests/fixture/meta/export_enum/esbuildCommonJS-0_14_0.input.js
+---
+Meta {
+    imports: [],
+    exports: [
+        Named {
+            local: Identifier(
+                "E",
+            ),
+            exported: "E",
+        },
+    ],
+}

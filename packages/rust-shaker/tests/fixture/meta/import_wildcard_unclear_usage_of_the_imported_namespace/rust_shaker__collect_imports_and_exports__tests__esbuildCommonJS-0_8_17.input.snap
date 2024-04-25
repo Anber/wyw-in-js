@@ -1,0 +1,14 @@
+---
+source: src/collect_imports_and_exports.rs
+description: "var __create = Object.create;\nvar __defProp = Object.defineProperty;\nvar __getProtoOf = Object.getPrototypeOf;\nvar __hasOwnProp = Object.prototype.hasOwnProperty;\nvar __getOwnPropNames = Object.getOwnPropertyNames;\nvar __getOwnPropDesc = Object.getOwnPropertyDescriptor;\nvar __markAsModule = (target) =>\n  __defProp(target, '__esModule', { value: true });\nvar __exportStar = (target, module2, desc) => {\n  __markAsModule(target);\n  if (\n    (module2 && typeof module2 === 'object') ||\n    typeof module2 === 'function'\n  ) {\n    for (let key of __getOwnPropNames(module2))\n      if (!__hasOwnProp.call(target, key) && key !== 'default')\n        __defProp(target, key, {\n          get: () => module2[key],\n          enumerable:\n            !(desc = __getOwnPropDesc(module2, key)) || desc.enumerable,\n        });\n  }\n  return target;\n};\nvar __toModule = (module2) => {\n  if (module2 && module2.__esModule) return module2;\n  return __exportStar(\n    __defProp(\n      module2 != null ? __create(__getProtoOf(module2)) : {},\n      'default',\n      { value: module2, enumerable: true }\n    ),\n    module2\n  );\n};\nvar ns = __toModule(require('unknown-package'));\nconsole.log(ns);\n"
+input_file: tests/fixture/meta/import_wildcard_unclear_usage_of_the_imported_namespace/esbuildCommonJS-0_8_17.input.js
+---
+Meta {
+    imports: [
+        Namespace {
+            source: "unknown-package",
+            local: "ns",
+        },
+    ],
+    exports: [],
+}

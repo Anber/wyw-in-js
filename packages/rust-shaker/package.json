@@ -1,0 +1,14 @@
+{
+    "name": "rust-shaker",
+    "version": "0.1.0",
+    "description": "",
+    "author": "",
+    "license": "ISC",
+    "keywords": ["swc-plugin"],
+    "main": "target/wasm32-wasi/release/rust-shaker.wasm",
+    "scripts": {
+        "prepublishOnly": "cargo build-wasi --release"
+    },
+    "files": [],
+    "preferUnplugged": true
+}

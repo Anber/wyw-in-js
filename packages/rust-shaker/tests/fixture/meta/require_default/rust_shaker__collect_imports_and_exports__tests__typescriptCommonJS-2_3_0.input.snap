@@ -1,0 +1,18 @@
+---
+source: src/collect_imports_and_exports.rs
+assertion_line: 1395
+description: "var unknownDefault = require('unknown-package');\nconsole.log(unknownDefault['default']);\n"
+input_file: tests/fixture/meta/require_default/typescriptCommonJS-2_3_0.input.js
+---
+Meta {
+    imports: [
+        Default {
+            source: "unknown-package",
+            local: MemberExpression(
+                "unknownDefault",
+                "default",
+            ),
+        },
+    ],
+    exports: [],
+}

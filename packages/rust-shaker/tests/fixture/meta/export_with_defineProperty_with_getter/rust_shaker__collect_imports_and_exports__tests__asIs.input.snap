@@ -1,0 +1,16 @@
+---
+source: src/collect_imports_and_exports.rs
+description: "Object.defineProperty(exports, 'a', {\n  get: () => 1,\n});\n"
+input_file: tests/fixture/meta/export_with_defineProperty_with_getter/asIs.input.js
+---
+Meta {
+    imports: [],
+    exports: [
+        Named {
+            local: NumericLiteral(
+                1.0,
+            ),
+            exported: "a",
+        },
+    ],
+}

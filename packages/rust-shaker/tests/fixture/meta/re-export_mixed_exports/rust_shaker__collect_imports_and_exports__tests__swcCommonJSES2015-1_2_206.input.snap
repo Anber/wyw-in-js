@@ -1,0 +1,30 @@
+---
+source: src/collect_imports_and_exports.rs
+description: "'use strict';\nObject.defineProperty(exports, '__esModule', {\n  value: true,\n});\nfunction _export(target, all) {\n  for (var name in all)\n    Object.defineProperty(target, name, {\n      get: all[name],\n      enumerable: true,\n    });\n}\n_export(exports, {\n  default: () => _default,\n  isUnnecessaryReactCall: () => _isUnnecessaryReactCall.default,\n  syncResolve: () => _asyncResolveFallback.syncResolve,\n});\nconst _asyncResolveFallback = require('./asyncResolveFallback');\n_exportStar(require('./collectExportsAndImports'), exports);\nconst _isUnnecessaryReactCall = _interopRequireDefault(\n  require('./isUnnecessaryReactCall')\n);\nfunction _exportStar(from, to) {\n  Object.keys(from).forEach(function (k) {\n    if (k !== 'default' && !Object.prototype.hasOwnProperty.call(to, k))\n      Object.defineProperty(to, k, {\n        enumerable: true,\n        get: function () {\n          return from[k];\n        },\n      });\n  });\n  return from;\n}\nfunction _interopRequireDefault(obj) {\n  return obj && obj.__esModule\n    ? obj\n    : {\n        default: obj,\n      };\n}\nvar _default = 123;\n"
+input_file: tests/fixture/meta/re-export_mixed_exports/swcCommonJSES2015-1_2_206.input.js
+---
+Meta {
+    imports: [],
+    exports: [
+        Default,
+        Named {
+            local: BooleanLiteral(
+                true,
+            ),
+            exported: "__esModule",
+        },
+        Reexport {
+            orig: "syncResolve",
+            exported: "syncResolve",
+            source: "./asyncResolveFallback",
+        },
+        Reexport {
+            orig: "default",
+            exported: "isUnnecessaryReactCall",
+            source: "./isUnnecessaryReactCall",
+        },
+        ReexportAll(
+            "./collectExportsAndImports",
+        ),
+    ],
+}

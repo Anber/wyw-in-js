@@ -1,0 +1,15 @@
+---
+source: src/collect_imports_and_exports.rs
+assertion_line: 1068
+description: "'use strict';\nvar ns = _interopRequireWildcard(require('unknown-package'));\nfunction _interopRequireWildcard(obj) {\n  if (obj && obj.__esModule) {\n    return obj;\n  } else {\n    var newObj = {};\n    if (obj != null) {\n      for (var key in obj) {\n        if (Object.prototype.hasOwnProperty.call(obj, key)) {\n          var desc =\n            Object.defineProperty && Object.getOwnPropertyDescriptor\n              ? Object.getOwnPropertyDescriptor(obj, key)\n              : {};\n          if (desc.get || desc.set) {\n            Object.defineProperty(newObj, key, desc);\n          } else {\n            newObj[key] = obj[key];\n          }\n        }\n      }\n    }\n    newObj.default = obj;\n    return newObj;\n  }\n}\nvar key1 = Math.random() > 0.5 ? 'a' : 'b';\nconsole.log(ns[key1]);\n"
+input_file: tests/fixture/meta/import_wildcard_dynamic_usage_of_the_imported_namespace/swcCommonJSES5-1_2_102.input.js
+---
+Meta {
+    imports: [
+        Namespace {
+            source: "unknown-package",
+            local: "ns",
+        },
+    ],
+    exports: [],
+}

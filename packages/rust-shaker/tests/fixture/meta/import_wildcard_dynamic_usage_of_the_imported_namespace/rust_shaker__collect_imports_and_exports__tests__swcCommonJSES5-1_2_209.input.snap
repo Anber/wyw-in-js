@@ -1,0 +1,22 @@
+---
+source: src/collect_imports_and_exports.rs
+assertion_line: 1106
+description: "'use strict';\nObject.defineProperty(exports, '__esModule', {\n  value: true,\n});\nvar _unknownPackage = /*#__PURE__*/ _interopRequireWildcard(\n  require('unknown-package')\n);\nfunction _getRequireWildcardCache(nodeInterop) {\n  if (typeof WeakMap !== 'function') return null;\n  var cacheBabelInterop = new WeakMap();\n  var cacheNodeInterop = new WeakMap();\n  return (_getRequireWildcardCache = function (nodeInterop) {\n    return nodeInterop ? cacheNodeInterop : cacheBabelInterop;\n  })(nodeInterop);\n}\nfunction _interopRequireWildcard(obj, nodeInterop) {\n  if (!nodeInterop && obj && obj.__esModule) {\n    return obj;\n  }\n  if (obj === null || (typeof obj !== 'object' && typeof obj !== 'function')) {\n    return {\n      default: obj,\n    };\n  }\n  var cache = _getRequireWildcardCache(nodeInterop);\n  if (cache && cache.has(obj)) {\n    return cache.get(obj);\n  }\n  var newObj = {};\n  var hasPropertyDescriptor =\n    Object.defineProperty && Object.getOwnPropertyDescriptor;\n  for (var key in obj) {\n    if (key !== 'default' && Object.prototype.hasOwnProperty.call(obj, key)) {\n      var desc = hasPropertyDescriptor\n        ? Object.getOwnPropertyDescriptor(obj, key)\n        : null;\n      if (desc && (desc.get || desc.set)) {\n        Object.defineProperty(newObj, key, desc);\n      } else {\n        newObj[key] = obj[key];\n      }\n    }\n  }\n  newObj.default = obj;\n  if (cache) {\n    cache.set(obj, newObj);\n  }\n  return newObj;\n}\nvar key = Math.random() > 0.5 ? 'a' : 'b';\nconsole.log(_unknownPackage[key]);\n"
+input_file: tests/fixture/meta/import_wildcard_dynamic_usage_of_the_imported_namespace/swcCommonJSES5-1_2_209.input.js
+---
+Meta {
+    imports: [
+        Namespace {
+            source: "unknown-package",
+            local: "_unknownPackage",
+        },
+    ],
+    exports: [
+        Named {
+            local: BooleanLiteral(
+                true,
+            ),
+            exported: "__esModule",
+        },
+    ],
+}

@@ -1,0 +1,22 @@
+---
+source: src/collect_imports_and_exports.rs
+description: "'use strict';\n\nObject.defineProperty(exports, '__esModule', {\n  value: true,\n});\nexports.Foo = void 0;\n\nfunction _defineProperties(target, props) {\n  for (var i = 0; i < props.length; i++) {\n    var descriptor = props[i];\n    descriptor.enumerable = descriptor.enumerable || false;\n    descriptor.configurable = true;\n    if ('value' in descriptor) descriptor.writable = true;\n    Object.defineProperty(target, descriptor.key, descriptor);\n  }\n}\n\nfunction _createClass(Constructor, protoProps, staticProps) {\n  if (protoProps) _defineProperties(Constructor.prototype, protoProps);\n  if (staticProps) _defineProperties(Constructor, staticProps);\n  return Constructor;\n}\n\nfunction _classCallCheck(instance, Constructor) {\n  if (!(instance instanceof Constructor)) {\n    throw new TypeError('Cannot call a class as a function');\n  }\n}\n\nvar Foo = /*#__PURE__*/ _createClass(function Foo() {\n  _classCallCheck(this, Foo);\n});\n\nexports.Foo = Foo;\n"
+input_file: tests/fixture/meta/export_class/babelCommonJSWithOldCoreAndTSC-7_16_5.input.js
+---
+Meta {
+    imports: [],
+    exports: [
+        Named {
+            local: Identifier(
+                "Foo",
+            ),
+            exported: "Foo",
+        },
+        Named {
+            local: BooleanLiteral(
+                true,
+            ),
+            exported: "__esModule",
+        },
+    ],
+}

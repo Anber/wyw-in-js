@@ -1,0 +1,22 @@
+---
+source: src/collect_imports_and_exports.rs
+description: "'use strict';\nObject.defineProperty(exports, '__esModule', {\n  value: true,\n});\nObject.defineProperty(exports, 'E', {\n  enumerable: true,\n  get: () => E,\n});\nvar E;\n(function (E) {\n  E[(E['A'] = 0)] = 'A';\n  E[(E['B'] = 1)] = 'B';\n  E[(E['C'] = 2)] = 'C';\n})(E || (E = {}));\n"
+input_file: tests/fixture/meta/export_enum/swcCommonJSES2015-1_2_208.input.js
+---
+Meta {
+    imports: [],
+    exports: [
+        Named {
+            local: Identifier(
+                "E",
+            ),
+            exported: "E",
+        },
+        Named {
+            local: BooleanLiteral(
+                true,
+            ),
+            exported: "__esModule",
+        },
+    ],
+}

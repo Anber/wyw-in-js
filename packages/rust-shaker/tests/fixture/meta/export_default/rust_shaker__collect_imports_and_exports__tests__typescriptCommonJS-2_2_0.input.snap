@@ -1,0 +1,17 @@
+---
+source: src/collect_imports_and_exports.rs
+description: "'use strict';\nexports.__esModule = true;\nexports['default'] = 'value';\n"
+input_file: tests/fixture/meta/export_default/typescriptCommonJS-2_2_0.input.js
+---
+Meta {
+    imports: [],
+    exports: [
+        Default,
+        Named {
+            local: BooleanLiteral(
+                true,
+            ),
+            exported: "__esModule",
+        },
+    ],
+}

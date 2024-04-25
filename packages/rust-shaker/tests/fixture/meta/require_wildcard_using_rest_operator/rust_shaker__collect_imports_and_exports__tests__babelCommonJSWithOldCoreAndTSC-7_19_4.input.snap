@@ -1,0 +1,15 @@
+---
+source: src/collect_imports_and_exports.rs
+assertion_line: 1106
+description: "'use strict';\n\nfunction _objectDestructuringEmpty(obj) {\n  if (obj == null) throw new TypeError('Cannot destructure undefined');\n}\n\nfunction _extends() {\n  _extends =\n    Object.assign ||\n    function (target) {\n      for (var i = 1; i < arguments.length; i++) {\n        var source = arguments[i];\n        for (var key in source) {\n          if (Object.prototype.hasOwnProperty.call(source, key)) {\n            target[key] = source[key];\n          }\n        }\n      }\n      return target;\n    };\n  return _extends.apply(this, arguments);\n}\n\nvar _require = require('unknown-package'),\n  fullNamespace = _extends({}, (_objectDestructuringEmpty(_require), _require));\n\nconsole.log(fullNamespace);\n"
+input_file: tests/fixture/meta/require_wildcard_using_rest_operator/babelCommonJSWithOldCoreAndTSC-7_19_4.input.js
+---
+Meta {
+    imports: [
+        Namespace {
+            source: "unknown-package",
+            local: "_require",
+        },
+    ],
+    exports: [],
+}

@@ -1,0 +1,20 @@
+---
+source: src/collect_imports_and_exports.rs
+assertion_line: 1106
+description: "'use strict';\nvar E;\n(function (E) {\n  E[(E['A'] = 0)] = 'A';\n  E[(E['B'] = 1)] = 'B';\n  E[(E['C'] = 2)] = 'C';\n})((E = exports.E || (exports.E = {})));\n"
+input_file: tests/fixture/meta/export_enum/typescriptCommonJS-2_2_0.input.js
+---
+Meta {
+    imports: [],
+    exports: [
+        Named {
+            local: Span(
+                Span {
+                    start: 146,
+                    end: 148,
+                },
+            ),
+            exported: "E",
+        },
+    ],
+}

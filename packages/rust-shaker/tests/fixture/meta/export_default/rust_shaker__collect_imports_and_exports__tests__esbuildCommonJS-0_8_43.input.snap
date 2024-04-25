@@ -1,0 +1,12 @@
+---
+source: src/collect_imports_and_exports.rs
+assertion_line: 1288
+description: "var __defProp = Object.defineProperty;\nvar __markAsModule = (target) =>\n  __defProp(target, '__esModule', { value: true });\nvar __export = (target, all) => {\n  for (var name in all)\n    __defProp(target, name, { get: all[name], enumerable: true });\n};\n__markAsModule(exports);\n__export(exports, {\n  default: () => source_default,\n});\nvar source_default = 'value';\n"
+input_file: tests/fixture/meta/export_default/esbuildCommonJS-0_8_43.input.js
+---
+Meta {
+    imports: [],
+    exports: [
+        Default,
+    ],
+}

@@ -1,0 +1,20 @@
+---
+source: src/collect_imports_and_exports.rs
+assertion_line: 1394
+description: "'use strict';\nObject.defineProperty(exports, '__esModule', {\n  value: true,\n});\nvar _unknownPackage = _interopRequireWildcard(require('unknown-package'));\nObject.keys(_unknownPackage).forEach(function (key) {\n  if (key === 'default' || key === '__esModule') return;\n  if (key in exports && exports[key] === _unknownPackage[key]) return;\n  Object.defineProperty(exports, key, {\n    enumerable: true,\n    get: function () {\n      return _unknownPackage[key];\n    },\n  });\n});\nfunction _interopRequireWildcard(obj) {\n  if (obj && obj.__esModule) {\n    return obj;\n  } else {\n    var newObj = {};\n    if (obj != null) {\n      for (var key in obj) {\n        if (Object.prototype.hasOwnProperty.call(obj, key)) {\n          var desc =\n            Object.defineProperty && Object.getOwnPropertyDescriptor\n              ? Object.getOwnPropertyDescriptor(obj, key)\n              : {};\n          if (desc.get || desc.set) {\n            Object.defineProperty(newObj, key, desc);\n          } else {\n            newObj[key] = obj[key];\n          }\n        }\n      }\n    }\n    newObj.default = obj;\n    return newObj;\n  }\n}\n"
+input_file: tests/fixture/meta/re-export_export_all/swcCommonJSES5-1_2_107.input.js
+---
+Meta {
+    imports: [],
+    exports: [
+        Named {
+            local: BooleanLiteral(
+                true,
+            ),
+            exported: "__esModule",
+        },
+        ReexportAll(
+            "unknown-package",
+        ),
+    ],
+}
