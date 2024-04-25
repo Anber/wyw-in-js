@@ -1,5 +1,13 @@
 # @wyw-in-js/processor-utils
 
+## 0.5.3
+
+### Patch Changes
+
+- 21f175c: Pass `extensions` option to processors
+- Updated dependencies
+  - @wyw-in-js/shared@0.5.3
+
 ## 0.5.2
 
 ### Patch Changes

@@ -1,5 +1,11 @@
 # @wyw-in-js/eslint-config
 
+## 0.5.3
+
+### Patch Changes
+
+- Bump versions
+
 ## 0.5.2
 
 ### Patch Changes

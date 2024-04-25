@@ -1,5 +1,11 @@
 # wyw-in-js
 
+## 0.5.3
+
+### Patch Changes
+
+- 21f175c: Pass `extensions` option to processors
+
 ## 0.5.2
 
 ### Patch Changes
