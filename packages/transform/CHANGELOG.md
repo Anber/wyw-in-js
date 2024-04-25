@@ -1,5 +1,14 @@
 # @wyw-in-js/transform
 
+## 0.5.2
+
+### Patch Changes
+
+- Updated dependencies
+- Updated dependencies [9096ba1]
+  - @wyw-in-js/shared@0.5.2
+  - @wyw-in-js/processor-utils@0.5.2
+
 ## 0.5.1
 
 ### Patch Changes
