@@ -1,5 +1,5 @@
 /* eslint-disable class-methods-use-this */
-import type { types as t } from '@babel/core';
+import type { NodePath, types as t } from '@babel/core';
 import generator from '@babel/generator';
 import type {
   Expression,
@@ -61,7 +61,7 @@ export abstract class BaseProcessor {
     },
     public readonly location: SourceLocation | null,
     protected readonly replacer: (
-      replacement: Expression,
+      replacement: Expression | ((tagPath: NodePath) => Expression),
       isPure: boolean
     ) => void,
     public readonly displayName: string,

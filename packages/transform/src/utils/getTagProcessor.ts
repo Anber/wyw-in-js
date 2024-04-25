@@ -245,9 +245,14 @@ function getBuilderForIdentifier(
     break;
   }
 
-  const replacer = (replacement: Expression, isPure: boolean) => {
+  const replacer = (
+    replacement: Expression | ((tagPath: NodePath) => Expression),
+    isPure: boolean
+  ) => {
     mutate(prev, (p) => {
-      p.replaceWith(replacement);
+      p.replaceWith(
+        typeof replacement === 'function' ? replacement(p) : replacement
+      );
       if (isPure) {
         p.addComment('leading', '#__PURE__');
       }
