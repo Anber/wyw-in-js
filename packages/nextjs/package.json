@@ -6,6 +6,7 @@
     "import-meta-resolve": "^4.1.0"
   },
   "devDependencies": {
+    "babel-plugin-transform-import-meta": "^2.2.1",
     "@wyw-in-js/babel-config": "workspace:*",
     "@wyw-in-js/eslint-config": "workspace:*",
     "@wyw-in-js/jest-preset": "workspace:*",
@@ -39,7 +40,7 @@
   },
   "scripts": {
     "build:esm": "babel src --out-dir esm --out-file-extension .mjs --extensions '.js,.jsx,.ts,.tsx' --source-maps --delete-dir-on-start",
-    "build:lib": "cross-env NODE_ENV=legacy babel src --out-dir lib --extensions '.js,.jsx,.ts,.tsx' --source-maps --delete-dir-on-start",
+    "build:lib": "cross-env NODE_ENV=legacy babel src --out-dir lib --extensions '.js,.jsx,.ts,.tsx' --source-maps --delete-dir-on-start --plugins=babel-plugin-transform-import-meta",
     "build:types": "tsc --project ./tsconfig.lib.json --baseUrl . --rootDir ./src",
     "lint": "eslint --ext .js,.ts ."
   },
