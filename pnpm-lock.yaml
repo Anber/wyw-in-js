@@ -396,6 +396,9 @@ importers:
       '@wyw-in-js/ts-config':
         specifier: workspace:*
         version: link:../../configs/ts
+      babel-plugin-transform-import-meta:
+        specifier: ^2.2.1
+        version: 2.2.1(@babel/core@7.23.5)
 
   packages/processor-utils:
     dependencies:
@@ -3216,6 +3219,11 @@ packages:
     resolution: {integrity: sha512-8sHeDOmXC8csczMrYEOf0UTNa4yE2SxV5JGeT/LP1n0OYVDUUFPxG9vdk2AlDlIit4t+Kf0xCtpgXPBwnn/9pw==}
     peerDependencies:
       '@babel/core': ^7.4.0 || ^8.0.0-0 <8.0.0
+
+  babel-plugin-transform-import-meta@2.2.1:
+    resolution: {integrity: sha512-AxNh27Pcg8Kt112RGa3Vod2QS2YXKKJ6+nSvRtv7qQTJAdx0MZa4UHZ4lnxHUWA2MNbLuZQv5FVab4P1CoLOWw==}
+    peerDependencies:
+      '@babel/core': ^7.10.0
 
   babel-preset-current-node-syntax@1.0.1:
     resolution: {integrity: sha512-M7LQ0bxarkxQoN+vz5aJPsLBn77n8QgTFmo8WK0/44auK2xlCXrYcUxHFxgU7qW5Yzw/CjmLRK2uJzaCd7LvqQ==}
@@ -11177,6 +11185,12 @@ snapshots:
       '@babel/helper-define-polyfill-provider': 0.4.3(@babel/core@7.23.5)
     transitivePeerDependencies:
       - supports-color
+
+  babel-plugin-transform-import-meta@2.2.1(@babel/core@7.23.5):
+    dependencies:
+      '@babel/core': 7.23.5
+      '@babel/template': 7.22.15
+      tslib: 2.6.2
 
   babel-preset-current-node-syntax@1.0.1(@babel/core@7.23.5):
     dependencies:

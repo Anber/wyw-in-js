@@ -21,7 +21,7 @@ function hasCorectExtension(fileName: string) {
 
 function requireResolve(pathname: string) {
   const res = resolve(pathname, import.meta.url);
-  return res.replaceAll('file://', '');
+  return res.replace('file://', '');
 }
 
 export default function withWywInJs(
