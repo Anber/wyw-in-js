@@ -24,6 +24,12 @@ const outputCssLoader = require.resolve('./outputCssLoader');
 export type LoaderOptions = {
   cacheProvider?: string | ICache;
   extension?: string;
+  nextjsConfig?: {
+    asyncResolve?: (token: string, importer: string) => Promise<string | null>;
+    isModule?: boolean;
+    outputCss?: boolean;
+    placeholderCssFile: string;
+  };
   preprocessor?: Preprocessor;
   sourceMap?: boolean;
 };
@@ -63,13 +69,23 @@ const webpack5Loader: Loader = function webpack5LoaderPlugin(
     preprocessor = undefined,
     extension = '.wyw-in-js.css',
     cacheProvider,
+    nextjsConfig,
     ...rest
   } = this.getOptions() || {};
 
   const outputFileName = this.resourcePath.replace(/\.[^.]+$/, extension);
   const resolveModule = this.getResolve({ dependencyType: 'esm' });
 
-  const asyncResolve = (token: string, importer: string): Promise<string> => {
+  const asyncResolve = async (
+    token: string,
+    importer: string
+  ): Promise<string> => {
+    if (nextjsConfig?.asyncResolve) {
+      const value = await nextjsConfig.asyncResolve(token, importer);
+      if (value) {
+        return value;
+      }
+    }
     const context = path.isAbsolute(importer)
       ? path.dirname(importer)
       : path.join(process.cwd(), path.dirname(importer));
@@ -117,30 +133,57 @@ const webpack5Loader: Loader = function webpack5LoaderPlugin(
             ) ?? []
           );
 
-          try {
-            const cacheInstance = await getCacheInstance(cacheProvider);
+          if (nextjsConfig) {
+            try {
+              const { isModule = true, outputCss = true } = nextjsConfig;
+              if (!outputCss) {
+                this.callback(null, result.code, result.sourceMap ?? undefined);
+                return;
+              }
+              const cssPart = `${
+                nextjsConfig.placeholderCssFile
+              }?${encodeURIComponent(
+                JSON.stringify({
+                  filename: this.resourcePath,
+                  source: cssText.replaceAll('!important', '__IMP__'), // webpack has a special handling for `!` and we want to handle `!important` in CSS
+                })
+              )}`;
+              this.callback(
+                null,
+                `${result.code}\n\n${
+                  isModule ? 'import ' : 'require('
+                }${JSON.stringify(cssPart)}${!isModule ? ')' : ''}`,
+                result.sourceMap ?? undefined
+              );
+            } catch (err) {
+              this.callback(err as Error);
+            }
+          } else {
+            try {
+              const cacheInstance = await getCacheInstance(cacheProvider);
 
-            await cacheInstance.set(this.resourcePath, cssText);
+              await cacheInstance.set(this.resourcePath, cssText);
 
-            await cacheInstance.setDependencies?.(
-              this.resourcePath,
-              this.getDependencies()
-            );
+              await cacheInstance.setDependencies?.(
+                this.resourcePath,
+                this.getDependencies()
+              );
 
-            const request = `${outputFileName}!=!${outputCssLoader}?cacheProvider=${encodeURIComponent(
-              typeof cacheProvider === 'string' ? cacheProvider : ''
-            )}!${this.resourcePath}`;
-            const stringifiedRequest = JSON.stringify(
-              this.utils.contextify(this.context || this.rootContext, request)
-            );
+              const request = `${outputFileName}!=!${outputCssLoader}?cacheProvider=${encodeURIComponent(
+                typeof cacheProvider === 'string' ? cacheProvider : ''
+              )}!${this.resourcePath}`;
+              const stringifiedRequest = JSON.stringify(
+                this.utils.contextify(this.context || this.rootContext, request)
+              );
 
-            this.callback(
-              null,
-              `${result.code}\n\nrequire(${stringifiedRequest});`,
-              result.sourceMap ?? undefined
-            );
-          } catch (err) {
-            this.callback(err as Error);
+              this.callback(
+                null,
+                `${result.code}\n\nrequire(${stringifiedRequest});`,
+                result.sourceMap ?? undefined
+              );
+            } catch (err) {
+              this.callback(err as Error);
+            }
           }
 
           return;
