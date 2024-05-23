@@ -246,5 +246,21 @@ describe('stylisGlobalPlugin', () => {
         `".globalA .component {color:red;}.globalB .component {color:blue;}"`
       );
     });
+
+    it('@media', () => {
+      const cssRule = dedent(`
+        .component :global() {
+          @media (prefers-color-scheme: dark) {
+            html {
+              color-scheme: dark;
+            }
+          }
+        }
+      `);
+
+      expect(compileRule(cssRule)).toMatchInlineSnapshot(
+        `"@media (prefers-color-scheme: dark){html {color-scheme:dark;}}"`
+      );
+    });
   });
 });
