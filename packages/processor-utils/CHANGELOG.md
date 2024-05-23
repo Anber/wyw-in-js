@@ -1,5 +1,13 @@
 # @wyw-in-js/processor-utils
 
+## 0.5.4
+
+### Patch Changes
+
+- Bump versions
+- Updated dependencies
+  - @wyw-in-js/shared@0.5.4
+
 ## 0.5.3
 
 ### Patch Changes

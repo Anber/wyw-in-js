@@ -1,6 +1,6 @@
 {
   "name": "@wyw-in-js/cli",
-  "version": "0.5.3",
+  "version": "0.5.4",
   "bin": {
     "wyw-in-js": "bin/wyw-in-js.js"
   },

@@ -1,5 +1,11 @@
 # wyw-in-js
 
+## 0.5.4
+
+### Patch Changes
+
+- 3cadae5: Support for @media selectors inside :global selectors.
+
 ## 0.5.3
 
 ### Patch Changes
