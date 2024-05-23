@@ -116,12 +116,26 @@ const isRuleset = (element: Element): element is Ruleset => {
   return element.type === RULESET && propsAreStrings(element.props);
 };
 
+function nonMediaParent(element: Element): Element | null {
+  let { parent } = element;
+
+  while (parent) {
+    if (parent.type !== '@media') {
+      return parent;
+    }
+
+    parent = parent.parent;
+  }
+
+  return null;
+}
+
 /**
  * Stylis plugin that mimics :global() selector behavior from Stylis v3.
  */
 export const stylisGlobalPlugin: Middleware = (element) => {
   function getGlobalSelectorModifiers(el: Element): IGlobalSelectorModifiers {
-    const { parent } = el;
+    const parent = nonMediaParent(el);
 
     const value = getOriginalElementValue(el);
     const parentValue = getOriginalElementValue(parent);
