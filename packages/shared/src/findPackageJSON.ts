@@ -10,7 +10,7 @@ export function findPackageJSON(
   filename: string | null | undefined
 ) {
   // Jest's resolver does not work properly with `moduleNameMapper` when `paths` are defined
-  const isJest = Boolean(process.env.JEST_WORKER_ID);
+  const isJest = Boolean(globalThis.process?.env?.JEST_WORKER_ID);
   const skipPathsOptions = isJest && !pkgName.startsWith('.');
 
   try {
