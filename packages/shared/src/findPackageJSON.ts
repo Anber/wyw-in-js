@@ -1,6 +1,4 @@
 import { dirname, isAbsolute } from 'path';
-import * as process from 'process';
-
 import findUp from 'find-up';
 
 const cache = new Map<string, string | undefined>();
