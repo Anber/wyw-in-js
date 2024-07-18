@@ -1,6 +1,6 @@
 {
   "name": "@wyw-in-js/object-syntax",
-  "version": "0.5.3",
+  "version": "0.5.4",
   "dependencies": {
     "@griffel/core": "1.5.0",
     "@wyw-in-js/processor-utils": "workspace:*"
