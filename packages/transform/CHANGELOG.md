@@ -1,5 +1,14 @@
 # @wyw-in-js/transform
 
+## 0.5.4
+
+### Patch Changes
+
+- 3cadae5: Support for @media selectors inside :global selectors.
+- Updated dependencies
+  - @wyw-in-js/shared@0.5.4
+  - @wyw-in-js/processor-utils@0.5.4
+
 ## 0.5.3
 
 ### Patch Changes

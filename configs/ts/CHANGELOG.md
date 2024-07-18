@@ -1,5 +1,11 @@
 # @wyw-in-js/ts-config
 
+## 0.5.4
+
+### Patch Changes
+
+- Bump versions
+
 ## 0.5.3
 
 ### Patch Changes
