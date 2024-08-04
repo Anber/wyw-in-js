@@ -84,6 +84,64 @@ describe('BaseAction', () => {
       expect(generator1.next()).toBe(generator2.next()); // return
     });
 
+    it('should only run the first handler', () => {
+      const fn1 = jest.fn();
+      const fn2 = jest.fn();
+
+      const handler1: Handler<'sync', ITransformAction> = function* handler() {
+        fn1();
+
+        yield ['resolveImports', entrypoint, { imports: new Map() }, null];
+
+        fn1();
+
+        return { code: 'bar', metadata: null };
+      };
+
+      const handler2: Handler<'sync', ITransformAction> = function* handler() {
+        fn2();
+        
+        yield ['resolveImports', entrypoint, { imports: new Map() }, null];
+
+        fn2();
+
+        return { code: 'foo', metadata: null };
+      };
+
+      const generator1 = action.run(handler1);
+      const generator2 = action.run(handler2);
+
+      // run generator2 first
+      expect(generator2.next()).toEqual({
+        done: false,
+        value: ['resolveImports', entrypoint, { imports: new Map() }, null],
+      });
+      expect(fn1).toHaveBeenCalledTimes(1);
+      expect(fn2).toHaveBeenCalledTimes(0);
+
+      expect(generator2.next()).toEqual({
+        done: true,
+        value: { code: 'bar', metadata: null },
+      });
+      expect(fn1).toHaveBeenCalledTimes(2);
+      expect(fn2).toHaveBeenCalledTimes(0);
+
+      // run generator1 after generator2 is done
+      expect(generator1.next()).toEqual({
+        done: false,
+        value: ['resolveImports', entrypoint, { imports: new Map() }, null],
+      });
+      expect(fn1).toHaveBeenCalledTimes(2);
+      expect(fn2).toHaveBeenCalledTimes(0);
+
+      expect(generator1.next(["Hi handler1, I'm generator1!"])).toEqual({
+        done: true,
+        value: { code: 'bar', metadata: null },
+      });
+      expect(fn1).toHaveBeenCalledTimes(2);
+      expect(fn2).toHaveBeenCalledTimes(0);
+    })
+
     it('should process error in generator', () => {
       const handler: Handler<'sync', ITransformAction> = function* handler() {
         try {
