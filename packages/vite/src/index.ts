@@ -17,7 +17,7 @@ import type {
   FilterPattern,
 } from 'vite';
 
-import { logger, syncResolve } from '@wyw-in-js/shared';
+import { asyncResolverFactory, logger, syncResolve } from '@wyw-in-js/shared';
 import type {
   IFileReporterOptions,
   PluginOptions,
@@ -271,6 +271,128 @@ export default function wywInJS({
   // <dependency id, targets>
   const targets: { dependencies: string[]; id: string }[] = [];
   const cache = new TransformCacheCollection();
+
+  type DepInfoLike = { file: string; processing?: Promise<void> };
+  type DepsOptimizerLike = {
+    init?: () => Promise<void>;
+    isOptimizedDepFile?: (id: string) => boolean;
+    metadata?: { depInfoList?: DepInfoLike[] };
+    scanProcessing?: Promise<void>;
+  };
+
+  type ViteServerWithDepsOptimizer = ViteDevServer & {
+    _depsOptimizer?: DepsOptimizerLike;
+    depsOptimizer?: DepsOptimizerLike;
+    environments?: Record<string, { depsOptimizer?: DepsOptimizerLike }>;
+  };
+
+  const isInsideCacheDir = (filename: string): boolean => {
+    if (!config.cacheDir) {
+      return false;
+    }
+
+    const relative = path.relative(config.cacheDir, filename);
+    return (
+      relative !== '' &&
+      !relative.startsWith('..') &&
+      !path.isAbsolute(relative)
+    );
+  };
+
+  const getDepsOptimizer = (): DepsOptimizerLike | null => {
+    if (!devServer) return null;
+
+    const server = devServer as unknown as ViteServerWithDepsOptimizer;
+    return (
+      server.environments?.client?.depsOptimizer ??
+      server.depsOptimizer ??
+      server._depsOptimizer ??
+      null
+    );
+  };
+
+  const waitForOptimizedDep = async (filename: string): Promise<boolean> => {
+    const depsOptimizer = getDepsOptimizer();
+    if (!depsOptimizer?.isOptimizedDepFile?.(filename)) {
+      return false;
+    }
+
+    await depsOptimizer.init?.();
+    await depsOptimizer.scanProcessing;
+
+    const info = depsOptimizer.metadata?.depInfoList?.find(
+      (item) => item.file === filename
+    );
+    if (info?.processing) {
+      await info.processing;
+    }
+
+    return true;
+  };
+
+  const createAsyncResolver = asyncResolverFactory(
+    async (
+      resolved: { external: boolean | 'absolute'; id: string } | null,
+      what: string,
+      importer: string,
+      stack: string[]
+    ): Promise<string | null> => {
+      const log = logger.extend('vite').extend(getFileIdx(importer));
+
+      if (resolved) {
+        if (resolved.external) {
+          // If module is marked as external, Rollup will not resolve it,
+          // so we need to resolve it ourselves with default resolver
+          const resolvedId = syncResolve(what, importer, stack);
+          log("resolve ✅ '%s'@'%s -> %O\n%s", what, importer, resolved);
+          return resolvedId;
+        }
+
+        log("resolve ✅ '%s'@'%s -> %O\n%s", what, importer, resolved);
+
+        // Vite adds param like `?v=667939b3` to cached modules
+        const resolvedId = resolved.id.split('?', 1)[0];
+
+        if (resolvedId.startsWith('\0')) {
+          // \0 is a special character in Rollup that tells Rollup to not include this in the bundle
+          // https://rollupjs.org/guide/en/#outputexports
+          return null;
+        }
+
+        if (resolvedId.startsWith('/@')) {
+          return null;
+        }
+
+        if (!existsSync(resolvedId)) {
+          // When Vite resolves to an optimized deps entry (cacheDir) it may not be written yet.
+          // Wait for Vite's optimizer instead of calling optimizeDeps() manually (deprecated in Vite 7).
+          try {
+            await waitForOptimizedDep(resolvedId);
+          } catch {
+            // If optimizer failed, fall through to preserve previous behavior and surface the error.
+          }
+
+          // Vite can return an optimized deps entry (from cacheDir) before it's written to disk.
+          // Manually calling optimizeDeps is deprecated in Vite 7 and can also get called many times.
+          // Instead, fall back to resolving the original module path directly.
+          if (!existsSync(resolvedId) && isInsideCacheDir(resolvedId)) {
+            try {
+              return syncResolve(what, importer, stack);
+            } catch {
+              // Fall through to preserve previous behavior: return resolvedId and let WyW surface the error.
+            }
+          }
+        }
+
+        return resolvedId;
+      }
+
+      log("resolve ❌ '%s'@'%s", what, importer);
+      throw new Error(`Could not resolve ${what}`);
+    },
+    (what, importer) => [what, importer]
+  );
+
   return {
     name: 'wyw-in-js',
     enforce: 'post',
@@ -431,123 +553,6 @@ export default function wywInJS({
 
       log('transform %s', id);
 
-      type DepInfoLike = { file: string; processing?: Promise<void> };
-      type DepsOptimizerLike = {
-        init?: () => Promise<void>;
-        isOptimizedDepFile?: (id: string) => boolean;
-        metadata?: { depInfoList?: DepInfoLike[] };
-        scanProcessing?: Promise<void>;
-      };
-
-      type ViteServerWithDepsOptimizer = ViteDevServer & {
-        _depsOptimizer?: DepsOptimizerLike;
-        depsOptimizer?: DepsOptimizerLike;
-        environments?: Record<string, { depsOptimizer?: DepsOptimizerLike }>;
-      };
-
-      const isInsideCacheDir = (filename: string): boolean => {
-        if (!config.cacheDir) {
-          return false;
-        }
-
-        const relative = path.relative(config.cacheDir, filename);
-        return (
-          relative !== '' &&
-          !relative.startsWith('..') &&
-          !path.isAbsolute(relative)
-        );
-      };
-
-      const getDepsOptimizer = (): DepsOptimizerLike | null => {
-        if (!devServer) return null;
-
-        const server = devServer as unknown as ViteServerWithDepsOptimizer;
-        return (
-          server.environments?.client?.depsOptimizer ??
-          server.depsOptimizer ??
-          server._depsOptimizer ??
-          null
-        );
-      };
-
-      const waitForOptimizedDep = async (
-        filename: string
-      ): Promise<boolean> => {
-        const depsOptimizer = getDepsOptimizer();
-        if (!depsOptimizer?.isOptimizedDepFile?.(filename)) {
-          return false;
-        }
-
-        await depsOptimizer.init?.();
-        await depsOptimizer.scanProcessing;
-
-        const info = depsOptimizer.metadata?.depInfoList?.find(
-          (item) => item.file === filename
-        );
-        if (info?.processing) {
-          await info.processing;
-        }
-
-        return true;
-      };
-
-      const asyncResolve = async (
-        what: string,
-        importer: string,
-        stack: string[]
-      ) => {
-        const resolved = await this.resolve(what, importer);
-        if (resolved) {
-          if (resolved.external) {
-            // If module is marked as external, Rollup will not resolve it,
-            // so we need to resolve it ourselves with default resolver
-            const resolvedId = syncResolve(what, importer, stack);
-            log("resolve ✅ '%s'@'%s -> %O\n%s", what, importer, resolved);
-            return resolvedId;
-          }
-
-          log("resolve ✅ '%s'@'%s -> %O\n%s", what, importer, resolved);
-          // Vite adds param like `?v=667939b3` to cached modules
-          const resolvedId = resolved.id.split('?', 1)[0];
-
-          if (resolvedId.startsWith('\0')) {
-            // \0 is a special character in Rollup that tells Rollup to not include this in the bundle
-            // https://rollupjs.org/guide/en/#outputexports
-            return null;
-          }
-
-          if (resolvedId.startsWith('/@')) {
-            return null;
-          }
-
-          if (!existsSync(resolvedId)) {
-            // When Vite resolves to an optimized deps entry (cacheDir) it may not be written yet.
-            // Wait for Vite's optimizer instead of calling optimizeDeps() manually (deprecated in Vite 7).
-            try {
-              await waitForOptimizedDep(resolvedId);
-            } catch {
-              // If optimizer failed, fall through to preserve previous behavior and surface the error.
-            }
-
-            // Vite can return an optimized deps entry (from cacheDir) before it's written to disk.
-            // Manually calling optimizeDeps is deprecated in Vite 7 and can also get called many times.
-            // Instead, fall back to resolving the original module path directly.
-            if (!existsSync(resolvedId) && isInsideCacheDir(resolvedId)) {
-              try {
-                return syncResolve(what, importer, stack);
-              } catch {
-                // Fall through to preserve previous behavior: return resolvedId and let WyW surface the error.
-              }
-            }
-          }
-
-          return resolvedId;
-        }
-
-        log("resolve ❌ '%s'@'%s", what, importer);
-        throw new Error(`Could not resolve ${what}`);
-      };
-
       const overrideContext: OverrideContext = (context, filename) => {
         const isSsr =
           typeof transformOptions === 'boolean'
@@ -580,7 +585,11 @@ export default function wywInJS({
         eventEmitter: emitter,
       };
 
-      const result = await transform(transformServices, code, asyncResolve);
+      const result = await transform(
+        transformServices,
+        code,
+        createAsyncResolver(this.resolve)
+      );
 
       let { cssText, dependencies } = result;
 

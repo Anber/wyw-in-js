@@ -1,6 +1,7 @@
 export { Debugger } from 'debug';
 
 export { asyncResolveFallback, syncResolve } from './asyncResolveFallback';
+export { asyncResolverFactory } from './asyncResolverFactory';
 export { hasEvalMeta } from './hasEvalMeta';
 export { findPackageJSON } from './findPackageJSON';
 export { isBoxedPrimitive } from './isBoxedPrimitive';
