@@ -185,8 +185,6 @@ export async function transform(
       return asyncResolveImports.call(this, asyncResolve);
     };
 
-    resolveImports.id = (asyncResolve as any).id;
-
     memoizedAsyncResolve.set(asyncResolve, resolveImports);
   }
 
