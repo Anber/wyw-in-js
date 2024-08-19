@@ -22,13 +22,13 @@ export default class MyProcessor extends TaggedTemplateProcessor {
 
 The `Params` type is an array of `Param` types, which represent the different ways a custom processor can be called. Each `Param` type corresponds to a different call pattern:
 
-- `CalleeParam`: This represents a call where the processor is directly invoked with a template literal, like `css```. The first element of the array is the string 'callee', and the second element is an Identifier or MemberExpression, which represents the processor being called (e.g., `css`).
+- `CalleeParam`: This represents a call where the processor is directly invoked with a template literal, like ` css`` `. The first element of the array is the string 'callee', and the second element is an Identifier or MemberExpression, which represents the processor being called (e.g., `css`).
 
-- `CallParam`: This represents a call where the processor is invoked with a function call, like `styled(SomeTag)```. The first element of the array is the string 'call', and the rest of the elements are ExpressionValues, which represent the arguments passed to the function call.
+- `CallParam`: This represents a call where the processor is invoked with a function call, like ` styled(SomeTag)`` `. The first element of the array is the string 'call', and the rest of the elements are ExpressionValues, which represent the arguments passed to the function call.
 
-- `MemberParam`: This represents a call where the processor is invoked on a member, like `styled.div```. The first element of the array is the string 'member', and the second element is a string, which represents the member being accessed (e.g., 'div').
+- `MemberParam`: This represents a call where the processor is invoked on a member, like ` styled.div`` `. The first element of the array is the string 'member', and the second element is a string, which represents the member being accessed (e.g., 'div').
 
-- `TemplateParam`: This represents a call where the processor is invoked with a template literal, like `styled```. The first element of the array is the string 'template', and the second element is an array of TemplateElements or ExpressionValues, which represent the contents of the template literal.
+- `TemplateParam`: This represents a call where the processor is invoked with a template literal, like ` styled`` `. The first element of the array is the string 'template', and the second element is an array of TemplateElements or ExpressionValues, which represent the contents of the template literal.
 
 In summary, the `Params` type is used to capture the different ways a custom processor can be invoked, and the specific arguments or members used in the invocation.
 
