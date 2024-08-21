@@ -1,5 +1,4 @@
 import type { NodePath } from '@babel/traverse';
-import traverse from '@babel/traverse';
 import type { Node } from '@babel/types';
 
 const caches = new WeakMap<
@@ -29,11 +28,6 @@ export const getTraversalCache = <
   }
 
   return cache.get(name) as WeakMap<TKey, TValue>;
-};
-
-const traverseCache = (traverse as unknown as { cache: unknown }).cache;
-export const clearBabelTraversalCache = () => {
-  (traverseCache as { clear: () => void }).clear();
 };
 
 export const invalidateTraversalCache = (path: NodePath) => {
