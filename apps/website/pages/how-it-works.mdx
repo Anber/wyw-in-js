@@ -1,7 +1,403 @@
-# How it works?
-
 import { Callout } from 'nextra/components';
 
+# How it works?
+
+`wyw-in-js` creates an **entrypoint** for each file to process, and transforms this entrypoint by running the workflow action.
+
+## Entrypoint
+
+We runs the worlflow action with `actionRunner` and `actionsCache` for better performance by avoiding running the same action twice. A workflow contains the following nested actions:
+
+```
+workflow
+├── processEntrypoint
+│   ├── explodeReexports
+│   │   ├── resolveImports
+│   │   └── getExports
+│   │       └── resolveImports
+│   └── transform
+│       ├── resolveImports
+│       └── processImports
+├── evalFile
+├── collect
+└── extract
+```
+
+## Workflow Action
+
+The entry point for file processing. Sequentially calls `processEntrypoint`, `evalFile`, `collect`, and `extract`. Returns the result of transforming the source code as well as all artifacts obtained from code execution.
+
+### Input
+
+```js
+import { css } from '@foooo/processor'; /* Your processor */
+import { getColor } from './get-color';
+
+export const c1 = css`
+  background-color: ${getColor('hawk')};
+  color: ${({ theme }) => theme.palette.primary.main};
+  font-size: ${({ theme }) => theme.size.font.h1};
+`;
+
+export const c2 = css(({ theme }) => ({
+  backgroundColor: getColor('wild'),
+  color: theme.palette.error.main,
+  fontSize: theme.size.font.h2,
+}));
+```
+
+```js
+/* usually defined in your processor, will be used when we're building the processor */
+export const theme = {
+  palette: {
+    primary: {
+      main: 'red',
+    },
+    error: {
+      main: 'orange',
+    },
+  },
+  size: {
+    font: {
+      h1: '3rem',
+      h2: '2.2rem',
+    },
+  },
+};
+```
+
+```js
+// ./get-color.js
+export const getColor = (variant) => {
+  if (variant === 'hawk') {
+    return 'pink';
+  }
+  if (variant === 'wild') {
+    return 'purple';
+  }
+  if (variant === 'king') {
+    return 'green';
+  }
+  return 'white';
+};
+```
+
+### Output
+
 <Callout emoji="🚨">
-  This page is a stub. Help us expand it by contributing!
+  The output can be different depending on the implementation of your processor!
 </Callout>
+
+```js
+const c1 = 'abcd';
+const c2 = 'wxyz';
+```
+
+```css
+.abcd {
+  background-color: pink;
+  color: red;
+  font-size: 3rem;
+}
+.wxyz {
+  background-color: purple;
+  color: orange;
+  font-size: 2.2rem;
+}
+```
+
+## ProcessEntrypoint Action
+
+The first stage of processing an entrypoint. This stage is responsible for:
+
+- scheduling the `explodeReexports` action
+- scheduling the `transform` action
+- rescheduling itself if the entrypoint is superseded
+
+## ExplodeReexports Action
+
+Replaces wildcard reexports with named reexports. Recursively emits `getExports` for each reexported module, and replaces wildcard with resolved named.
+
+### Input
+
+```js
+export * from './foo'; /* wildcard reexports */
+```
+
+```js
+// ./foo.js
+export const foo1 = 'foo1';
+export const foo2 = 'foo2';
+export const foo3 = 'foo3';
+```
+
+### Output
+
+```js
+export { foo1, foo2, foo3 } from './foo';
+```
+
+## ResolveImports Action
+
+Resolves specified imports with a provided resolver.
+
+## GetExports Action
+
+Collects exports and re-exports. Recursively emits `getExports` for each reexported module.
+
+```js
+// index.js
+export * from 'a'; /* wildcard re-export, emit getExports for 'a' */
+
+// a.js
+export * from 'b'; /* wildcard re-export, emit getExports for 'b' */
+
+// b.js
+export * from 'c'; /* wildcard re-export, emit getExports for 'c' */
+
+// c.js
+export const c = 'c';
+```
+
+## Transform Action
+
+Prepares the code for evaluation. This includes removing dead and potentially unsafe code. Emits `resolveImports` and `processImports` events.
+
+### Transform Preeval
+
+Finds the defined processors along with their usages.
+
+```js
+import { /* defined processor */ css } from '@foooo/processor';
+import { getColor } from './get-color';
+
+export const c1 = /* first usage */ css`
+  background-color: ${getColor('hawk')};
+  color: ${({ theme }) => theme.palette.primary.main};
+  font-size: ${({ theme }) => theme.size.font.h1};
+`;
+
+export const c2 = /* second usage */ css(({ theme }) => ({
+  backgroundColor: getColor('wild'),
+  color: theme.palette.error.main,
+  fontSize: theme.size.font.h2,
+}));
+```
+
+After all usages are found, we extract the expression for each usage. The extracted expressions `_exp`, `_exp2`, `_exp3` and `_exp4` will be inserted as close as possible before its usage.
+
+{/* prettier-ignore-start */}
+```js
+import { css } from '@foooo/processor';
+import { getColor } from './get-color';
+
+const _exp = () => getColor('hawk');
+const _exp2 = () => ({ theme }) => theme.palette.primary.main;
+const _exp3 = () => ({ theme }) => theme.size.font.h1;
+export const c1 = css`
+  background-color: ${getColor('hawk')};
+  color: ${({ theme }) => theme.palette.primary.main};
+  font-size: ${({ theme }) => theme.size.font.h1};
+`;
+
+const _exp4 = () => ({ theme }) => ({
+  backgroundColor: getColor('wild'),
+  color: theme.palette.error.main,
+  fontSize: theme.size.font.h2,
+});
+export const c2 = css(({ theme }) => ({
+  backgroundColor: getColor('wild'),
+  color: theme.palette.error.main,
+  fontSize: theme.size.font.h2,
+}));
+```
+{/* prettier-ignore-end */}
+
+Each usage requires one processor instance for processing. In this case, we have two processor instance.
+
+Assume the first `css` processor has `className = 'abcd'` and `dependencies = [_exp, _exp2, _exp3]`, second `css` processor has `className = 'wxyz'` and `dependencies = [_exp4]`. After the preeval stage:
+
+{/* prettier-ignore-start */}
+```js
+import { css } from '@foooo/processor';
+import { getColor } from './get-color';
+
+const _exp = () => getColor('hawk');
+const _exp2 = () => ({ theme }) => theme.palette.primary.main;
+const _exp3 = () => ({ theme }) => theme.size.font.h1;
+export const c1 = 'abcd'; /* do evaltime replacement */
+
+const _exp4 = () => ({ theme }) => ({
+  backgroundColor: getColor('wild'),
+  color: theme.palette.error.main,
+  fontSize: theme.size.font.h2,
+});
+export const c2 = 'wxyz'; /* do evaltime replacement */
+
+export const __wywPreval = { /* collect all dependencies in this object */
+  _exp: _exp,
+  _exp2: _exp2,
+  _exp3: _exp3,
+  _exp4: _exp4
+};
+```
+{/* prettier-ignore-end */}
+
+### Transform Evaluator
+
+Finds all irrelevant code and cuts it out of the file. We use the `shaker` plugin by default. For the root entrypoint, we only care about the `__wywPreval` named export. For child entrypoints like the one for `get-color.js` in our example, all its code will be shaked out except for the `getColor` named export and its dependencies.
+
+## ProcessImports Action
+
+Creates new entrypoints and emits `processEntrypoint` for each resolved import. In our example, we create a child entrypoint for the `get-color` module to process `getColor`.
+
+{/* prettier-ignore-start */}
+
+```js
+import { css } from '@foooo/processor';
+import { getColor } from './get-color'; /* child entrypoint with only=['getColor'] */
+
+const _exp = () => getColor('hawk');
+// ...
+```
+
+## EvalFile Action
+
+Executes the code prepared in previous steps, the [`processEntrypoint`](#processentrypoint-action) action, within the current `Entrypoint`. Returns all exports that were requested in `only`.
+
+In this step, we create `Module` for each entrypoint and evaluate each module recursively with [`node:vm`](https://nodejs.org/api/vm.html#vm-executing-javascript). After all modules are evaluated, we execute the extracted expressions `_exp`, `_exp2`, `_exp3` and `_exp4` which are extracted in [Transform Preeval](#transform-preeval) step.
+
+{/* prettier-ignore-start */}
+```js
+const _exp = () => getColor('hawk');
+const _exp2 = () => ({ theme }) => theme.palette.primary.main;
+const _exp3 = () => ({ theme }) => theme.size.font.h1;
+const _exp4 = () => ({ theme }) => ({
+  backgroundColor: getColor('wild'),
+  color: theme.palette.error.main,
+  fontSize: theme.size.font.h2,
+});
+```
+{/* prettier-ignore-end */}
+
+Now we have a `valueCache` map for building our processor instances of this entrypoint in next step.
+
+{/* prettier-ignore-start */}
+```js
+const valueCache = new Map([
+  ['_exp', 'pink'],
+  ['_exp2', [Function]], /* ({ theme }) => theme.palette.primary.main */
+  ['_exp3', [Function]], /* ({ theme }) => theme.size.font.h1 */
+  ['_exp4', [Function]], /* ({ thene }) => ({ backgroundColor: getColor('wild'), ... }) */
+])
+```
+{/* prettier-ignore-end */}
+
+## Collect Action
+
+Builds and does runtime replacement for each processor. Removes `__wywPreval` object and all related code.
+
+Collect action calls `processor.build` with `valueCache` as the argument. You can decide how to build the artifacts. Here is a simple example:
+
+```ts
+export default class CssProcessor extends BaseProcessor {
+  // ...
+
+  build(values: Map<string, unknown>) {
+    let cssText = '';
+    const props = { theme };
+
+    if (this.callParam[0] === 'template') {
+      this.callParam[1].forEach((item: any) => {
+        if ('kind' in item) {
+          const evaluatedValue = values.get(item.ex.name);
+          cssText +=
+            typeof evaluatedValue === 'function'
+              ? evaluatedValue(props)
+              : evaluatedValue;
+        } else {
+          cssText += item.value.cooked;
+        }
+      });
+    } else if (this.callParam[0] === 'call') {
+      const evaluatedValue = values.get(this.callParam[1].ex.name) as Function;
+      const obj = evaluatedValue(props);
+      cssText += '\n';
+      Object.entries(obj).forEach(([key, value]) => {
+        cssText += `  ${toKebabCase(key)}: ${value};\n`;
+      });
+    }
+
+    this.artifacts.push([
+      'css',
+      [
+        /* Rules */
+        {
+          [this.adSelector]: {
+            className: this.className,
+            cssText,
+            // ...
+          },
+        },
+        /* Replacements */
+        [
+          // ...
+        ],
+      ],
+    ]);
+  }
+
+  // ...
+}
+```
+
+The artifacts of our first processor:
+
+{/* prettier-ignore-start */}
+```js
+[
+  'css',
+  {
+    '.abcd': {
+      className: 'abcd',
+      cssText: '\n  background-color: pink;\n  color: red;\n  font-size: 3rem;\n',
+      // ...
+    },
+  },
+  [
+    // ...
+  ],
+];
+```
+{/* prettier-ignore-end */}
+
+The second processor:
+
+{/* prettier-ignore-start */}
+```js
+[
+  'css',
+  {
+    '.wxyz': {
+      className: 'wxyz',
+      cssText: '\n  background-color: purple;\n  color: orange;\n  font-size: 2.2rem;\n',
+      // ...
+    },
+  },
+  [
+    // ...
+  ],
+];
+```
+{/* prettier-ignore-end */}
+
+And after the code removal, our remaining code becomes:
+
+```js
+const c1 = 'abcd';
+const c2 = 'wxyz';
+```
+
+## Extract Action
+
+Extracts artifacts (e.g. CSS) from processors.
