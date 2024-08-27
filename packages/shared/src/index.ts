@@ -4,12 +4,12 @@ export { asyncResolveFallback, syncResolve } from './asyncResolveFallback';
 export { hasEvalMeta } from './hasEvalMeta';
 export { findPackageJSON } from './findPackageJSON';
 export { isBoxedPrimitive } from './isBoxedPrimitive';
-export { IVariableContext } from './IVariableContext';
 export { enableDebug, logger } from './logger';
 export { isFeatureEnabled } from './options/isFeatureEnabled';
 export { slugify } from './slugify';
 export { ValueType } from './types';
 
+export type { IVariableContext } from './IVariableContext';
 export type {
   ClassNameSlugVars,
   ClassNameFn,
