@@ -31,6 +31,46 @@ type Loader = RawLoaderDefinitionFunction<LoaderOptions>;
 
 const cache = new TransformCacheCollection();
 
+const resolvers: Record<
+  string,
+  ((what: string, importer: string) => Promise<string>)[]
+> = {};
+
+const asyncResolve = (what: string, importer: string): Promise<string> => {
+  const resolver = resolvers[importer];
+  if (!resolver || resolver.length === 0) {
+    throw new Error('No resolver found');
+  }
+
+  // Every resolver should return the same result, but we need to call all of them
+  // to ensure that all side effects are executed (e.g. adding dependencies)
+  return Promise.all(resolver.map((r) => r(what, importer))).then((results) => {
+    const firstResult = results[0];
+    if (results.some((r) => r !== firstResult)) {
+      throw new Error('Resolvers returned different results');
+    }
+
+    return firstResult;
+  });
+};
+
+function addResolver(
+  resourcePath: string,
+  resolver: (what: string, importer: string) => Promise<string>
+) {
+  if (!resolvers[resourcePath]) {
+    resolvers[resourcePath] = [];
+  }
+
+  resolvers[resourcePath].push(resolver);
+
+  return () => {
+    resolvers[resourcePath] = resolvers[resourcePath].filter(
+      (r) => r !== resolver
+    );
+  };
+}
+
 const webpack5Loader: Loader = function webpack5LoaderPlugin(
   content,
   inputSourceMap
@@ -56,6 +96,17 @@ const webpack5Loader: Loader = function webpack5LoaderPlugin(
   // tell Webpack this loader is async
   this.async();
 
+  const resolveOptions = { dependencyType: 'esm' };
+
+  const removeResolver = addResolver(this.resourcePath, (what, importer) =>
+    this.getResolve(resolveOptions)(
+      path.isAbsolute(importer)
+        ? path.dirname(importer)
+        : path.join(process.cwd(), path.dirname(importer)),
+      what
+    )
+  );
+
   logger('loader %s', this.resourcePath);
 
   const {
@@ -67,25 +118,6 @@ const webpack5Loader: Loader = function webpack5LoaderPlugin(
   } = this.getOptions() || {};
 
   const outputFileName = this.resourcePath.replace(/\.[^.]+$/, extension);
-  const resolveModule = this.getResolve({ dependencyType: 'esm' });
-
-  const asyncResolve = (token: string, importer: string): Promise<string> => {
-    const context = path.isAbsolute(importer)
-      ? path.dirname(importer)
-      : path.join(process.cwd(), path.dirname(importer));
-    return new Promise((resolve, reject) => {
-      resolveModule(context, token, (err, result) => {
-        if (err) {
-          reject(err);
-        } else if (result) {
-          this.addDependency(result);
-          resolve(result);
-        } else {
-          reject(new Error(`Cannot resolve ${token}`));
-        }
-      });
-    });
-  };
 
   const transformServices = {
     options: {
@@ -150,7 +182,8 @@ const webpack5Loader: Loader = function webpack5LoaderPlugin(
       },
       (err: Error) => this.callback(err)
     )
-    .catch((err: Error) => this.callback(err));
+    .catch((err: Error) => this.callback(err))
+    .finally(removeResolver);
 };
 
 export default webpack5Loader;
