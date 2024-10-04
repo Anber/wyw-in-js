@@ -1,0 +1,27 @@
+---
+source: src/collect_meta.rs
+description: "'use strict';\n\nObject.defineProperty(exports, '__esModule', {\n  value: true,\n});\nexports.E = void 0;\nvar E;\nexports.E = E;\n\n(function (E) {\n  E[(E['A'] = 0)] = 'A';\n  E[(E['B'] = 1)] = 'B';\n  E[(E['C'] = 2)] = 'C';\n})(E || (exports.E = E = {}));\n"
+input_file: tests/fixture/meta/export_enum/babelCommonJSWithOldCoreAndTSC-7_0_0.input.js
+---
+Meta {
+    cjs: true,
+    es_module: true,
+    imports: [],
+    exports: [
+        Named {
+            local: Identifier(
+                "E",
+            ),
+            exported: "E",
+        },
+        Named {
+            local: Span(
+                Span {
+                    start: 240,
+                    end: 242,
+                },
+            ),
+            exported: "E",
+        },
+    ],
+}

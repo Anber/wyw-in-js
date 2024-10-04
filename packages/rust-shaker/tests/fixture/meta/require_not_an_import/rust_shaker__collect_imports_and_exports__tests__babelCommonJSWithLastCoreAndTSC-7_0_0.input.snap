@@ -1,9 +1,0 @@
----
-source: src/collect_imports_and_exports.rs
-description: "'use strict';\n\nvar notModule = (function () {\n  var require = function require() {\n    return {};\n  };\n  var _require = require('unknown-package'),\n    dep = _require.dep;\n  return result;\n})();\nconsole.log(notModule);\n"
-input_file: tests/fixture/meta/require_not_an_import/babelCommonJSWithLastCoreAndTSC-7_0_0.input.js
----
-Meta {
-    imports: [],
-    exports: [],
-}

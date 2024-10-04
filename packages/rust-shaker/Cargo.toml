@@ -11,16 +11,21 @@ lto = true
 
 [dependencies]
 serde = "1"
-swc_core = { version = "0.90.*", features = ["ecma_plugin_transform"] }
-swc_common = "0.33.19"
-swc_ecmascript = "0.239.15"
-swc_ecma_ast = "0.112.5"
 log = "0.4.21"
 serde_json = "1.0.114"
-oxc = "0.29.0"
-oxc_traverse = "0.29.0"
-oxc_semantic = "0.29.0"
+oxc = "0.30.5"
+oxc_codegen = "0.30.5"
+oxc_traverse = "0.30.5"
+oxc_semantic = "0.30.5"
 glob = "0.3.1"
+oxc_resolver = { version = "1.11.0", features = ["package_json_raw_json_api", "pnp", "yarn_pnp"] }
+pico-args = "0.5.0"
+walkdir = "2.5.0"
+normalize-path = "0.2.1"
+insta = { version = "1.40.0", features = ["filters"] }
+itertools = "0.13.0"
+indoc = "2.0.5"
+regex = "1.11.0"
 
 [dev-dependencies]
 insta = { version = "1.40.0", features = ["yaml"] }

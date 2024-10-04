@@ -1,0 +1,18 @@
+---
+source: src/collect_meta.rs
+description: "'use strict';\n\nObject.defineProperty(exports, '__esModule', {\n  value: true,\n});\nexports.named = void 0;\nvar a = 1;\nexports.named = a;\n"
+input_file: tests/fixture/meta/export_named/babelCommonJSWithLastCoreAndTSC-7_0_0.input.js
+---
+Meta {
+    cjs: true,
+    es_module: true,
+    imports: [],
+    exports: [
+        Named {
+            local: Identifier(
+                "a",
+            ),
+            exported: "named",
+        },
+    ],
+}

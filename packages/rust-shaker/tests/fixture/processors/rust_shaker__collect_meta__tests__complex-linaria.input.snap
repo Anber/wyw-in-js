@@ -1,0 +1,123 @@
+---
+source: src/collect_meta.rs
+description: "import {css, cx} from \"@linaria/core\";\nimport {styled} from \"@linaria/react\";\n\nconst fontSize = 16;\n\nexport const base = css`\n    color: green;\n`;\n\nexport const Button = styled.button`\n    .${base} {\n        font-size: ${fontSize}px;\n    }\n`;\n\n\nexport const DangerButton = styled(Button)`\n    color: red;\n`;\n\nconst combined = cx(base, css` color: blue; `);\n"
+input_file: tests/fixture/processors/complex-linaria.input.js
+---
+Meta {
+    cjs: false,
+    es_module: true,
+    imports: [
+        Named {
+            source: Resolved("[root]/tests/fixture/processors/node_modules/@linaria/core/dist/index.mjs"),
+            imported: "css",
+            local: Identifier(
+                "css",
+            ),
+            processor: "[root]/tests/fixture/processors/node_modules/@linaria/core/dist/processors/css.js",
+        },
+        Named {
+            source: Resolved("[root]/tests/fixture/processors/node_modules/@linaria/core/dist/index.mjs"),
+            imported: "cx",
+            local: Identifier(
+                "cx",
+            ),
+        },
+        Named {
+            source: Resolved("[root]/tests/fixture/processors/node_modules/@linaria/react/dist/index.mjs"),
+            imported: "styled",
+            local: Identifier(
+                "styled",
+            ),
+            processor: "[root]/tests/fixture/processors/node_modules/@linaria/react/dist/processors/styled.js",
+        },
+    ],
+    exports: [
+        Named {
+            local: Identifier(
+                "Button",
+            ),
+            exported: "Button",
+        },
+        Named {
+            local: Identifier(
+                "DangerButton",
+            ),
+            exported: "DangerButton",
+        },
+        Named {
+            local: Identifier(
+                "base",
+            ),
+            exported: "base",
+        },
+    ],
+    evaltime_replacements: [
+        (
+            Span {
+                start: 357,
+                end: 357,
+            },
+            "\nexport const __wywPreval = {base: base,fontSize: fontSize,};",
+        ),
+    ],
+    processor_params: [
+        (
+            Span {
+                start: 121,
+                end: 145,
+            },
+            ProcessorParams {
+                idx: 0,
+                display_name: "base",
+                params: [
+                    Callee(121..124, Identifier("css")),
+                    Template(121..145, [TemplateValue(125..144, "\n    color: green;\n")])),
+                ],
+            },
+        ),
+        (
+            Span {
+                start: 170,
+                end: 241,
+            },
+            ProcessorParams {
+                idx: 1,
+                display_name: "Button",
+                params: [
+                    Callee(170..176, Identifier("styled")),
+                    Member(170..183, "button")),
+                    Template(170..241, [TemplateValue(184..190, "\n    ."), Ident(192..196, "base"), TemplateValue(197..219, " {\n        font-size: "), Ident(221..229, "fontSize"), TemplateValue(230..240, "px;\n    }\n")])),
+                ],
+            },
+        ),
+        (
+            Span {
+                start: 273,
+                end: 306,
+            },
+            ProcessorParams {
+                idx: 2,
+                display_name: "DangerButton",
+                params: [
+                    Callee(273..279, Identifier("styled")),
+                    Call(273..287, [])),
+                    Template(273..306, [TemplateValue(288..305, "\n    color: red;\n")])),
+                ],
+            },
+        ),
+        (
+            Span {
+                start: 335,
+                end: 354,
+            },
+            ProcessorParams {
+                idx: 3,
+                display_name: "combined",
+                params: [
+                    Callee(335..338, Identifier("css")),
+                    Template(335..354, [TemplateValue(339..353, " color: blue; ")])),
+                ],
+            },
+        ),
+    ],
+}

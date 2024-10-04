@@ -1,0 +1,17 @@
+---
+source: src/collect_meta.rs
+description: "'use strict';\nObject.defineProperty(exports, '__esModule', {\n  value: true,\n});\nvar _unknownPackage = require('unknown-package');\nObject.defineProperty(exports, 'renamed', {\n  enumerable: true,\n  get: function () {\n    return _unknownPackage.token;\n  },\n});\n"
+input_file: tests/fixture/meta/re-export_renamed/swcCommonJSES5-1_2_43.input.js
+---
+Meta {
+    cjs: true,
+    es_module: true,
+    imports: [],
+    exports: [
+        Reexport {
+            orig: "token",
+            exported: "renamed",
+            source: "unknown-package",
+        },
+    ],
+}

@@ -1,0 +1,18 @@
+---
+source: src/collect_meta.rs
+description: "'use strict';\nObject.defineProperty(exports, '__esModule', {\n  value: true,\n});\nObject.defineProperty(exports, 'Foo', {\n  enumerable: true,\n  get: function () {\n    return Foo;\n  },\n});\nfunction _class_call_check(instance, Constructor) {\n  if (!(instance instanceof Constructor)) {\n    throw new TypeError('Cannot call a class as a function');\n  }\n}\nvar Foo = function Foo() {\n  'use strict';\n  _class_call_check(this, Foo);\n};\n"
+input_file: tests/fixture/meta/export_class/swcCommonJSES5-1_3_46.input.js
+---
+Meta {
+    cjs: true,
+    es_module: true,
+    imports: [],
+    exports: [
+        Named {
+            local: Identifier(
+                "Foo",
+            ),
+            exported: "Foo",
+        },
+    ],
+}

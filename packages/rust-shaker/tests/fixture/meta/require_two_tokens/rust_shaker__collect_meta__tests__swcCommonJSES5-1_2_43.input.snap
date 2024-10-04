@@ -1,0 +1,20 @@
+---
+source: src/collect_meta.rs
+description: "'use strict';\nvar ref = require('unknown-package'),\n  _very = ref.very,\n  _deep = _very.deep,\n  oneToken = _deep.oneToken,\n  anotherToken = _deep.anotherToken;\nconsole.log(oneToken, anotherToken);\n"
+input_file: tests/fixture/meta/require_two_tokens/swcCommonJSES5-1_2_43.input.js
+---
+Meta {
+    cjs: true,
+    es_module: false,
+    imports: [
+        Named {
+            source: "unknown-package",
+            imported: "very",
+            local: MemberExpression(
+                "ref",
+                "very",
+            ),
+        },
+    ],
+    exports: [],
+}

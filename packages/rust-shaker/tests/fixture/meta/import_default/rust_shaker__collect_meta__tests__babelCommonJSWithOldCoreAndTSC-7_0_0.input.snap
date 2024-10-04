@@ -1,0 +1,19 @@
+---
+source: src/collect_meta.rs
+description: "'use strict';\n\nvar _unknownPackage = _interopRequireDefault(require('unknown-package'));\n\nfunction _interopRequireDefault(obj) {\n  return obj && obj.__esModule ? obj : { default: obj };\n}\n\nconsole.log(_unknownPackage.default);\n"
+input_file: tests/fixture/meta/import_default/babelCommonJSWithOldCoreAndTSC-7_0_0.input.js
+---
+Meta {
+    cjs: true,
+    es_module: false,
+    imports: [
+        Default {
+            source: "unknown-package",
+            local: MemberExpression(
+                "_unknownPackage",
+                "default",
+            ),
+        },
+    ],
+    exports: [],
+}

@@ -1,0 +1,24 @@
+---
+source: src/collect_meta.rs
+description: "'use strict';\nconst tslib_1 = require('tslib');\ntslib_1.__exportStar(require('./moduleA1'), exports);\n"
+input_file: tests/fixture/meta/re-export___exportStar/swcCommonJSES2015-1_2_130.input.js
+---
+Meta {
+    cjs: true,
+    es_module: false,
+    imports: [
+        Named {
+            source: "tslib",
+            imported: "__exportStar",
+            local: MemberExpression(
+                "tslib_1",
+                "__exportStar",
+            ),
+        },
+    ],
+    exports: [
+        ReexportAll {
+            source: "./moduleA1",
+        },
+    ],
+}

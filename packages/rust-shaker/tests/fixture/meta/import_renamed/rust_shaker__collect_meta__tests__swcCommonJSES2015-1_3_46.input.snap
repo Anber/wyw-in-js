@@ -1,0 +1,20 @@
+---
+source: src/collect_meta.rs
+description: "'use strict';\nObject.defineProperty(exports, '__esModule', {\n  value: true,\n});\nconst _unknownpackage = require('unknown-package');\nconsole.log(_unknownpackage.named);\n"
+input_file: tests/fixture/meta/import_renamed/swcCommonJSES2015-1_3_46.input.js
+---
+Meta {
+    cjs: true,
+    es_module: true,
+    imports: [
+        Named {
+            source: "unknown-package",
+            imported: "named",
+            local: MemberExpression(
+                "_unknownpackage",
+                "named",
+            ),
+        },
+    ],
+    exports: [],
+}

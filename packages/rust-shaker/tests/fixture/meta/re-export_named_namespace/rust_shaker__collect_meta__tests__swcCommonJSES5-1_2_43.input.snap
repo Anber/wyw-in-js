@@ -1,0 +1,16 @@
+---
+source: src/collect_meta.rs
+description: "'use strict';\nObject.defineProperty(exports, '__esModule', {\n  value: true,\n});\nexports.ns = void 0;\nvar _ns = _interopRequireWildcard(require('unknown-package'));\nfunction _interopRequireWildcard(obj) {\n  if (obj && obj.__esModule) {\n    return obj;\n  } else {\n    var newObj = {};\n    if (obj != null) {\n      for (var key in obj) {\n        if (Object.prototype.hasOwnProperty.call(obj, key)) {\n          var desc =\n            Object.defineProperty && Object.getOwnPropertyDescriptor\n              ? Object.getOwnPropertyDescriptor(obj, key)\n              : {};\n          if (desc.get || desc.set) {\n            Object.defineProperty(newObj, key, desc);\n          } else {\n            newObj[key] = obj[key];\n          }\n        }\n      }\n    }\n    newObj.default = obj;\n    return newObj;\n  }\n}\nexports.ns = _ns;\n"
+input_file: tests/fixture/meta/re-export_named_namespace/swcCommonJSES5-1_2_43.input.js
+---
+Meta {
+    cjs: true,
+    es_module: true,
+    imports: [],
+    exports: [
+        ReexportNamespace {
+            exported: "ns",
+            source: "unknown-package",
+        },
+    ],
+}

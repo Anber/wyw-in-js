@@ -1,0 +1,28 @@
+---
+source: src/collect_meta.rs
+description: "'use strict';\nexports.__esModule = true;\nvar ns = require('unknown-package');\nconsole.log(ns.named, ns['anotherNamed']);\n"
+input_file: tests/fixture/meta/import_wildcard_clear_usage_of_the_imported_namespace/typescriptCommonJS-2_2_1.input.js
+---
+Meta {
+    cjs: true,
+    es_module: true,
+    imports: [
+        Named {
+            source: "unknown-package",
+            imported: "anotherNamed",
+            local: MemberExpression(
+                "ns",
+                "anotherNamed",
+            ),
+        },
+        Named {
+            source: "unknown-package",
+            imported: "named",
+            local: MemberExpression(
+                "ns",
+                "named",
+            ),
+        },
+    ],
+    exports: [],
+}

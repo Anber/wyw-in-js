@@ -1,0 +1,24 @@
+---
+source: src/collect_meta.rs
+description: "'use strict';\nObject.defineProperty(exports, '__esModule', {\n  value: true,\n});\nfunction _export(target, all) {\n  for (var name in all)\n    Object.defineProperty(target, name, {\n      enumerable: true,\n      get: all[name],\n    });\n}\n_export(exports, {\n  a: function () {\n    return a;\n  },\n  b: function () {\n    return b;\n  },\n});\nvar obj = {\n  a: 1,\n  b: 2,\n};\nvar a = obj.a,\n  b = obj.b;\n"
+input_file: tests/fixture/meta/export_with_destruction/swcCommonJSES5-1_2_208.input.js
+---
+Meta {
+    cjs: true,
+    es_module: true,
+    imports: [],
+    exports: [
+        Named {
+            local: Identifier(
+                "a",
+            ),
+            exported: "a",
+        },
+        Named {
+            local: Identifier(
+                "b",
+            ),
+            exported: "b",
+        },
+    ],
+}

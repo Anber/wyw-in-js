@@ -443,6 +443,8 @@ importers:
         specifier: ^0.7.4
         version: 0.7.4
 
+  packages/rust-shaker: {}
+
   packages/shared:
     dependencies:
       debug:

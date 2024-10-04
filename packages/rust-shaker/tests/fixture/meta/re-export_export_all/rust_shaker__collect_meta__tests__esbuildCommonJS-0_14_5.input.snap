@@ -1,0 +1,15 @@
+---
+source: src/collect_meta.rs
+description: "var __create = Object.create;\nvar __defProp = Object.defineProperty;\nvar __getOwnPropDesc = Object.getOwnPropertyDescriptor;\nvar __getOwnPropNames = Object.getOwnPropertyNames;\nvar __getProtoOf = Object.getPrototypeOf;\nvar __hasOwnProp = Object.prototype.hasOwnProperty;\nvar __markAsModule = (target) =>\n  __defProp(target, '__esModule', { value: true });\nvar __reExport = (target, module2, copyDefault, desc) => {\n  if (\n    (module2 && typeof module2 === 'object') ||\n    typeof module2 === 'function'\n  ) {\n    for (let key of __getOwnPropNames(module2))\n      if (!__hasOwnProp.call(target, key) && (copyDefault || key !== 'default'))\n        __defProp(target, key, {\n          get: () => module2[key],\n          enumerable:\n            !(desc = __getOwnPropDesc(module2, key)) || desc.enumerable,\n        });\n  }\n  return target;\n};\nvar __toESM = (module2, isNodeMode) => {\n  return __reExport(\n    __markAsModule(\n      __defProp(\n        module2 != null ? __create(__getProtoOf(module2)) : {},\n        'default',\n        !isNodeMode && module2 && module2.__esModule\n          ? { get: () => module2.default, enumerable: true }\n          : { value: module2, enumerable: true }\n      )\n    ),\n    module2\n  );\n};\nvar __toCommonJS = /* @__PURE__ */ ((cache) => {\n  return (module2, temp) => {\n    return (\n      (cache && cache.get(module2)) ||\n      ((temp = __reExport(__markAsModule({}), module2, 1)),\n      cache && cache.set(module2, temp),\n      temp)\n    );\n  };\n})(typeof WeakMap !== 'undefined' ? /* @__PURE__ */ new WeakMap() : 0);\nvar source_exports = {};\n__reExport(source_exports, __toESM(require('unknown-package')));\nmodule.exports = __toCommonJS(source_exports);\n"
+input_file: tests/fixture/meta/re-export_export_all/esbuildCommonJS-0_14_5.input.js
+---
+Meta {
+    cjs: true,
+    es_module: true,
+    imports: [],
+    exports: [
+        ReexportAll {
+            source: "unknown-package",
+        },
+    ],
+}

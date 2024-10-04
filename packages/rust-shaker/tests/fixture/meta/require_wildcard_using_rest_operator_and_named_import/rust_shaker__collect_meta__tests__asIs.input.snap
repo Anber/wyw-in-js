@@ -1,0 +1,23 @@
+---
+source: src/collect_meta.rs
+description: "const { named, ...fullNamespace } = require('unknown-package');\n\nconsole.log(fullNamespace, named);\n"
+input_file: tests/fixture/meta/require_wildcard_using_rest_operator_and_named_import/asIs.input.js
+---
+Meta {
+    cjs: true,
+    es_module: false,
+    imports: [
+        Named {
+            source: "unknown-package",
+            imported: "named",
+            local: Identifier(
+                "named",
+            ),
+        },
+        Namespace {
+            source: "unknown-package",
+            local: "fullNamespace",
+        },
+    ],
+    exports: [],
+}

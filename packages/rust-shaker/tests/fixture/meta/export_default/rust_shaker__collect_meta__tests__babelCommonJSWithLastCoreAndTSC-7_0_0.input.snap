@@ -1,0 +1,13 @@
+---
+source: src/collect_meta.rs
+description: "'use strict';\n\nObject.defineProperty(exports, '__esModule', {\n  value: true,\n});\nexports.default = void 0;\nvar _default = 'value';\nexports.default = _default;\n"
+input_file: tests/fixture/meta/export_default/babelCommonJSWithLastCoreAndTSC-7_0_0.input.js
+---
+Meta {
+    cjs: true,
+    es_module: true,
+    imports: [],
+    exports: [
+        Default,
+    ],
+}

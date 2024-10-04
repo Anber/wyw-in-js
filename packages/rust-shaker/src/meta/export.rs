@@ -1,3 +1,4 @@
+use crate::meta::import::Source;
 use crate::meta::MetaCollector;
 use oxc::span::{Atom, Span};
 use std::fmt::Debug;
@@ -27,14 +28,16 @@ pub enum Export<'a> {
   Reexport {
     orig: Atom<'a>,
     exported: Atom<'a>,
-    source: Atom<'a>,
+    source: Source<'a>,
   },
 
-  ReexportAll(Atom<'a>),
+  ReexportAll {
+    source: Source<'a>,
+  },
 
   ReexportNamespace {
     exported: Atom<'a>,
-    source: Atom<'a>,
+    source: Source<'a>,
   },
 }
 
@@ -44,7 +47,7 @@ impl<'a> Export<'a> {
       Self::Default => 0,
       Self::Named { .. } => 1,
       Self::Reexport { .. } => 2,
-      Self::ReexportAll(..) => 3,
+      Self::ReexportAll { .. } => 3,
       Self::ReexportNamespace { .. } => 4,
     }
   }
@@ -73,7 +76,7 @@ impl Ord for Export<'_> {
           a_name.cmp(b_name)
         }
       }
-      (Self::ReexportAll(a), Self::ReexportAll(b)) => a.cmp(b),
+      (Self::ReexportAll { source: a }, Self::ReexportAll { source: b }) => a.cmp(b),
       (_, _) => std::cmp::Ordering::Equal,
     }
   }
@@ -89,6 +92,7 @@ impl Eq for Export<'_> {}
 
 #[derive(Clone, Default)]
 pub struct Exports<'a> {
+  pub es_module: bool,
   pub list: Vec<Export<'a>>,
 }
 
@@ -100,6 +104,14 @@ impl<'a> Debug for Exports<'a> {
 
 impl<'a> Exports<'a> {
   pub fn add(&mut self, export: Export<'a>) {
+    if let Export::Named { exported, .. } = &export {
+      if exported == "__esModule" {
+        self.mark_as_es_module();
+
+        return;
+      }
+    }
+
     self.list.push(export);
   }
 
@@ -114,7 +126,7 @@ impl<'a> Exports<'a> {
     });
   }
 
-  pub fn add_reexport(&mut self, orig: &Atom<'a>, exported: &Atom<'a>, source: &Atom<'a>) {
+  pub fn add_reexport(&mut self, orig: &Atom<'a>, exported: &Atom<'a>, source: &Source<'a>) {
     self.add(Export::Reexport {
       orig: orig.clone(),
       exported: exported.clone(),
@@ -122,15 +134,38 @@ impl<'a> Exports<'a> {
     });
   }
 
-  pub fn add_reexport_all(&mut self, source: &Atom<'a>) {
-    self.add(Export::ReexportAll(source.clone()));
+  pub fn add_unresolved_reexport(
+    &mut self,
+    orig: &Atom<'a>,
+    exported: &Atom<'a>,
+    source: &Atom<'a>,
+  ) {
+    self.add_reexport(orig, exported, &Source::Unresolved(source.clone()));
   }
 
-  pub fn add_reexport_namespace(&mut self, exported: &Atom<'a>, source: &Atom<'a>) {
+  pub fn add_reexport_all(&mut self, source: &Source<'a>) {
+    self.add(Export::ReexportAll {
+      source: source.clone(),
+    });
+  }
+
+  pub fn add_unresolved_reexport_all(&mut self, source: &Atom<'a>) {
+    self.add_reexport_all(&Source::Unresolved(source.clone()));
+  }
+
+  pub fn add_reexport_namespace(&mut self, exported: &Atom<'a>, source: &Source<'a>) {
     self.add(Export::ReexportNamespace {
       exported: exported.clone(),
       source: source.clone(),
     });
+  }
+
+  pub fn add_unresolved_reexport_namespace(&mut self, exported: &Atom<'a>, source: &Atom<'a>) {
+    self.add_reexport_namespace(exported, &Source::Unresolved(source.clone()));
+  }
+
+  pub fn mark_as_es_module(&mut self) {
+    self.es_module = true;
   }
 }
 

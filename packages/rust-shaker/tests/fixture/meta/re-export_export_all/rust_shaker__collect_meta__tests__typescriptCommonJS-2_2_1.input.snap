@@ -1,0 +1,15 @@
+---
+source: src/collect_meta.rs
+description: "'use strict';\nfunction __export(m) {\n  for (var p in m) if (!exports.hasOwnProperty(p)) exports[p] = m[p];\n}\nexports.__esModule = true;\n__export(require('unknown-package'));\n"
+input_file: tests/fixture/meta/re-export_export_all/typescriptCommonJS-2_2_1.input.js
+---
+Meta {
+    cjs: true,
+    es_module: true,
+    imports: [],
+    exports: [
+        ReexportAll {
+            source: "unknown-package",
+        },
+    ],
+}

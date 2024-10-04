@@ -1,0 +1,15 @@
+---
+source: src/collect_meta.rs
+description: "'use strict';\nObject.defineProperty(exports, '__esModule', {\n  value: true,\n});\n_exportStar(require('unknown-package'), exports);\nfunction _exportStar(from, to) {\n  Object.keys(from).forEach(function (k) {\n    if (k !== 'default' && !Object.prototype.hasOwnProperty.call(to, k))\n      Object.defineProperty(to, k, {\n        enumerable: true,\n        get: function () {\n          return from[k];\n        },\n      });\n  });\n  return from;\n}\n"
+input_file: tests/fixture/meta/re-export_export_all/swcCommonJSES5-1_2_206.input.js
+---
+Meta {
+    cjs: true,
+    es_module: true,
+    imports: [],
+    exports: [
+        ReexportAll {
+            source: "unknown-package",
+        },
+    ],
+}

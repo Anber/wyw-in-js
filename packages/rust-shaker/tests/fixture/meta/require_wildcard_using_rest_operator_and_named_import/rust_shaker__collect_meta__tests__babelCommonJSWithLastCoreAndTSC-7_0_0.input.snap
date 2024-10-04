@@ -1,0 +1,24 @@
+---
+source: src/collect_meta.rs
+description: "'use strict';\n\nfunction _objectWithoutProperties(source, excluded) {\n  if (source == null) return {};\n  var target = _objectWithoutPropertiesLoose(source, excluded);\n  var key, i;\n  if (Object.getOwnPropertySymbols) {\n    var sourceSymbolKeys = Object.getOwnPropertySymbols(source);\n    for (i = 0; i < sourceSymbolKeys.length; i++) {\n      key = sourceSymbolKeys[i];\n      if (excluded.indexOf(key) >= 0) continue;\n      if (!Object.prototype.propertyIsEnumerable.call(source, key)) continue;\n      target[key] = source[key];\n    }\n  }\n  return target;\n}\nfunction _objectWithoutPropertiesLoose(source, excluded) {\n  if (source == null) return {};\n  var target = {};\n  var sourceKeys = Object.keys(source);\n  var key, i;\n  for (i = 0; i < sourceKeys.length; i++) {\n    key = sourceKeys[i];\n    if (excluded.indexOf(key) >= 0) continue;\n    target[key] = source[key];\n  }\n  return target;\n}\nvar _require = require('unknown-package'),\n  named = _require.named,\n  fullNamespace = _objectWithoutProperties(_require, ['named']);\nconsole.log(fullNamespace, named);\n"
+input_file: tests/fixture/meta/require_wildcard_using_rest_operator_and_named_import/babelCommonJSWithLastCoreAndTSC-7_0_0.input.js
+---
+Meta {
+    cjs: true,
+    es_module: false,
+    imports: [
+        Named {
+            source: "unknown-package",
+            imported: "named",
+            local: MemberExpression(
+                "_require",
+                "named",
+            ),
+        },
+        Namespace {
+            source: "unknown-package",
+            local: "_require",
+        },
+    ],
+    exports: [],
+}

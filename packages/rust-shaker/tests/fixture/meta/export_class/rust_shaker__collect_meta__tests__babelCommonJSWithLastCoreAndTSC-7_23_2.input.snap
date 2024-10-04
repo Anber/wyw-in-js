@@ -1,0 +1,21 @@
+---
+source: src/collect_meta.rs
+description: "'use strict';\n\nfunction _typeof(o) {\n  '@babel/helpers - typeof';\n  return (\n    (_typeof =\n      'function' == typeof Symbol && 'symbol' == typeof Symbol.iterator\n        ? function (o) {\n            return typeof o;\n          }\n        : function (o) {\n            return o &&\n              'function' == typeof Symbol &&\n              o.constructor === Symbol &&\n              o !== Symbol.prototype\n              ? 'symbol'\n              : typeof o;\n          }),\n    _typeof(o)\n  );\n}\nObject.defineProperty(exports, '__esModule', {\n  value: true,\n});\nexports.Foo = void 0;\nfunction _defineProperties(target, props) {\n  for (var i = 0; i < props.length; i++) {\n    var descriptor = props[i];\n    descriptor.enumerable = descriptor.enumerable || false;\n    descriptor.configurable = true;\n    if ('value' in descriptor) descriptor.writable = true;\n    Object.defineProperty(target, _toPropertyKey(descriptor.key), descriptor);\n  }\n}\nfunction _createClass(Constructor, protoProps, staticProps) {\n  if (protoProps) _defineProperties(Constructor.prototype, protoProps);\n  if (staticProps) _defineProperties(Constructor, staticProps);\n  Object.defineProperty(Constructor, 'prototype', { writable: false });\n  return Constructor;\n}\nfunction _toPropertyKey(arg) {\n  var key = _toPrimitive(arg, 'string');\n  return _typeof(key) === 'symbol' ? key : String(key);\n}\nfunction _toPrimitive(input, hint) {\n  if (_typeof(input) !== 'object' || input === null) return input;\n  var prim = input[Symbol.toPrimitive];\n  if (prim !== undefined) {\n    var res = prim.call(input, hint || 'default');\n    if (_typeof(res) !== 'object') return res;\n    throw new TypeError('@@toPrimitive must return a primitive value.');\n  }\n  return (hint === 'string' ? String : Number)(input);\n}\nfunction _classCallCheck(instance, Constructor) {\n  if (!(instance instanceof Constructor)) {\n    throw new TypeError('Cannot call a class as a function');\n  }\n}\nvar Foo = (exports.Foo = /*#__PURE__*/ _createClass(function Foo() {\n  _classCallCheck(this, Foo);\n}));\n"
+input_file: tests/fixture/meta/export_class/babelCommonJSWithLastCoreAndTSC-7_23_2.input.js
+---
+Meta {
+    cjs: true,
+    es_module: true,
+    imports: [],
+    exports: [
+        Named {
+            local: Span(
+                Span {
+                    start: 1965,
+                    end: 2027,
+                },
+            ),
+            exported: "Foo",
+        },
+    ],
+}

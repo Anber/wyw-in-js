@@ -1,0 +1,11 @@
+---
+source: src/collect_meta.rs
+description: "'use strict';\n\nObject.defineProperty(exports, '__esModule', {\n  value: true,\n});\nvar value = 'value';\nconsole.log(value);\n"
+input_file: tests/fixture/meta/import_types/babelCommonJSWithLastCoreAndTSC-7_4_3.input.js
+---
+Meta {
+    cjs: true,
+    es_module: true,
+    imports: [],
+    exports: [],
+}

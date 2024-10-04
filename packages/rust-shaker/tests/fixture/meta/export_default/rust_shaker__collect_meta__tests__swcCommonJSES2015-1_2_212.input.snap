@@ -1,0 +1,13 @@
+---
+source: src/collect_meta.rs
+description: "'use strict';\nObject.defineProperty(exports, '__esModule', {\n  value: true,\n});\nObject.defineProperty(exports, 'default', {\n  enumerable: true,\n  get: () => _default,\n});\nconst _default = 'value';\n"
+input_file: tests/fixture/meta/export_default/swcCommonJSES2015-1_2_212.input.js
+---
+Meta {
+    cjs: true,
+    es_module: true,
+    imports: [],
+    exports: [
+        Default,
+    ],
+}

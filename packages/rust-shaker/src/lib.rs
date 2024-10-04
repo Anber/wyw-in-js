@@ -1,3 +1,5 @@
-mod collect_imports_and_exports;
+mod collect_meta;
 mod declaration_context;
+mod default_resolver;
 mod meta;
+mod processors;

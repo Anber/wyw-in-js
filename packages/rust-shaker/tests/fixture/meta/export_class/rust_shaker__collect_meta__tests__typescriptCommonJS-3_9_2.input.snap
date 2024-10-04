@@ -1,0 +1,18 @@
+---
+source: src/collect_meta.rs
+description: "'use strict';\nObject.defineProperty(exports, '__esModule', { value: true });\nexports.Foo = void 0;\nvar Foo = /** @class */ (function () {\n  function Foo() {}\n  return Foo;\n})();\nexports.Foo = Foo;\n"
+input_file: tests/fixture/meta/export_class/typescriptCommonJS-3_9_2.input.js
+---
+Meta {
+    cjs: true,
+    es_module: true,
+    imports: [],
+    exports: [
+        Named {
+            local: Identifier(
+                "Foo",
+            ),
+            exported: "Foo",
+        },
+    ],
+}

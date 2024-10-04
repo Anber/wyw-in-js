@@ -1,0 +1,18 @@
+---
+source: src/collect_meta.rs
+description: "var __create = Object.create;\nvar __defProp = Object.defineProperty;\nvar __getOwnPropDesc = Object.getOwnPropertyDescriptor;\nvar __getOwnPropNames = Object.getOwnPropertyNames;\nvar __getProtoOf = Object.getPrototypeOf;\nvar __hasOwnProp = Object.prototype.hasOwnProperty;\nvar __markAsModule = (target) =>\n  __defProp(target, '__esModule', { value: true });\nvar __require =\n  typeof require !== 'undefined'\n    ? require\n    : (x) => {\n        throw new Error('Dynamic require of \"' + x + '\" is not supported');\n      };\nvar __reExport = (target, module2, desc) => {\n  if (\n    (module2 && typeof module2 === 'object') ||\n    typeof module2 === 'function'\n  ) {\n    for (let key of __getOwnPropNames(module2))\n      if (!__hasOwnProp.call(target, key) && key !== 'default')\n        __defProp(target, key, {\n          get: () => module2[key],\n          enumerable:\n            !(desc = __getOwnPropDesc(module2, key)) || desc.enumerable,\n        });\n  }\n  return target;\n};\nvar __toModule = (module2) => {\n  return __reExport(\n    __markAsModule(\n      __defProp(\n        module2 != null ? __create(__getProtoOf(module2)) : {},\n        'default',\n        module2 && module2.__esModule && 'default' in module2\n          ? { get: () => module2.default, enumerable: true }\n          : { value: module2, enumerable: true }\n      )\n    ),\n    module2\n  );\n};\n__markAsModule(exports);\n__reExport(exports, __toModule(require('unknown-package-1')));\n__reExport(exports, __toModule(require('unknown-package-2')));\n"
+input_file: tests/fixture/meta/re-export_multiple_export_all/esbuildCommonJS-0_12_26.input.js
+---
+Meta {
+    cjs: true,
+    es_module: false,
+    imports: [],
+    exports: [
+        ReexportAll {
+            source: "unknown-package-1",
+        },
+        ReexportAll {
+            source: "unknown-package-2",
+        },
+    ],
+}

@@ -1,0 +1,27 @@
+---
+source: src/collect_meta.rs
+description: "'use strict';\nObject.defineProperty(exports, '__esModule', {\n  value: true,\n});\nexports.E = void 0;\nvar E;\nexports.E = E;\n(function (E) {\n  exports.E[(exports.E['A'] = 0)] = 'A';\n  exports.E[(exports.E['B'] = 1)] = 'B';\n  exports.E[(exports.E['C'] = 2)] = 'C';\n})(exports.E || (exports.E = E = {}));\n"
+input_file: tests/fixture/meta/export_enum/swcCommonJSES5-1_2_149.input.js
+---
+Meta {
+    cjs: true,
+    es_module: true,
+    imports: [],
+    exports: [
+        Named {
+            local: Identifier(
+                "E",
+            ),
+            exported: "E",
+        },
+        Named {
+            local: Span(
+                Span {
+                    start: 294,
+                    end: 296,
+                },
+            ),
+            exported: "E",
+        },
+    ],
+}

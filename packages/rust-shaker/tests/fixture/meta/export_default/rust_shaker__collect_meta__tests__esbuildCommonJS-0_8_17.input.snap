@@ -1,0 +1,13 @@
+---
+source: src/collect_meta.rs
+description: "var __defProp = Object.defineProperty;\nvar __markAsModule = (target) =>\n  __defProp(target, '__esModule', { value: true });\nvar __export = (target, all) => {\n  __markAsModule(target);\n  for (var name in all)\n    __defProp(target, name, { get: all[name], enumerable: true });\n};\n__export(exports, {\n  default: () => stdin_default,\n});\nvar stdin_default = 'value';\n"
+input_file: tests/fixture/meta/export_default/esbuildCommonJS-0_8_17.input.js
+---
+Meta {
+    cjs: true,
+    es_module: false,
+    imports: [],
+    exports: [
+        Default,
+    ],
+}

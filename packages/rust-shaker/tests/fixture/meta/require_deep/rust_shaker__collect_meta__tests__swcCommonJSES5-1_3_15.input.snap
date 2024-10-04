@@ -1,0 +1,20 @@
+---
+source: src/collect_meta.rs
+description: "'use strict';\nvar _require = require('unknown-package'),\n  _require_very = _require.very,\n  token = _require_very.deep.token;\nconsole.log(namedDefault);\n"
+input_file: tests/fixture/meta/require_deep/swcCommonJSES5-1_3_15.input.js
+---
+Meta {
+    cjs: true,
+    es_module: false,
+    imports: [
+        Named {
+            source: "unknown-package",
+            imported: "very",
+            local: MemberExpression(
+                "_require",
+                "very",
+            ),
+        },
+    ],
+    exports: [],
+}

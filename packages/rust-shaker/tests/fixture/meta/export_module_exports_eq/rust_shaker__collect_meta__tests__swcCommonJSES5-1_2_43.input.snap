@@ -1,0 +1,13 @@
+---
+source: src/collect_meta.rs
+description: "'use strict';\nmodule.exports = 42;\n"
+input_file: tests/fixture/meta/export_module_exports_eq/swcCommonJSES5-1_2_43.input.js
+---
+Meta {
+    cjs: true,
+    es_module: false,
+    imports: [],
+    exports: [
+        Default,
+    ],
+}

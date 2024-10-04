@@ -1,0 +1,24 @@
+---
+source: src/collect_meta.rs
+description: "const obj = { a: 1, b: 2 };\nexport const { a, ...rest } = obj;\n"
+input_file: tests/fixture/meta/export_with_destruction_and_rest_operator/asIs.input.js
+---
+Meta {
+    cjs: false,
+    es_module: true,
+    imports: [],
+    exports: [
+        Named {
+            local: Identifier(
+                "a",
+            ),
+            exported: "a",
+        },
+        Named {
+            local: Identifier(
+                "rest",
+            ),
+            exported: "rest",
+        },
+    ],
+}

@@ -1,0 +1,18 @@
+---
+source: src/collect_meta.rs
+description: "export let E;\n\n(function (E) {\n  E[(E['A'] = 0)] = 'A';\n  E[(E['B'] = 1)] = 'B';\n  E[(E['C'] = 2)] = 'C';\n})(E || (E = {}));\n"
+input_file: tests/fixture/meta/export_enum/babelNode16-7_0_0.input.js
+---
+Meta {
+    cjs: false,
+    es_module: true,
+    imports: [],
+    exports: [
+        Named {
+            local: Identifier(
+                "E",
+            ),
+            exported: "E",
+        },
+    ],
+}

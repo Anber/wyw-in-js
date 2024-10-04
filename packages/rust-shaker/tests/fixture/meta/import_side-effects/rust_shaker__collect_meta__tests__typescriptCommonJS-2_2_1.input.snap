@@ -1,0 +1,15 @@
+---
+source: src/collect_meta.rs
+description: "'use strict';\nexports.__esModule = true;\nrequire('unknown-package');\n"
+input_file: tests/fixture/meta/import_side-effects/typescriptCommonJS-2_2_1.input.js
+---
+Meta {
+    cjs: true,
+    es_module: true,
+    imports: [
+        SideEffect {
+            source: "unknown-package",
+        },
+    ],
+    exports: [],
+}

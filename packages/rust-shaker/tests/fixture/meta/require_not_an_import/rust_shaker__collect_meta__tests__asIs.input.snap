@@ -1,0 +1,11 @@
+---
+source: src/collect_meta.rs
+description: "const notModule = (() => {\n  const require = () => ({});\n  const { dep } = require('unknown-package');\n  return result;\n})();\n\nconsole.log(notModule);\n"
+input_file: tests/fixture/meta/require_not_an_import/asIs.input.js
+---
+Meta {
+    cjs: true,
+    es_module: false,
+    imports: [],
+    exports: [],
+}

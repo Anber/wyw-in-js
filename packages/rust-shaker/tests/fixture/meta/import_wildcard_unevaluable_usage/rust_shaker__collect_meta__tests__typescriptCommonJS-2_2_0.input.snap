@@ -1,0 +1,16 @@
+---
+source: src/collect_meta.rs
+description: "'use strict';\nvar ns = require('unknown-package');\nvar getNamed = function (n) {\n  return n.name;\n};\nvar named = getNamed(ns);\nconsole.log(named);\n"
+input_file: tests/fixture/meta/import_wildcard_unevaluable_usage/typescriptCommonJS-2_2_0.input.js
+---
+Meta {
+    cjs: true,
+    es_module: false,
+    imports: [
+        Namespace {
+            source: "unknown-package",
+            local: "ns",
+        },
+    ],
+    exports: [],
+}

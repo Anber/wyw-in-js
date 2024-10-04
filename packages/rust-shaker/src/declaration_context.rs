@@ -1,14 +1,17 @@
+use crate::meta::symbol::Symbol;
+use oxc::allocator::Allocator;
 use oxc::ast::ast::*;
+use oxc_semantic::SymbolTable;
 
 #[derive(Clone, Debug)]
 pub enum PathPart<'a> {
-  Identifier(Atom<'a>),
   Index(usize),
+  Member(Atom<'a>),
 }
 
 #[derive(Debug)]
 pub struct DeclaredIdent<'a> {
-  pub name: Atom<'a>,
+  pub symbol: &'a Symbol<'a>,
   pub from: Vec<PathPart<'a>>,
 }
 
@@ -18,24 +21,27 @@ pub enum DeclarationContext<'a> {
   List(Vec<DeclaredIdent<'a>>),
 }
 
-fn get_property_key<'a, 'b>(prop: &'b BindingProperty<'a>) -> &'b Atom<'a> {
+fn get_property_key<'a, 'b>(prop: &'b BindingProperty<'a>) -> Option<&'b Atom<'a>> {
   match &prop.key {
-    PropertyKey::StaticIdentifier(ident) => &ident.name,
+    PropertyKey::StaticIdentifier(ident) => Some(&ident.name),
 
-    _ => {
-      // Unknown type of property name. Throw an error.
-      todo!("Unsupported type of property name. Only static identifiers are supported.");
-    }
+    _ => None,
   }
 }
 
 fn unfold<'a>(
+  allocator: &'a Allocator,
+  symbols: &SymbolTable,
   pattern: &BindingPatternKind<'a>,
   stack: &mut Vec<PathPart<'a>>,
 ) -> Vec<DeclaredIdent<'a>> {
   match pattern {
     BindingPatternKind::BindingIdentifier(ident) => vec![DeclaredIdent {
-      name: ident.name.clone(),
+      symbol: Symbol::new(
+        allocator,
+        symbols,
+        ident.symbol_id.get().expect("Expected a symbol id"),
+      ),
       from: stack.clone(),
     }],
 
@@ -46,7 +52,7 @@ fn unfold<'a>(
       .filter_map(|(idx, elem)| match elem {
         Some(elem) => {
           stack.push(PathPart::Index(idx));
-          let res = unfold(&elem.kind, stack);
+          let res = unfold(allocator, symbols, &elem.kind, stack);
           stack.pop();
           Some(res)
         }
@@ -56,20 +62,26 @@ fn unfold<'a>(
       .flatten()
       .collect(),
 
-    BindingPatternKind::AssignmentPattern(assigment) => unfold(&assigment.left.kind, stack),
+    BindingPatternKind::AssignmentPattern(assigment) => {
+      unfold(allocator, symbols, &assigment.left.kind, stack)
+    }
 
     BindingPatternKind::ObjectPattern(object) => {
       let mut res = vec![];
 
       for prop in &object.properties {
         let key = get_property_key(prop);
-        stack.push(PathPart::Identifier(key.clone()));
-        res.extend(unfold(&prop.value.kind, stack));
+        if key.is_none() {
+          // FIXME: It's okay if we will not try to use this context later
+          continue;
+        }
+        stack.push(PathPart::Member(key.unwrap().clone()));
+        res.extend(unfold(allocator, symbols, &prop.value.kind, stack));
         stack.pop();
       }
 
       if let Some(ident) = &object.rest {
-        res.extend(unfold(&ident.argument.kind, stack));
+        res.extend(unfold(allocator, symbols, &ident.argument.kind, stack));
       }
 
       res
@@ -78,16 +90,31 @@ fn unfold<'a>(
 }
 
 impl<'a> DeclarationContext<'a> {
-  pub fn from(node: &VariableDeclarator<'a>) -> Self {
+  pub fn from(
+    allocator: &'a Allocator,
+    symbols: &SymbolTable,
+    node: &VariableDeclarator<'a>,
+  ) -> Self {
     match &node.id.kind {
       BindingPatternKind::BindingIdentifier(ident) => {
         DeclarationContext::List(vec![DeclaredIdent {
-          name: ident.name.clone(),
+          symbol: Symbol::new(
+            allocator,
+            symbols,
+            ident.symbol_id.get().expect("Expected a symbol id"),
+          ),
           from: vec![],
         }])
       }
 
-      pattern => DeclarationContext::List(unfold(pattern, &mut vec![])),
+      pattern => DeclarationContext::List(unfold(allocator, symbols, pattern, &mut vec![])),
+    }
+  }
+
+  pub(crate) fn get_declaring_symbol(&self) -> Option<Symbol<'a>> {
+    match &self {
+      DeclarationContext::List(list) if list.len() == 1 => Some(list[0].symbol.clone()),
+      _ => None,
     }
   }
 }
@@ -95,27 +122,40 @@ impl<'a> DeclarationContext<'a> {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use oxc::allocator::{Allocator, CloneIn};
+  use oxc::allocator::Allocator;
   use oxc::parser::{ParseOptions, Parser};
   use std::path::Path;
 
-  fn prepare<'a>(allocator: &'a Allocator, pattern: &'a str) -> VariableDeclarator<'a> {
+  fn run(pattern: &str) -> String {
+    let allocator = Allocator::default();
+
     let source_text = format!("const {} = obj;", pattern);
 
     let path = Path::new("test.js");
     let source_type = SourceType::from_path(path).unwrap();
 
-    let ret = Parser::new(allocator, &source_text, source_type)
+    let parser_ret = Parser::new(&allocator, &source_text, source_type)
       .with_options(ParseOptions {
         parse_regular_expression: true,
         ..ParseOptions::default()
       })
       .parse();
 
-    assert!(ret.errors.is_empty());
+    assert!(parser_ret.errors.is_empty());
 
-    if let Statement::VariableDeclaration(decl) = &ret.program.body[0] {
-      return decl.declarations[0].clone_in(allocator);
+    let program = allocator.alloc(parser_ret.program);
+
+    let semantic_ret = oxc_semantic::SemanticBuilder::new(&source_text)
+      .build_module_record(path, program)
+      .with_check_syntax_error(true)
+      .with_trivias(parser_ret.trivias)
+      .build(program);
+
+    let (symbols, _scopes) = semantic_ret.semantic.into_symbol_table_and_scope_tree();
+
+    if let Statement::VariableDeclaration(decl) = &program.body[0] {
+      return DeclarationContext::from(&allocator, &symbols, &decl.declarations[0])
+        .to_debug_string();
     }
 
     panic!("Expected a variable declaration statement");
@@ -133,13 +173,13 @@ mod tests {
               .from
               .iter()
               .map(|part| match part {
-                PathPart::Identifier(ident) => ident.to_string(),
+                PathPart::Member(ident) => ident.to_string(),
                 PathPart::Index(idx) => idx.to_string(),
               })
               .collect::<Vec<String>>()
               .join(".");
 
-            format!("{}:{}", ident.name, from)
+            format!("{}:{}", ident.symbol.name, from)
           })
           .collect::<Vec<String>>()
           .join(", "),
@@ -150,89 +190,50 @@ mod tests {
   #[test]
   fn test_simple_ident() {
     // const a = obj;
-    let allocator = Allocator::default();
-    let node = prepare(&allocator, "a");
-
-    assert_eq!(DeclarationContext::from(&node).to_debug_string(), "a:");
+    assert_eq!(run("a"), "a:");
   }
 
   #[test]
   fn test_simple_array() {
     // const [a, b] = obj;
-    let allocator = Allocator::default();
-    let node = prepare(&allocator, "[a, b]");
-
-    assert_eq!(
-      DeclarationContext::from(&node).to_debug_string(),
-      "a:0, b:1"
-    );
+    assert_eq!(run("[a, b]"), "a:0, b:1");
   }
 
   #[test]
   fn test_nested_array() {
     // const [a, [b, c]] = obj;
-    let allocator = Allocator::default();
-    let node = prepare(&allocator, "[a, [b, c]]");
-
-    assert_eq!(
-      DeclarationContext::from(&node).to_debug_string(),
-      "a:0, b:1.0, c:1.1"
-    );
+    assert_eq!(run("[a, [b, c]]"), "a:0, b:1.0, c:1.1");
   }
 
   #[test]
   fn test_simple_object() {
     // const {a, b} = obj;
-    let allocator = Allocator::default();
-    let node = prepare(&allocator, "{a, b}");
-
-    assert_eq!(
-      DeclarationContext::from(&node).to_debug_string(),
-      "a:a, b:b"
-    );
+    assert_eq!(run("{a, b}"), "a:a, b:b");
   }
 
   #[test]
   fn test_nested_object() {
     // const {a, b: {b, c}} = obj;
-    let allocator = Allocator::default();
-    let node = prepare(&allocator, "{a, b: {b, c}}");
-
-    assert_eq!(
-      DeclarationContext::from(&node).to_debug_string(),
-      "a:a, b:b.b, c:b.c"
-    );
+    assert_eq!(run("{a, b: {b, c}}"), "a:a, b:b.b, c:b.c");
   }
 
   #[test]
   fn test_rest_object() {
     // const {a, ...rest} = obj;
-    let allocator = Allocator::default();
-    let node = prepare(&allocator, "{a, ...rest}");
-
-    assert_eq!(
-      DeclarationContext::from(&node).to_debug_string(),
-      "a:a, rest:"
-    );
+    assert_eq!(run("{a, ...rest}"), "a:a, rest:");
   }
 
   #[test]
   fn test_with_default() {
-    // const { a = 1 } = obj;
-    let allocator = Allocator::default();
-    let node = prepare(&allocator, "{ a = 1 }");
-
-    assert_eq!(DeclarationContext::from(&node).to_debug_string(), "a:a");
+    // const {a = 1} = obj;
+    assert_eq!(run("{a = 1}"), "a:a");
   }
 
   #[test]
   fn test_mixed() {
     // const {a, b = 1, c: [c, d] = [], ...rest} = obj;
-    let allocator = Allocator::default();
-    let node = prepare(&allocator, "{a, b = 1, c: [c, d] = [], ...rest}");
-
     assert_eq!(
-      DeclarationContext::from(&node).to_debug_string(),
+      run("{a, b = 1, c: [c, d] = [], ...rest}"),
       "a:a, b:b, c:c.0, d:c.1, rest:"
     );
   }

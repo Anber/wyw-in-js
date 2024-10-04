@@ -1,0 +1,16 @@
+---
+source: src/collect_meta.rs
+description: "'use strict';\nvar ns = require('unknown-package');\nvar key = Math.random() > 0.5 ? 'a' : 'b';\nconsole.log(ns[key]);\n"
+input_file: tests/fixture/meta/import_wildcard_dynamic_usage_of_the_imported_namespace/typescriptCommonJS-2_2_0.input.js
+---
+Meta {
+    cjs: true,
+    es_module: false,
+    imports: [
+        Namespace {
+            source: "unknown-package",
+            local: "ns",
+        },
+    ],
+    exports: [],
+}

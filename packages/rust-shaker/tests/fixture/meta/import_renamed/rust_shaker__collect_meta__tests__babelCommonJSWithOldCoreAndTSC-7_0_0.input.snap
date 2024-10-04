@@ -1,0 +1,20 @@
+---
+source: src/collect_meta.rs
+description: "'use strict';\n\nvar _unknownPackage = require('unknown-package');\n\nconsole.log(_unknownPackage.named);\n"
+input_file: tests/fixture/meta/import_renamed/babelCommonJSWithOldCoreAndTSC-7_0_0.input.js
+---
+Meta {
+    cjs: true,
+    es_module: false,
+    imports: [
+        Named {
+            source: "unknown-package",
+            imported: "named",
+            local: MemberExpression(
+                "_unknownPackage",
+                "named",
+            ),
+        },
+    ],
+    exports: [],
+}

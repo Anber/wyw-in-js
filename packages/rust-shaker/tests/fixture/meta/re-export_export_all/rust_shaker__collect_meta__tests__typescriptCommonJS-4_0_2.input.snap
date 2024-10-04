@@ -1,0 +1,15 @@
+---
+source: src/collect_meta.rs
+description: "'use strict';\nvar __createBinding =\n  (this && this.__createBinding) ||\n  (Object.create\n    ? function (o, m, k, k2) {\n        if (k2 === undefined) k2 = k;\n        Object.defineProperty(o, k2, {\n          enumerable: true,\n          get: function () {\n            return m[k];\n          },\n        });\n      }\n    : function (o, m, k, k2) {\n        if (k2 === undefined) k2 = k;\n        o[k2] = m[k];\n      });\nvar __exportStar =\n  (this && this.__exportStar) ||\n  function (m, exports) {\n    for (var p in m)\n      if (p !== 'default' && !Object.prototype.hasOwnProperty.call(exports, p))\n        __createBinding(exports, m, p);\n  };\nObject.defineProperty(exports, '__esModule', { value: true });\n__exportStar(require('unknown-package'), exports);\n"
+input_file: tests/fixture/meta/re-export_export_all/typescriptCommonJS-4_0_2.input.js
+---
+Meta {
+    cjs: true,
+    es_module: true,
+    imports: [],
+    exports: [
+        ReexportAll {
+            source: "unknown-package",
+        },
+    ],
+}

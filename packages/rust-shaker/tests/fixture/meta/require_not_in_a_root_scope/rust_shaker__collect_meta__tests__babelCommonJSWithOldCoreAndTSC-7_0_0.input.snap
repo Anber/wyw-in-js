@@ -1,0 +1,20 @@
+---
+source: src/collect_meta.rs
+description: "'use strict';\n\nvar _module = (function () {\n  var _require = require('unknown-package'),\n    dep = _require.dep;\n\n  return result;\n})();\n\nconsole.log(_module);\n"
+input_file: tests/fixture/meta/require_not_in_a_root_scope/babelCommonJSWithOldCoreAndTSC-7_0_0.input.js
+---
+Meta {
+    cjs: true,
+    es_module: false,
+    imports: [
+        Named {
+            source: "unknown-package",
+            imported: "dep",
+            local: MemberExpression(
+                "_require",
+                "dep",
+            ),
+        },
+    ],
+    exports: [],
+}

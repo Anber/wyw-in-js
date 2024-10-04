@@ -1,0 +1,20 @@
+---
+source: src/collect_meta.rs
+description: "'use strict';\nObject.defineProperty(exports, '__esModule', { value: true });\nvar ns = require('unknown-package');\nvar named = ns.named;\nconsole.log(named);\n"
+input_file: tests/fixture/meta/import_wildcard_destructed_namespace/typescriptCommonJS-3_6_2.input.js
+---
+Meta {
+    cjs: true,
+    es_module: true,
+    imports: [
+        Named {
+            source: "unknown-package",
+            imported: "named",
+            local: MemberExpression(
+                "ns",
+                "named",
+            ),
+        },
+    ],
+    exports: [],
+}

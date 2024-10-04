@@ -1,0 +1,18 @@
+---
+source: src/collect_meta.rs
+description: "var __defProp = Object.defineProperty;\nvar __markAsModule = (target) =>\n  __defProp(target, '__esModule', { value: true });\nvar __require =\n  typeof require !== 'undefined'\n    ? require\n    : (x) => {\n        throw new Error('Dynamic require of \"' + x + '\" is not supported');\n      };\nvar __export = (target, all) => {\n  __markAsModule(target);\n  for (var name in all)\n    __defProp(target, name, { get: all[name], enumerable: true });\n};\n__export(exports, {\n  Foo: () => Foo,\n});\nclass Foo {}\n"
+input_file: tests/fixture/meta/export_class/esbuildCommonJS-0_12_26.input.js
+---
+Meta {
+    cjs: true,
+    es_module: false,
+    imports: [],
+    exports: [
+        Named {
+            local: Identifier(
+                "Foo",
+            ),
+            exported: "Foo",
+        },
+    ],
+}
