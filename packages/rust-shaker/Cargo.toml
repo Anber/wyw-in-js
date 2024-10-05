@@ -27,6 +27,8 @@ itertools = "0.13.0"
 indoc = "2.0.5"
 regex = "1.11.0"
 
+shaker_macro = { path = "./crates/shaker_macro" }
+
 [dev-dependencies]
 insta = { version = "1.40.0", features = ["yaml"] }
 swc_ecma_parser = { version = "0.143.5" }

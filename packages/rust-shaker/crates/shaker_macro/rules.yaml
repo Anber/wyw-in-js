@@ -1,0 +1,358 @@
+rules:
+  AssignmentExpression:
+    - action: todo
+      path: right
+      condition: removed
+    - action: remove
+      path: left
+      condition: removed
+
+  AssignmentPattern:
+    - action: todo
+      path: right
+      condition: removed
+    - action: remove
+      path: left
+      condition: removed
+
+  AssignmentTargetPropertyIdentifier:
+    - action: remove
+      path: binding
+      condition: removed
+
+  AssignmentTargetPropertyProperty:
+    - action: remove
+      path: name
+      condition: removed
+    - action: remove
+      path: binding
+      condition: removed
+
+  BindingProperty:
+    - action: remove
+      path: key
+      condition: removed
+    - action: remove
+      path: value
+      condition: removed
+
+  ConditionalExpression:
+    - action: replace
+      with: alternate
+      path: test
+      condition: removed
+    - action: replace
+      with: undefined
+      path: consequent
+      condition: removed
+    - action: replace
+      with: undefined
+      path: alternate
+      condition: removed
+
+  ExportSpecifier:
+    - action: remove
+      path: local
+      condition: removed
+
+  ExpressionStatement:
+    - action: remove
+      path: expression
+      condition: removed
+
+  MethodDefinition:
+    - action: remove
+      path: key
+      condition: removed
+    - action: remove
+      path: value
+      condition: removed
+
+  ParenthesizedExpression:
+    - action: remove
+      path: expression
+      condition: removed
+
+  VariableDeclarator:
+    - action: remove
+      path: id
+      condition: removed
+
+  AccessorProperty: "Not implemented"
+  Argument: "Not implemented"
+  ArrayExpression:
+    skip: true
+  ArrayExpressionElement:
+    skip: true
+  ArrayPattern:
+    skip: true
+  ArrowFunctionExpression: "Not implemented"
+  AssignmentTarget:
+    skip: true
+  AssignmentTargetMaybeDefault:
+    skip: true
+  AssignmentTargetPattern:
+    skip: true
+  AssignmentTargetProperty:
+    skip: true
+  AssignmentTargetRest: "Not implemented"
+  AssignmentTargetWithDefault: "Not implemented"
+  AwaitExpression: "Not implemented"
+  BigIntLiteral:
+    lifetime: false
+    skip: true
+  BinaryExpression: "Not implemented"
+  BindingIdentifier:
+    skip: true
+  BindingPatternKind:
+    skip: true
+  BindingRestElement: "Not implemented"
+  BlockStatement: "Not implemented"
+  BooleanLiteral:
+    lifetime: false
+    skip: true
+  BreakStatement: "Not implemented"
+  CallExpression: "Not implemented"
+  CatchClause: "Not implemented"
+  CatchParameter: "Not implemented"
+  ChainElement: "Not implemented"
+  ChainExpression: "Not implemented"
+  Class:
+    skip: true
+  ClassElement:
+    skip: true
+  ComputedMemberExpression: "Not implemented"
+  ContinueStatement: "Not implemented"
+  Declaration:
+    skip: true
+  Decorator: "Not implemented"
+  Directive: "Not implemented"
+  DoWhileStatement: "Not implemented"
+  Elision:
+    lifetime: false
+    skip: true
+  EmptyStatement:
+    lifetime: false
+    skip: true
+  ExportAllDeclaration: "Not implemented"
+  ExportDefaultDeclaration: "Not implemented"
+  ExportDefaultDeclarationKind: "Not implemented"
+  Expression:
+    skip: true
+  ForInStatement: "Not implemented"
+  FormalParameter:
+    skip: true
+  FormalParameters:
+    skip: true
+  ForOfStatement: "Not implemented"
+  ForStatement: "Not implemented"
+  ForStatementInit: "Not implemented"
+  ForStatementLeft: "Not implemented"
+  Hashbang: "Not implemented"
+  IdentifierName:
+    skip: true
+  IdentifierReference:
+    skip: true
+  IfStatement: "Not implemented"
+  ImportAttribute: "Not implemented"
+  ImportAttributeKey: "Not implemented"
+  ImportDeclaration: "Not implemented"
+  ImportDeclarationSpecifier: "Not implemented"
+  ImportDefaultSpecifier: "Not implemented"
+  ImportExpression: "Not implemented"
+  ImportNamespaceSpecifier: "Not implemented"
+  ImportSpecifier: "Not implemented"
+  JSDocNonNullableType: "Not implemented"
+  JSDocNullableType: "Not implemented"
+  JSDocUnknownType:
+    lifetime: false
+    skip: true
+  JSXAttribute: "Not implemented"
+  JSXAttributeItem: "Not implemented"
+  JSXAttributeName: "Not implemented"
+  JSXAttributeValue: "Not implemented"
+  JSXChild: "Not implemented"
+  JSXClosingElement: "Not implemented"
+  JSXElement: "Not implemented"
+  JSXElementName: "Not implemented"
+  JSXEmptyExpression:
+    lifetime: false
+    skip: true
+  JSXExpression: "Not implemented"
+  JSXExpressionContainer: "Not implemented"
+  JSXFragment: "Not implemented"
+  JSXIdentifier: "Not implemented"
+  JSXMemberExpression: "Not implemented"
+  JSXMemberExpressionObject: "Not implemented"
+  JSXNamespacedName: "Not implemented"
+  JSXOpeningElement: "Not implemented"
+  JSXSpreadAttribute: "Not implemented"
+  JSXSpreadChild: "Not implemented"
+  JSXText: "Not implemented"
+  LabeledStatement: "Not implemented"
+  LabelIdentifier: "Not implemented"
+  MemberExpression: "Not implemented"
+  MetaProperty: "Not implemented"
+  ModuleDeclaration:
+    skip: true
+  ModuleExportName:
+    skip: true
+  NewExpression: "Not implemented"
+  NullLiteral:
+    lifetime: false
+    skip: true
+  NumericLiteral:
+    lifetime: false
+    skip: true
+  ObjectExpression:
+    skip: true
+  ObjectProperty:
+    skip: true
+  ObjectPropertyKind:
+    skip: true
+  PrivateFieldExpression: "Not implemented"
+  PrivateIdentifier: "Not implemented"
+  PrivateInExpression: "Not implemented"
+  PropertyDefinition: "Not implemented"
+  PropertyKey:
+    skip: true
+  RegExpLiteral:
+    skip: true
+  ReturnStatement:
+    skip: true
+  SimpleAssignmentTarget:
+    skip: true
+  SpreadElement: "Not implemented"
+  Statement:
+    skip: true
+  StaticBlock: "Not implemented"
+  StaticMemberExpression: "Not implemented"
+  Super:
+    lifetime: false
+    skip: true
+  StringLiteral:
+    skip: true
+  SwitchCase: "Not implemented"
+  SwitchStatement: "Not implemented"
+  TaggedTemplateExpression: "Not implemented"
+  TemplateElement: "Not implemented"
+  TemplateLiteral: "Not implemented"
+  ThisExpression:
+    lifetime: false
+    skip: true
+  ThrowStatement: "Not implemented"
+  TryStatement: "Not implemented"
+  TSAnyKeyword:
+    lifetime: false
+    skip: true
+  TSArrayType: "Not implemented"
+  TSAsExpression: "Not implemented"
+  TSBigIntKeyword:
+    lifetime: false
+    skip: true
+  TSBooleanKeyword:
+    lifetime: false
+    skip: true
+  TSCallSignatureDeclaration: "Not implemented"
+  TSClassImplements: "Not implemented"
+  TSConditionalType: "Not implemented"
+  TSConstructorType: "Not implemented"
+  TSConstructSignatureDeclaration: "Not implemented"
+  TSEnumDeclaration: "Not implemented"
+  TSEnumMember: "Not implemented"
+  TSEnumMemberName: "Not implemented"
+  TSExportAssignment: "Not implemented"
+  TSExternalModuleReference: "Not implemented"
+  TSFunctionType: "Not implemented"
+  TSImportAttribute: "Not implemented"
+  TSImportAttributeName: "Not implemented"
+  TSImportAttributes: "Not implemented"
+  TSImportEqualsDeclaration: "Not implemented"
+  TSImportType: "Not implemented"
+  TSIndexedAccessType: "Not implemented"
+  TSIndexSignature: "Not implemented"
+  TSIndexSignatureName: "Not implemented"
+  TSInferType: "Not implemented"
+  TSInstantiationExpression: "Not implemented"
+  TSInterfaceBody: "Not implemented"
+  TSInterfaceDeclaration: "Not implemented"
+  TSInterfaceHeritage: "Not implemented"
+  TSIntersectionType: "Not implemented"
+  TSIntrinsicKeyword:
+    lifetime: false
+    skip: true
+  TSLiteral: "Not implemented"
+  TSLiteralType: "Not implemented"
+  TSMappedType: "Not implemented"
+  TSMethodSignature: "Not implemented"
+  TSModuleBlock: "Not implemented"
+  TSModuleDeclaration: "Not implemented"
+  TSModuleDeclarationBody: "Not implemented"
+  TSModuleDeclarationName: "Not implemented"
+  TSModuleReference: "Not implemented"
+  TSNamedTupleMember: "Not implemented"
+  TSNamespaceExportDeclaration: "Not implemented"
+  TSNeverKeyword:
+    lifetime: false
+    skip: true
+  TSNonNullExpression: "Not implemented"
+  TSNullKeyword:
+    lifetime: false
+    skip: true
+  TSNumberKeyword:
+    lifetime: false
+    skip: true
+  TSObjectKeyword:
+    lifetime: false
+    skip: true
+  TSOptionalType: "Not implemented"
+  TSParenthesizedType: "Not implemented"
+  TSPropertySignature: "Not implemented"
+  TSQualifiedName: "Not implemented"
+  TSRestType: "Not implemented"
+  TSSatisfiesExpression: "Not implemented"
+  TSSignature: "Not implemented"
+  TSStringKeyword:
+    lifetime: false
+    skip: true
+  TSSymbolKeyword:
+    lifetime: false
+    skip: true
+  TSTemplateLiteralType: "Not implemented"
+  TSThisParameter: "Not implemented"
+  TSThisType:
+    lifetime: false
+    skip: true
+  TSTupleElement: "Not implemented"
+  TSTupleType: "Not implemented"
+  TSType: "Not implemented"
+  TSTypeAliasDeclaration: "Not implemented"
+  TSTypeAnnotation: "Not implemented"
+  TSTypeAssertion: "Not implemented"
+  TSTypeLiteral: "Not implemented"
+  TSTypeName: "Not implemented"
+  TSTypeOperator: "Not implemented"
+  TSTypeParameter: "Not implemented"
+  TSTypeParameterDeclaration: "Not implemented"
+  TSTypeParameterInstantiation: "Not implemented"
+  TSTypePredicate: "Not implemented"
+  TSTypePredicateName: "Not implemented"
+  TSTypeQuery: "Not implemented"
+  TSTypeQueryExprName: "Not implemented"
+  TSTypeReference: "Not implemented"
+  TSUndefinedKeyword:
+    lifetime: false
+    skip: true
+  TSUnionType: "Not implemented"
+  TSUnknownKeyword:
+    lifetime: false
+    skip: true
+  TSVoidKeyword:
+    lifetime: false
+    skip: true
+  UnaryExpression: "Not implemented"
+  UpdateExpression: "Not implemented"
+  WhileStatement: "Not implemented"
+  WithClause: "Not implemented"
+  WithStatement: "Not implemented"
+  YieldExpression: "Not implemented"

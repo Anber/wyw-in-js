@@ -1,0 +1,15 @@
+[package]
+name = "shaker_macro"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+darling = "0.20.10"
+syn = { version = "2.0.79", features = ["visit-mut"] }
+quote = "1.0.37"
+yaml-rust = "0.4.5"
+convert_case = "0.6.0"
+proc-macro2 = "1.0.86"
