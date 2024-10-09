@@ -7,6 +7,7 @@ pub mod processor_params;
 mod shaker;
 mod spans;
 pub mod symbol;
+mod traverse;
 mod unnecessary_code;
 
 use crate::declaration_context::DeclarationContext;

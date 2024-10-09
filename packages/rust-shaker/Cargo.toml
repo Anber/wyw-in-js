@@ -18,7 +18,7 @@ oxc_codegen = "0.30.5"
 oxc_traverse = "0.30.5"
 oxc_semantic = "0.30.5"
 glob = "0.3.1"
-oxc_resolver = { version = "1.11.0", features = ["package_json_raw_json_api", "pnp", "yarn_pnp"] }
+oxc_resolver = { version = "1.12.0", features = ["package_json_raw_json_api", "pnp", "yarn_pnp"] }
 pico-args = "0.5.0"
 walkdir = "2.5.0"
 normalize-path = "0.2.1"
@@ -27,13 +27,12 @@ itertools = "0.13.0"
 indoc = "2.0.5"
 regex = "1.11.0"
 
+fast-traverse = { path = "./crates/fast-traverse" }
 shaker_macro = { path = "./crates/shaker_macro" }
 
 [dev-dependencies]
 insta = { version = "1.40.0", features = ["yaml"] }
-swc_ecma_parser = { version = "0.143.5" }
-swc_ecma_transforms_testing = { version = "0.140.10" }
-testing = { version = "0.35.19" }
+testing = { version = "0.42.0" }
 
 # .cargo/config defines few alias to build plugin.
 # cargo build-wasi generates wasm-wasi32 binary

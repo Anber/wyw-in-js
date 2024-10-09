@@ -19,9 +19,15 @@ impl Spans {
     // If new span covers existing spans, replace them with the new span
     let mut i = 0;
     while i < self.list.len() {
-      let existing = &self.list[i];
+      let existing = self.list.get_mut(i).unwrap();
       if existing.start >= span.start && existing.end <= span.end {
         self.list.remove(i);
+      } else if existing.end == span.start {
+        *existing = Span::new(existing.start, span.end);
+        return;
+      } else if existing.start == span.end {
+        *existing = Span::new(span.start, existing.end);
+        return;
       } else if existing.start > span.end {
         break;
       } else {
@@ -63,11 +69,22 @@ mod tests {
       Spans::new(vec![Span::new(20, 30), Span::new(1, 10)]).list,
       vec![Span::new(1, 10), Span::new(20, 30)]
     );
+
+    assert_eq!(
+      Spans::new(vec![
+        Span::new(9, 10),
+        Span::new(15, 16),
+        Span::new(10, 12),
+        Span::new(13, 15),
+      ])
+      .list,
+      vec![Span::new(9, 12), Span::new(13, 16),]
+    );
   }
 
   #[test]
   fn test_add() {
-    let mut spans = Spans::new(Vec::new());
+    let mut spans = Spans::new(vec![]);
     spans.add(Span::new(1, 10));
     spans.add(Span::new(20, 30));
     assert_eq!(spans.list, vec![Span::new(1, 10), Span::new(20, 30)]);
@@ -78,9 +95,8 @@ mod tests {
 
   #[test]
   fn test_has() {
-    let mut spans = Spans::new(Vec::new());
-    spans.add(Span::new(1, 10));
-    spans.add(Span::new(20, 30));
+    let spans = Spans::new(vec![Span::new(1, 10), Span::new(20, 30)]);
+
     assert!(spans.has(Span::new(1, 10)));
     assert!(spans.has(Span::new(4, 8)));
     assert!(!spans.has(Span::new(1, 30)));
