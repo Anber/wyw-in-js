@@ -330,18 +330,13 @@ fn create_walk_fn(
       node: #type_ref,
       ctx: &mut TraverseCtx<'a>,
     ) {
-      // ctx.ancestors.push(AnyNode::#name_ident(node));
-
       if let EnterAction::Ignore = hooks.#enter_fn_name(node, ctx) {
-        // ctx.ancestors.pop();
         return;
       }
 
       #body
 
       hooks.#exit_fn_name(node, ctx);
-
-      // ctx.ancestors.pop();
     }
   }
 }

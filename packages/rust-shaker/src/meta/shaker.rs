@@ -1,4 +1,4 @@
-use crate::meta::spans::Spans;
+use crate::meta::replacements::Replacements;
 use oxc::allocator::CloneIn;
 use oxc::ast::ast::*;
 use oxc::span::{GetSpan, Span};
@@ -6,14 +6,14 @@ use oxc_traverse::TraverseCtx;
 use shaker_macro::shaker_from_cfg;
 
 pub struct Shaker<'a> {
-  for_delete: Spans,
+  for_delete: Replacements,
   for_replace: Vec<(Span, Expression<'a>)>,
 }
 
 impl<'a> Shaker<'a> {
   pub fn new(for_delete: Vec<Span>) -> Self {
     Self {
-      for_delete: Spans::new(for_delete),
+      for_delete: Replacements::from_spans(for_delete),
       for_replace: vec![],
     }
   }
@@ -23,7 +23,7 @@ impl<'a> Shaker<'a> {
   }
 
   fn mark_for_delete(&mut self, span: Span) {
-    self.for_delete.add(span);
+    self.for_delete.add_deletion(span);
   }
 
   fn mark_for_replace(&mut self, span: Span, replacement: Expression<'a>) {

@@ -1,40 +1,60 @@
-use crate::meta::spans::Spans;
+use crate::meta::replacements::Replacements;
 use fast_traverse::{TraverseCtx, TraverseHooks};
+use itertools::Itertools;
 use oxc::ast::ast::*;
 use oxc::span::GetSpan;
 
 struct Shaker<'a> {
-  for_delete: Spans,
-  for_replace: Vec<(Span, String)>,
+  replacements: Replacements,
   source_text: &'a String,
 }
 
 impl<'a> Shaker<'a> {
   pub fn new(source_text: &'a String, for_delete: Vec<Span>) -> Self {
     Self {
-      for_delete: Spans::new(for_delete),
-      for_replace: vec![],
+      replacements: Replacements::from_spans(for_delete),
       source_text,
     }
   }
 
-  fn is_for_delete(&self, span: Span) -> bool {
-    self.for_delete.has(span)
+  fn is_for_delete(&self, node: &impl GetSpan) -> bool {
+    self.replacements.has(node.span())
+  }
+
+  fn is_vec_for_delete(&self, nodes: impl IntoIterator<Item = &'a (impl GetSpan + 'a)>) -> bool {
+    nodes.into_iter().all(|node| self.is_for_delete(node))
+  }
+
+  fn is_vec_opt_for_delete(
+    &self,
+    nodes: impl IntoIterator<Item = &'a Option<(impl GetSpan + 'a)>>,
+  ) -> bool {
+    nodes
+      .into_iter()
+      .all(|el| !el.as_ref().is_some_and(|v| !self.is_for_delete(v)))
   }
 
   fn mark_for_delete(&mut self, span: Span) {
-    self.for_delete.add(span);
+    self.replacements.add_deletion(span);
+  }
+
+  fn remove_delimiters(&mut self, nodes: impl IntoIterator<Item = &'a (impl GetSpan + 'a)>) {
+    let iter = nodes.into_iter();
+    for (prev, next) in iter.tuple_windows() {
+      if self.is_for_delete(prev) {
+        self.mark_for_delete(Span::new(prev.span().end, next.span().start));
+      }
+    }
   }
 
   fn mark_for_replace(&mut self, span: Span, replacement: Expression<'a>) {
     // self.for_replace.push((span, replacement));
   }
 
-  fn replace_with_undefined(&mut self, span: Span, ctx: &TraverseCtx<'a>) {
-    // self.mark_for_replace(
-    //   span,
-    //   ctx.ast.expression_identifier_reference(span, "undefined"),
-    // );
+  fn replace_with_undefined(&mut self, node: &impl GetSpan) {
+    self
+      .replacements
+      .add_replacement(node.span(), "undefined".to_string());
   }
 }
 
@@ -69,55 +89,84 @@ impl<'a> TraverseHooks<'a> for Shaker<'a> {
     // }
   }
 
+  fn exit_assignment_expression(
+    &mut self,
+    node: &'a AssignmentExpression<'a>,
+    ctx: &mut TraverseCtx<'a>,
+  ) {
+    if self.is_for_delete(&node.right) {
+      todo!()
+    }
+
+    if self.is_for_delete(&node.left) {
+      self.mark_for_delete(node.span);
+    }
+  }
+
   fn exit_array_assignment_target(
     &mut self,
     node: &ArrayAssignmentTarget<'a>,
     _ctx: &mut TraverseCtx<'a>,
   ) {
-    // for el in node.elements.iter_mut() {
-    //   if let Some(trg) = el {
-    //     if self.is_for_delete(trg.span()) {
-    //       *el = None;
-    //     }
-    //   }
-    // }
-
-    if node.elements.iter().all(|el| el.is_none()) {
+    if self.is_vec_opt_for_delete(&node.elements) {
       self.mark_for_delete(node.span());
     }
   }
 
   fn exit_object_assignment_target(
     &mut self,
-    node: &ObjectAssignmentTarget<'a>,
+    node: &'a ObjectAssignmentTarget<'a>,
     _ctx: &mut TraverseCtx<'a>,
   ) {
-    // node
-    //   .properties
-    //   .retain(|prop| !self.is_for_delete(prop.span()));
-
-    if node.properties.is_empty() {
+    if self.is_vec_for_delete(&node.properties) {
       self.mark_for_delete(node.span());
+    } else {
+      self.remove_delimiters(&node.properties);
     }
   }
 
-  fn exit_sequence_expression(&mut self, node: &SequenceExpression<'a>, ctx: &mut TraverseCtx<'a>) {
-    if node.expressions.is_empty() {
-      self.mark_for_delete(node.span());
-      return;
+  fn exit_assignment_target_property_identifier(
+    &mut self,
+    node: &'a AssignmentTargetPropertyIdentifier<'a>,
+    _ctx: &mut TraverseCtx<'a>,
+  ) {
+    if self.is_for_delete(&node.binding) {
+      self.mark_for_delete(node.span)
     }
+  }
 
-    // let last_expr = node.expressions.last_mut().unwrap();
-    // let last_expr_span = last_expr.span();
-    // if self.is_for_delete(last_expr_span) {
-    //   *last_expr = ctx
-    //     .ast
-    //     .expression_identifier_reference(last_expr_span, "undefined");
-    // }
-    //
-    // node
-    //   .expressions
-    //   .retain(|expr| expr.span() == last_expr_span || !self.is_for_delete(expr.span()));
+  fn exit_assignment_target_property_property(
+    &mut self,
+    node: &'a AssignmentTargetPropertyProperty<'a>,
+    _ctx: &mut TraverseCtx<'a>,
+  ) {
+    if self.is_for_delete(&node.name) || self.is_for_delete(&node.binding) {
+      self.mark_for_delete(node.span);
+    }
+  }
+
+  fn exit_sequence_expression(
+    &mut self,
+    node: &'a SequenceExpression<'a>,
+    _ctx: &mut TraverseCtx<'a>,
+  ) {
+    self.remove_delimiters(&node.expressions);
+
+    if let Some(last_expr) = node.expressions.last() {
+      if self.is_for_delete(last_expr) {
+        self.replace_with_undefined(last_expr);
+      }
+    }
+  }
+
+  fn exit_parenthesized_expression(
+    &mut self,
+    node: &'a ParenthesizedExpression<'a>,
+    _ctx: &mut TraverseCtx<'a>,
+  ) {
+    if self.is_for_delete(&node.expression) {
+      self.mark_for_delete(node.span);
+    }
   }
 
   fn exit_variable_declaration(
@@ -125,16 +174,18 @@ impl<'a> TraverseHooks<'a> for Shaker<'a> {
     node: &VariableDeclaration<'a>,
     _ctx: &mut TraverseCtx<'a>,
   ) {
-    // node
-    //   .declarations
-    //   .retain(|decl| !self.is_for_delete(decl.span()));
-
-    if node.declarations.is_empty() {
+    if self.is_vec_for_delete(&node.declarations) {
       self.mark_for_delete(node.span());
     }
   }
 
   fn exit_variable_declarator(&mut self, node: &VariableDeclarator<'a>, ctx: &mut TraverseCtx<'a>) {
+    if self.is_for_delete(&node.id) {
+      self.mark_for_delete(node.span);
+      if let Some(comma) = ctx.delimiter() {
+        self.mark_for_delete(comma);
+      }
+    }
     // if let Some(init) = &mut node.init {
     //   let init_span = init.span();
     //   if self.is_for_delete(init_span) {
@@ -145,6 +196,16 @@ impl<'a> TraverseHooks<'a> for Shaker<'a> {
     //     *init = replacement.clone_in(ctx.ast.allocator);
     //   }
     // }
+  }
+
+  fn exit_expression_statement(
+    &mut self,
+    node: &'a ExpressionStatement<'a>,
+    ctx: &mut TraverseCtx<'a>,
+  ) {
+    if self.is_for_delete(&node.expression) {
+      self.mark_for_delete(node.span);
+    }
   }
 
   fn exit_debugger_statement(&mut self, node: &DebuggerStatement, _ctx: &mut TraverseCtx<'a>) {
@@ -191,12 +252,44 @@ impl<'a> TraverseHooks<'a> for Shaker<'a> {
     // }
   }
 
-  fn exit_object_pattern(&mut self, node: &ObjectPattern<'a>, ctx: &mut TraverseCtx<'a>) {
-    // node
-    //   .properties
-    //   .retain(|prop| !self.is_for_delete(prop.span()));
+  fn exit_assignment_pattern(
+    &mut self,
+    node: &'a AssignmentPattern<'a>,
+    ctx: &mut TraverseCtx<'a>,
+  ) {
+    if self.is_for_delete(&node.right) {
+      todo!()
+    }
 
-    if node.properties.is_empty() {
+    if self.is_for_delete(&node.left) {
+      self.mark_for_delete(node.span);
+    }
+  }
+
+  fn exit_object_pattern(&mut self, node: &ObjectPattern<'a>, ctx: &mut TraverseCtx<'a>) {
+    if self.is_vec_for_delete(&node.properties) {
+      self.mark_for_delete(node.span());
+    }
+  }
+
+  fn exit_binding_property(&mut self, node: &'a BindingProperty<'a>, ctx: &mut TraverseCtx<'a>) {
+    if self.is_for_delete(&node.key) {
+      self.mark_for_delete(node.span);
+    }
+
+    if self.is_for_delete(&node.value) {
+      self.mark_for_delete(node.span);
+    }
+
+    if self.is_for_delete(node) {
+      if let Some(comma) = ctx.delimiter() {
+        self.mark_for_delete(comma);
+      }
+    }
+  }
+
+  fn exit_array_pattern(&mut self, node: &'a ArrayPattern<'a>, ctx: &mut TraverseCtx<'a>) {
+    if self.is_vec_opt_for_delete(&node.elements) {
       self.mark_for_delete(node.span());
     }
   }
@@ -225,25 +318,15 @@ impl<'a> TraverseHooks<'a> for Shaker<'a> {
   fn exit_export_named_declaration(
     &mut self,
     node: &ExportNamedDeclaration<'a>,
-    ctx: &mut TraverseCtx<'a>,
+    _ctx: &mut TraverseCtx<'a>,
   ) {
-    if !node.specifiers.is_empty() {
-      if node
-        .specifiers
-        .iter()
-        .all(|specifier| self.is_for_delete(specifier.span()))
-      {
-        self.mark_for_delete(node.span());
-      } else {
-        // node
-        //   .specifiers
-        //   .retain(|specifier| !self.is_for_delete(specifier.span()));
-      }
+    if !node.specifiers.is_empty() && self.is_vec_for_delete(&node.specifiers) {
+      self.mark_for_delete(node.span());
     }
   }
 
   fn exit_export_specifier(&mut self, node: &'a ExportSpecifier<'a>, ctx: &mut TraverseCtx<'a>) {
-    if self.is_for_delete(node.span) {
+    if self.is_for_delete(node) {
       if let Some(comma) = ctx.delimiter() {
         self.mark_for_delete(comma);
       }
@@ -349,20 +432,9 @@ mod tests {
       .with_trivias(parser_ret.trivias)
       .build(program);
 
-    let (symbols, scopes) = semantic_ret.semantic.into_symbol_table_and_scope_tree();
+    walk(&mut shaker, program);
 
-    walk(&mut shaker, &program);
-
-    let mut chunks = vec![];
-    let mut last_pos: usize = 0;
-    for span in shaker.for_delete.list {
-      chunks.push(source_text[last_pos..(span.start as usize)].to_string());
-      last_pos = span.end as usize;
-    }
-
-    chunks.push(source_text[last_pos..].to_string());
-
-    let res = chunks.join("");
+    let res = shaker.replacements.apply(&source_text);
     if res == "\n" {
       "".to_string()
     } else {
@@ -414,6 +486,170 @@ mod tests {
       run(indoc! {r#"
         export { to_remove_1, to_remove_2 };
                  ^^^^^^^^^^^  ^^^^^^^^^^^
+      "#}),
+      indoc! {r#""#}
+    );
+  }
+
+  #[test]
+  fn test_variable_declaration() {
+    assert_eq!(
+      run(indoc! {r#"
+        const a = 42;
+              ^
+      "#}),
+      indoc! {r#""#}
+    );
+
+    assert_eq!(
+      run(indoc! {r#"
+        const a = 42, b = 24;
+              ^
+      "#}),
+      indoc! {r#"
+        const b = 24;
+      "#}
+    );
+
+    assert_eq!(
+      run(indoc! {r#"
+        const a = 42, b = 24;
+                      ^
+      "#}),
+      indoc! {r#"
+        const a = 42;
+      "#}
+    );
+
+    assert_eq!(
+      run(indoc! {r#"
+        const a = 42, b = 24;
+              ^       ^
+      "#}),
+      indoc! {r#""#}
+    );
+
+    assert_eq!(
+      run(indoc! {r#"
+        const { a: b } = { a: 42 }
+                   ^
+      "#}),
+      indoc! {r#""#}
+    );
+
+    assert_eq!(
+      run(indoc! {r#"
+        const { a = 1, b } = {
+                ^
+          a: 42,
+          b: 24
+        };
+      "#}),
+      indoc! {r#"
+        const { b } = {
+          a: 42,
+          b: 24
+        };
+      "#}
+    );
+
+    assert_eq!(
+      run(indoc! {r#"
+        const [a, b] = [42, 24];
+               ^
+      "#}),
+      indoc! {r#"
+        const [, b] = [42, 24];
+      "#}
+    );
+
+    assert_eq!(
+      run(indoc! {r#"
+        const [a, b] = [42, 24];
+               ^  ^
+      "#}),
+      indoc! {r#""#}
+    );
+  }
+
+  #[test]
+  fn test_assigment() {
+    assert_eq!(
+      run(indoc! {r#"
+        a = 42;
+        ^
+      "#}),
+      indoc! {r#""#}
+    );
+
+    assert_eq!(
+      run(indoc! {r#"
+        a = 42, b = 24;
+        ^
+      "#}),
+      indoc! {r#"
+        b = 24;
+      "#}
+    );
+
+    assert_eq!(
+      run(indoc! {r#"
+        a = 42, b = 24;
+                ^
+      "#}),
+      indoc! {r#"
+        a = 42, undefined;
+      "#}
+    );
+
+    assert_eq!(
+      run(indoc! {r#"
+        a = 42, b = 24;
+        ^       ^
+      "#}),
+      indoc! {r#"
+        undefined;
+      "#}
+    );
+
+    assert_eq!(
+      run(indoc! {r#"
+        ({ a: b } = { a: 42 })
+              ^
+      "#}),
+      indoc! {r#""#}
+    );
+
+    assert_eq!(
+      run(indoc! {r#"
+        ({ a = 1, b } = {
+           ^
+          a: 42,
+          b: 24
+        });
+      "#}),
+      indoc! {r#"
+        ({ b } = {
+          a: 42,
+          b: 24
+        });
+      "#}
+    );
+
+    assert_eq!(
+      run(indoc! {r#"
+        [a, b] = [42, 24];
+         ^
+      "#}),
+      indoc! {r#"
+        [, b] = [42, 24];
+      "#}
+    );
+
+    assert_eq!(
+      run(indoc! {r#"
+        [a, b] = [42, 24];
+         ^  ^
       "#}),
       indoc! {r#""#}
     );
