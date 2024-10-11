@@ -1,4 +1,4 @@
-use crate::meta::replacements::Replacements;
+use crate::meta::replacements::{ReplacementValue, Replacements};
 use crate::meta::symbol::Symbol;
 use oxc::allocator::Allocator;
 use oxc::ast::ast::{Expression, IdentifierReference, MemberExpression};
@@ -8,13 +8,13 @@ use oxc::syntax::reference::ReferenceFlags;
 use oxc_semantic::{AstNode, AstNodes, NodeId, Semantic};
 use std::collections::HashMap;
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Reference {
   pub flags: ReferenceFlags,
   pub span: Span,
 }
 
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct References<'a> {
   pub map: HashMap<&'a Symbol<'a>, Vec<Reference>>,
 }
@@ -75,11 +75,46 @@ impl<'a> References<'a> {
   }
 
   pub fn apply_replacements(&mut self, replacements: &Replacements) {
-    for (_, references) in self.map.iter_mut() {
-      references.retain(|reference| !replacements.has(reference.span));
+    let mut moved_spans = vec![];
+    for replacement in &replacements.list {
+      match replacement.value {
+        ReplacementValue::Del => {}
+        ReplacementValue::Span(from) => {
+          moved_spans.push((from, replacement.span));
+        }
+        ReplacementValue::Str(_) => {}
+        ReplacementValue::Undefined => {}
+      }
     }
 
-    // TODO: A replacement might have a new reference. We should add it here.
+    let mut new_refs = vec![];
+    for (&symbol, refs) in self.map.iter_mut() {
+      for reference in &*refs {
+        for (from, to) in &moved_spans {
+          if reference.span.start >= from.start && reference.span.end <= from.end {
+            let delta: i32 = from.start as i32 - reference.span.start as i32;
+            new_refs.push((
+              symbol,
+              Span::new(
+                (to.start as i32 - delta) as u32,
+                (to.end as i32 - delta) as u32,
+              ),
+              reference.flags,
+            ));
+          }
+        }
+      }
+
+      refs.retain(|reference| !replacements.has(reference.span));
+    }
+
+    for (symbol, span, flags) in new_refs {
+      self
+        .map
+        .get_mut(symbol)
+        .unwrap()
+        .push(Reference { flags, span });
+    }
   }
 
   pub fn from_semantic(semantic: &Semantic, allocator: &'a Allocator) -> Self {

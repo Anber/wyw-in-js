@@ -1,6 +1,6 @@
 use crate::meta::references::References;
-use crate::meta::replacements::Replacements;
-use fast_traverse::walk;
+use crate::meta::replacements::{ReplacementValue, Replacements};
+use fast_traverse::{walk, AnyNode};
 use fast_traverse::{TraverseCtx, TraverseHooks};
 use itertools::Itertools;
 use oxc::allocator::Allocator;
@@ -9,20 +9,24 @@ use oxc::span::GetSpan;
 use oxc_semantic::Semantic;
 
 struct Shaker<'a> {
+  changed: bool,
   references: References<'a>,
   replacements: Replacements,
   source_text: &'a str,
 }
 
 impl<'a> TraverseHooks<'a> for Shaker<'a> {
+  fn should_skip(&self, node: &AnyNode) -> bool {
+    self.is_for_change(node)
+  }
   // fn exit_export_specifier(&mut self, node: &ExportSpecifier<'a>, ctx: &mut TraverseCtx<'a>) {
   //   if self.is_for_delete(node.local.span()) {
   //     self.mark_for_delete(node.span);
   //   }
   // }
 
-  fn exit_program(&mut self, node: &Program<'a>, ctx: &mut TraverseCtx<'a>) {
-    // node.body.retain(|stmt| !self.is_for_delete(stmt.span()));
+  fn exit_program(&mut self, node: &'a Program<'a>, ctx: &mut TraverseCtx<'a>) {
+    self.remove_delimiters(&node.body);
   }
 
   fn exit_logical_expression(&mut self, node: &LogicalExpression<'a>, ctx: &mut TraverseCtx<'a>) {
@@ -45,16 +49,41 @@ impl<'a> TraverseHooks<'a> for Shaker<'a> {
     // }
   }
 
+  fn exit_conditional_expression(
+    &mut self,
+    node: &'a ConditionalExpression<'a>,
+    ctx: &mut TraverseCtx<'a>,
+  ) {
+    if self.is_for_change(&node.alternate)
+      && (self.is_for_change(&node.consequent) || self.is_for_change(&node.test))
+    {
+      self.replace_with_undefined(&node.span);
+      return;
+    }
+
+    if self.is_for_change(&node.consequent) {
+      self.replace_with_undefined(&node.consequent.span());
+    }
+
+    if self.is_for_change(&node.alternate) {
+      self.replace_with_undefined(&node.alternate.span());
+    }
+
+    if self.is_for_change(&node.test) {
+      self.replace_with_another(&node.span(), &node.alternate);
+    }
+  }
+
   fn exit_assignment_expression(
     &mut self,
     node: &'a AssignmentExpression<'a>,
     ctx: &mut TraverseCtx<'a>,
   ) {
-    if self.is_for_delete(&node.right) {
+    if self.is_for_change(&node.right) {
       todo!()
     }
 
-    if self.is_for_delete(&node.left) {
+    if self.is_for_change(&node.left) {
       self.mark_for_delete(node.span);
     }
   }
@@ -86,7 +115,7 @@ impl<'a> TraverseHooks<'a> for Shaker<'a> {
     node: &'a AssignmentTargetPropertyIdentifier<'a>,
     _ctx: &mut TraverseCtx<'a>,
   ) {
-    if self.is_for_delete(&node.binding) {
+    if self.is_for_change(&node.binding) {
       self.mark_for_delete(node.span)
     }
   }
@@ -96,7 +125,7 @@ impl<'a> TraverseHooks<'a> for Shaker<'a> {
     node: &'a AssignmentTargetPropertyProperty<'a>,
     _ctx: &mut TraverseCtx<'a>,
   ) {
-    if self.is_for_delete(&node.name) || self.is_for_delete(&node.binding) {
+    if self.is_for_change(&node.name) || self.is_for_change(&node.binding) {
       self.mark_for_delete(node.span);
     }
   }
@@ -106,13 +135,13 @@ impl<'a> TraverseHooks<'a> for Shaker<'a> {
     node: &'a SequenceExpression<'a>,
     _ctx: &mut TraverseCtx<'a>,
   ) {
-    self.remove_delimiters(&node.expressions);
-
     if let Some(last_expr) = node.expressions.last() {
-      if self.is_for_delete(last_expr) {
+      if self.is_for_change(last_expr) {
         self.replace_with_undefined(last_expr);
       }
     }
+
+    self.remove_delimiters(&node.expressions);
   }
 
   fn exit_parenthesized_expression(
@@ -120,7 +149,7 @@ impl<'a> TraverseHooks<'a> for Shaker<'a> {
     node: &'a ParenthesizedExpression<'a>,
     _ctx: &mut TraverseCtx<'a>,
   ) {
-    if self.is_for_delete(&node.expression) {
+    if self.is_for_change(&node.expression) {
       self.mark_for_delete(node.span);
     }
   }
@@ -136,7 +165,7 @@ impl<'a> TraverseHooks<'a> for Shaker<'a> {
   }
 
   fn exit_variable_declarator(&mut self, node: &VariableDeclarator<'a>, ctx: &mut TraverseCtx<'a>) {
-    if self.is_for_delete(&node.id) {
+    if self.is_for_change(&node.id) {
       self.mark_for_delete(node.span);
       if let Some(comma) = ctx.delimiter() {
         self.mark_for_delete(comma);
@@ -159,7 +188,7 @@ impl<'a> TraverseHooks<'a> for Shaker<'a> {
     node: &'a ExpressionStatement<'a>,
     ctx: &mut TraverseCtx<'a>,
   ) {
-    if self.is_for_delete(&node.expression) {
+    if self.is_for_change(&node.expression) {
       self.mark_for_delete(node.span);
     }
   }
@@ -213,11 +242,11 @@ impl<'a> TraverseHooks<'a> for Shaker<'a> {
     node: &'a AssignmentPattern<'a>,
     ctx: &mut TraverseCtx<'a>,
   ) {
-    if self.is_for_delete(&node.right) {
+    if self.is_for_change(&node.right) {
       todo!()
     }
 
-    if self.is_for_delete(&node.left) {
+    if self.is_for_change(&node.left) {
       self.mark_for_delete(node.span);
     }
   }
@@ -229,15 +258,15 @@ impl<'a> TraverseHooks<'a> for Shaker<'a> {
   }
 
   fn exit_binding_property(&mut self, node: &'a BindingProperty<'a>, ctx: &mut TraverseCtx<'a>) {
-    if self.is_for_delete(&node.key) {
+    if self.is_for_change(&node.key) {
       self.mark_for_delete(node.span);
     }
 
-    if self.is_for_delete(&node.value) {
+    if self.is_for_change(&node.value) {
       self.mark_for_delete(node.span);
     }
 
-    if self.is_for_delete(node) {
+    if self.is_for_change(node) {
       if let Some(comma) = ctx.delimiter() {
         self.mark_for_delete(comma);
       }
@@ -273,21 +302,17 @@ impl<'a> TraverseHooks<'a> for Shaker<'a> {
 
   fn exit_export_named_declaration(
     &mut self,
-    node: &ExportNamedDeclaration<'a>,
+    node: &'a ExportNamedDeclaration<'a>,
     _ctx: &mut TraverseCtx<'a>,
   ) {
     if !node.specifiers.is_empty() && self.is_vec_for_delete(&node.specifiers) {
       self.mark_for_delete(node.span());
     }
+
+    self.remove_delimiters(&node.specifiers);
   }
 
-  fn exit_export_specifier(&mut self, node: &'a ExportSpecifier<'a>, ctx: &mut TraverseCtx<'a>) {
-    if self.is_for_delete(node) {
-      if let Some(comma) = ctx.delimiter() {
-        self.mark_for_delete(comma);
-      }
-    }
-  }
+  fn exit_export_specifier(&mut self, node: &'a ExportSpecifier<'a>, ctx: &mut TraverseCtx<'a>) {}
 
   // fn exit_statements(
   //   &mut self,
@@ -300,18 +325,26 @@ impl<'a> TraverseHooks<'a> for Shaker<'a> {
 impl<'a> Shaker<'a> {
   pub fn new(source_text: &'a str, references: References<'a>, for_delete: Vec<Span>) -> Self {
     Self {
+      changed: false,
       references,
       replacements: Replacements::from_spans(for_delete),
       source_text,
     }
   }
 
-  fn is_for_delete(&self, node: &impl GetSpan) -> bool {
+  fn is_for_change(&self, node: &impl GetSpan) -> bool {
     self.replacements.has(node.span())
   }
 
+  fn is_for_delete(&self, node: &impl GetSpan) -> bool {
+    self
+      .replacements
+      .get(node.span())
+      .is_some_and(|v| matches!(v.value, ReplacementValue::Del))
+  }
+
   fn is_vec_for_delete(&self, nodes: impl IntoIterator<Item = &'a (impl GetSpan + 'a)>) -> bool {
-    nodes.into_iter().all(|node| self.is_for_delete(node))
+    nodes.into_iter().all(|node| self.is_for_change(node))
   }
 
   fn is_vec_opt_for_delete(
@@ -320,41 +353,54 @@ impl<'a> Shaker<'a> {
   ) -> bool {
     nodes
       .into_iter()
-      .all(|el| !el.as_ref().is_some_and(|v| !self.is_for_delete(v)))
+      .all(|el| !el.as_ref().is_some_and(|v| !self.is_for_change(v)))
   }
 
   fn mark_for_delete(&mut self, span: Span) {
-    self.replacements.add_deletion(span);
+    self.changed |= self.replacements.add_deletion(span);
   }
 
-  fn remove_delimiters(&mut self, nodes: impl IntoIterator<Item = &'a (impl GetSpan + 'a)>) {
+  fn remove_delimiters<TItem: GetSpan + 'a>(&mut self, nodes: impl IntoIterator<Item = &'a TItem>) {
     let iter = nodes.into_iter();
-    for (prev, next) in iter.tuple_windows() {
+    let tuples = iter.tuple_windows();
+    let mut last_pair: Option<(&TItem, &TItem)> = None;
+    for (prev, next) in tuples {
+      last_pair = Some((prev, next));
       if self.is_for_delete(prev) {
         self.mark_for_delete(Span::new(prev.span().end, next.span().start));
       }
     }
-  }
 
-  fn mark_for_replace(&mut self, span: Span, replacement: Expression<'a>) {
-    // self.for_replace.push((span, replacement));
+    if let Some((penult, last)) = last_pair {
+      if self.is_for_delete(last) {
+        self.mark_for_delete(Span::new(penult.span().end, last.span().start));
+      }
+    }
   }
 
   fn replace_with_undefined(&mut self, node: &impl GetSpan) {
-    self
+    self.changed |= self
       .replacements
-      .add_replacement(node.span(), "undefined".to_string());
+      .add_replacement(node.span(), ReplacementValue::Undefined);
+  }
+
+  fn replace_with_another(&mut self, node: &impl GetSpan, another: &impl GetSpan) {
+    self.changed |= self
+      .replacements
+      .add_replacement(node.span(), ReplacementValue::Span(another.span()));
   }
 
   pub fn shake(&mut self, program: &'a Program<'a>) {
+    self.changed = false;
     walk(self, program);
 
     // Remove all references to deleted nodes
-    self.references.apply_replacements(&self.replacements);
+    let mut cloned_references = self.references.clone();
+    cloned_references.apply_replacements(&self.replacements);
 
     let mut has_changes = false;
     let mut dead_symbols = vec![];
-    for (&symbol, references) in &self.references.map {
+    for (&symbol, references) in &cloned_references.map {
       if references.is_empty() {
         dead_symbols.push(symbol);
         has_changes = true;
@@ -362,11 +408,10 @@ impl<'a> Shaker<'a> {
     }
 
     for dead_symbol in dead_symbols {
-      self.references.map.remove(&dead_symbol);
       self.mark_for_delete(dead_symbol.decl);
     }
 
-    if has_changes {
+    if self.changed {
       self.shake(program);
     }
   }
@@ -708,6 +753,39 @@ mod tests {
   }
 
   #[test]
+  fn test_conditional_expression() {
+    assert_eq!(
+      run(indoc! {r#"
+        const a = to_remove ? 42 : 24;
+                  ^^^^^^^^^
+      "#}),
+      indoc! {r#"
+        const a = 24;
+      "#}
+    );
+
+    assert_eq!(
+      run(indoc! {r#"
+        const a = to_remove ? 42 : 24;
+                              ^^
+      "#}),
+      indoc! {r#"
+        const a = to_remove ? undefined : 24;
+      "#}
+    );
+
+    assert_eq!(
+      run(indoc! {r#"
+        const a = to_remove ? 42 : 24;
+                                   ^^
+      "#}),
+      indoc! {r#"
+        const a = to_remove ? 42 : undefined;
+      "#}
+    );
+  }
+
+  #[test]
   fn test_unused_declaration() {
     assert_eq!(
       run(indoc! {r#"
@@ -718,8 +796,25 @@ mod tests {
       "#}),
       indoc! {r#"
         const a = 42;
-
         export { a };
+      "#}
+    );
+  }
+
+  #[test]
+  fn test_moved_reference() {
+    assert_eq!(
+      run(indoc! {r#"
+        const a = 42;
+        const b = 24;
+        const c = localStorage.isDebug ? a : b;
+                  ^^^^^^^^^^^^^^^^^^^^
+        export { c };
+      "#}),
+      indoc! {r#"
+        const b = 24;
+        const c = b;
+        export { c };
       "#}
     );
   }

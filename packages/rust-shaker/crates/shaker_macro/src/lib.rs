@@ -371,6 +371,14 @@ fn create_enum_item(node_type: &NodeType) -> proc_macro2::TokenStream {
   }
 }
 
+fn create_get_span_item(node_type: &NodeType) -> proc_macro2::TokenStream {
+  let type_ident = node_type.as_ident();
+
+  quote! {
+    AnyNode::#type_ident(node) => node.span(),
+  }
+}
+
 fn add_hook_fn(prefix: &str, item: &mut ItemImpl, node_type: &NodeType) {
   let stream = create_hook_fn(prefix, node_type, "");
 
@@ -409,9 +417,11 @@ pub fn define(_input: TokenStream) -> TokenStream {
   let mut walkers = vec![];
   let mut matches = vec![];
   let mut enum_items = vec![];
+  let mut get_span = vec![];
 
   for node_type in &ast.structs {
     enum_items.push(create_enum_item(node_type));
+    get_span.push(create_get_span_item(node_type));
 
     hooks.push(create_hook_fn("enter", node_type, "EnterAction"));
     hooks.push(create_hook_fn("exit", node_type, ""));
@@ -429,6 +439,7 @@ pub fn define(_input: TokenStream) -> TokenStream {
     };
 
     enum_items.push(create_enum_item(&node_type));
+    get_span.push(create_get_span_item(&node_type));
 
     hooks.push(create_hook_fn("enter", &node_type, "EnterAction"));
     hooks.push(create_hook_fn("exit", &node_type, ""));
@@ -442,7 +453,19 @@ pub fn define(_input: TokenStream) -> TokenStream {
       #(#enum_items)*
     }
 
+    impl<'a> oxc::span::GetSpan for AnyNode<'a> {
+      fn span(&self) -> oxc::span::Span {
+        match self {
+          #(#get_span)*
+        }
+      }
+    }
+
     pub trait TraverseHooks<'a> {
+      fn should_skip(&self, node: &AnyNode) -> bool {
+        false
+      }
+
       #(#hooks)*
     }
 
@@ -453,6 +476,10 @@ pub fn define(_input: TokenStream) -> TokenStream {
       any_node: AnyNode<'a>,
       ctx: &mut TraverseCtx<'a>
     ) {
+      if hooks.should_skip(&any_node) {
+        return;
+      }
+
       match &any_node {
         #(#matches)*
       }

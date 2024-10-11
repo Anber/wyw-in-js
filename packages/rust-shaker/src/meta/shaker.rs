@@ -349,39 +349,6 @@ mod tests {
   }
 
   #[test]
-  fn test_conditional_expression() {
-    assert_eq!(
-      run(indoc! {r#"
-        const a = to_remove ? 42 : 24;
-                  ^^^^^^^^^
-      "#}),
-      indoc! {r#"
-        const a = 24;
-      "#}
-    );
-
-    assert_eq!(
-      run(indoc! {r#"
-        const a = to_remove ? 42 : 24;
-                              ^^
-      "#}),
-      indoc! {r#"
-        const a = to_remove ? undefined : 24;
-      "#}
-    );
-
-    assert_eq!(
-      run(indoc! {r#"
-        const a = to_remove ? 42 : 24;
-                                   ^^
-      "#}),
-      indoc! {r#"
-        const a = to_remove ? 42 : undefined;
-      "#}
-    );
-  }
-
-  #[test]
   fn test_logical_expression() {
     assert_eq!(
       run(indoc! {r#"
