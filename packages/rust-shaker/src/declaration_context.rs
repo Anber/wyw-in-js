@@ -36,14 +36,14 @@ fn unfold<'a>(
   stack: &mut Vec<PathPart<'a>>,
 ) -> Vec<DeclaredIdent<'a>> {
   match pattern {
-    BindingPatternKind::BindingIdentifier(ident) => vec![DeclaredIdent {
-      symbol: Symbol::new(
-        allocator,
-        symbols,
-        ident.symbol_id.get().expect("Expected a symbol id"),
-      ),
-      from: stack.clone(),
-    }],
+    BindingPatternKind::BindingIdentifier(ident) => {
+      let symbol_id = ident.symbol_id.get().expect("Expected a symbol id");
+      let decl = symbols.spans.get(symbol_id).unwrap();
+      vec![DeclaredIdent {
+        symbol: Symbol::new(allocator, symbols, symbol_id, *decl),
+        from: stack.clone(),
+      }]
+    }
 
     BindingPatternKind::ArrayPattern(array) => array
       .elements
@@ -96,16 +96,15 @@ impl<'a> DeclarationContext<'a> {
     node: &VariableDeclarator<'a>,
   ) -> Self {
     match &node.id.kind {
-      BindingPatternKind::BindingIdentifier(ident) => {
-        DeclarationContext::List(vec![DeclaredIdent {
-          symbol: Symbol::new(
-            allocator,
-            symbols,
-            ident.symbol_id.get().expect("Expected a symbol id"),
-          ),
+      BindingPatternKind::BindingIdentifier(ident) => DeclarationContext::List({
+        let symbol_id = ident.symbol_id.get().expect("Expected a symbol id");
+        let decl = symbols.spans.get(symbol_id).unwrap();
+
+        vec![DeclaredIdent {
+          symbol: Symbol::new(allocator, symbols, symbol_id, *decl),
           from: vec![],
-        }])
-      }
+        }]
+      }),
 
       pattern => DeclarationContext::List(unfold(allocator, symbols, pattern, &mut vec![])),
     }

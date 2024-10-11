@@ -1,4 +1,5 @@
 use oxc::allocator::Allocator;
+use oxc::span::Span;
 use oxc_semantic::{SymbolId, SymbolTable};
 use std::fmt::Debug;
 use std::hash::Hash;
@@ -7,6 +8,7 @@ use std::hash::Hash;
 pub struct Symbol<'a> {
   pub symbol_id: SymbolId,
   pub name: &'a str,
+  pub decl: Span,
 }
 
 impl<'a> Debug for Symbol<'a> {
@@ -16,9 +18,18 @@ impl<'a> Debug for Symbol<'a> {
 }
 
 impl<'a> Symbol<'a> {
-  pub fn new(allocator: &'a Allocator, symbols: &SymbolTable, symbol_id: SymbolId) -> &'a Self {
+  pub fn new(
+    allocator: &'a Allocator,
+    symbols: &SymbolTable,
+    symbol_id: SymbolId,
+    decl: Span,
+  ) -> &'a Self {
     let name = allocator.alloc_str(symbols.get_name(symbol_id));
-    allocator.alloc(Self { symbol_id, name })
+    allocator.alloc(Self {
+      symbol_id,
+      name,
+      decl,
+    })
   }
 }
 

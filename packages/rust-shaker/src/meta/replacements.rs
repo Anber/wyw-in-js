@@ -7,17 +7,14 @@ pub(crate) struct Replacement {
   pub text: String,
 }
 
+#[derive(Default)]
 pub(crate) struct Replacements {
   pub(crate) list: Vec<Replacement>,
 }
 
 impl Replacements {
-  pub fn empty() -> Self {
-    Self { list: Vec::new() }
-  }
-
   pub fn new(init: impl IntoIterator<Item = Replacement>) -> Self {
-    let mut res = Self::empty();
+    let mut res = Self::default();
     for span in init {
       res.add(span);
     }
@@ -36,7 +33,7 @@ impl Replacements {
     // If new span covers existing spans, replace them with the new span
     let mut i = 0;
     while i < self.list.len() {
-      let existing = self.list.get_mut(i).unwrap();
+      let existing = self.list.get(i).unwrap();
       if existing.span.start >= new.span.start && existing.span.end <= new.span.end {
         self.list.remove(i);
       } else if existing.span.end > new.span.start {
@@ -115,7 +112,7 @@ mod tests {
 
   #[test]
   fn test_new() {
-    assert_eq!(Replacements::empty().list, vec![]);
+    assert_eq!(Replacements::default().list, vec![]);
 
     assert_eq!(Replacements::new(vec![]).list, vec![]);
 
@@ -142,7 +139,7 @@ mod tests {
 
   #[test]
   fn test_add_deletion() {
-    let mut repl = Replacements::empty();
+    let mut repl = Replacements::default();
     repl.add_deletion(Span::new(1, 10));
     repl.add_deletion(Span::new(20, 30));
     assert_eq!(repl.list, vec![del(1, 10), del(20, 30)]);
@@ -164,7 +161,7 @@ mod tests {
   #[test]
   fn test_apply() {
     let source = "0123456789";
-    let mut repl = Replacements::empty();
+    let mut repl = Replacements::default();
 
     repl.add_deletion(Span::new(0, 2));
     assert_eq!(repl.apply(source), "23456789");

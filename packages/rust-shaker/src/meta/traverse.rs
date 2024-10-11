@@ -1,61 +1,17 @@
+use crate::meta::references::References;
 use crate::meta::replacements::Replacements;
+use fast_traverse::walk;
 use fast_traverse::{TraverseCtx, TraverseHooks};
 use itertools::Itertools;
+use oxc::allocator::Allocator;
 use oxc::ast::ast::*;
 use oxc::span::GetSpan;
+use oxc_semantic::Semantic;
 
 struct Shaker<'a> {
+  references: References<'a>,
   replacements: Replacements,
-  source_text: &'a String,
-}
-
-impl<'a> Shaker<'a> {
-  pub fn new(source_text: &'a String, for_delete: Vec<Span>) -> Self {
-    Self {
-      replacements: Replacements::from_spans(for_delete),
-      source_text,
-    }
-  }
-
-  fn is_for_delete(&self, node: &impl GetSpan) -> bool {
-    self.replacements.has(node.span())
-  }
-
-  fn is_vec_for_delete(&self, nodes: impl IntoIterator<Item = &'a (impl GetSpan + 'a)>) -> bool {
-    nodes.into_iter().all(|node| self.is_for_delete(node))
-  }
-
-  fn is_vec_opt_for_delete(
-    &self,
-    nodes: impl IntoIterator<Item = &'a Option<(impl GetSpan + 'a)>>,
-  ) -> bool {
-    nodes
-      .into_iter()
-      .all(|el| !el.as_ref().is_some_and(|v| !self.is_for_delete(v)))
-  }
-
-  fn mark_for_delete(&mut self, span: Span) {
-    self.replacements.add_deletion(span);
-  }
-
-  fn remove_delimiters(&mut self, nodes: impl IntoIterator<Item = &'a (impl GetSpan + 'a)>) {
-    let iter = nodes.into_iter();
-    for (prev, next) in iter.tuple_windows() {
-      if self.is_for_delete(prev) {
-        self.mark_for_delete(Span::new(prev.span().end, next.span().start));
-      }
-    }
-  }
-
-  fn mark_for_replace(&mut self, span: Span, replacement: Expression<'a>) {
-    // self.for_replace.push((span, replacement));
-  }
-
-  fn replace_with_undefined(&mut self, node: &impl GetSpan) {
-    self
-      .replacements
-      .add_replacement(node.span(), "undefined".to_string());
-  }
+  source_text: &'a str,
 }
 
 impl<'a> TraverseHooks<'a> for Shaker<'a> {
@@ -341,33 +297,99 @@ impl<'a> TraverseHooks<'a> for Shaker<'a> {
   // }
 }
 
-// #[traverse]
-// impl<'a> Shaker {
-//   pub fn visit(&mut self, program: &Program<'a>) {
-//     let mut ctx = TraverseCtx { ancestors: vec![] };
-//
-//     self.visit_program(program, &mut ctx);
-//   }
-//
-//   fn visit_program(&mut self, node: &'a Program<'a>, ctx: &mut TraverseCtx<'a>) {
-//     ctx.ancestors.push(AstKind::Program(node));
-//
-//     self.enter_program(node, ctx);
-//     // if let EnterAction::Ignore = self.enter_program(node, ctx) {
-//     // } else {
-//     //   // node.body
-//     // }
-//
-//     self.exit_program(node, ctx);
-//
-//     ctx.ancestors.pop();
-//   }
-// }
+impl<'a> Shaker<'a> {
+  pub fn new(source_text: &'a str, references: References<'a>, for_delete: Vec<Span>) -> Self {
+    Self {
+      references,
+      replacements: Replacements::from_spans(for_delete),
+      source_text,
+    }
+  }
+
+  fn is_for_delete(&self, node: &impl GetSpan) -> bool {
+    self.replacements.has(node.span())
+  }
+
+  fn is_vec_for_delete(&self, nodes: impl IntoIterator<Item = &'a (impl GetSpan + 'a)>) -> bool {
+    nodes.into_iter().all(|node| self.is_for_delete(node))
+  }
+
+  fn is_vec_opt_for_delete(
+    &self,
+    nodes: impl IntoIterator<Item = &'a Option<(impl GetSpan + 'a)>>,
+  ) -> bool {
+    nodes
+      .into_iter()
+      .all(|el| !el.as_ref().is_some_and(|v| !self.is_for_delete(v)))
+  }
+
+  fn mark_for_delete(&mut self, span: Span) {
+    self.replacements.add_deletion(span);
+  }
+
+  fn remove_delimiters(&mut self, nodes: impl IntoIterator<Item = &'a (impl GetSpan + 'a)>) {
+    let iter = nodes.into_iter();
+    for (prev, next) in iter.tuple_windows() {
+      if self.is_for_delete(prev) {
+        self.mark_for_delete(Span::new(prev.span().end, next.span().start));
+      }
+    }
+  }
+
+  fn mark_for_replace(&mut self, span: Span, replacement: Expression<'a>) {
+    // self.for_replace.push((span, replacement));
+  }
+
+  fn replace_with_undefined(&mut self, node: &impl GetSpan) {
+    self
+      .replacements
+      .add_replacement(node.span(), "undefined".to_string());
+  }
+
+  pub fn shake(&mut self, program: &'a Program<'a>) {
+    walk(self, program);
+
+    // Remove all references to deleted nodes
+    self.references.apply_replacements(&self.replacements);
+
+    let mut has_changes = false;
+    let mut dead_symbols = vec![];
+    for (&symbol, references) in &self.references.map {
+      if references.is_empty() {
+        dead_symbols.push(symbol);
+        has_changes = true;
+      }
+    }
+
+    for dead_symbol in dead_symbols {
+      self.references.map.remove(&dead_symbol);
+      self.mark_for_delete(dead_symbol.decl);
+    }
+
+    if has_changes {
+      self.shake(program);
+    }
+  }
+}
+
+pub fn shake(
+  program: &Program,
+  for_delete: Vec<Span>,
+  semantic: &Semantic,
+  allocator: &Allocator,
+) -> String {
+  let references = References::from_semantic(semantic, allocator);
+  let source_text = semantic.source_text();
+  let mut shaker = Shaker::new(source_text, references, for_delete);
+
+  shaker.shake(program);
+
+  shaker.replacements.apply(source_text)
+}
 
 #[cfg(test)]
 mod tests {
   use super::*;
-  use fast_traverse::walk;
   use indoc::indoc;
   use itertools::Itertools;
   use oxc::allocator::Allocator;
@@ -424,7 +446,6 @@ mod tests {
     assert!(parser_ret.errors.is_empty());
 
     let program = allocator.alloc(parser_ret.program);
-    let mut shaker = Shaker::new(&source_text, for_delete);
 
     let semantic_ret = oxc_semantic::SemanticBuilder::new(&source_text)
       .build_module_record(path, program)
@@ -432,9 +453,7 @@ mod tests {
       .with_trivias(parser_ret.trivias)
       .build(program);
 
-    walk(&mut shaker, program);
-
-    let res = shaker.replacements.apply(&source_text);
+    let res = shake(program, for_delete, &semantic_ret.semantic, &allocator);
     if res == "\n" {
       "".to_string()
     } else {
@@ -652,6 +671,56 @@ mod tests {
          ^  ^
       "#}),
       indoc! {r#""#}
+    );
+  }
+
+  #[test]
+  fn test_sequence() {
+    assert_eq!(
+      run(indoc! {r#"
+        const a = (1, 2, 3, b);
+                            ^
+      "#}),
+      indoc! {r#"
+        const a = (1, 2, 3, undefined);
+      "#}
+    );
+
+    assert_eq!(
+      run(indoc! {r#"
+        const a = (1, 2, b, 3);
+                         ^
+      "#}),
+      indoc! {r#"
+        const a = (1, 2, 3);
+      "#}
+    );
+
+    assert_eq!(
+      run(indoc! {r#"
+        const a = (b, c, d);
+                   ^  ^  ^
+      "#}),
+      indoc! {r#"
+        const a = (undefined);
+      "#}
+    );
+  }
+
+  #[test]
+  fn test_unused_declaration() {
+    assert_eq!(
+      run(indoc! {r#"
+        const a = 42;
+        const b = 24;
+        export { a, b };
+                    ^
+      "#}),
+      indoc! {r#"
+        const a = 42;
+
+        export { a };
+      "#}
     );
   }
 }

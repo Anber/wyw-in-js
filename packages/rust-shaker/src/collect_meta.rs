@@ -5,6 +5,7 @@ use crate::meta::ident_usages::IdentUsage;
 use crate::meta::import::{Import, Source};
 use crate::meta::local_identifier::LocalIdentifier;
 use crate::meta::processor_params::{ExpressionValue, Param};
+use crate::meta::references::{Reference, References};
 use crate::meta::symbol::Symbol;
 use crate::meta::MetaCollector;
 use glob::glob;
@@ -14,10 +15,9 @@ use oxc::diagnostics::OxcDiagnostic;
 use oxc::parser::{ParseOptions, Parser};
 use oxc::span::{Atom, GetSpan, SourceType};
 use oxc_resolver::Resolver;
-use oxc_semantic::{IsGlobalReference, Semantic};
+use oxc_semantic::{IsGlobalReference, ReferenceFlags, Semantic};
 use oxc_traverse::{traverse_mut, Ancestor, Traverse, TraverseCtx};
 use std::borrow::Cow;
-use std::collections::HashMap;
 use std::ops::Deref;
 use std::path::Path;
 
@@ -272,11 +272,13 @@ impl<'a> Traverse<'a> for MetaCollector<'a> {
 
     let symbol = self.get_symbol_for_ref(node, ctx.deref());
     if let Some(symbol) = symbol {
-      if let std::collections::hash_map::Entry::Vacant(e) = self.references.entry(symbol) {
-        e.insert(vec![node.span]);
-      } else {
-        self.references.get_mut(&symbol).unwrap().push(node.span);
-      }
+      self.references.add(
+        symbol,
+        Reference {
+          flags: ReferenceFlags::Read,
+          span: node.span,
+        },
+      );
 
       if !self.is_span_ignored(&node.span) {
         self.resolve_identifier_usage(ctx, &node.span, symbol);
@@ -1184,9 +1186,10 @@ impl<'a> MetaCollector<'a> {
 
     let reference = reference.unwrap();
 
-    reference
-      .symbol_id()
-      .map(|id| Symbol::new(self.allocator, ctx.symbols(), id))
+    reference.symbol_id().map(|id| {
+      let decl = ctx.symbols().spans.get(id).unwrap();
+      Symbol::new(self.allocator, ctx.symbols(), id, *decl)
+    })
   }
 
   pub(crate) fn get_symbol_for_binding(
@@ -1197,7 +1200,10 @@ impl<'a> MetaCollector<'a> {
     ident
       .symbol_id
       .get()
-      .map(|id| Symbol::new(self.allocator, ctx.symbols(), id))
+      .map(|id| {
+        let decl = ctx.symbols().spans.get(id).unwrap();
+        Symbol::new(self.allocator, ctx.symbols(), id, *decl)
+      })
       .expect("No symbol id")
   }
 
@@ -1407,7 +1413,7 @@ fn collect<'a>(
   allocator: &'a Allocator,
   resolver: &'a Resolver,
   program: &'a mut Program<'a>,
-) -> (HashMap<&'a Symbol<'a>, Vec<Span>>, Meta<'a>) {
+) -> (References<'a>, Meta<'a>) {
   let (symbols, scopes) = semantic.into_symbol_table_and_scope_tree();
 
   let mut collector = MetaCollector::new(path, source_text, allocator, resolver);

@@ -4,6 +4,7 @@ pub mod ident_usages;
 pub mod import;
 pub mod local_identifier;
 pub mod processor_params;
+pub mod references;
 mod replacements;
 mod shaker;
 pub mod symbol;
@@ -14,6 +15,7 @@ use crate::declaration_context::DeclarationContext;
 use crate::meta::export::ExportArea;
 use crate::meta::file::Meta;
 use crate::meta::ident_usages::IdentUsage;
+use crate::meta::references::References;
 use crate::meta::symbol::Symbol;
 use oxc::allocator::Allocator;
 use oxc::span::{Atom, Span};
@@ -30,7 +32,7 @@ pub struct MetaCollector<'a> {
   pub identifier_usages: HashMap<&'a Symbol<'a>, Vec<IdentUsage<'a>>>,
   pub ignored_spans: Vec<Span>,
 
-  pub references: HashMap<&'a Symbol<'a>, Vec<Span>>,
+  pub references: References<'a>,
 
   pub resolver: &'a Resolver,
 
