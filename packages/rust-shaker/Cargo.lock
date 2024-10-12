@@ -1030,7 +1030,7 @@ name = "fast-traverse"
 version = "0.1.0"
 dependencies = [
  "oxc",
- "shaker_macro",
+ "wyw_macros",
 ]
 
 [[package]]
@@ -3355,9 +3355,9 @@ dependencies = [
  "regex",
  "serde",
  "serde_json",
- "shaker_macro",
  "testing",
  "walkdir",
+ "wyw_macros",
 ]
 
 [[package]]
@@ -3625,22 +3625,6 @@ dependencies = [
  "cfg-if",
  "cpufeatures",
  "digest",
-]
-
-[[package]]
-name = "shaker_macro"
-version = "0.1.0"
-dependencies = [
- "cargo",
- "convert_case",
- "darling",
- "glob",
- "proc-macro2",
- "quote",
- "regex",
- "semver",
- "syn 2.0.79",
- "yaml-rust",
 ]
 
 [[package]]
@@ -4563,6 +4547,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "36c1fec1a2bb5866f07c25f68c26e565c4c200aebb96d7e55710c19d3e8ac49b"
 dependencies = [
  "memchr",
+]
+
+[[package]]
+name = "wyw_macros"
+version = "0.1.0"
+dependencies = [
+ "cargo",
+ "convert_case",
+ "darling",
+ "glob",
+ "proc-macro2",
+ "quote",
+ "regex",
+ "semver",
+ "syn 2.0.79",
+ "yaml-rust",
 ]
 
 [[package]]

@@ -28,7 +28,7 @@ indoc = "2.0.5"
 regex = "1.11.0"
 
 fast-traverse = { path = "./crates/fast-traverse" }
-shaker_macro = { path = "./crates/shaker_macro" }
+wyw_macros = { path = "crates/wyw_macros" }
 
 [dev-dependencies]
 insta = { version = "1.40.0", features = ["yaml"] }

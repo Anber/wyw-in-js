@@ -5,4 +5,4 @@ edition = "2021"
 
 [dependencies]
 oxc = "0.30.5"
-shaker_macro = { path = "../shaker_macro" }
+wyw_macros = { path = "../wyw_macros" }

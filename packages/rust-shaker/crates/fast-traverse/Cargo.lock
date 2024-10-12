@@ -833,7 +833,7 @@ name = "fast-traverse"
 version = "0.1.0"
 dependencies = [
  "oxc",
- "shaker_macro",
+ "wyw_macros",
 ]
 
 [[package]]
@@ -3000,22 +3000,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "shaker_macro"
-version = "0.1.0"
-dependencies = [
- "cargo",
- "convert_case",
- "darling",
- "glob",
- "proc-macro2",
- "quote",
- "regex",
- "semver",
- "syn",
- "yaml-rust",
-]
-
-[[package]]
 name = "sharded-slab"
 version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3739,6 +3723,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "36c1fec1a2bb5866f07c25f68c26e565c4c200aebb96d7e55710c19d3e8ac49b"
 dependencies = [
  "memchr",
+]
+
+[[package]]
+name = "wyw_macros"
+version = "0.1.0"
+dependencies = [
+ "cargo",
+ "convert_case",
+ "darling",
+ "glob",
+ "proc-macro2",
+ "quote",
+ "regex",
+ "semver",
+ "syn",
+ "yaml-rust",
 ]
 
 [[package]]

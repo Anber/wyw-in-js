@@ -3,7 +3,7 @@ use oxc::allocator::CloneIn;
 use oxc::ast::ast::*;
 use oxc::span::{GetSpan, Span};
 use oxc_traverse::TraverseCtx;
-use shaker_macro::shaker_from_cfg;
+use wyw_macros::shaker_from_cfg;
 
 pub struct Shaker<'a> {
   for_delete: Replacements,

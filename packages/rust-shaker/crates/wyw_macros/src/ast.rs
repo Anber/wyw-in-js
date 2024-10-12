@@ -36,53 +36,71 @@ impl FieldType {
       | FieldType::VectorOfOptional(t) => t.to_string(),
     }
   }
-}
-
-#[derive(Debug)]
-pub struct FieldInfo {
-  pub name: String,
-  pub has_lifetime: bool,
-  pub value: FieldType,
-}
-
-#[derive(Debug)]
-pub struct EnumType {
-  pub name: String,
-  pub has_lifetime: bool,
-  pub variants: Vec<(String, String, bool)>,
-  pub inherits: Vec<String>,
-}
-
-#[derive(Debug)]
-pub struct NodeType {
-  pub name: String,
-  pub has_lifetime: bool,
-  pub fields: Vec<FieldInfo>,
-}
-
-impl FieldInfo {
-  pub fn as_fn_name(&self, prefix: &str) -> proc_macro2::Ident {
-    format_ident!("{prefix}_{}", self.name.to_case(Case::Snake))
-  }
-
-  pub fn as_ident(&self) -> proc_macro2::Ident {
-    format_ident!("{}", self.name)
-  }
 
   pub fn as_any_node(&self) -> proc_macro2::TokenStream {
-    let type_name = self.value.get_name();
+    let type_name = self.get_name();
     let type_ident = format_ident!("{}", type_name);
     quote! { AnyNode::#type_ident }
   }
 }
 
-impl EnumType {
+#[derive(Debug)]
+pub struct EnumType {
+  pub variants: Vec<(String, String, bool)>,
+  pub inherits: Vec<String>,
+}
+
+#[derive(Debug)]
+pub enum InnerType {
+  Enum(EnumType),
+  Field(FieldType),
+  Struct(Vec<AstType>),
+}
+
+#[derive(Debug)]
+pub struct AstType {
+  pub name: String,
+  pub has_lifetime: bool,
+  pub inner: InnerType,
+}
+
+fn parse_path_segment(segment: &syn::PathSegment) -> Vec<String> {
+  let mut result = vec![segment.ident.to_string()];
+
+  let rest = match &segment.arguments {
+    syn::PathArguments::AngleBracketed(AngleBracketedGenericArguments { args, .. }) => {
+      match (args.get(0), args.get(1), args.get(2)) {
+        (
+          Some(GenericArgument::Lifetime(_)),
+          Some(GenericArgument::Type(Type::Path(path))),
+          None,
+        ) => parse_path_segment(path.path.segments.first().unwrap()),
+        (Some(GenericArgument::Type(Type::Path(path))), None, None) => {
+          parse_path_segment(path.path.segments.first().unwrap())
+        }
+        (Some(GenericArgument::Lifetime(_)), None, None) => vec!["life time".into()],
+        _ => {
+          dbg!(&args);
+          vec![]
+        }
+      }
+    }
+
+    syn::PathArguments::None => vec![],
+
+    unknown => {
+      dbg!(unknown, segment);
+      vec![]
+    }
+  };
+
+  result.extend(rest);
+  result
+}
+
+impl AstType {
   pub fn as_fn_name(&self, prefix: &str) -> proc_macro2::Ident {
     format_ident!("{prefix}_{}", self.name.to_case(Case::Snake))
-  }
-
-  pub fn as_ident(&self) -> proc_macro2::Ident {
-    format_ident!("{}", self.name)
   }
 
   pub fn as_full_name(&self) -> proc_macro2::TokenStream {
@@ -90,45 +108,29 @@ impl EnumType {
     quote! { oxc::ast::ast::#type_ident }
   }
 
-  pub fn as_ref(&self) -> proc_macro2::TokenStream {
-    let type_ident = self.as_ident();
-    if self.has_lifetime {
-      quote! { &'a oxc::ast::ast::#type_ident<'a> }
-    } else {
-      quote! { &'a oxc::ast::ast::#type_ident }
-    }
-  }
-}
-impl NodeType {
-  pub fn as_fn_name(&self, prefix: &str) -> proc_macro2::Ident {
-    format_ident!("{prefix}_{}", self.name.to_case(Case::Snake))
-  }
-
   pub fn as_ident(&self) -> proc_macro2::Ident {
     format_ident!("{}", self.name)
   }
 
   pub fn as_ref(&self) -> proc_macro2::TokenStream {
-    let type_ident = self.as_ident();
+    let full_name = self.as_full_name();
     if self.has_lifetime {
-      quote! { &'a oxc::ast::ast::#type_ident<'a> }
+      quote! { &'a #full_name<'a> }
     } else {
-      quote! { &'a oxc::ast::ast::#type_ident }
+      quote! { &'a #full_name }
     }
   }
 }
 
 #[derive(Debug)]
 pub struct Ast {
-  pub enums: Vec<EnumType>,
-  pub structs: Vec<NodeType>,
+  pub types: Vec<AstType>,
 }
 
 impl Ast {
   pub fn new() -> Self {
     let mut ast = Self {
-      enums: Default::default(),
-      structs: Default::default(),
+      types: Default::default(),
     };
 
     ast.parse_file("js.rs");
@@ -144,54 +146,63 @@ impl Ast {
     while has_unexpanded {
       has_unexpanded = false;
 
-      for enum_type in &ast.enums {
-        if enum_type.inherits.is_empty() {
-          all_defined.insert(enum_type.name.to_string());
-          enums.insert(enum_type.name.to_string(), enum_type.variants.clone());
-          continue;
-        }
+      for t in &ast.types {
+        match t.inner {
+          InnerType::Enum(ref enum_type) => {
+            if enum_type.inherits.is_empty() {
+              all_defined.insert(t.name.to_string());
+              enums.insert(t.name.to_string(), enum_type.variants.clone());
+              continue;
+            }
 
-        if enum_type.inherits.iter().all(|i| enums.contains_key(i)) {
-          let mut combined = vec![];
-          combined.extend(enum_type.variants.clone());
-          for inherit in enum_type
-            .inherits
-            .iter()
-            .flat_map(|i| enums.get(i).unwrap())
-          {
-            combined.push(inherit.clone())
+            if enum_type.inherits.iter().all(|i| enums.contains_key(i)) {
+              let mut combined = vec![];
+              combined.extend(enum_type.variants.clone());
+              for inherit in enum_type
+                .inherits
+                .iter()
+                .flat_map(|i| enums.get(i).unwrap())
+              {
+                combined.push(inherit.clone())
+              }
+
+              all_defined.insert(t.name.to_string());
+              enums.insert(t.name.to_string(), combined);
+
+              continue;
+            }
+
+            has_unexpanded = true;
           }
 
-          all_defined.insert(enum_type.name.to_string());
-          enums.insert(enum_type.name.to_string(), combined);
+          InnerType::Field(_) => {
+            panic!("Cannot be on top level");
+          }
 
-          continue;
+          InnerType::Struct(_) => {
+            all_defined.insert(t.name.to_string());
+          }
         }
-
-        has_unexpanded = true;
       }
     }
 
-    for struct_type in &ast.structs {
-      all_defined.insert(struct_type.name.clone());
+    for t in &mut ast.types {
+      match t.inner {
+        InnerType::Enum(ref mut inner) => {
+          inner.inherits.clear();
+          inner.variants = enums.remove(&t.name).unwrap();
+        }
+        InnerType::Field(_) => {
+          panic!("Cannot be on top level");
+        }
+        InnerType::Struct(ref mut nodes) => {
+          nodes.retain(|n| match &n.inner {
+            InnerType::Field(value) => all_defined.contains(&value.get_name()),
+            _ => false,
+          });
+        }
+      }
     }
-
-    for st in &mut ast.structs {
-      st.fields
-        .retain(|f| all_defined.contains(&f.value.get_name()))
-    }
-
-    let mut expanded_enums = vec![];
-    for (name, variants) in enums {
-      expanded_enums.push(EnumType {
-        name,
-        variants,
-        has_lifetime: true,
-        inherits: vec![],
-      });
-    }
-
-    ast.enums = expanded_enums;
 
     ast
   }
@@ -225,40 +236,6 @@ impl Ast {
     panic!("Couldn't lock the registry")
   }
 
-  fn parse_path_segment(&self, segment: &syn::PathSegment) -> Vec<String> {
-    let mut result = vec![segment.ident.to_string()];
-
-    let rest = match &segment.arguments {
-      syn::PathArguments::AngleBracketed(AngleBracketedGenericArguments { args, .. }) => {
-        match (args.get(0), args.get(1), args.get(2)) {
-          (
-            Some(GenericArgument::Lifetime(_)),
-            Some(GenericArgument::Type(Type::Path(path))),
-            None,
-          ) => self.parse_path_segment(path.path.segments.first().unwrap()),
-          (Some(GenericArgument::Type(Type::Path(path))), None, None) => {
-            self.parse_path_segment(path.path.segments.first().unwrap())
-          }
-          (Some(GenericArgument::Lifetime(_)), None, None) => vec!["life time".into()],
-          _ => {
-            dbg!(&args);
-            vec![]
-          }
-        }
-      }
-
-      syn::PathArguments::None => vec![],
-
-      unknown => {
-        dbg!(unknown, segment);
-        vec![]
-      }
-    };
-
-    result.extend(rest);
-    result
-  }
-
   fn parse_field_value(&self, field: &Field) -> Option<(FieldType, bool)> {
     match &field.ty {
       Type::Path(syn::TypePath { path, .. }) => {
@@ -266,7 +243,7 @@ impl Ast {
         first?;
 
         let first = first.unwrap();
-        let types = self.parse_path_segment(first);
+        let types = parse_path_segment(first);
 
         let types: Vec<&str> = types.iter().map(|s| s.as_str()).collect();
         let slice = &types[..];
@@ -355,8 +332,6 @@ impl Ast {
 
     let enum_name = &item_enum.ident;
     let mut enum_type = EnumType {
-      name: enum_name.to_string(),
-      has_lifetime: true,
       variants: vec![],
       inherits: vec![],
     };
@@ -372,21 +347,23 @@ impl Ast {
       }
     }
 
-    self.enums.push(enum_type);
+    self.types.push(AstType {
+      name: enum_name.to_string(),
+      has_lifetime: true,
+      inner: InnerType::Enum(enum_type),
+    });
   }
 
-  fn parse_macro_source(&self, source: &String) -> Option<EnumType> {
+  fn parse_macro_source(&self, source: &str) -> Option<AstType> {
     let re_name = Regex::new(r#"pub\s*enum\s*([A-Z]\w+)<'a>"#).unwrap();
-    let name = if let Some(res) = re_name.captures(source.as_str()) {
+    let name = if let Some(res) = re_name.captures(source) {
       let name = &res[1];
       name.to_string()
     } else {
       return None;
     };
 
-    let mut res = EnumType {
-      name,
-      has_lifetime: true,
+    let mut enum_type = EnumType {
       variants: vec![],
       inherits: vec![],
     };
@@ -396,7 +373,7 @@ impl Ast {
     for captures in re_member.captures_iter(source) {
       let variant = captures[1].to_string();
       let type_name = captures[2].to_string();
-      res.variants.push((variant, type_name, true));
+      enum_type.variants.push((variant, type_name, true));
     }
 
     // Something like `EmptyExpression(JSXEmptyExpression)`
@@ -404,17 +381,21 @@ impl Ast {
     for captures in re_member.captures_iter(source) {
       let variant = captures[1].to_string();
       let type_name = captures[2].to_string();
-      res.variants.push((variant, type_name, false));
+      enum_type.variants.push((variant, type_name, false));
     }
 
     // `@inherit Expression`
     let re_inherit = Regex::new(r#"@inherit\s*([A-Z]\w+)\b"#).unwrap();
     for captures in re_inherit.captures_iter(source) {
       let inherit = captures[1].to_string();
-      res.inherits.push(inherit);
+      enum_type.inherits.push(inherit);
     }
 
-    Some(res)
+    Some(AstType {
+      name,
+      has_lifetime: true,
+      inner: InnerType::Enum(enum_type),
+    })
   }
 
   fn parse_macro(&mut self, item_macro: &ItemMacro) {
@@ -430,8 +411,8 @@ impl Ast {
 
     let tokens = &item_macro.mac.tokens;
     let source = tokens.to_string();
-    if let Some(enum_type) = self.parse_macro_source(&source) {
-      self.enums.push(enum_type);
+    if let Some(t) = self.parse_macro_source(&source) {
+      self.types.push(t);
     } else {
       dbg!(source);
     }
@@ -444,11 +425,7 @@ impl Ast {
 
     let struct_name = &item_struct.ident;
 
-    let mut node_type = NodeType {
-      name: struct_name.to_string(),
-      fields: Default::default(),
-      has_lifetime: item_struct.generics.lifetimes().count() > 0,
-    };
+    let mut fields = vec![];
 
     for field in &item_struct.fields {
       match self.parse_field(field) {
@@ -461,20 +438,22 @@ impl Ast {
             continue;
           }
 
-          let info = FieldInfo {
+          fields.push(AstType {
             name,
-            value,
             has_lifetime,
-          };
-
-          node_type.fields.push(info);
+            inner: InnerType::Field(value),
+          });
         }
 
         None => continue,
       };
     }
 
-    self.structs.push(node_type);
+    self.types.push(AstType {
+      name: struct_name.to_string(),
+      has_lifetime: item_struct.generics.lifetimes().count() > 0,
+      inner: InnerType::Struct(fields),
+    });
   }
 
   fn parse_file(&mut self, file: &str) {

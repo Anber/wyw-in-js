@@ -2,7 +2,7 @@ mod generated;
 
 use oxc::span::GetSpan;
 use oxc::span::Span;
-use shaker_macro::define;
+use wyw_macros::define;
 
 pub enum Ancestor<'a> {
   Field(AnyNode<'a>, &'a str),

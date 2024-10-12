@@ -1,6 +1,5 @@
 // Just for debug
 
-use oxc::span::GetSpan;
 use oxc::span::Span;
 
 // pub enum Ancestor<'a> {
