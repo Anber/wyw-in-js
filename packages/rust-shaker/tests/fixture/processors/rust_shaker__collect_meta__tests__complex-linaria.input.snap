@@ -8,7 +8,7 @@ Meta {
     es_module: true,
     imports: [
         Named {
-            source: Resolved("[root]/tests/fixture/processors/node_modules/@linaria/core/dist/index.mjs"),
+            source: Resolved("[root]/tests/fixture/processors/node_modules/@linaria/core/dist/index.mjs", [WywTag { name: "css", processor: "[root]/tests/fixture/processors/node_modules/@linaria/core/dist/processors/css.js" }]),
             imported: "css",
             local: Identifier(
                 "css",
@@ -16,14 +16,14 @@ Meta {
             processor: "[root]/tests/fixture/processors/node_modules/@linaria/core/dist/processors/css.js",
         },
         Named {
-            source: Resolved("[root]/tests/fixture/processors/node_modules/@linaria/core/dist/index.mjs"),
+            source: Resolved("[root]/tests/fixture/processors/node_modules/@linaria/core/dist/index.mjs", [WywTag { name: "css", processor: "[root]/tests/fixture/processors/node_modules/@linaria/core/dist/processors/css.js" }]),
             imported: "cx",
             local: Identifier(
                 "cx",
             ),
         },
         Named {
-            source: Resolved("[root]/tests/fixture/processors/node_modules/@linaria/react/dist/index.mjs"),
+            source: Resolved("[root]/tests/fixture/processors/node_modules/@linaria/react/dist/index.mjs", [WywTag { name: "styled", processor: "[root]/tests/fixture/processors/node_modules/@linaria/react/dist/processors/styled.js" }]),
             imported: "styled",
             local: Identifier(
                 "styled",
@@ -51,22 +51,14 @@ Meta {
             exported: "base",
         },
     ],
-    evaltime_replacements: [
-        (
-            Span {
-                start: 357,
-                end: 357,
-            },
-            "\nexport const __wywPreval = {base: base,fontSize: fontSize,};",
-        ),
-    ],
-    processor_params: [
-        (
-            Span {
+    processor_calls: [
+        ProcessorCall {
+            span: Span {
                 start: 121,
                 end: 145,
             },
-            ProcessorParams {
+            processor: "[root]/tests/fixture/processors/node_modules/@linaria/core/dist/processors/css.js",
+            params: ProcessorParams {
                 idx: 0,
                 display_name: "base",
                 params: [
@@ -74,13 +66,14 @@ Meta {
                     Template(121..145, [TemplateValue(125..144, "\n    color: green;\n")])),
                 ],
             },
-        ),
-        (
-            Span {
+        },
+        ProcessorCall {
+            span: Span {
                 start: 170,
                 end: 241,
             },
-            ProcessorParams {
+            processor: "[root]/tests/fixture/processors/node_modules/@linaria/react/dist/processors/styled.js",
+            params: ProcessorParams {
                 idx: 1,
                 display_name: "Button",
                 params: [
@@ -89,28 +82,30 @@ Meta {
                     Template(170..241, [TemplateValue(184..190, "\n    ."), Ident(192..196, "base"), TemplateValue(197..219, " {\n        font-size: "), Ident(221..229, "fontSize"), TemplateValue(230..240, "px;\n    }\n")])),
                 ],
             },
-        ),
-        (
-            Span {
+        },
+        ProcessorCall {
+            span: Span {
                 start: 273,
                 end: 306,
             },
-            ProcessorParams {
+            processor: "[root]/tests/fixture/processors/node_modules/@linaria/react/dist/processors/styled.js",
+            params: ProcessorParams {
                 idx: 2,
                 display_name: "DangerButton",
                 params: [
                     Callee(273..279, Identifier("styled")),
-                    Call(273..287, [])),
+                    Call(273..287, [Ident(280..286, "Button")])),
                     Template(273..306, [TemplateValue(288..305, "\n    color: red;\n")])),
                 ],
             },
-        ),
-        (
-            Span {
+        },
+        ProcessorCall {
+            span: Span {
                 start: 335,
                 end: 354,
             },
-            ProcessorParams {
+            processor: "[root]/tests/fixture/processors/node_modules/@linaria/core/dist/processors/css.js",
+            params: ProcessorParams {
                 idx: 3,
                 display_name: "combined",
                 params: [
@@ -118,6 +113,6 @@ Meta {
                     Template(335..354, [TemplateValue(339..353, " color: blue; ")])),
                 ],
             },
-        ),
+        },
     ],
 }

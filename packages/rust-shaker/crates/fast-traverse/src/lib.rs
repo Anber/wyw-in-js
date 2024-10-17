@@ -1,16 +1,28 @@
-mod generated;
+pub mod local_identifier;
+pub mod symbol;
 
-use oxc::span::GetSpan;
-use oxc::span::Span;
-use wyw_macros::define;
+use oxc_semantic::SymbolTable;
 
+wyw_macros::define_traverse!();
+
+#[derive(Debug)]
 pub enum Ancestor<'a> {
   Field(AnyNode<'a>, &'a str),
-  ListItem(AnyNode<'a>, &'a str, usize, Option<Span>),
+  ListItem(AnyNode<'a>, &'a str, usize),
+}
+
+impl<'a> Ancestor<'a> {
+  pub fn node(&self) -> &AnyNode<'a> {
+    match self {
+      Self::Field(node, _) => node,
+      Self::ListItem(node, _, _) => node,
+    }
+  }
 }
 
 pub struct TraverseCtx<'a> {
   pub ancestors: Vec<Ancestor<'a>>,
+  symbols: &'a SymbolTable,
 }
 
 impl<'a> TraverseCtx<'a> {
@@ -22,12 +34,8 @@ impl<'a> TraverseCtx<'a> {
     }
   }
 
-  pub fn delimiter(&self) -> Option<Span> {
-    if let Some(Ancestor::ListItem(_, _, _, Some(span))) = self.parent() {
-      Some(*span)
-    } else {
-      None
-    }
+  pub fn symbols(&self) -> &'a SymbolTable {
+    self.symbols
   }
 }
 
@@ -39,10 +47,15 @@ pub enum EnterAction {
   Continue,
 }
 
-define!();
-
-pub fn walk<'a, Tr: TraverseHooks<'a>>(hooks: &mut Tr, program: &'a oxc::ast::ast::Program<'a>) {
-  let mut ctx = TraverseCtx { ancestors: vec![] };
+pub fn walk<'a, Tr: TraverseHooks<'a>>(
+  hooks: &mut Tr,
+  program: &'a oxc::ast::ast::Program<'a>,
+  symbols: &'a SymbolTable,
+) {
+  let mut ctx = TraverseCtx {
+    ancestors: vec![],
+    symbols,
+  };
   let program_node = AnyNode::Program(program);
   walk_any(hooks, program_node, &mut ctx);
 }

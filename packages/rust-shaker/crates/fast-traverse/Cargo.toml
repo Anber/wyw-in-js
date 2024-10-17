@@ -5,4 +5,5 @@ edition = "2021"
 
 [dependencies]
 oxc = "0.30.5"
+oxc_semantic = "0.30.5"
 wyw_macros = { path = "../wyw_macros" }

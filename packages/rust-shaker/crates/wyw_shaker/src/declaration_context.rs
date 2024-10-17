@@ -1,7 +1,6 @@
-use crate::meta::symbol::Symbol;
-use oxc::allocator::Allocator;
+use fast_traverse::symbol::Symbol;
+use fast_traverse::{Ancestor, AnyNode};
 use oxc::ast::ast::*;
-use oxc_semantic::SymbolTable;
 
 #[derive(Clone, Debug)]
 pub enum PathPart<'a> {
@@ -11,7 +10,7 @@ pub enum PathPart<'a> {
 
 #[derive(Debug)]
 pub struct DeclaredIdent<'a> {
-  pub symbol: &'a Symbol<'a>,
+  pub symbol: Symbol,
   pub from: Vec<PathPart<'a>>,
 }
 
@@ -30,17 +29,14 @@ fn get_property_key<'a, 'b>(prop: &'b BindingProperty<'a>) -> Option<&'b Atom<'a
 }
 
 fn unfold<'a>(
-  allocator: &'a Allocator,
-  symbols: &SymbolTable,
   pattern: &BindingPatternKind<'a>,
   stack: &mut Vec<PathPart<'a>>,
 ) -> Vec<DeclaredIdent<'a>> {
   match pattern {
     BindingPatternKind::BindingIdentifier(ident) => {
       let symbol_id = ident.symbol_id.get().expect("Expected a symbol id");
-      let decl = symbols.spans.get(symbol_id).unwrap();
       vec![DeclaredIdent {
-        symbol: Symbol::new(allocator, symbols, symbol_id, *decl),
+        symbol: Symbol::new_with_name(ident.name.to_string(), symbol_id, ident.span),
         from: stack.clone(),
       }]
     }
@@ -52,7 +48,7 @@ fn unfold<'a>(
       .filter_map(|(idx, elem)| match elem {
         Some(elem) => {
           stack.push(PathPart::Index(idx));
-          let res = unfold(allocator, symbols, &elem.kind, stack);
+          let res = unfold(&elem.kind, stack);
           stack.pop();
           Some(res)
         }
@@ -62,9 +58,7 @@ fn unfold<'a>(
       .flatten()
       .collect(),
 
-    BindingPatternKind::AssignmentPattern(assigment) => {
-      unfold(allocator, symbols, &assigment.left.kind, stack)
-    }
+    BindingPatternKind::AssignmentPattern(assigment) => unfold(&assigment.left.kind, stack),
 
     BindingPatternKind::ObjectPattern(object) => {
       let mut res = vec![];
@@ -76,12 +70,12 @@ fn unfold<'a>(
           continue;
         }
         stack.push(PathPart::Member(key.unwrap().clone()));
-        res.extend(unfold(allocator, symbols, &prop.value.kind, stack));
+        res.extend(unfold(&prop.value.kind, stack));
         stack.pop();
       }
 
       if let Some(ident) = &object.rest {
-        res.extend(unfold(allocator, symbols, &ident.argument.kind, stack));
+        res.extend(unfold(&ident.argument.kind, stack));
       }
 
       res
@@ -90,32 +84,40 @@ fn unfold<'a>(
 }
 
 impl<'a> DeclarationContext<'a> {
-  pub fn from(
-    allocator: &'a Allocator,
-    symbols: &SymbolTable,
-    node: &VariableDeclarator<'a>,
-  ) -> Self {
+  pub fn from(node: &VariableDeclarator<'a>) -> Self {
     match &node.id.kind {
       BindingPatternKind::BindingIdentifier(ident) => DeclarationContext::List({
         let symbol_id = ident.symbol_id.get().expect("Expected a symbol id");
-        let decl = symbols.spans.get(symbol_id).unwrap();
+        let decl = ident.span;
 
         vec![DeclaredIdent {
-          symbol: Symbol::new(allocator, symbols, symbol_id, *decl),
+          symbol: Symbol::new_with_name(ident.name.to_string(), symbol_id, decl),
           from: vec![],
         }]
       }),
 
-      pattern => DeclarationContext::List(unfold(allocator, symbols, pattern, &mut vec![])),
+      pattern => DeclarationContext::List(unfold(pattern, &mut vec![])),
     }
   }
 
-  pub(crate) fn get_declaring_symbol(&self) -> Option<Symbol<'a>> {
-    match &self {
-      DeclarationContext::List(list) if list.len() == 1 => Some(list[0].symbol.clone()),
+  pub fn from_ancestors(ancestors: &[Ancestor<'a>]) -> Self {
+    let decl = ancestors.iter().rev().find_map(|ancestor| match ancestor {
+      Ancestor::Field(AnyNode::VariableDeclarator(decl), _) => Some(decl),
       _ => None,
+    });
+
+    match decl {
+      None => DeclarationContext::None,
+      Some(decl) => DeclarationContext::from(decl),
     }
   }
+
+  // pub(crate) fn get_declaring_symbol(&self) -> Option<Symbol> {
+  //   match &self {
+  //     DeclarationContext::List(list) if list.len() == 1 => Some(list[0].symbol.clone()),
+  //     _ => None,
+  //   }
+  // }
 }
 
 #[cfg(test)]
@@ -153,8 +155,7 @@ mod tests {
     let (symbols, _scopes) = semantic_ret.semantic.into_symbol_table_and_scope_tree();
 
     if let Statement::VariableDeclaration(decl) = &program.body[0] {
-      return DeclarationContext::from(&allocator, &symbols, &decl.declarations[0])
-        .to_debug_string();
+      return DeclarationContext::from(&decl.declarations[0]).to_debug_string();
     }
 
     panic!("Expected a variable declaration statement");

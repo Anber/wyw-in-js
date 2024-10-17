@@ -4,7 +4,7 @@ description: "import { named as renamed } from 'unknown-package';\nconsole.log(r
 input_file: tests/fixture/meta/import_renamed/typescriptES2022-4_5_2.input.js
 ---
 Meta {
-    cjs: true,
+    cjs: false,
     es_module: true,
     imports: [
         Named {

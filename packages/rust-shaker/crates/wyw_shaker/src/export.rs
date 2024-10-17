@@ -1,7 +1,9 @@
-use crate::meta::import::Source;
-use crate::meta::MetaCollector;
+use crate::import::Source;
+use oxc::allocator::Allocator;
 use oxc::span::{Atom, Span};
+use oxc_resolver::Resolver;
 use std::fmt::Debug;
+use std::path::Path;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum ExportedValue<'a> {
@@ -90,10 +92,13 @@ impl<'a> PartialOrd for Export<'a> {
 
 impl Eq for Export<'_> {}
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct Exports<'a> {
+  allocator: &'a Allocator,
+  directory: &'a Path,
   pub es_module: bool,
   pub list: Vec<Export<'a>>,
+  resolver: &'a Resolver,
 }
 
 impl<'a> Debug for Exports<'a> {
@@ -103,6 +108,16 @@ impl<'a> Debug for Exports<'a> {
 }
 
 impl<'a> Exports<'a> {
+  pub fn new(allocator: &'a Allocator, resolver: &'a Resolver, directory: &'a Path) -> Self {
+    Self {
+      allocator,
+      directory,
+      es_module: false,
+      list: Vec::new(),
+      resolver,
+    }
+  }
+
   pub fn add(&mut self, export: Export<'a>) {
     if let Export::Named { exported, .. } = &export {
       if exported == "__esModule" {
@@ -130,7 +145,7 @@ impl<'a> Exports<'a> {
     self.add(Export::Reexport {
       orig: orig.clone(),
       exported: exported.clone(),
-      source: source.clone(),
+      source: source.as_resolved(self.allocator, self.resolver, self.directory),
     });
   }
 
@@ -145,7 +160,7 @@ impl<'a> Exports<'a> {
 
   pub fn add_reexport_all(&mut self, source: &Source<'a>) {
     self.add(Export::ReexportAll {
-      source: source.clone(),
+      source: source.as_resolved(self.allocator, self.resolver, self.directory),
     });
   }
 
@@ -156,7 +171,7 @@ impl<'a> Exports<'a> {
   pub fn add_reexport_namespace(&mut self, exported: &Atom<'a>, source: &Source<'a>) {
     self.add(Export::ReexportNamespace {
       exported: exported.clone(),
-      source: source.clone(),
+      source: source.as_resolved(self.allocator, self.resolver, self.directory),
     });
   }
 
@@ -180,23 +195,6 @@ impl<'a> IntoIterator for Exports<'a> {
 
 #[derive(Clone, Debug, Default)]
 pub struct ExportArea<'a> {
-  export: Export<'a>,
-  span: Span,
-}
-
-impl<'a> MetaCollector<'a> {
-  pub fn add_export_area(&mut self, span: &Span, export: &Export<'a>) {
-    self.export_areas.push(ExportArea {
-      export: export.clone(),
-      span: *span,
-    });
-  }
-
-  pub fn get_export_by_span(&self, span: &Span) -> Option<&Export<'a>> {
-    self
-      .export_areas
-      .iter()
-      .find(|area| area.span.start <= span.start && area.span.end >= span.end)
-      .map(|area| &area.export)
-  }
+  pub export: Export<'a>,
+  pub span: Span,
 }

@@ -4,7 +4,7 @@ description: "import 'unknown-package';\n"
 input_file: tests/fixture/meta/import_side-effects/asIs.input.js
 ---
 Meta {
-    cjs: true,
+    cjs: false,
     es_module: true,
     imports: [
         SideEffect {

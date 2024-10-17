@@ -1,33 +1,23 @@
 use oxc::span::Span;
 use std::cmp::Ordering;
+use std::fmt::Debug;
+use wyw_processor::replacement_value::ReplacementValue;
 
 #[derive(Debug, PartialEq)]
-pub(crate) enum ReplacementValue {
-  Del,
-  Span(Span),
-  Str(String),
-  Undefined,
-}
-
-impl ReplacementValue {
-  fn from_str(s: &str) -> Self {
-    if s == "undefined" {
-      Self::Undefined
-    } else {
-      Self::Str(s.to_string())
-    }
-  }
-}
-
-#[derive(Debug, PartialEq)]
-pub(crate) struct Replacement {
+pub struct Replacement {
   pub span: Span,
   pub value: ReplacementValue,
 }
 
 #[derive(Default)]
-pub(crate) struct Replacements {
+pub struct Replacements {
   pub(crate) list: Vec<Replacement>,
+}
+
+impl Debug for Replacements {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    f.debug_list().entries(self.list.iter()).finish()
+  }
 }
 
 impl Replacements {
@@ -233,13 +223,13 @@ mod tests {
     repl.add_deletion(Span::new(0, 2));
     assert_eq!(repl.apply(source), "23456789");
 
-    repl.add_replacement(Span::new(3, 4), ReplacementValue::from_str("!"));
+    repl.add_replacement(Span::new(3, 4), ReplacementValue::from_string("!"));
     assert_eq!(repl.apply(source), "2!456789");
 
-    repl.add_replacement(Span::new(5, 5), ReplacementValue::from_str("insertion"));
+    repl.add_replacement(Span::new(5, 5), ReplacementValue::from_string("insertion"));
     assert_eq!(repl.apply(source), "2!4insertion56789");
 
-    repl.add_replacement(Span::new(0, 2), ReplacementValue::from_str("prefix"));
+    repl.add_replacement(Span::new(0, 2), ReplacementValue::from_string("prefix"));
     assert_eq!(repl.apply(source), "prefix2!4insertion56789");
 
     repl.add_replacement(Span::new(8, 10), ReplacementValue::Span(Span::new(0, 2)));

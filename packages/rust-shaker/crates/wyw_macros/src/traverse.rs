@@ -1,7 +1,7 @@
 use crate::ast::{Ast, AstType, EnumType, FieldType, InnerType};
 use convert_case::{Case, Casing};
 use proc_macro::TokenStream;
-use quote::{format_ident, quote, ToTokens};
+use quote::{format_ident, quote};
 
 pub(crate) fn create_hook_fn(
   prefix: &str,
@@ -91,13 +91,7 @@ fn create_struct_walk_fn_body(
 
       FieldType::Vector(_) => quote! {
         for (idx, item) in node.#field_name_ident.iter().enumerate() {
-          let next = node.#field_name_ident.get(idx + 1).map(|i| Span::new(item.span().end, i.span().start));
-          let prev = if idx > 0 {
-            node.#field_name_ident.get(idx - 1).map(|i| Span::new(i.span().end, item.span().start))
-          } else {
-            None
-          };
-          ctx.ancestors.push(Ancestor::ListItem(AnyNode::#node_type_ident(node), #field_name, idx, next.or(prev)));
+          ctx.ancestors.push(Ancestor::ListItem(AnyNode::#node_type_ident(node), #field_name, idx));
           walk_any(hooks, #any_node(item), ctx);
           ctx.ancestors.pop();
         }
@@ -114,8 +108,7 @@ fn create_struct_walk_fn_body(
       FieldType::OptionalVector(_) => quote! {
         if let Some(v) = &node.#field_name_ident {
           for (idx, item) in v.iter().enumerate() {
-            let next = v.get(idx + 1).map(|i| Span::new(item.span().end, i.span().start));
-            ctx.ancestors.push(Ancestor::ListItem(AnyNode::#node_type_ident(node), #field_name, idx, next));
+            ctx.ancestors.push(Ancestor::ListItem(AnyNode::#node_type_ident(node), #field_name, idx));
             walk_any(hooks, #any_node(item), ctx);
             ctx.ancestors.pop();
           }
@@ -125,13 +118,7 @@ fn create_struct_walk_fn_body(
       FieldType::VectorOfOptional(_) => quote! {
         for (idx, item) in node.#field_name_ident.iter().enumerate() {
           if let Some(v) = item {
-            let next = if let Some(Some(next)) = node.#field_name_ident.get(idx + 1) {
-              Some(Span::new(v.span().end, next.span().start))
-            } else {
-              None
-            };
-
-            ctx.ancestors.push(Ancestor::ListItem(AnyNode::#node_type_ident(node), #field_name, idx, next));
+            ctx.ancestors.push(Ancestor::ListItem(AnyNode::#node_type_ident(node), #field_name, idx));
             walk_any(hooks, #any_node(v), ctx);
             ctx.ancestors.pop();
           }
@@ -229,6 +216,10 @@ pub fn define(_input: TokenStream) -> TokenStream {
   }
 
   let result = quote! {
+    use oxc::span::GetSpan;
+    use oxc::span::Span;
+
+    #[derive(Debug)]
     pub enum AnyNode<'a> {
       #(#enum_items)*
     }

@@ -8,7 +8,7 @@ Meta {
     es_module: true,
     imports: [
         Named {
-            source: Resolved("[root]/tests/fixture/processors/node_modules/@linaria/core/dist/index.mjs"),
+            source: Resolved("[root]/tests/fixture/processors/node_modules/@linaria/core/dist/index.mjs", [WywTag { name: "css", processor: "[root]/tests/fixture/processors/node_modules/@linaria/core/dist/processors/css.js" }]),
             imported: "css",
             local: Identifier(
                 "css",
@@ -24,22 +24,14 @@ Meta {
             exported: "base",
         },
     ],
-    evaltime_replacements: [
-        (
-            Span {
-                start: 82,
-                end: 82,
-            },
-            "\nexport const __wywPreval = {};",
-        ),
-    ],
-    processor_params: [
-        (
-            Span {
+    processor_calls: [
+        ProcessorCall {
+            span: Span {
                 start: 56,
                 end: 80,
             },
-            ProcessorParams {
+            processor: "[root]/tests/fixture/processors/node_modules/@linaria/core/dist/processors/css.js",
+            params: ProcessorParams {
                 idx: 0,
                 display_name: "base",
                 params: [
@@ -47,6 +39,6 @@ Meta {
                     Template(56..80, [TemplateValue(60..79, "\n    color: green;\n")])),
                 ],
             },
-        ),
+        },
     ],
 }

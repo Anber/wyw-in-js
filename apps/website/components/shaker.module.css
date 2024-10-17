@@ -1,0 +1,20 @@
+.page {
+  margin: -8px;
+
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+
+  & > .input, & > .output {
+    flex-grow: 1;
+    height: 100vh;
+    margin-bottom: 20px;
+    padding: 10px;
+    font-size: 16px;
+    border: 1px solid #ccc;
+    border-radius: 5px;
+    font-family: monospace;
+  }
+}

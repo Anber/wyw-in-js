@@ -1,0 +1,12 @@
+[package]
+name = "wyw_processor"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+fast-traverse = { path = "../fast-traverse" }
+oxc = "0.30.5"
+oxc_semantic = "0.30.5"
+pathdiff = "0.2.2"
+pluginator = "1.0.1"
+regex = "1.11.0"

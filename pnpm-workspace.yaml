@@ -5,3 +5,4 @@ packages:
     - 'e2e/*'
     - 'examples/*'
     - 'packages/*'
+    - 'packages/rust-shaker/crates/wyw_wasm/pkg'

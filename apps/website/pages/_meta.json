@@ -2,5 +2,9 @@
   "index": "Introduction",
   "how-it-works": "How it works?",
   "how-to": "How to use",
-  "bundlers": "Supported bundlers"
+  "bundlers": "Supported bundlers",
+  "shaker": {
+    "display": "hidden",
+    "type": "page"
+  }
 }

@@ -1,5 +1,5 @@
-use crate::meta::replacements::{ReplacementValue, Replacements};
-use crate::meta::symbol::Symbol;
+use crate::replacements::Replacements;
+use fast_traverse::symbol::Symbol;
 use oxc::allocator::Allocator;
 use oxc::ast::ast::{Expression, IdentifierReference, MemberExpression};
 use oxc::ast::AstKind;
@@ -7,6 +7,7 @@ use oxc::span::{GetSpan, Span};
 use oxc::syntax::reference::ReferenceFlags;
 use oxc_semantic::{AstNode, AstNodes, NodeId, Semantic};
 use std::collections::HashMap;
+use wyw_processor::replacement_value::ReplacementValue;
 
 #[derive(Clone, Debug)]
 pub struct Reference {
@@ -16,7 +17,7 @@ pub struct Reference {
 
 #[derive(Clone, Debug, Default)]
 pub struct References<'a> {
-  pub map: HashMap<&'a Symbol<'a>, Vec<Reference>>,
+  pub map: HashMap<&'a Symbol, Vec<Reference>>,
 }
 
 fn get_parent_node<'a>(nodes: &'a AstNodes, node_id: NodeId) -> &'a AstNode<'a> {
@@ -66,12 +67,16 @@ fn is_write_ref(nodes: &AstNodes, node: &IdentifierReference, node_id: NodeId) -
 }
 
 impl<'a> References<'a> {
-  pub fn add(&mut self, symbol: &'a Symbol<'a>, reference: Reference) {
+  pub fn add(&mut self, symbol: &'a Symbol, reference: Reference) {
     if let std::collections::hash_map::Entry::Vacant(e) = self.map.entry(symbol) {
       e.insert(vec![reference]);
     } else {
       self.map.get_mut(&symbol).unwrap().push(reference);
     }
+  }
+
+  pub fn get(&self, symbol: &'a Symbol) -> Option<&Vec<Reference>> {
+    self.map.get(symbol)
   }
 
   pub fn apply_replacements(&mut self, replacements: &Replacements) {
@@ -135,7 +140,7 @@ impl<'a> References<'a> {
 
       let decl_node = decl_node.unwrap();
       let symbol_id = symbol_id.unwrap();
-      let symbol = Symbol::new(allocator, symbols, symbol_id, decl_node.span());
+      let symbol = allocator.alloc(Symbol::new(symbols, symbol_id, decl_node.span()));
       let node_id = reference.node_id();
       let node = nodes.get_node(node_id);
       let node_kind = node.kind();

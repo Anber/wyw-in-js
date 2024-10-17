@@ -4,7 +4,7 @@ description: "import type { Named as Renamed } from 'unknown-package';\n\nconst 
 input_file: tests/fixture/meta/import_types/asIs.input.ts
 ---
 Meta {
-    cjs: true,
+    cjs: false,
     es_module: true,
     imports: [],
     exports: [],

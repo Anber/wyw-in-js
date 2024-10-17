@@ -1,21 +1,39 @@
-use crate::meta::import::Source::{Resolved, Unresolved};
-use crate::meta::local_identifier::LocalIdentifier;
-use crate::meta::symbol::Symbol;
+use crate::import::Source::{Resolved, Unresolved};
+use fast_traverse::local_identifier::LocalIdentifier;
+use fast_traverse::symbol::Symbol;
+use normalize_path::NormalizePath;
+use oxc::allocator::Allocator;
 use oxc::span::Atom;
+use oxc_resolver::Resolver;
 use std::fmt::Debug;
 use std::path::{Path, PathBuf};
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WywTag {
+  pub name: String,
+  pub processor: PathBuf,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum WywConfig {
+  Resolved { tags: Vec<WywTag> },
+  None,
+}
 
 #[derive(Clone, Eq, PartialEq)]
 pub enum Source<'a> {
   Unresolved(Atom<'a>),
-  Resolved(&'a Path),
+  Resolved(&'a Path, WywConfig),
 }
 
 impl<'a> Debug for Source<'a> {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     match self {
       Unresolved(atom) => write!(f, "{:?}", atom),
-      Resolved(path) => write!(f, "Resolved({:?})", path),
+      Resolved(path, WywConfig::None) => write!(f, "Resolved({:?})", path),
+      Resolved(path, WywConfig::Resolved { tags }) => {
+        write!(f, "Resolved({:?}, {:?})", path, tags)
+      }
     }
   }
 }
@@ -24,9 +42,9 @@ impl<'a> PartialOrd for Source<'a> {
   fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
     match (self, other) {
       (Unresolved(a), Unresolved(b)) => Some(a.cmp(b)),
-      (Resolved(a), Resolved(b)) => Some(a.cmp(b)),
-      (Unresolved(_), Resolved(_)) => Some(std::cmp::Ordering::Less),
-      (Resolved(_), Unresolved(_)) => Some(std::cmp::Ordering::Greater),
+      (Resolved(a, _), Resolved(b, _)) => Some(a.cmp(b)),
+      (Unresolved(_), Resolved(_, _)) => Some(std::cmp::Ordering::Less),
+      (Resolved(_, _), Unresolved(_)) => Some(std::cmp::Ordering::Greater),
     }
   }
 }
@@ -54,9 +72,70 @@ impl<'a> Source<'a> {
       _ => None,
     }
   }
+
+  pub fn as_resolved(
+    &self,
+    allocator: &'a Allocator,
+    resolver: &Resolver,
+    directory: &Path,
+  ) -> Self {
+    match self {
+      Unresolved(atom) => {
+        if let Ok(resolution) = resolver.resolve(directory, atom) {
+          let resolution = allocator.alloc(resolution);
+          if let Some(package_json) = resolution.package_json() {
+            let raw_json = package_json.raw_json();
+
+            if let Some(obj) = raw_json.as_object() {
+              if let Some(wyw) = obj.get("wyw-in-js") {
+                if let Some(tags) = wyw.get("tags") {
+                  let tags = tags
+                    .as_object()
+                    .unwrap()
+                    .iter()
+                    .map(|(name, processor)| {
+                      let processor = package_json
+                        .path
+                        .parent()
+                        .map(|p| p.join(processor.as_str().unwrap()).normalize())
+                        .unwrap();
+
+                      WywTag {
+                        name: name.clone(),
+                        processor,
+                      }
+                    })
+                    .collect();
+
+                  return Resolved(resolution.path(), WywConfig::Resolved { tags });
+                  // if let Some(tag) = tags.get(symbol.name) {
+                  //   // processor here is a relative path to the processor file
+                  //   let processor = tag.as_str().unwrap();
+                  //
+                  //   let full_path = package_json
+                  //     .path
+                  //     .parent()
+                  //     .map(|p| p.join(processor).normalize())
+                  //     .unwrap();
+                  //
+                  //   return Resolved(resolution.path(), Processor::Resolved(full_path));
+                  // }
+                }
+              }
+            }
+          }
+
+          Resolved(resolution.path(), WywConfig::None)
+        } else {
+          Unresolved(atom.clone())
+        }
+      }
+      resolved @ Resolved(_, _) => resolved.clone(),
+    }
+  }
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, Eq, PartialEq)]
 pub enum Processor {
   Resolved(PathBuf),
   Unresolved,
@@ -74,12 +153,11 @@ pub enum Import<'a> {
     source: Source<'a>,
     imported: Atom<'a>,
     local: LocalIdentifier<'a>,
-    processor: Processor,
   },
 
   Namespace {
     source: Source<'a>,
-    local: &'a Symbol<'a>,
+    local: &'a Symbol,
   },
 
   SideEffect {
@@ -90,11 +168,10 @@ pub enum Import<'a> {
 impl<'a> Debug for Import<'a> {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     match self {
-      Self::Named {
+      named @ Self::Named {
         source,
         imported,
         local,
-        processor,
       } => {
         let mut base = f.debug_struct("Named");
         let mut common_fields = base
@@ -102,8 +179,8 @@ impl<'a> Debug for Import<'a> {
           .field("imported", imported)
           .field("local", local);
 
-        if let Processor::Resolved(p) = processor {
-          common_fields = common_fields.field("processor", p);
+        if let Some(processor) = named.processor() {
+          common_fields = common_fields.field("processor", processor);
         }
 
         common_fields.finish()
@@ -127,12 +204,29 @@ impl<'a> Debug for Import<'a> {
 }
 
 impl<'a> Import<'a> {
-  pub(crate) fn local(&self) -> Option<LocalIdentifier<'a>> {
+  pub fn local(&self) -> Option<LocalIdentifier<'a>> {
     match self {
       Self::Default { local, .. } => Some(local.clone()),
       Self::Named { local, .. } => Some(local.clone()),
       Self::Namespace { local, .. } => Some(LocalIdentifier::Identifier(<&Symbol>::clone(local))),
       Self::SideEffect { .. } => None,
+    }
+  }
+
+  pub fn processor(&self) -> Option<&PathBuf> {
+    match self {
+      Self::Named {
+        source, imported, ..
+      } => {
+        if let Resolved(_, WywConfig::Resolved { tags }) = source {
+          if let Some(tag) = tags.iter().find(|tag| tag.name == imported.as_str()) {
+            return Some(&tag.processor);
+          }
+        }
+
+        None
+      }
+      _ => None,
     }
   }
 
@@ -154,42 +248,33 @@ impl<'a> Import<'a> {
     }
   }
 
-  pub fn set_resolved(&mut self, path: &'a Path) -> &mut Self {
+  pub fn set_source(&mut self, source: Source<'a>) -> &mut Self {
     *self = match self {
       Self::Default { local, .. } => Self::Default {
-        source: Resolved(path),
+        source,
         local: local.clone(),
       },
       Self::Named {
-        imported,
-        local,
-        processor,
-        ..
+        imported, local, ..
       } => Self::Named {
-        source: Resolved(path),
+        source,
         imported: imported.clone(),
         local: local.clone(),
-        processor: processor.clone(),
       },
-      Self::Namespace { local, .. } => Self::Namespace {
-        source: Resolved(path),
-        local,
-      },
-      Self::SideEffect { .. } => Self::SideEffect {
-        source: Resolved(path),
-      },
+      Self::Namespace { local, .. } => Self::Namespace { source, local },
+      Self::SideEffect { .. } => Self::SideEffect { source },
     };
 
     self
   }
 
-  pub fn set_processor(&mut self, processor: PathBuf) {
-    if let Self::Named { processor: p, .. } = self {
-      *p = Processor::Resolved(processor);
-    } else {
-      todo!("set_processor for {:?}", self);
-    }
-  }
+  // pub fn set_processor(&mut self, processor: PathBuf) {
+  //   if let Self::Named { processor: p, .. } = self {
+  //     *p = Processor::Resolved(processor);
+  //   } else {
+  //     todo!("set_processor for {:?}", self);
+  //   }
+  // }
 }
 
 impl Ord for Import<'_> {
@@ -211,9 +296,12 @@ impl<'a> PartialOrd for Import<'a> {
 
 impl Eq for Import<'_> {}
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct Imports<'a> {
+  allocator: &'a Allocator,
+  directory: &'a Path,
   pub list: Vec<Import<'a>>,
+  resolver: &'a Resolver,
 }
 
 impl<'a> Debug for Imports<'a> {
@@ -223,8 +311,27 @@ impl<'a> Debug for Imports<'a> {
 }
 
 impl<'a> Imports<'a> {
+  pub fn new(allocator: &'a Allocator, resolver: &'a Resolver, directory: &'a Path) -> Self {
+    Self {
+      allocator,
+      directory,
+      list: Vec::new(),
+      resolver,
+    }
+  }
+
   pub fn add(&mut self, import: Import<'a>) {
-    self.list.push(import);
+    match import.source() {
+      Resolved(_, _) => {
+        self.list.push(import);
+      }
+      unresolved @ Unresolved(_) => {
+        let resolved = unresolved.as_resolved(self.allocator, self.resolver, self.directory);
+        let mut import = import.clone();
+        import.set_source(resolved);
+        self.list.push(import);
+      }
+    }
   }
 
   pub fn add_side_effect(&mut self, source: &Source<'a>) {
@@ -268,7 +375,6 @@ impl<'a> Imports<'a> {
       source: source.clone(),
       imported: imported.clone(),
       local: local.clone(),
-      processor: Processor::Unresolved,
     });
   }
 
@@ -281,14 +387,14 @@ impl<'a> Imports<'a> {
     self.add_named(&Unresolved(source.clone()), imported, local);
   }
 
-  pub fn add_namespace(&mut self, source: &Source<'a>, local: &'a Symbol<'a>) {
+  pub fn add_namespace(&mut self, source: &Source<'a>, local: &'a Symbol) {
     self.add(Import::Namespace {
       source: source.clone(),
       local,
     });
   }
 
-  pub fn add_unresolved_namespace(&mut self, source: &Atom<'a>, local: &'a Symbol<'a>) {
+  pub fn add_unresolved_namespace(&mut self, source: &Atom<'a>, local: &'a Symbol) {
     self.add_namespace(&Unresolved(source.clone()), local);
   }
 
@@ -300,7 +406,7 @@ impl<'a> Imports<'a> {
       .collect()
   }
 
-  pub fn find_ns_by_source(&self, expected: &str) -> Option<&'a Symbol<'a>> {
+  pub fn find_ns_by_source(&self, expected: &str) -> Option<&'a Symbol> {
     self.list.iter().find_map(|import| {
       if let Import::Namespace { source, local } = import {
         if source == expected {
@@ -312,7 +418,7 @@ impl<'a> Imports<'a> {
     })
   }
 
-  pub fn find_by_symbol(&mut self, symbol: &Symbol<'a>) -> Option<&mut Import<'a>> {
+  pub fn find_by_symbol(&mut self, symbol: &Symbol) -> Option<&mut Import<'a>> {
     self.list.iter_mut().find(|import| {
       if let Some(LocalIdentifier::Identifier(local)) = import.local() {
         return local == symbol;

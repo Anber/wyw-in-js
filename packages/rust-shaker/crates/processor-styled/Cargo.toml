@@ -1,0 +1,11 @@
+[package]
+name = "processor-styled"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["dylib"]
+
+[dependencies]
+oxc = "0.30.5"
+wyw_processor = { path = "../wyw_processor" }

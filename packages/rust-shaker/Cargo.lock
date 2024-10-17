@@ -400,7 +400,7 @@ checksum = "508a82e6202bdb857bed8fabd67a29cdb2e5c3dd3eeb283da3e225da5a5c700d"
 dependencies = [
  "anyhow",
  "cargo-credential",
- "libloading",
+ "libloading 0.8.5",
 ]
 
 [[package]]
@@ -1030,6 +1030,7 @@ name = "fast-traverse"
 version = "0.1.0"
 dependencies = [
  "oxc",
+ "oxc_semantic",
  "wyw_macros",
 ]
 
@@ -2292,6 +2293,16 @@ dependencies = [
 
 [[package]]
 name = "libloading"
+version = "0.7.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b67380fd3b2fbe7527a606e18729d21c6f3951633d0500574c4dc22d2d638b9f"
+dependencies = [
+ "cfg-if",
+ "winapi",
+]
+
+[[package]]
+name = "libloading"
 version = "0.8.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4979f22fdb869068da03c9f7528f8297c6fd2606bc3a4affe42e6a823fdb8da4"
@@ -2382,9 +2393,9 @@ dependencies = [
 
 [[package]]
 name = "log"
-version = "0.4.21"
+version = "0.4.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "90ed8c1e510134f979dbc4f070f87d4313098b704861a105fe34231c70a3901c"
+checksum = "a7a70ba024b9dc04c27ea2f0c0548feb474ec5c54bba33a7f72f873a39d07b24"
 
 [[package]]
 name = "matchers"
@@ -2994,9 +3005,9 @@ checksum = "1e91099d4268b0e11973f036e885d652fb0b21fedcf69738c627f94db6a44f42"
 
 [[package]]
 name = "pathdiff"
-version = "0.2.1"
+version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8835116a5c179084a830efb3adc117ab007512b535bc1a21c991d3b32a6b44dd"
+checksum = "d61c5ce1153ab5b689d0c074c4e7fc613e942dfb7dd9eea5ab202d2ad91fe361"
 
 [[package]]
 name = "pem-rfc7468"
@@ -3092,6 +3103,15 @@ name = "pkg-config"
 version = "0.3.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "953ec861398dccce10c670dfeaf3ec4911ca479e9c02154b3a215178c5f566f2"
+
+[[package]]
+name = "pluginator"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fbddb84b4e6e46de39bf57d63ce57c45e5fc3843650090f4ce1cf4f3f022641d"
+dependencies = [
+ "libloading 0.7.4",
+]
 
 [[package]]
 name = "pnp"
@@ -3344,6 +3364,7 @@ dependencies = [
  "indoc",
  "insta",
  "itertools",
+ "libloading 0.8.5",
  "log",
  "normalize-path",
  "oxc",
@@ -3352,12 +3373,15 @@ dependencies = [
  "oxc_semantic",
  "oxc_traverse",
  "pico-args",
+ "pluginator",
  "regex",
  "serde",
  "serde_json",
  "testing",
  "walkdir",
  "wyw_macros",
+ "wyw_processor",
+ "wyw_shaker",
 ]
 
 [[package]]
@@ -4563,6 +4587,33 @@ dependencies = [
  "semver",
  "syn 2.0.79",
  "yaml-rust",
+]
+
+[[package]]
+name = "wyw_processor"
+version = "0.1.0"
+dependencies = [
+ "fast-traverse",
+ "oxc",
+ "oxc_semantic",
+ "pathdiff",
+ "pluginator",
+ "regex",
+]
+
+[[package]]
+name = "wyw_shaker"
+version = "0.1.0"
+dependencies = [
+ "fast-traverse",
+ "indoc",
+ "itertools",
+ "normalize-path",
+ "oxc",
+ "oxc_resolver",
+ "oxc_semantic",
+ "regex",
+ "wyw_processor",
 ]
 
 [[package]]

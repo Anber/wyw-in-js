@@ -1,11 +1,11 @@
-use crate::meta::local_identifier::LocalIdentifier;
-use crate::meta::symbol::Symbol;
+use fast_traverse::local_identifier::LocalIdentifier;
+use fast_traverse::symbol::Symbol;
+use fast_traverse::{Ancestor, AnyNode, TraverseCtx};
 use oxc::ast::ast::*;
 use oxc::span::{Atom, GetSpan, Span};
-use oxc_traverse::{Ancestor, TraverseCtx};
 use std::borrow::Cow;
 use std::fmt::Debug;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug)]
 pub enum ConstValue<'a> {
@@ -29,6 +29,62 @@ pub enum ExpressionValue<'a> {
   },
 }
 
+pub enum Param<'a> {
+  Callee(Span, LocalIdentifier<'a>),
+  Call(Span, Vec<ExpressionValue<'a>>),
+  Member(Span, Atom<'a>),
+  Template(Span, Vec<ExpressionValue<'a>>),
+}
+
+pub struct ProcessorParams<'a> {
+  pub idx: usize,
+  pub display_name: Cow<'a, str>,
+  pub params: Vec<Param<'a>>,
+  pub root: &'a PathBuf,
+  pub filename: &'a PathBuf,
+}
+
+#[derive(Debug)]
+pub struct ProcessorCall<'a> {
+  pub span: Span,
+  pub processor: PathBuf,
+  pub params: ProcessorParams<'a>,
+}
+
+pub type ProcessorCalls<'a> = Vec<ProcessorCall<'a>>;
+
+impl<'a> ExpressionValue<'a> {
+  pub fn from_expression(expression: &Expression<'a>) -> Self {
+    match expression {
+      Expression::Identifier(ident) => {
+        if ident.name == "undefined" {
+          ExpressionValue::ConstValue(ConstValue::Undefined(ident.span))
+        } else {
+          ExpressionValue::Ident(ident.span, ident.name.clone())
+        }
+      }
+      Expression::ArrowFunctionExpression(fn_expr) => ExpressionValue::Function(fn_expr.span()),
+      Expression::FunctionExpression(fn_expr) => ExpressionValue::Function(fn_expr.span()),
+      Expression::StringLiteral(literal) => {
+        ExpressionValue::ConstValue(ConstValue::String(literal.span(), literal.value.clone()))
+      }
+      Expression::NumericLiteral(literal) => {
+        ExpressionValue::ConstValue(ConstValue::Number(literal.span(), literal.value))
+      }
+      Expression::BigIntLiteral(literal) => {
+        ExpressionValue::ConstValue(ConstValue::BigInt(literal.span(), literal.raw.clone()))
+      }
+      Expression::BooleanLiteral(literal) => {
+        ExpressionValue::ConstValue(ConstValue::Boolean(literal.span(), literal.value))
+      }
+      Expression::NullLiteral(literal) => {
+        ExpressionValue::ConstValue(ConstValue::Null(literal.span()))
+      }
+      _ => ExpressionValue::Source(expression.span()),
+    }
+  }
+}
+
 impl<'a> Debug for ExpressionValue<'a> {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     match self {
@@ -47,13 +103,6 @@ impl<'a> Debug for ExpressionValue<'a> {
       }
     }
   }
-}
-
-pub enum Param<'a> {
-  Callee(Span, LocalIdentifier<'a>),
-  Call(Span, Vec<Span>),
-  Member(Span, Atom<'a>),
-  Template(Span, Vec<ExpressionValue<'a>>),
 }
 
 impl<'a> Debug for Param<'a> {
@@ -75,12 +124,6 @@ impl<'a> Debug for Param<'a> {
   }
 }
 
-pub struct ProcessorParams<'a> {
-  pub idx: usize,
-  pub display_name: Cow<'a, str>,
-  pub params: Vec<Param<'a>>,
-}
-
 impl<'a> Debug for ProcessorParams<'a> {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     f.debug_struct("ProcessorParams")
@@ -91,27 +134,26 @@ impl<'a> Debug for ProcessorParams<'a> {
   }
 }
 
-fn find_display_name<'a, 't>(
-  decl_node: Option<Ancestor<'a, 't>>,
-  declaring_symbol: Option<Symbol<'a>>,
+fn find_display_name<'a>(
+  decl_node: Option<&Ancestor<'a>>,
   idx: usize,
   file_name: &'a Path,
 ) -> Cow<'a, str> {
   let mut display_name = None;
 
   match decl_node {
-    Some(Ancestor::ObjectPropertyValue(obj)) => {
-      display_name = obj.key().name();
+    Some(Ancestor::Field(AnyNode::ObjectProperty(obj), "value")) => {
+      display_name = obj.key.name();
     }
 
-    Some(Ancestor::VariableDeclaratorInit(_)) => {
-      if declaring_symbol.is_some() {
-        display_name = Some(Cow::Borrowed(declaring_symbol.unwrap().name));
+    Some(Ancestor::Field(AnyNode::VariableDeclarator(decl), "init")) => {
+      if let BindingPatternKind::BindingIdentifier(ident) = &decl.id.kind {
+        display_name = Some(Cow::Borrowed(ident.name.as_str()));
       }
     }
 
-    Some(Ancestor::JSXAttributeValue(attr)) => {
-      display_name = Some(Cow::Borrowed(attr.name().get_identifier().name.as_str()));
+    Some(Ancestor::Field(AnyNode::JSXAttribute(attr), "value")) => {
+      display_name = Some(Cow::Borrowed(attr.name.get_identifier().name.as_str()));
     }
 
     _ => {}
@@ -133,30 +175,31 @@ fn find_display_name<'a, 't>(
 }
 
 impl<'a> ProcessorParams<'a> {
-  fn new(idx: usize, display_name: Cow<'a, str>) -> Self {
+  fn new(idx: usize, display_name: Cow<'a, str>, root: &'a PathBuf, filename: &'a PathBuf) -> Self {
     Self {
       idx,
       display_name,
       params: Vec::new(),
+      root,
+      filename,
     }
   }
 
   fn find_display_name(
-    ctx: &TraverseCtx<'a>,
-    declaring_symbol: Option<Symbol<'a>>,
+    ancestors: &[Ancestor<'a>],
     idx: usize,
     file_name: &'a Path,
   ) -> Cow<'a, str> {
-    let decl_node = ctx.ancestors().find(|n| {
+    let decl_node = ancestors.iter().rfind(|n| {
       matches!(
         n,
-        Ancestor::ObjectPropertyValue(_)
-          | Ancestor::VariableDeclaratorInit(_)
-          | Ancestor::JSXAttributeValue(_)
+        Ancestor::Field(AnyNode::ObjectProperty(_), "value")
+          | Ancestor::Field(AnyNode::VariableDeclarator(_), "init")
+          | Ancestor::Field(AnyNode::JSXAttribute(_), "value")
       )
     });
 
-    find_display_name(decl_node, declaring_symbol, idx, file_name)
+    find_display_name(decl_node, idx, file_name)
   }
 
   pub fn is_empty(&self) -> bool {
@@ -167,35 +210,45 @@ impl<'a> ProcessorParams<'a> {
   pub fn from_ident(
     ctx: &TraverseCtx<'a>,
     span: &Span,
-    symbol_id: &'a Symbol<'a>,
-    declaring_symbol: Option<Symbol<'a>>,
+    symbol: &'a Symbol,
     idx: usize,
-    file_name: &'a Path,
-  ) -> (Span, oxc::allocator::Box<'a, Self>) {
-    let mut result = ctx.alloc(Self::new(
+    root: &'a PathBuf,
+    file_name: &'a PathBuf,
+  ) -> (Span, Self) {
+    let mut result = Self::new(
       idx,
-      Self::find_display_name(ctx, declaring_symbol, idx, file_name),
-    ));
+      Self::find_display_name(&ctx.ancestors, idx, file_name),
+      root,
+      file_name,
+    );
     let mut span = span;
     result
       .params
-      .push(Param::Callee(*span, LocalIdentifier::Identifier(symbol_id)));
+      .push(Param::Callee(*span, LocalIdentifier::Identifier(symbol)));
 
-    for next in ctx.ancestors() {
+    for next in ctx.ancestors.iter().rev() {
       match &next {
-        Ancestor::CallExpressionCallee(expr) => {
-          span = expr.span();
-          result.params.push(Param::Call(*span, Vec::new()));
+        Ancestor::Field(AnyNode::CallExpression(expr), "callee") => {
+          span = &expr.span;
+          let args = expr
+            .arguments
+            .iter()
+            .map(|arg| match arg.as_expression() {
+              Some(expr) => ExpressionValue::from_expression(expr),
+              None => panic!("Expected an expression"),
+            })
+            .collect();
+          result.params.push(Param::Call(expr.span, args));
         }
-        Ancestor::StaticMemberExpressionObject(expr) => {
-          span = expr.span();
+        Ancestor::Field(AnyNode::StaticMemberExpression(expr), "object") => {
+          span = &expr.span;
           result
             .params
-            .push(Param::Member(*span, expr.property().name.clone()));
+            .push(Param::Member(expr.span, expr.property.name.clone()));
         }
-        Ancestor::TaggedTemplateExpressionTag(expr) => {
+        Ancestor::Field(AnyNode::TaggedTemplateExpression(expr), "tag") => {
           let mut expressions = Vec::new();
-          let literal = expr.quasi();
+          let literal = &expr.quasi;
           // Let's iterate over the quasis and expressions.
           for i in 0..literal.quasis.len() {
             let quasi = &literal.quasis[i];
@@ -210,41 +263,11 @@ impl<'a> ProcessorParams<'a> {
             }
 
             let expression = &literal.expressions[i];
-            let expr = match expression {
-              Expression::Identifier(ident) => {
-                if ident.name == "undefined" {
-                  ExpressionValue::ConstValue(ConstValue::Undefined(ident.span))
-                } else {
-                  ExpressionValue::Ident(ident.span, ident.name.clone())
-                }
-              }
-              Expression::ArrowFunctionExpression(fn_expr) => {
-                ExpressionValue::Function(fn_expr.span())
-              }
-              Expression::FunctionExpression(fn_expr) => ExpressionValue::Function(fn_expr.span()),
-              Expression::StringLiteral(literal) => ExpressionValue::ConstValue(
-                ConstValue::String(literal.span(), literal.value.clone()),
-              ),
-              Expression::NumericLiteral(literal) => {
-                ExpressionValue::ConstValue(ConstValue::Number(literal.span(), literal.value))
-              }
-              Expression::BigIntLiteral(literal) => {
-                ExpressionValue::ConstValue(ConstValue::BigInt(literal.span(), literal.raw.clone()))
-              }
-              Expression::BooleanLiteral(literal) => {
-                ExpressionValue::ConstValue(ConstValue::Boolean(literal.span(), literal.value))
-              }
-              Expression::NullLiteral(literal) => {
-                ExpressionValue::ConstValue(ConstValue::Null(literal.span()))
-              }
-              _ => ExpressionValue::Source(expression.span()),
-            };
-
-            expressions.push(expr);
+            expressions.push(ExpressionValue::from_expression(expression));
           }
 
-          span = expr.span();
-          result.params.push(Param::Template(*span, expressions));
+          span = &expr.span;
+          result.params.push(Param::Template(expr.span, expressions));
         }
         _ => {
           return (*span, result);
@@ -256,52 +279,32 @@ impl<'a> ProcessorParams<'a> {
   }
 }
 
-pub type ListOfProcessorParams<'a> = Vec<(Span, oxc::allocator::Box<'a, ProcessorParams<'a>>)>;
-
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::declaration_context::DeclarationContext;
+  use fast_traverse::{walk, EnterAction, TraverseHooks};
   use oxc::allocator::Allocator;
   use oxc::parser::{ParseOptions, Parser};
-  use oxc_traverse::{traverse_mut, TraverseCtx};
   use std::path::Path;
 
   struct TestVisitor<'a> {
-    pub allocator: &'a Allocator,
-    pub declaration_context: DeclarationContext<'a>,
     pub display_name: Option<Cow<'a, str>>,
     pub file_name: &'a Path,
   }
 
-  impl<'a> oxc_traverse::Traverse<'a> for TestVisitor<'a> {
+  impl<'a> TraverseHooks<'a> for TestVisitor<'a> {
     fn enter_tagged_template_expression(
       &mut self,
-      node: &mut TaggedTemplateExpression<'a>,
+      _node: &TaggedTemplateExpression<'a>,
       ctx: &mut TraverseCtx<'a>,
-    ) {
+    ) -> EnterAction {
       self.display_name = Some(ProcessorParams::find_display_name(
-        ctx,
-        self.declaration_context.get_declaring_symbol(),
+        &ctx.ancestors,
         0,
         self.file_name,
       ));
-    }
 
-    fn enter_variable_declarator(
-      &mut self,
-      node: &mut VariableDeclarator<'a>,
-      ctx: &mut TraverseCtx<'a>,
-    ) {
-      self.declaration_context = DeclarationContext::from(self.allocator, ctx.symbols(), node);
-    }
-
-    fn exit_variable_declarator(
-      &mut self,
-      _node: &mut VariableDeclarator<'a>,
-      _ctx: &mut TraverseCtx<'a>,
-    ) {
-      self.declaration_context = DeclarationContext::None;
+      EnterAction::Continue
     }
   }
 
@@ -311,7 +314,7 @@ mod tests {
     let path = Path::new(path);
     let source_type = SourceType::from_path(path).unwrap();
 
-    let parser_ret = Parser::new(&allocator, &source_text, source_type)
+    let parser_ret = Parser::new(&allocator, source_text, source_type)
       .with_options(ParseOptions {
         parse_regular_expression: true,
         ..ParseOptions::default()
@@ -320,21 +323,18 @@ mod tests {
 
     let program = allocator.alloc(parser_ret.program);
     let mut visitor = TestVisitor {
-      allocator: &allocator,
-      declaration_context: DeclarationContext::None,
+      // declaration_context: DeclarationContext::None,
       display_name: None,
       file_name: path,
     };
 
-    let semantic_ret = oxc_semantic::SemanticBuilder::new(&source_text)
+    let semantic_ret = oxc_semantic::SemanticBuilder::new(source_text)
       .build_module_record(path, program)
       .with_check_syntax_error(true)
       .with_trivias(parser_ret.trivias)
       .build(program);
 
-    let (symbols, scopes) = semantic_ret.semantic.into_symbol_table_and_scope_tree();
-
-    traverse_mut(&mut visitor, &allocator, program, symbols, scopes);
+    walk(&mut visitor, program, semantic_ret.semantic.symbols());
 
     visitor.display_name.expect("Unresolved").to_string()
   }

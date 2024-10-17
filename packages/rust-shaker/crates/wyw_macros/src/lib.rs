@@ -218,6 +218,6 @@ pub fn traverse(_args: TokenStream, input: TokenStream) -> TokenStream {
 }
 
 #[proc_macro]
-pub fn define(input: TokenStream) -> TokenStream {
+pub fn define_traverse(input: TokenStream) -> TokenStream {
   traverse::define(input)
 }

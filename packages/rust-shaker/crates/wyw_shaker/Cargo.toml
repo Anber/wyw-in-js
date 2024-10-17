@@ -1,0 +1,15 @@
+[package]
+name = "wyw_shaker"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+fast-traverse = { path = "../fast-traverse" }
+indoc = "2.0.5"
+itertools = "0.13.0"
+normalize-path = "0.2.1"
+oxc = "0.30.5"
+oxc_resolver = { version = "1.12.0", features = ["package_json_raw_json_api", "pnp", "yarn_pnp"] }
+oxc_semantic = "0.30.5"
+regex = "1.11.0"
+wyw_processor = { path = "../wyw_processor" }

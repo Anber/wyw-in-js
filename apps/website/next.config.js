@@ -7,4 +7,14 @@ module.exports = withNextra({
   images: {
     unoptimized: true,
   },
+  webpack: (config) => {
+    return {
+      ...config,
+      experiments: {
+        ...(config.experiments ?? {}),
+        asyncWebAssembly: true,
+      },
+    };
+  },
+  experimental: { esmExternals: 'loose' },
 });

@@ -1,13 +1,7 @@
-use crate::declaration_context::{DeclarationContext, PathPart};
-use crate::meta::export::{Export, ExportedValue};
-use crate::meta::file::{JsFilePatch, Meta};
-use crate::meta::ident_usages::IdentUsage;
-use crate::meta::import::{Import, Source};
-use crate::meta::local_identifier::LocalIdentifier;
-use crate::meta::processor_params::{ExpressionValue, Param};
-use crate::meta::references::{Reference, References};
-use crate::meta::symbol::Symbol;
 use crate::meta::MetaCollector;
+use fast_traverse::local_identifier::LocalIdentifier;
+use fast_traverse::symbol::Symbol;
+use fast_traverse::{walk, Ancestor, AnyNode, EnterAction, TraverseCtx, TraverseHooks};
 use glob::glob;
 use oxc::allocator::Allocator;
 use oxc::ast::ast::*;
@@ -15,11 +9,16 @@ use oxc::diagnostics::OxcDiagnostic;
 use oxc::parser::{ParseOptions, Parser};
 use oxc::span::{Atom, GetSpan, SourceType};
 use oxc_resolver::Resolver;
-use oxc_semantic::{IsGlobalReference, ReferenceFlags, Semantic};
-use oxc_traverse::{traverse_mut, Ancestor, Traverse, TraverseCtx};
+use oxc_semantic::{IsGlobalReference, Semantic, SymbolTable};
 use std::borrow::Cow;
 use std::ops::Deref;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use wyw_processor::params::{ProcessorCall, ProcessorParams};
+use wyw_shaker::declaration_context::{DeclarationContext, PathPart};
+use wyw_shaker::export::{Export, ExportArea, ExportedValue};
+use wyw_shaker::ident_usages::IdentUsage;
+use wyw_shaker::import::{Import, Source};
+use wyw_shaker::meta::{JsFilePatch, Meta};
 
 // There is a built-in method `is_require_call` in `oxc_traverse` crate
 // but it doesn't check if `require` is a global reference.
@@ -100,217 +99,244 @@ fn unwrap_assignment_value<'a, 'b>(expr: &'b Expression<'a>) -> &'b Expression<'
   }
 }
 
-impl<'a> Traverse<'a> for MetaCollector<'a> {
-  fn exit_program(&mut self, _node: &mut Program<'a>, ctx: &mut TraverseCtx<'a>) {
-    self.meta.resolve_all(self.resolver, self.allocator);
+impl<'a> TraverseHooks<'a> for MetaCollector<'a> {
+  fn exit_program(&mut self, _node: &Program<'a>, _ctx: &mut TraverseCtx<'a>) {
+    // self.meta.resolve_all(self.resolver, self.allocator);
+    //
+    // let mut patch = JsFilePatch::default();
+    //
+    // for import in &self.meta.imports.list {
+    //   let local = import.local();
+    //   if local.is_none() {
+    //     // It is a side effect import. We have to keep it.
+    //     continue;
+    //   }
+    //
+    //   let local = local.unwrap();
+    //   if let LocalIdentifier::MemberExpression(_, _) = local {
+    //     // It is a member expression. We have to keep it.
+    //     panic!("Member expression import");
+    //   }
+    //
+    //   if let LocalIdentifier::Identifier(ident) = local {
+    //     let usages = self.identifier_usages.get(&ident);
+    //     if usages.is_none() || usages.unwrap().is_empty() {
+    //       continue;
+    //     }
+    //
+    //     let usages = usages.unwrap();
+    //
+    //     if usages
+    //       .iter()
+    //       .all(|usage| self.is_marked_as_unnecessary(usage.span()))
+    //     {
+    //       // The identifier is used but will be shaken off. We can remove the import.
+    //       patch.delete_import(import);
+    //       continue;
+    //     }
+    //   }
+    // }
+    //
+    // self.meta.apply_patch(patch);
 
-    let mut patch = JsFilePatch::default();
-
-    for import in &self.meta.imports.list {
-      let local = import.local();
-      if local.is_none() {
-        // It is a side effect import. We have to keep it.
-        continue;
-      }
-
-      let local = local.unwrap();
-      if let LocalIdentifier::MemberExpression(_, _) = local {
-        // It is a member expression. We have to keep it.
-        panic!("Member expression import");
-      }
-
-      if let LocalIdentifier::Identifier(ident) = local {
-        let usages = self.identifier_usages.get(&ident);
-        if usages.is_none() || usages.unwrap().is_empty() {
-          continue;
-        }
-
-        let usages = usages.unwrap();
-
-        if usages.iter().all(|usage| {
-          let usage_span = usage.span();
-          self.is_marked_as_unnecessary(usage_span)
-        }) {
-          // The identifier is used but will be shaken off. We can remove the import.
-          patch.delete_import(import);
-          continue;
-        }
-      }
-    }
-
-    self.meta.apply_patch(patch);
-
-    let mut patch = JsFilePatch::default();
+    let mut patch = JsFilePatch::new(self.allocator, self.resolver, self.meta.directory);
 
     for import in &self.meta.imports.list {
       if let Import::Namespace { source, local } = import {
         let usages = self.identifier_usages.get(local);
-        if usages.is_none() || usages.unwrap().is_empty() {
+        let is_empty = usages.map(|l| l.is_empty()).unwrap_or(true); //.is_none() || usages.unwrap().is_empty();
+        if is_empty {
           // The identifier is not used. Maybe a side effect import?
           patch.delete_import(import);
           patch.imports.add_side_effect(source);
           continue;
         }
 
-        let usages = usages.unwrap();
+        if let Some(usages) = usages {
+          // Check if the namespace is used only in an export area
+          if usages.len() == 1 {
+            let only_usage = &usages[0];
+            let export = self.get_export_by_span(only_usage.span());
 
-        // Check if the namespace is used only in an export area
-        if usages.len() == 1 {
-          let only_usage = &usages[0];
-          let export = self.get_export_by_span(only_usage.span());
+            match (only_usage.prop(), export) {
+              (
+                Some(prop),
+                Some(Export::Named { exported, .. } | Export::Reexport { exported, .. }),
+              ) => {
+                patch.delete_import(import);
+                patch.delete_export(export.unwrap());
+                patch.exports.add_reexport(prop, exported, source);
+                continue;
+              }
 
-          match (only_usage.prop(), export) {
-            (
-              Some(prop),
-              Some(Export::Named { exported, .. } | Export::Reexport { exported, .. }),
-            ) => {
-              patch.delete_import(import);
-              patch.delete_export(export.unwrap());
-              patch.exports.add_reexport(prop, exported, source);
-              continue;
-            }
+              (_, None) => {}
 
-            (_, None) => {}
+              (None, Some(Export::Named { exported, .. })) => {
+                patch.delete_import(import);
+                patch.delete_export(export.unwrap());
+                patch.exports.add_reexport_namespace(exported, source);
+                continue;
+              }
 
-            (None, Some(Export::Named { exported, .. })) => {
-              patch.delete_import(import);
-              patch.delete_export(export.unwrap());
-              patch.exports.add_reexport_namespace(exported, source);
-              continue;
-            }
-
-            (_prop, _export) => {
-              // FIXME: prop-types/index.js breaks this approach.
-              // todo!("Handle unknown export: {:?} as {:?}", export, prop);
-            }
-          }
-        }
-
-        let mut has_uncertain = false;
-
-        for usage in usages {
-          match usage {
-            IdentUsage::Unpacked {
-              symbol_id, path, ..
-            } => {
-              patch
-                .imports
-                .add_named(source, path, &LocalIdentifier::Identifier(*symbol_id));
-            }
-
-            IdentUsage::MemberExpression(_span, obj, prop) => {
-              patch.imports.add_named(
-                source,
-                prop,
-                &LocalIdentifier::MemberExpression(obj, prop.clone()),
-              );
-            }
-
-            IdentUsage::ReexportAll(_) => {
-              // The identifier is reexported. We have to remove the import and add a reexport.
-              patch.delete_import(import);
-              patch.exports.add_reexport_all(source);
-            }
-
-            IdentUsage::Uncertain(_) => {
-              // The identifier is used in an unknown way. We can skip it.
-              has_uncertain = true;
+              (_prop, _export) => {
+                // FIXME: prop-types/index.js breaks this approach.
+                // todo!("Handle unknown export: {:?} as {:?}", export, prop);
+              }
             }
           }
-        }
 
-        // If at least one usage is uncertain, we have to keep the import.
-        if !has_uncertain {
-          patch.delete_import(import);
+          let mut has_uncertain = false;
+
+          for usage in usages {
+            match usage {
+              IdentUsage::Unpacked { symbol, path, .. } => {
+                let symbol = self.allocator.alloc(symbol.clone());
+                patch
+                  .imports
+                  .add_named(source, path, &LocalIdentifier::Identifier(symbol));
+              }
+
+              IdentUsage::MemberExpression(_span, obj, prop) => {
+                patch.imports.add_named(
+                  source,
+                  prop,
+                  &LocalIdentifier::MemberExpression(obj, prop.clone()),
+                );
+              }
+
+              IdentUsage::ReexportAll(_) => {
+                // The identifier is reexported. We have to remove the import and add a reexport.
+                patch.delete_import(import);
+                patch.exports.add_reexport_all(source);
+              }
+
+              IdentUsage::Uncertain(_) => {
+                // The identifier is used in an unknown way. We can skip it.
+                has_uncertain = true;
+              }
+            }
+          }
+
+          // If at least one usage is uncertain, we have to keep the import.
+          if !has_uncertain {
+            patch.delete_import(import);
+          }
         }
       }
     }
 
     self.meta.apply_patch(patch);
 
-    if !self.meta.processor_params.is_empty() {
-      // Build __wywPreval
-      let preval = self.allocator.alloc(String::from("\n"));
-      if self.meta.cjs {
-        preval.push_str("module.exports.__wywPreval = {");
-      } else {
-        preval.push_str("export const __wywPreval = {");
-      }
+    // if !self.meta.processor_params.is_empty() {
+    //   // Build __wywPreval
+    //   let preval = self.allocator.alloc(String::from("\n"));
+    //   if self.meta.cjs {
+    //     preval.push_str("module.exports.__wywPreval = {");
+    //   } else {
+    //     preval.push_str("export const __wywPreval = {");
+    //   }
+    //
+    //   for param in self
+    //     .meta
+    //     .processor_params
+    //     .iter()
+    //     .flat_map(|(_, v)| &v.params)
+    //   {
+    //     if let Param::Template(_, expressions) = &param {
+    //       for expr in expressions {
+    //         if let ExpressionValue::Ident(_, atom) = expr {
+    //           preval.push_str(&format!("{}: {},", atom, atom));
+    //         }
+    //       }
+    //     }
+    //   }
+    //   preval.push_str("};");
+    //
+    //   let eof_span = Span::new(self.source.len() as u32, self.source.len() as u32);
+    //   self
+    //     .meta
+    //     .evaltime_replacements
+    //     .push((eof_span, Atom::from(preval.as_str())));
+    // }
 
-      for param in self
-        .meta
-        .processor_params
-        .iter()
-        .flat_map(|(_, v)| &v.params)
-      {
-        if let Param::Template(_, expressions) = &param {
-          for expr in expressions {
-            if let ExpressionValue::Ident(_, atom) = expr {
-              preval.push_str(&format!("{}: {},", atom, atom));
-            }
-          }
-        }
-      }
-      preval.push_str("};");
-
-      let eof_span = Span::new(self.source.len() as u32, self.source.len() as u32);
-      self
-        .meta
-        .evaltime_replacements
-        .push((eof_span, Atom::from(preval.as_str())));
-    }
-
-    self.meta.optimize_replacements();
+    // self.meta.optimize_replacements();
   }
 
   fn enter_identifier_reference(
     &mut self,
-    node: &mut IdentifierReference<'a>,
+    node: &IdentifierReference<'a>,
     ctx: &mut TraverseCtx<'a>,
-  ) {
+  ) -> EnterAction {
     // self.shaker_markup.process_ref(node, ctx);
 
     let symbol = self.get_symbol_for_ref(node, ctx.deref());
     if let Some(symbol) = symbol {
-      self.references.add(
-        symbol,
-        Reference {
-          flags: ReferenceFlags::Read,
-          span: node.span,
-        },
-      );
-
       if !self.is_span_ignored(&node.span) {
-        self.resolve_identifier_usage(ctx, &node.span, symbol);
+        if let Some(parent) = ctx.parent() {
+          self.identifier_usages.resolve_identifier_usage(
+            parent,
+            &node.span,
+            symbol,
+            ctx.symbols(),
+          );
+
+          let import = self.meta.imports.find_by_symbol(symbol);
+          let processor = import.and_then(|import| import.processor());
+          if let Some(processor) = processor {
+            let idx = self.meta.processor_calls.len();
+            let (span, processor_params) =
+              ProcessorParams::from_ident(ctx, &node.span, symbol, idx, self.root, self.file_name);
+
+            if !processor_params.is_empty() {
+              self.meta.processor_calls.push(ProcessorCall {
+                span,
+                processor: processor.clone(),
+                params: processor_params,
+              });
+            }
+          }
+        }
       }
     } else {
       // It's a global reference. Just ignore it.
     }
+
+    EnterAction::Continue
   }
 
   fn enter_member_expression(
     &mut self,
-    node: &mut MemberExpression<'a>,
+    node: &MemberExpression<'a>,
     ctx: &mut TraverseCtx<'a>,
-  ) {
+  ) -> EnterAction {
     if let MemberExpression::ComputedMemberExpression(member_expr) = node {
       // Something like `namespace["property"]`
       if let Expression::Identifier(ident) = &member_expr.object {
-        let symbol_id = self.get_symbol_for_ref(ident, ctx);
+        let symbol = self.get_symbol_for_ref(ident, ctx);
 
-        if symbol_id.is_some() {
+        if let Some(symbol) = symbol {
           if let Expression::StringLiteral(string) = &member_expr.expression {
-            self.add_member_usage(&member_expr.span, string.value.clone(), symbol_id.unwrap());
+            self.identifier_usages.add_member_usage(
+              &member_expr.span,
+              string.value.clone(),
+              symbol,
+            );
             self.ignore_span(&member_expr.span);
           }
         }
       }
     }
+
+    EnterAction::Continue
   }
 
   // Looking for "require" and "import" calls.
-  fn enter_call_expression(&mut self, node: &mut CallExpression<'a>, ctx: &mut TraverseCtx<'a>) {
-    self.necessity_check_call(node, ctx);
+  fn enter_call_expression(
+    &mut self,
+    node: &CallExpression<'a>,
+    ctx: &mut TraverseCtx<'a>,
+  ) -> EnterAction {
+    // self.necessity_check_call(node, ctx);
 
     if is_require_call(node, ctx) {
       self.import_from_require_call(node, ctx)
@@ -329,15 +355,17 @@ impl<'a> Traverse<'a> for MetaCollector<'a> {
         }
       }
     }
+
+    EnterAction::Continue
   }
 
   fn enter_assignment_expression(
     &mut self,
-    node: &mut AssignmentExpression<'a>,
+    node: &AssignmentExpression<'a>,
     ctx: &mut TraverseCtx<'a>,
-  ) {
+  ) -> EnterAction {
     if !node.left.is_member_expression() {
-      return;
+      return EnterAction::Continue;
     }
 
     let member_expr = node.left.as_member_expression().unwrap();
@@ -347,7 +375,7 @@ impl<'a> Traverse<'a> for MetaCollector<'a> {
 
     if right.is_void_0() {
       // … = void 0;
-      return;
+      return EnterAction::Continue;
     }
 
     let reexport_source = if let Expression::CallExpression(call_expr) = &node.right {
@@ -401,43 +429,30 @@ impl<'a> Traverse<'a> for MetaCollector<'a> {
       self.meta.exports.add(export.clone());
       self.add_export_area(&node.span, &export);
     }
-  }
 
-  // If we are inside a declarator, we have to save declared variable name.
-  fn enter_variable_declarator(
-    &mut self,
-    node: &mut VariableDeclarator<'a>,
-    ctx: &mut TraverseCtx<'a>,
-  ) {
-    self.declaration_context = DeclarationContext::from(self.allocator, ctx.symbols(), node);
-  }
-
-  fn exit_variable_declarator(
-    &mut self,
-    _node: &mut VariableDeclarator<'a>,
-    _ctx: &mut TraverseCtx<'a>,
-  ) {
-    self.declaration_context = DeclarationContext::None;
+    EnterAction::Continue
   }
 
   fn enter_expression_statement(
     &mut self,
-    node: &mut ExpressionStatement<'a>,
+    node: &ExpressionStatement<'a>,
     ctx: &mut TraverseCtx<'a>,
-  ) {
+  ) -> EnterAction {
     self.tslib_entrypoint(node, ctx);
     self.esbuild_entrypoint(node, ctx);
     self.swc_entrypoint(node, ctx);
     self.object_define_property_entrypoint(node, ctx);
+
+    EnterAction::Continue
   }
 
   fn enter_import_expression(
     &mut self,
-    node: &mut ImportExpression<'a>,
-    _ctx: &mut TraverseCtx<'a>,
-  ) {
+    node: &ImportExpression<'a>,
+    ctx: &mut TraverseCtx<'a>,
+  ) -> EnterAction {
     if self.is_span_ignored(&node.span) {
-      return;
+      return EnterAction::Continue;
     }
 
     // Since it returns a promise, there are no simple ways to figure out what is imported.
@@ -445,7 +460,9 @@ impl<'a> Traverse<'a> for MetaCollector<'a> {
       Expression::StringLiteral(str) => {
         let source = &str.value;
 
-        match &self.declaration_context {
+        let declaration_context = DeclarationContext::from_ancestors(&ctx.ancestors);
+
+        match &declaration_context {
           DeclarationContext::None => {
             // It is a side effect import
             self.meta.imports.add_side_effect_unresolved(source);
@@ -453,21 +470,19 @@ impl<'a> Traverse<'a> for MetaCollector<'a> {
 
           DeclarationContext::List(list) => {
             for decl in list {
+              let symbol = self.allocator.alloc(decl.symbol.clone());
               match &*decl.from {
                 &[PathPart::Member(ref ident), ..] => {
                   self.meta.imports.add_unresolved_named(
                     source,
                     ident,
-                    &LocalIdentifier::Identifier(decl.symbol),
+                    &LocalIdentifier::Identifier(symbol),
                   );
                 }
 
                 [] => {
                   // It is a namespace import
-                  self
-                    .meta
-                    .imports
-                    .add_unresolved_namespace(source, decl.symbol);
+                  self.meta.imports.add_unresolved_namespace(source, symbol);
                 }
 
                 _ => {
@@ -484,32 +499,35 @@ impl<'a> Traverse<'a> for MetaCollector<'a> {
         todo!("Handle other types of arguments");
       }
     }
-  }
 
-  fn enter_module_declaration(
-    &mut self,
-    _node: &mut ModuleDeclaration<'a>,
-    _ctx: &mut TraverseCtx<'a>,
-  ) {
-    self.meta.exports.mark_as_es_module();
+    EnterAction::Continue
   }
 
   fn enter_import_declaration(
     &mut self,
-    node: &mut ImportDeclaration<'a>,
+    node: &ImportDeclaration<'a>,
     _ctx: &mut TraverseCtx<'a>,
-  ) {
+  ) -> EnterAction {
+    self.meta.exports.mark_as_es_module();
+    self.meta.cjs = false;
+
     if node.specifiers.is_none() {
       self
         .meta
         .imports
         .add_side_effect_unresolved(&node.source.value);
     }
+
+    EnterAction::Continue
   }
 
-  fn enter_import_specifier(&mut self, node: &mut ImportSpecifier<'a>, ctx: &mut TraverseCtx<'a>) {
+  fn enter_import_specifier(
+    &mut self,
+    node: &ImportSpecifier<'a>,
+    ctx: &mut TraverseCtx<'a>,
+  ) -> EnterAction {
     if node.import_kind.is_type() || self.is_type_import(ctx) {
-      return;
+      return EnterAction::Ignore;
     }
 
     let source = self.get_source_from_specifier(ctx);
@@ -528,17 +546,17 @@ impl<'a> Traverse<'a> for MetaCollector<'a> {
         todo!("Handle other types of import specifiers");
       }
     }
+
+    EnterAction::Continue
   }
 
   fn enter_import_default_specifier(
     &mut self,
-    node: &mut ImportDefaultSpecifier<'a>,
+    node: &ImportDefaultSpecifier<'a>,
     ctx: &mut TraverseCtx<'a>,
-  ) {
-    self.meta.cjs = false;
-
+  ) -> EnterAction {
     if self.is_type_import(ctx) {
-      return;
+      return EnterAction::Ignore;
     }
 
     let source = self.get_source_from_specifier(ctx);
@@ -547,17 +565,40 @@ impl<'a> Traverse<'a> for MetaCollector<'a> {
       source.unwrap(),
       &LocalIdentifier::Identifier(self.get_symbol_for_binding(&node.local, ctx)),
     );
+
+    EnterAction::Continue
+  }
+
+  fn enter_ts_export_assignment(
+    &mut self,
+    _node: &'a TSExportAssignment<'a>,
+    _ctx: &mut TraverseCtx<'a>,
+  ) -> EnterAction {
+    self.meta.exports.mark_as_es_module();
+    self.meta.cjs = false;
+    EnterAction::Continue
+  }
+
+  fn enter_ts_namespace_export_declaration(
+    &mut self,
+    _node: &'a TSNamespaceExportDeclaration<'a>,
+    _ctx: &mut TraverseCtx<'a>,
+  ) -> EnterAction {
+    self.meta.exports.mark_as_es_module();
+    self.meta.cjs = false;
+    EnterAction::Continue
   }
 
   fn enter_import_namespace_specifier(
     &mut self,
-    node: &mut ImportNamespaceSpecifier<'a>,
+    node: &ImportNamespaceSpecifier<'a>,
     ctx: &mut TraverseCtx<'a>,
-  ) {
+  ) -> EnterAction {
+    self.meta.exports.mark_as_es_module();
     self.meta.cjs = false;
 
     if self.is_type_import(ctx) {
-      return;
+      return EnterAction::Ignore;
     }
 
     let source = self.get_source_from_specifier(ctx);
@@ -567,17 +608,20 @@ impl<'a> Traverse<'a> for MetaCollector<'a> {
       source.unwrap(),
       self.get_symbol_for_binding(&node.local, ctx),
     );
+
+    EnterAction::Continue
   }
 
   fn enter_export_named_declaration(
     &mut self,
-    node: &mut ExportNamedDeclaration<'a>,
+    node: &ExportNamedDeclaration<'a>,
     ctx: &mut TraverseCtx<'a>,
-  ) {
+  ) -> EnterAction {
+    self.meta.exports.mark_as_es_module();
     self.meta.cjs = false;
 
     if node.declaration.is_none() || self.is_type_export(ctx) || node.export_kind.is_type() {
-      return;
+      return EnterAction::Continue;
     }
 
     match &node.declaration {
@@ -636,22 +680,27 @@ impl<'a> Traverse<'a> for MetaCollector<'a> {
         todo!("Handle other types of export declarations");
       }
     }
+
+    EnterAction::Continue
   }
 
   fn enter_export_default_declaration(
     &mut self,
-    _node: &mut ExportDefaultDeclaration<'a>,
+    _node: &ExportDefaultDeclaration<'a>,
     _ctx: &mut TraverseCtx<'a>,
-  ) {
+  ) -> EnterAction {
+    self.meta.exports.mark_as_es_module();
     self.meta.cjs = false;
     self.meta.exports.add_default();
+    EnterAction::Continue
   }
 
   fn enter_export_all_declaration(
     &mut self,
-    node: &mut ExportAllDeclaration<'a>,
+    node: &ExportAllDeclaration<'a>,
     _ctx: &mut TraverseCtx<'a>,
-  ) {
+  ) -> EnterAction {
+    self.meta.exports.mark_as_es_module();
     self.meta.cjs = false;
     let source = node.source.value.clone();
 
@@ -670,12 +719,17 @@ impl<'a> Traverse<'a> for MetaCollector<'a> {
         self.meta.exports.add_unresolved_reexport_all(&source);
       }
     }
+
+    EnterAction::Continue
   }
 
-  fn enter_export_specifier(&mut self, node: &mut ExportSpecifier<'a>, ctx: &mut TraverseCtx<'a>) {
-    self.meta.cjs = false;
+  fn enter_export_specifier(
+    &mut self,
+    node: &ExportSpecifier<'a>,
+    ctx: &mut TraverseCtx<'a>,
+  ) -> EnterAction {
     if self.is_type_export(ctx) || node.export_kind.is_type() {
-      return;
+      return EnterAction::Ignore;
     }
 
     let source = self.get_source_from_specifier(ctx);
@@ -705,15 +759,17 @@ impl<'a> Traverse<'a> for MetaCollector<'a> {
         todo!("Handle other types of export specifiers");
       }
     }
+
+    EnterAction::Continue
   }
 
-  fn enter_jsx_element(&mut self, node: &mut JSXElement<'a>, ctx: &mut TraverseCtx<'a>) {
-    self.mark_react_component_as_unnecessary(ctx, node.span);
-  }
-
-  fn enter_jsx_fragment(&mut self, node: &mut JSXFragment<'a>, ctx: &mut TraverseCtx<'a>) {
-    self.mark_react_component_as_unnecessary(ctx, node.span);
-  }
+  // fn enter_jsx_element(&mut self, node: &JSXElement<'a>, ctx: &mut TraverseCtx<'a>) {
+  //   self.mark_react_component_as_unnecessary(ctx, node.span);
+  // }
+  //
+  // fn enter_jsx_fragment(&mut self, node: &JSXFragment<'a>, ctx: &mut TraverseCtx<'a>) {
+  //   self.mark_react_component_as_unnecessary(ctx, node.span);
+  // }
 }
 
 fn get_property_key<'a>(prop: &PropertyKey<'a>) -> Option<Atom<'a>> {
@@ -727,16 +783,36 @@ fn get_property_key<'a>(prop: &PropertyKey<'a>) -> Option<Atom<'a>> {
 }
 
 impl<'a> MetaCollector<'a> {
+  pub fn add_export_area(&mut self, span: &Span, export: &Export<'a>) {
+    self.export_areas.push(ExportArea {
+      export: export.clone(),
+      span: *span,
+    });
+  }
+
+  pub fn get_export_by_span(&self, span: &Span) -> Option<&Export<'a>> {
+    self
+      .export_areas
+      .iter()
+      .find(|area| area.span.start <= span.start && area.span.end >= span.end)
+      .map(|area| &area.export)
+  }
+}
+
+impl<'a> MetaCollector<'a> {
   // es import/export helpers
   fn get_source_from_specifier<'b>(&self, ctx: &'b TraverseCtx<'a>) -> Option<&'b Atom<'a>> {
-    match ctx.parent() {
-      Ancestor::ImportDeclarationSpecifiers(spec) => Some(&spec.source().value),
+    let parent = ctx.parent()?;
+    match &parent {
+      Ancestor::ListItem(AnyNode::ImportDeclaration(import_decl), "specifiers", _) => {
+        Some(&import_decl.source.value)
+      }
 
-      Ancestor::ExportNamedDeclarationSpecifiers(spec) => {
-        let source = spec.source();
-        match source {
-          Some(source) => Some(&source.value),
-          None => None,
+      Ancestor::ListItem(AnyNode::ExportNamedDeclaration(export_decl), "specifiers", _) => {
+        if let Some(source) = &export_decl.source {
+          Some(&source.value)
+        } else {
+          None
         }
       }
 
@@ -747,15 +823,21 @@ impl<'a> MetaCollector<'a> {
   }
 
   fn is_type_import(&self, ctx: &TraverseCtx<'a>) -> bool {
-    match ctx.parent() {
-      Ancestor::ImportDeclarationSpecifiers(spec) => spec.import_kind().is_type(),
+    let parent = ctx.parent();
+    match parent {
+      Some(Ancestor::ListItem(AnyNode::ImportDeclaration(import_decl), "specifiers", _)) => {
+        import_decl.import_kind.is_type()
+      }
       _ => false,
     }
   }
 
   fn is_type_export(&self, ctx: &TraverseCtx<'a>) -> bool {
-    match ctx.parent() {
-      Ancestor::ExportNamedDeclarationSpecifiers(spec) => spec.export_kind().is_type(),
+    let parent = ctx.parent();
+    match parent {
+      Some(Ancestor::ListItem(AnyNode::ExportNamedDeclaration(export_decl), "specifiers", _)) => {
+        export_decl.export_kind.is_type()
+      }
       _ => false,
     }
   }
@@ -801,7 +883,7 @@ impl<'a> MetaCollector<'a> {
 
   fn object_define_property_entrypoint(
     &mut self,
-    node: &mut ExpressionStatement<'a>,
+    node: &ExpressionStatement<'a>,
     ctx: &TraverseCtx<'a>,
   ) -> bool {
     if let Expression::CallExpression(call_expr) = &node.expression {
@@ -1017,11 +1099,7 @@ impl<'a> MetaCollector<'a> {
     }
   }
 
-  fn swc_entrypoint(
-    &mut self,
-    node: &mut ExpressionStatement<'a>,
-    ctx: &mut TraverseCtx<'a>,
-  ) -> bool {
+  fn swc_entrypoint(&mut self, node: &ExpressionStatement<'a>, ctx: &mut TraverseCtx<'a>) -> bool {
     if let Expression::CallExpression(call_expr) = &node.expression {
       self.swc_get_from_fn_export(call_expr, ctx);
     }
@@ -1057,7 +1135,7 @@ impl<'a> MetaCollector<'a> {
 
   fn esbuild_entrypoint(
     &mut self,
-    node: &mut ExpressionStatement<'a>,
+    node: &ExpressionStatement<'a>,
     ctx: &mut TraverseCtx<'a>,
   ) -> bool {
     if let Expression::CallExpression(call_expr) = &node.expression {
@@ -1073,7 +1151,7 @@ impl<'a> MetaCollector<'a> {
 
   fn tslib_entrypoint(
     &mut self,
-    node: &mut ExpressionStatement<'a>,
+    node: &ExpressionStatement<'a>,
     ctx: &mut TraverseCtx<'a>,
   ) -> bool {
     let tslib_import = self.get_tslib_import();
@@ -1127,7 +1205,7 @@ impl<'a> MetaCollector<'a> {
   fn tslib_is_export_star(
     &self,
     call_expr: &CallExpression<'a>,
-    tslib: &'a Symbol<'a>,
+    tslib: &'a Symbol,
     ctx: &TraverseCtx<'a>,
   ) -> bool {
     if let Expression::StaticMemberExpression(ident) = &call_expr.callee {
@@ -1150,7 +1228,7 @@ impl<'a> MetaCollector<'a> {
 }
 
 impl<'a> MetaCollector<'a> {
-  fn get_tslib_import(&self) -> Option<&'a Symbol<'a>> {
+  fn get_tslib_import(&self) -> Option<&'a Symbol> {
     self.meta.imports.find_ns_by_source("tslib")
   }
 }
@@ -1174,35 +1252,27 @@ impl<'a> MetaCollector<'a> {
     &self,
     ident: &IdentifierReference<'a>,
     ctx: &TraverseCtx<'a>,
-  ) -> Option<&'a Symbol<'a>> {
-    let reference_id = ident.reference_id.get();
-    reference_id?;
+  ) -> Option<&'a Symbol> {
+    let reference_id = ident.reference_id.get()?;
+    let id = ctx.symbols().references.get(reference_id)?.symbol_id()?;
 
-    let reference_id = reference_id.unwrap();
-
-    let reference = ctx.symbols().references.get(reference_id);
-
-    reference?;
-
-    let reference = reference.unwrap();
-
-    reference.symbol_id().map(|id| {
-      let decl = ctx.symbols().spans.get(id).unwrap();
-      Symbol::new(self.allocator, ctx.symbols(), id, *decl)
-    })
+    let decl = ctx.symbols().spans.get(id).unwrap();
+    let symbol = self.allocator.alloc(Symbol::new(ctx.symbols(), id, *decl));
+    Some(symbol)
   }
 
   pub(crate) fn get_symbol_for_binding(
     &self,
     ident: &BindingIdentifier<'a>,
     ctx: &TraverseCtx<'a>,
-  ) -> &'a Symbol<'a> {
+  ) -> &'a Symbol {
     ident
       .symbol_id
       .get()
       .map(|id| {
         let decl = ctx.symbols().spans.get(id).unwrap();
-        Symbol::new(self.allocator, ctx.symbols(), id, *decl)
+        let symbol = Symbol::new(ctx.symbols(), id, *decl);
+        self.allocator.alloc(symbol)
       })
       .expect("No symbol id")
   }
@@ -1255,14 +1325,8 @@ impl<'a> MetaCollector<'a> {
   }
 
   fn process_standalone_require_call(&mut self, source: &Atom<'a>, ctx: &TraverseCtx<'a>) {
-    let parent = ctx.parent();
-    let is_namespace_import =
-      (parent.is_via_expression() || parent.is_via_argument()) && !parent.is_expression_statement();
-
-    if !is_namespace_import {
-      // Side effect import
+    if let Some(Ancestor::Field(AnyNode::ExpressionStatement(_), "expression")) = ctx.parent() {
       self.meta.imports.add_side_effect_unresolved(source);
-
       return;
     }
 
@@ -1274,14 +1338,14 @@ impl<'a> MetaCollector<'a> {
       "_export_star",
     ];
 
-    let reexport_method = ctx.ancestors().find(|ancestor| {
+    let has_reexport_method = ctx.ancestors.iter().rev().any(|ancestor| {
       matches!(
-          ancestor,
-          Ancestor::CallExpressionArguments(arg) if reexport_method_names.iter().any(|m| arg.callee().is_specific_id(m))
+        ancestor,
+        Ancestor::ListItem(AnyNode::CallExpression(call_expr), "arguments", _) if reexport_method_names.iter().any(|m| call_expr.callee.is_specific_id(m))
       )
     });
 
-    if reexport_method.is_some() {
+    if has_reexport_method {
       // It is a reexport
       self.meta.exports.add_unresolved_reexport_all(source);
     }
@@ -1293,8 +1357,8 @@ impl<'a> MetaCollector<'a> {
     }
 
     let prop = match ctx.parent() {
-      Ancestor::StaticMemberExpressionObject(member_expr) => {
-        Some(member_expr.property().name.clone())
+      Some(Ancestor::Field(AnyNode::StaticMemberExpression(member_expr), "object")) => {
+        Some(member_expr.property.name.clone())
       }
       _ => None,
     };
@@ -1302,28 +1366,27 @@ impl<'a> MetaCollector<'a> {
     match &call_expr.arguments.first().unwrap() {
       Argument::StringLiteral(str) => {
         let source = &str.value;
+        let declaration_context = DeclarationContext::from_ancestors(&ctx.ancestors);
 
-        match &self.declaration_context {
+        match &declaration_context {
           DeclarationContext::None => {
             self.process_standalone_require_call(source, ctx);
           }
 
           DeclarationContext::List(list) => {
             for decl in list {
+              let symbol = self.allocator.alloc(decl.symbol.clone());
               match (&*decl.from, &prop) {
                 (_, Some(ref ident)) | (&[PathPart::Member(ref ident), ..], None) => {
                   self.meta.imports.add_unresolved_named(
                     source,
                     ident,
-                    &LocalIdentifier::Identifier(decl.symbol),
+                    &LocalIdentifier::Identifier(symbol),
                   );
                 }
 
                 (&[], None) => {
-                  self
-                    .meta
-                    .imports
-                    .add_unresolved_namespace(source, decl.symbol);
+                  self.meta.imports.add_unresolved_namespace(source, symbol);
                 }
 
                 (&[PathPart::Index(_), ..], None) => {
@@ -1343,7 +1406,7 @@ impl<'a> MetaCollector<'a> {
     }
   }
 
-  fn import_from_import_meta_glob(&mut self, args: &[Argument<'a>], _ctx: &TraverseCtx<'a>) {
+  fn import_from_import_meta_glob(&mut self, args: &[Argument<'a>], ctx: &TraverseCtx<'a>) {
     if args.is_empty() || args.len() > 2 {
       return;
     }
@@ -1358,13 +1421,15 @@ impl<'a> MetaCollector<'a> {
       let full_path_buf = self.file_name.parent().unwrap().join(pattern);
       let full_path = full_path_buf.to_str();
       if let Some(full_path) = full_path {
+        let declaration_context = DeclarationContext::from_ancestors(&ctx.ancestors);
+
         for entry in glob(full_path).expect("Failed to read glob pattern") {
           match entry {
             Ok(path) => {
               let path = self.allocator.alloc(path);
               let path_str = path.to_str().unwrap();
               let source = Atom::from(path_str);
-              match &self.declaration_context {
+              match &declaration_context {
                 DeclarationContext::None => {
                   // It is a side effect import
                   self.meta.imports.add_side_effect_unresolved(&source);
@@ -1372,21 +1437,19 @@ impl<'a> MetaCollector<'a> {
 
                 DeclarationContext::List(list) => {
                   for decl in list {
+                    let symbol = self.allocator.alloc(decl.symbol.clone());
                     match &*decl.from {
                       &[PathPart::Member(ref ident), ..] => {
                         self.meta.imports.add_unresolved_named(
                           &source,
                           ident,
-                          &LocalIdentifier::Identifier(decl.symbol),
+                          &LocalIdentifier::Identifier(symbol),
                         );
                       }
 
                       [] => {
                         // It is a namespace import
-                        self
-                          .meta
-                          .imports
-                          .add_unresolved_namespace(&source, decl.symbol);
+                        self.meta.imports.add_unresolved_namespace(&source, symbol);
                       }
 
                       _ => {
@@ -1406,30 +1469,28 @@ impl<'a> MetaCollector<'a> {
   }
 }
 
-fn collect<'a>(
-  semantic: Semantic<'a>,
-  path: &'a Path,
+pub fn collect_meta<'a>(
+  symbols: &'a SymbolTable,
+  root: &'a PathBuf,
+  path: &'a PathBuf,
   source_text: &'a str,
   allocator: &'a Allocator,
   resolver: &'a Resolver,
-  program: &'a mut Program<'a>,
-) -> (References<'a>, Meta<'a>) {
-  let (symbols, scopes) = semantic.into_symbol_table_and_scope_tree();
+  program: &'a Program<'a>,
+) -> Meta<'a> {
+  let mut collector = MetaCollector::new(root, path, source_text, allocator, resolver);
 
-  let mut collector = MetaCollector::new(path, source_text, allocator, resolver);
+  walk(&mut collector, program, symbols);
 
-  traverse_mut(&mut collector, allocator, program, symbols, scopes);
-
-  (collector.references, collector.meta)
+  collector.meta
 }
 
 pub fn parse_js_file_from_source<'a>(
   allocator: &'a Allocator,
-  resolver: &'a Resolver,
   path: &'a Path,
   source_text: &'a str,
   source_type: SourceType,
-) -> Result<Meta<'a>, Vec<OxcDiagnostic>> {
+) -> Result<(Semantic<'a>, Program<'a>), Vec<OxcDiagnostic>> {
   let parser_ret = Parser::new(allocator, source_text, source_type)
     .with_options(ParseOptions {
       parse_regular_expression: true,
@@ -1439,7 +1500,6 @@ pub fn parse_js_file_from_source<'a>(
 
   if !parser_ret.errors.is_empty() {
     for error in parser_ret.errors.clone() {
-      // let error = error.with_source_code(source_text.clone());
       println!("{error:?}");
       println!("Parsed with Errors.");
     }
@@ -1447,18 +1507,31 @@ pub fn parse_js_file_from_source<'a>(
     return Err(parser_ret.errors.clone());
   }
 
-  let program = allocator.alloc(parser_ret.program);
-
   let semantic_ret = oxc_semantic::SemanticBuilder::new(source_text)
-    .build_module_record(path, program)
+    .build_module_record(path, &parser_ret.program)
     .with_check_syntax_error(true)
     .with_trivias(parser_ret.trivias)
-    .build(program);
+    .build(&parser_ret.program);
 
-  let nodes = semantic_ret.semantic.nodes();
+  Ok((semantic_ret.semantic, parser_ret.program))
+}
 
-  let (references, meta) = collect(
-    semantic_ret.semantic,
+pub fn parse_and_collect<'a>(
+  allocator: &'a Allocator,
+  resolver: &'a Resolver,
+  root: &'a PathBuf,
+  path: &'a PathBuf,
+  source_text: &'a str,
+  source_type: SourceType,
+) -> Result<Meta<'a>, Vec<OxcDiagnostic>> {
+  let (semantic, program) = parse_js_file_from_source(allocator, path, source_text, source_type)?;
+
+  let semantic = allocator.alloc(semantic);
+  let program = allocator.alloc(program);
+
+  let meta = collect_meta(
+    semantic.symbols(),
+    root,
     path,
     source_text,
     allocator,
@@ -1499,13 +1572,14 @@ pub fn parse_js_file_from_source<'a>(
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::default_resolver::create_resolver;
   use glob::glob;
   use insta::assert_debug_snapshot;
   use std::path::PathBuf;
+  use wyw_shaker::default_resolver::create_resolver;
 
   #[testing::fixture("tests/fixture/**/*.input.?s")]
   fn fixture(input: PathBuf) {
+    let root = std::env::current_dir().unwrap();
     let snapshot_path = input.parent().unwrap();
     let snapshot_name = input.file_stem().and_then(|s| s.to_str()).unwrap();
 
@@ -1513,8 +1587,14 @@ mod tests {
     let allocator = Allocator::default();
     let file_content = std::fs::read_to_string(&input).unwrap();
     let source_type = SourceType::from_path(&input).unwrap();
-    let result =
-      parse_js_file_from_source(&allocator, &resolver, &input, &file_content, source_type);
+    let result = parse_and_collect(
+      &allocator,
+      &resolver,
+      &root,
+      &input,
+      &file_content,
+      source_type,
+    );
     assert!(result.is_ok());
 
     let js_file = result.unwrap();
@@ -1541,11 +1621,18 @@ mod tests {
       .map(|file| (file.clone(), std::fs::read_to_string(&file).unwrap()));
 
     fn run_for_file(file: &PathBuf, file_content: &str) {
+      let root = std::env::current_dir().unwrap();
       let resolver = create_resolver(&file);
       let allocator = Allocator::default();
       let source_type = SourceType::from_path(file).unwrap();
-      let result =
-        parse_js_file_from_source(&allocator, &resolver, file, file_content, source_type);
+      let result = parse_and_collect(
+        &allocator,
+        &resolver,
+        &root,
+        file,
+        file_content,
+        source_type,
+      );
       assert!(result.is_ok());
     }
 

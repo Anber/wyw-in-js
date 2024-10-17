@@ -11,7 +11,7 @@ lto = true
 
 [dependencies]
 serde = "1"
-log = "0.4.21"
+log = "0.4.22"
 serde_json = "1.0.114"
 oxc = "0.30.5"
 oxc_codegen = "0.30.5"
@@ -26,9 +26,13 @@ insta = { version = "1.40.0", features = ["filters"] }
 itertools = "0.13.0"
 indoc = "2.0.5"
 regex = "1.11.0"
+pluginator = "1.0.1"
 
-fast-traverse = { path = "./crates/fast-traverse" }
+fast-traverse = { path = "crates/fast-traverse" }
 wyw_macros = { path = "crates/wyw_macros" }
+wyw_processor = { path = "crates/wyw_processor" }
+wyw_shaker = { path = "crates/wyw_shaker" }
+libloading = "0.8.5"
 
 [dev-dependencies]
 insta = { version = "1.40.0", features = ["yaml"] }
