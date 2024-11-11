@@ -21,19 +21,34 @@ function createWindow(): Window {
   return win;
 }
 
+/**
+ * `happy-dom` already has required references, so we don't need to set them.
+ */
+function setReferencePropertyIfNotPresent(
+  context: vm.Context,
+  key: string
+): void {
+  if (context[key] === context) {
+    return;
+  }
+
+  context[key] = context;
+}
+
 function createBaseContext(
   win: Window | undefined,
   additionalContext: Partial<vm.Context>
 ): Partial<vm.Context> {
   const baseContext: vm.Context = win ?? {};
 
-  baseContext.document = win?.document;
-  baseContext.window = win;
-  baseContext.self = win;
-  baseContext.top = win;
-  baseContext.parent = win;
-  baseContext.global = win;
+  setReferencePropertyIfNotPresent(baseContext, 'window');
+  setReferencePropertyIfNotPresent(baseContext, 'self');
+  setReferencePropertyIfNotPresent(baseContext, 'top');
+  setReferencePropertyIfNotPresent(baseContext, 'parent');
+  setReferencePropertyIfNotPresent(baseContext, 'global');
+  setReferencePropertyIfNotPresent(baseContext, 'process');
 
+  baseContext.document = win?.document;
   baseContext.process = process;
 
   baseContext.clearImmediate = NOOP;
@@ -57,7 +72,7 @@ function createHappyDOMWindow() {
 
   return {
     teardown: () => {
-      win.happyDOM.cancelAsync();
+      win.happyDOM.abort();
     },
     window: win,
   };
