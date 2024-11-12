@@ -1,5 +1,11 @@
 # @wyw-in-js/shared
 
+## 0.5.5
+
+### Patch Changes
+
+- 6bd612a: fix(shared): invalid export of interface
+
 ## 0.5.4
 
 ### Patch Changes

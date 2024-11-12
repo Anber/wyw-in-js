@@ -1,5 +1,16 @@
 # @wyw-in-js/cli
 
+## 0.5.5
+
+### Patch Changes
+
+- Updated dependencies [6bd612a]
+- Updated dependencies [830d6df]
+- Updated dependencies [fcfc357]
+- Updated dependencies [81bcb65]
+  - @wyw-in-js/shared@0.5.5
+  - @wyw-in-js/transform@0.5.5
+
 ## 0.5.4
 
 ### Patch Changes
