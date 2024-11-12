@@ -1,5 +1,16 @@
 # @wyw-in-js/transform
 
+## 0.5.5
+
+### Patch Changes
+
+- 830d6df: chore: bump happy-dom to 13.10.1
+- fcfc357: chore: bump happy-dom to 14.12.3
+- 81bcb65: chore: bump happy-dom to 15.11.0
+- Updated dependencies [6bd612a]
+  - @wyw-in-js/shared@0.5.5
+  - @wyw-in-js/processor-utils@0.5.5
+
 ## 0.5.4
 
 ### Patch Changes
