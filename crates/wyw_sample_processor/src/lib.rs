@@ -16,7 +16,7 @@ pub enum TransformTargetProcessors {
 pub struct TransformTarget {
   pub specifier: String,
   pub source: String,
-  pub processor: TransformTargetProcessors
+  pub processor: TransformTargetProcessors,
 }
 
 #[napi(object)]
@@ -28,19 +28,18 @@ pub struct TransformOptions {
 
 #[napi]
 pub fn transform(filename: String, source_code: String, options: TransformOptions) -> String {
-  let processors = HashMap::from([
-    (TransformTargetProcessors::SampleTag, SampleTagProcessor{}),
-  ]);
+  let processors = HashMap::from([(TransformTargetProcessors::SampleTag, SampleTagProcessor {})]);
 
   // TODO this is a stub implementation, will be moved to wyw-in-js-transform
-  processors.get(&TransformTargetProcessors::SampleTag).unwrap().transform()
+  processors
+    .get(&TransformTargetProcessors::SampleTag)
+    .unwrap()
+    .transform()
 }
 
 // TODO: this is an actual impl, will stay in this crate
 
-struct SampleTagProcessor {
-
-}
+struct SampleTagProcessor {}
 
 impl Processor for SampleTagProcessor {
   fn id(&self) -> &str {
