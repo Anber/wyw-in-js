@@ -2,6 +2,7 @@ packages:
     - '.'
     - 'apps/*'
     - 'configs/*'
+    - 'crates/*'
     - 'e2e/*'
     - 'examples/*'
     - 'packages/*'

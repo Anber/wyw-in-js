@@ -35,6 +35,9 @@ importers:
       '@changesets/write':
         specifier: ^0.2.3
         version: 0.2.3
+      '@napi-rs/cli':
+        specifier: ^2.18.4
+        version: 2.18.4
       '@pnpm/core':
         specifier: ^12.1.3
         version: 12.2.0(@pnpm/logger@5.0.0)(@pnpm/worker@0.3.1(@pnpm/logger@5.0.0)(@types/node@16.18.55))(@yarnpkg/core@4.0.2(typanion@3.14.0))(typanion@3.14.0)
@@ -161,6 +164,12 @@ importers:
   configs/jest: {}
 
   configs/ts: {}
+
+  crates/wyw_sample_processor:
+    devDependencies:
+      '@napi-rs/cli':
+        specifier: ^2.18.4
+        version: 2.18.4
 
   e2e/vite:
     dependencies:
@@ -1717,6 +1726,11 @@ packages:
     resolution: {integrity: sha512-zQH//gdOmuu7nt2oJR29vFhDv88oGPmVw6BggmrHeMI+xgEkp1B2dX9/bMBSYtK0dyLX/aOmesKS09g222K1/g==}
     peerDependencies:
       react: '>=16'
+
+  '@napi-rs/cli@2.18.4':
+    resolution: {integrity: sha512-SgJeA4df9DE2iAEpr3M2H0OKl/yjtg1BnRI5/JyowS71tUWhrfSu2LT0V3vlHET+g1hBVlrO60PmEXwUEKp8Mg==}
+    engines: {node: '>= 10'}
+    hasBin: true
 
   '@napi-rs/simple-git-android-arm-eabi@0.1.9':
     resolution: {integrity: sha512-9D4JnfePMpgL4pg9aMUX7/TIWEUQ+Tgx8n3Pf8TNCMGjUbImJyYsDSLJzbcv9wH7srgn4GRjSizXFJHAPjzEug==}
@@ -9051,6 +9065,8 @@ snapshots:
       '@types/mdx': 2.0.8
       '@types/react': 18.2.24
       react: 18.2.0
+
+  '@napi-rs/cli@2.18.4': {}
 
   '@napi-rs/simple-git-android-arm-eabi@0.1.9':
     optional: true
