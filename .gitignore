@@ -9,3 +9,11 @@ esm
 lib
 tsconfig.tsbuildinfo
 types
+
+# Rust related
+
+crates/*/index.d.ts
+crates/*/index.js
+
+target
+*.node
