@@ -1,0 +1,14 @@
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+
+[workspace.package]
+edition = "2021"
+rust-version = "1.77.0"
+
+[workspace.dependencies]
+wyw_processor = { version = "0.1.0", path = "crates/wyw_processor" }
+
+napi = { version = "2.12.2", default-features = false, features = ["napi4"] }
+napi-build = "2.0.1"
+napi-derive = "2.12.2"
