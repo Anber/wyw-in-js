@@ -7,16 +7,16 @@
 import { existsSync } from 'fs';
 import path from 'path';
 
-import { optimizeDeps, createFilter } from 'vite';
 import type {
+  FilterPattern,
   ModuleNode,
   Plugin,
   ResolvedConfig,
   ViteDevServer,
-  FilterPattern,
 } from 'vite';
+import { createFilter, optimizeDeps } from 'vite';
 
-import { logger, syncResolve } from '@wyw-in-js/shared';
+import { asyncResolverFactory, logger, syncResolve } from '@wyw-in-js/shared';
 import type {
   IFileReporterOptions,
   PluginOptions,
@@ -58,6 +58,45 @@ export default function wywInJS({
   // <dependency id, targets>
   const targets: { dependencies: string[]; id: string }[] = [];
   const cache = new TransformCacheCollection();
+
+  const createAsyncResolver = asyncResolverFactory(
+    async (
+      resolved: {
+        external: boolean | 'absolute';
+        id: string;
+      } | null,
+      what,
+      importer,
+      stack
+    ) => {
+      if (resolved) {
+        if (resolved.external) {
+          // If module is marked as external, Rollup will not resolve it,
+          // so we need to resolve it ourselves with default resolver
+          return syncResolve(what, importer, stack);
+        }
+
+        // Vite adds param like `?v=667939b3` to cached modules
+        const resolvedId = resolved.id.split('?', 1)[0];
+
+        if (resolvedId.startsWith('\0')) {
+          // \0 is a special character in Rollup that tells Rollup to not include this in the bundle
+          // https://rollupjs.org/guide/en/#outputexports
+          return null;
+        }
+
+        if (!existsSync(resolvedId)) {
+          await optimizeDeps(config);
+        }
+
+        return resolvedId;
+      }
+
+      throw new Error(`Could not resolve ${what}`);
+    },
+    (what, importer) => [what, importer]
+  );
+
   return {
     name: 'wyw-in-js',
     enforce: 'post',
@@ -115,42 +154,6 @@ export default function wywInJS({
 
       log('transform %s', id);
 
-      const asyncResolve = async (
-        what: string,
-        importer: string,
-        stack: string[]
-      ) => {
-        const resolved = await this.resolve(what, importer);
-        if (resolved) {
-          if (resolved.external) {
-            // If module is marked as external, Rollup will not resolve it,
-            // so we need to resolve it ourselves with default resolver
-            const resolvedId = syncResolve(what, importer, stack);
-            log("resolve ✅ '%s'@'%s -> %O\n%s", what, importer, resolved);
-            return resolvedId;
-          }
-
-          log("resolve ✅ '%s'@'%s -> %O\n%s", what, importer, resolved);
-          // Vite adds param like `?v=667939b3` to cached modules
-          const resolvedId = resolved.id.split('?', 1)[0];
-
-          if (resolvedId.startsWith('\0')) {
-            // \0 is a special character in Rollup that tells Rollup to not include this in the bundle
-            // https://rollupjs.org/guide/en/#outputexports
-            return null;
-          }
-
-          if (!existsSync(resolvedId)) {
-            await optimizeDeps(config);
-          }
-
-          return resolvedId;
-        }
-
-        log("resolve ❌ '%s'@'%s", what, importer);
-        throw new Error(`Could not resolve ${what}`);
-      };
-
       const transformServices = {
         options: {
           filename: id,
@@ -162,7 +165,11 @@ export default function wywInJS({
         eventEmitter: emitter,
       };
 
-      const result = await transform(transformServices, code, asyncResolve);
+      const result = await transform(
+        transformServices,
+        code,
+        createAsyncResolver(this.resolve)
+      );
 
       let { cssText, dependencies } = result;
 
