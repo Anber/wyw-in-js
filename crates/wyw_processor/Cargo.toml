@@ -6,3 +6,6 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+wyw_traverse = { workspace = true }
+
+oxc = { workspace = true }
