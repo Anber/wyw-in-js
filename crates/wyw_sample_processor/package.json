@@ -1,0 +1,22 @@
+{
+  "name": "@wyw-in-js/sample-processor",
+  "version": "0.0.0",
+  "private": true,
+  "main": "index.js",
+  "types": "index.d.ts",
+  "napi": {
+    "name": "sample-tag-processor",
+    "triples": {}
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "@napi-rs/cli": "^2.18.4"
+  },
+  "scripts": {
+    "artifacts": "napi artifacts",
+    "build:lib": "napi build --platform --release",
+    "build:debug": "napi build --platform",
+    "test": "jest --config ./jest.config.js",
+    "universal": "napi universal"
+  }
+}
