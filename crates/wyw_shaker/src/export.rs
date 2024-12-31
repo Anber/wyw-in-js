@@ -239,13 +239,19 @@ mod tests {
       Export::Reexport {
         orig: Atom::from("doSome"),
         exported: Atom::from("doSome"),
-        source: ModuleSource::Resolved(&utils_path.canonicalize().unwrap().as_path()),
+        source: ModuleSource::Resolved(
+          Atom::from("./utils"),
+          &utils_path.canonicalize().unwrap().as_path()
+        ),
       }
     );
     assert_eq!(
       exports.list[1],
       Export::ReexportAll {
-        source: ModuleSource::Resolved(&components_path.canonicalize().unwrap().as_path()),
+        source: ModuleSource::Resolved(
+          Atom::from("./components"),
+          &components_path.canonicalize().unwrap().as_path()
+        ),
       }
     );
   }

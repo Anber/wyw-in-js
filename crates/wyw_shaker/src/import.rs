@@ -181,7 +181,7 @@ impl<'a> Imports<'a> {
 
   pub fn add(&mut self, import: Import<'a>) {
     match import.source() {
-      ModuleSource::Resolved(_) => {
+      ModuleSource::Resolved(_, _) => {
         self.list.push(import);
       }
       unresolved @ ModuleSource::Unresolved(_) => {
@@ -189,6 +189,9 @@ impl<'a> Imports<'a> {
         let mut import = import.clone();
         import.set_source(resolved);
         self.list.push(import);
+      }
+      ModuleSource::ResolvedWithError(_, _) => {
+        // TODO: this should be handled differently
       }
     }
   }
@@ -345,7 +348,10 @@ mod tests {
 
     assert_eq!(
       resolved,
-      ModuleSource::Resolved(module_path.canonicalize().unwrap().as_path())
+      ModuleSource::Resolved(
+        Atom::from("./foo"),
+        module_path.canonicalize().unwrap().as_path()
+      )
     );
   }
 }
