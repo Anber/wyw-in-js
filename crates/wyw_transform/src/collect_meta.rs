@@ -1,14 +1,12 @@
 use glob::glob;
 use oxc::allocator::Allocator;
 use oxc::ast::ast::*;
-use oxc::diagnostics::OxcDiagnostic;
-use oxc::parser::{ParseOptions, Parser};
-use oxc::span::{Atom, GetSpan, SourceType};
+use oxc::span::{Atom, GetSpan};
 use oxc_resolver::Resolver;
-use oxc_semantic::{IsGlobalReference, Semantic, SemanticBuilder, SymbolTable};
+use oxc_semantic::{IsGlobalReference, SymbolTable};
 use std::borrow::Cow;
 use std::ops::Deref;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use wyw_processor::params::{ProcessorCall, ProcessorParams};
 use wyw_processor::Processors;
 use wyw_shaker::declaration_context::{DeclarationContext, PathPart};
@@ -1535,101 +1533,104 @@ pub fn collect_meta<'a>(
   collector.meta
 }
 
-pub fn parse_js_file_from_source<'a>(
-  allocator: &'a Allocator,
-  path: &'a Path,
-  source_text: &'a str,
-  source_type: SourceType,
-) -> Result<(Semantic<'a>, Program<'a>), Vec<OxcDiagnostic>> {
-  let parser_ret = Parser::new(allocator, source_text, source_type)
-    .with_options(ParseOptions {
-      parse_regular_expression: true,
-      ..ParseOptions::default()
-    })
-    .parse();
-
-  if !parser_ret.errors.is_empty() {
-    for error in parser_ret.errors.clone() {
-      println!("{error:?}");
-      println!("Parsed with Errors.");
-    }
-
-    return Err(parser_ret.errors.clone());
-  }
-
-  let semantic_ret = SemanticBuilder::new()
-    .build_module_record(path, &parser_ret.program)
-    .with_check_syntax_error(true)
-    .build(&parser_ret.program);
-
-  Ok((semantic_ret.semantic, parser_ret.program))
-}
-
-pub fn parse_and_collect<'a>(
-  allocator: &'a Allocator,
-  resolver: &'a Resolver,
-  root: &'a PathBuf,
-  path: &'a PathBuf,
-  source_text: &'a str,
-  source_type: SourceType,
-  processors: &'a Processors,
-) -> Result<Meta<'a>, Vec<OxcDiagnostic>> {
-  let (semantic, program) = parse_js_file_from_source(allocator, path, source_text, source_type)?;
-
-  let semantic = allocator.alloc(semantic);
-  let program = allocator.alloc(program);
-
-  let meta = collect_meta(
-    semantic.symbols(),
-    root,
-    path,
-    source_text,
-    allocator,
-    resolver,
-    program,
-    processors,
-  );
-
-  // Replacements may contain references to the original source text. So the final solution will be more complex.
-  // let spans_for_remove = &meta
-  //   .evaltime_replacements
-  //   .iter()
-  //   .map(|(span, _)| *span)
-  //   .dedup_by(|a, b| a.end > b.start)
-  //   .collect::<Vec<_>>();
-
-  // let mut nodes_for_remove = vec![];
-
-  // let mut references = references.clone();
-  //
-  // for (symbol, refs) in references.iter_mut() {
-  //   refs.retain(|span| {
-  //     spans_for_remove
-  //       .iter()
-  //       .any(|remove_span| remove_span.start <= span.start && remove_span.end >= span.end)
-  //   });
-  //
-  //   if refs.is_empty() {
-  //     if let Some(decl) = symbols.declarations.get(symbol.symbol_id) {
-  //       let node = nodes.get_node(*decl);
-  //       nodes_for_remove.push(node);
-  //     }
-  //   }
-  // }
-
-  Ok(meta)
-}
-
 #[cfg(test)]
 mod tests {
   use super::*;
 
   use glob::glob;
   use insta::assert_debug_snapshot;
-  use oxc_resolver::{AliasValue, ResolveOptions};
-  use std::path::PathBuf;
+  use oxc::diagnostics::OxcDiagnostic;
+  use oxc::parser::{ParseOptions, Parser};
+  use oxc::span::SourceType;
+  use oxc_semantic::{Semantic, SemanticBuilder};
+  use std::path::{Path, PathBuf};
   use wyw_processor::{Processor, ProcessorTarget};
   use wyw_shaker::default_resolver::create_resolver;
+
+  pub fn parse_js_file_from_source<'a>(
+    allocator: &'a Allocator,
+    path: &'a Path,
+    source_text: &'a str,
+    source_type: SourceType,
+  ) -> Result<(Semantic<'a>, Program<'a>), Vec<OxcDiagnostic>> {
+    let parser_ret = Parser::new(allocator, source_text, source_type)
+      .with_options(ParseOptions {
+        parse_regular_expression: true,
+        ..ParseOptions::default()
+      })
+      .parse();
+
+    if !parser_ret.errors.is_empty() {
+      for error in parser_ret.errors.clone() {
+        println!("{error:?}");
+        println!("Parsed with Errors.");
+      }
+
+      return Err(parser_ret.errors.clone());
+    }
+
+    let semantic_ret = SemanticBuilder::new()
+      .build_module_record(path, &parser_ret.program)
+      .with_check_syntax_error(true)
+      .build(&parser_ret.program);
+
+    Ok((semantic_ret.semantic, parser_ret.program))
+  }
+
+  pub fn parse_and_collect<'a>(
+    allocator: &'a Allocator,
+    resolver: &'a Resolver,
+    root: &'a PathBuf,
+    path: &'a PathBuf,
+    source_text: &'a str,
+    source_type: SourceType,
+    processors: &'a Processors,
+  ) -> Result<Meta<'a>, Vec<OxcDiagnostic>> {
+    let (semantic, program) = parse_js_file_from_source(allocator, path, source_text, source_type)?;
+
+    let semantic = allocator.alloc(semantic);
+    let program = allocator.alloc(program);
+
+    let meta = collect_meta(
+      semantic.symbols(),
+      root,
+      path,
+      source_text,
+      allocator,
+      resolver,
+      program,
+      processors,
+    );
+
+    // Replacements may contain references to the original source text. So the final solution will be more complex.
+    // let spans_for_remove = &meta
+    //   .evaltime_replacements
+    //   .iter()
+    //   .map(|(span, _)| *span)
+    //   .dedup_by(|a, b| a.end > b.start)
+    //   .collect::<Vec<_>>();
+
+    // let mut nodes_for_remove = vec![];
+
+    // let mut references = references.clone();
+    //
+    // for (symbol, refs) in references.iter_mut() {
+    //   refs.retain(|span| {
+    //     spans_for_remove
+    //       .iter()
+    //       .any(|remove_span| remove_span.start <= span.start && remove_span.end >= span.end)
+    //   });
+    //
+    //   if refs.is_empty() {
+    //     if let Some(decl) = symbols.declarations.get(symbol.symbol_id) {
+    //       let node = nodes.get_node(*decl);
+    //       nodes_for_remove.push(node);
+    //     }
+    //   }
+    // }
+
+    Ok(meta)
+  }
 
   #[testing::fixture("tests/fixture/**/*.input.?s")]
   fn fixture(input: PathBuf) {
@@ -1697,6 +1698,19 @@ mod tests {
 
   #[test]
   fn performance() {
+    #[derive(Debug)]
+    struct LinariaFakeProcessor {}
+
+    impl Processor for LinariaFakeProcessor {
+      fn id(&self) -> &str {
+        "sample-tag-processor"
+      }
+
+      fn transform(&self) -> String {
+        "Hello, World!".to_string()
+      }
+    }
+
     // Load all fixtures
     let fixtures = glob("tests/fixture/**/*.input.?s")
       .unwrap()
@@ -1709,7 +1723,20 @@ mod tests {
       let resolver = create_resolver(&file);
       let allocator = Allocator::default();
       let source_type = SourceType::from_path(file).unwrap();
-      let processors = Processors::new(vec![]);
+
+      let processor = LinariaFakeProcessor {};
+      let processors = Processors::new(vec![
+        ProcessorTarget {
+          specifier: "css".to_string(),
+          source: "@linaria/core".to_string(),
+          processor: &processor,
+        },
+        ProcessorTarget {
+          specifier: "styled".to_string(),
+          source: "@linaria/react".to_string(),
+          processor: &processor,
+        },
+      ]);
 
       let result = parse_and_collect(
         &allocator,
