@@ -12,8 +12,11 @@ wyw_processor = { version = "0.1.0", path = "crates/wyw_processor" }
 wyw_shaker = { version = "0.1.0", path = "crates/wyw_shaker" }
 wyw_traverse = { version = "0.1.0", path = "crates/wyw_traverse" }
 
+cargo-insta = "1.41.1"
+glob = "0.3.1"
 indoc = { version= "2.0.5" } 
 itertools = { version = "0.13.0" }
+insta = { version = "1.41.1", features = ["filters"] }
 napi = { version = "2.12.2", default-features = false, features = ["napi4"] }
 napi-build = "2.0.1"
 napi-derive = "2.12.2"
@@ -25,3 +28,4 @@ oxc_semantic = "0.38.0"
 regex = "1.11.1"
 serde_json = "1.0.133"
 tempfile = "3.14.0"
+testing = { version = "0.42.0" }

@@ -1,5 +1,5 @@
 [package]
-name = "wyw_shaker"
+name = "wyw_transform"
 version = "0.1.0"
 
 edition.workspace = true
@@ -7,17 +7,14 @@ rust-version.workspace = true
 
 [dependencies]
 wyw_processor = { workspace = true }
+wyw_shaker = { workspace = true }
 wyw_traverse = { workspace = true }
 
-itertools = { workspace = true }
-normalize-path = { workspace = true }
+glob = { workspace = true }
 oxc = { workspace = true }
-oxc_index = { workspace = true }
 oxc_resolver = { workspace = true }
 oxc_semantic = { workspace = true }
 
 [dev-dependencies]
-indoc = { workspace = true }
-serde_json = { workspace = true }
-tempfile = { workspace = true }
-regex = { workspace = true }
+insta = { workspace = true }
+testing = { workspace = true }

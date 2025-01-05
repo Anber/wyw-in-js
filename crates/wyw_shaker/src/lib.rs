@@ -18,7 +18,7 @@ pub mod export;
 pub mod ident_usages;
 pub mod import;
 pub mod meta;
-mod module_source;
+pub mod module_source;
 pub mod references;
 pub mod replacements;
 

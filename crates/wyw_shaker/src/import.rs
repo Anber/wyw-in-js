@@ -4,6 +4,7 @@ use oxc::span::Atom;
 use oxc_resolver::Resolver;
 use std::fmt::Debug;
 use std::path::Path;
+use wyw_processor::{Processor, Processors};
 use wyw_traverse::local_identifier::LocalIdentifier;
 use wyw_traverse::symbol::Symbol;
 
@@ -71,24 +72,6 @@ impl<'a> Import<'a> {
     }
   }
 
-  // TODO Should be implemented differently
-  // pub fn processor(&self) -> Option<&PathBuf> {
-  //   match self {
-  //     Self::Named {
-  //       source, imported, ..
-  //     } => {
-  //       if let ImportSource::Resolved(_, WywConfig::Resolved { tags }) = source {
-  //         if let Some(tag) = tags.iter().find(|tag| tag.name == imported.as_str()) {
-  //           return Some(&tag.processor);
-  //         }
-  //       }
-
-  //       None
-  //     }
-  //     _ => None,
-  //   }
-  // }
-
   pub fn source(&self) -> &ModuleSource<'a> {
     match self {
       Self::Default { source, .. }
@@ -127,13 +110,22 @@ impl<'a> Import<'a> {
     self
   }
 
-  // pub fn set_processor(&mut self, processor: PathBuf) {
-  //   if let Self::Named { processor: p, .. } = self {
-  //     *p = Processor::Resolved(processor);
-  //   } else {
-  //     todo!("set_processor for {:?}", self);
-  //   }
-  // }
+  pub fn processor(&self, processors: &'a Processors) -> Option<&'a dyn Processor> {
+    match self {
+      Self::Named {
+        source, imported, ..
+      } => {
+        if let ModuleSource::Resolved(import_source, _) = source {
+          let processor = processors.get(&imported, import_source);
+
+          processor
+        } else {
+          None
+        }
+      }
+      _ => None,
+    }
+  }
 }
 
 impl Ord for Import<'_> {
