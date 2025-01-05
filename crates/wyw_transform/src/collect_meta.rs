@@ -325,21 +325,24 @@ impl<'a> TraverseHooks<'a> for MetaCollector<'a> {
           );
 
           let import = self.meta.imports.find_by_symbol(symbol);
-          // let processor = import.and_then(|import| import.processor(self.processors));
+          println!("Import: {:?}", import);
+          let processor = import.and_then(|import| import.processor(self.processors));
+          println!("Processors: {:?}", self.processors);
+          println!("Processor: {:?}", processor);
 
-          // if let Some(processor) = processor {
-          //   let idx = self.meta.processor_calls.len();
-          //   let (span, processor_params) =
-          //     ProcessorParams::from_ident(ctx, &node.span, symbol, idx, self.root, self.file_name);
+          if let Some(processor) = processor {
+            let idx = self.meta.processor_calls.len();
+            let (span, processor_params) =
+              ProcessorParams::from_ident(ctx, &node.span, symbol, idx, self.root, self.file_name);
 
-          //   if !processor_params.is_empty() {
-          //     self.meta.processor_calls.push(ProcessorCall {
-          //       span,
-          //       processor: processor,
-          //       params: processor_params,
-          //     });
-          //   }
-          // }
+            if !processor_params.is_empty() {
+              self.meta.processor_calls.push(ProcessorCall {
+                span,
+                processor,
+                params: processor_params,
+              });
+            }
+          }
         }
       }
     } else {
@@ -1617,98 +1620,125 @@ pub fn parse_and_collect<'a>(
   Ok(meta)
 }
 
-// #[cfg(test)]
-// mod tests {
-//   use super::*;
+#[cfg(test)]
+mod tests {
+  use super::*;
 
-//   use glob::glob;
-//   use insta::assert_debug_snapshot;
-//   use oxc_resolver::{AliasValue, ResolveOptions};
-//   use std::path::PathBuf;
-//   use wyw_shaker::default_resolver::create_resolver;
+  use glob::glob;
+  use insta::assert_debug_snapshot;
+  use oxc_resolver::{AliasValue, ResolveOptions};
+  use std::path::PathBuf;
+  use wyw_processor::{Processor, ProcessorTarget};
+  use wyw_shaker::default_resolver::create_resolver;
 
-//   #[testing::fixture("tests/fixture/**/*.input.?s")]
-//   fn fixture(input: PathBuf) {
-//     let root = std::env::current_dir().unwrap();
-//     let snapshot_path = input.parent().unwrap();
-//     let snapshot_name = input.file_stem().and_then(|s| s.to_str()).unwrap();
+  #[testing::fixture("tests/fixture/**/*.input.?s")]
+  fn fixture(input: PathBuf) {
+    #[derive(Debug)]
+    struct LinariaFakeProcessor {}
 
-//     let resolver = create_resolver(&input);
-//     let allocator = Allocator::default();
-//     let file_content = std::fs::read_to_string(&input).unwrap();
-//     let source_type = SourceType::from_path(&input).unwrap();
-//     let processors = Processors::new(vec![]);
+    impl Processor for LinariaFakeProcessor {
+      fn id(&self) -> &str {
+        "sample-tag-processor"
+      }
 
-//     let result = parse_and_collect(
-//       &allocator,
-//       &resolver,
-//       &root,
-//       &input,
-//       &file_content,
-//       source_type,
-//       &processors,
-//     );
-//     assert!(result.is_ok());
+      fn transform(&self) -> String {
+        "Hello, World!".to_string()
+      }
+    }
 
-//     let js_file = result.unwrap();
+    let root = std::env::current_dir().unwrap();
+    let snapshot_path = input.parent().unwrap();
+    let snapshot_name = input.file_stem().and_then(|s| s.to_str()).unwrap();
 
-//     let root = std::env::current_dir().unwrap();
+    let resolver = create_resolver(&input);
+    let allocator = Allocator::default();
+    let file_content = std::fs::read_to_string(&input).unwrap();
+    let source_type = SourceType::from_path(&input).unwrap();
 
-//     insta::with_settings!({
-//       input_file => &input,
-//       snapshot_path => &snapshot_path,
-//       description => &file_content,
-//       omit_expression => true,
-//       filters => [(root.to_str().unwrap(), "[root]")]
-//     }, {
-//           assert_debug_snapshot!(snapshot_name, js_file);
-//     });
-//   }
+    let processor = LinariaFakeProcessor {};
+    let processors = Processors::new(vec![
+      ProcessorTarget {
+        specifier: "css".to_string(),
+        source: "@linaria/core".to_string(),
+        processor: &processor,
+      },
+      ProcessorTarget {
+        specifier: "styled".to_string(),
+        source: "@linaria/react".to_string(),
+        processor: &processor,
+      },
+    ]);
 
-//   #[test]
-//   fn performance() {
-//     // Load all fixtures
-//     let fixtures = glob("tests/fixture/**/*.input.?s")
-//       .unwrap()
-//       .map(|file| file.unwrap())
-//       .map(|file| (file.clone(), std::fs::read_to_string(&file).unwrap()));
+    let result = parse_and_collect(
+      &allocator,
+      &resolver,
+      &root,
+      &input,
+      &file_content,
+      source_type,
+      &processors,
+    );
+    assert!(result.is_ok());
 
-//     fn run_for_file(file: &PathBuf, file_content: &str) {
-//       let root = std::env::current_dir().unwrap();
+    let js_file = result.unwrap();
 
-//       let resolver = create_resolver(&file);
-//       let allocator = Allocator::default();
-//       let source_type = SourceType::from_path(file).unwrap();
-//       let processors = Processors::new(vec![]);
+    let root = std::env::current_dir().unwrap();
 
-//       let result = parse_and_collect(
-//         &allocator,
-//         &resolver,
-//         &root,
-//         file,
-//         file_content,
-//         source_type,
-//         &processors,
-//       );
+    insta::with_settings!({
+      input_file => &input,
+      snapshot_path => &snapshot_path,
+      description => &file_content,
+      omit_expression => true,
+      filters => [(root.to_str().unwrap(), "[root]")]
+    }, {
+          assert_debug_snapshot!(snapshot_name, js_file);
+    });
+  }
 
-//       assert!(result.is_ok());
-//     }
+  #[test]
+  fn performance() {
+    // Load all fixtures
+    let fixtures = glob("tests/fixture/**/*.input.?s")
+      .unwrap()
+      .map(|file| file.unwrap())
+      .map(|file| (file.clone(), std::fs::read_to_string(&file).unwrap()));
 
-//     let n = 1;
+    fn run_for_file(file: &PathBuf, file_content: &str) {
+      let root = std::env::current_dir().unwrap();
 
-//     // Run the parser N times for each file and measure the time
-//     let start = std::time::Instant::now();
+      let resolver = create_resolver(&file);
+      let allocator = Allocator::default();
+      let source_type = SourceType::from_path(file).unwrap();
+      let processors = Processors::new(vec![]);
 
-//     let mut count = 0;
-//     for entry in fixtures {
-//       let (file, content) = entry;
-//       for _ in 0..n {
-//         run_for_file(&file, &content);
-//         count += 1;
-//       }
-//     }
+      let result = parse_and_collect(
+        &allocator,
+        &resolver,
+        &root,
+        file,
+        file_content,
+        source_type,
+        &processors,
+      );
 
-//     let duration = start.elapsed();
-//     println!("Parsed {} files in {:?}", count, duration);
-//   }
-// }
+      assert!(result.is_ok());
+    }
+
+    let n = 1;
+
+    // Run the parser N times for each file and measure the time
+    let start = std::time::Instant::now();
+
+    let mut count = 0;
+    for entry in fixtures {
+      let (file, content) = entry;
+      for _ in 0..n {
+        run_for_file(&file, &content);
+        count += 1;
+      }
+    }
+
+    let duration = start.elapsed();
+    println!("Parsed {} files in {:?}", count, duration);
+  }
+}

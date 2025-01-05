@@ -9,12 +9,14 @@ pub trait Processor: Debug {
   fn transform(&self) -> String;
 }
 
+#[derive(Debug)]
 pub struct ProcessorTarget<'a> {
   pub specifier: String,
   pub source: String,
   pub processor: &'a dyn Processor,
 }
 
+#[derive(Debug)]
 pub struct Processors<'a> {
   targets: Vec<ProcessorTarget<'a>>,
 }

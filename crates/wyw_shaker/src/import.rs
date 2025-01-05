@@ -114,15 +114,15 @@ impl<'a> Import<'a> {
     match self {
       Self::Named {
         source, imported, ..
-      } => {
-        if let ModuleSource::Resolved(import_source, _) = source {
+      } => match source {
+        ModuleSource::Resolved(import_source, _)
+        | ModuleSource::Unresolved(import_source)
+        | ModuleSource::ResolvedWithError(import_source, _) => {
           let processor = processors.get(&imported, import_source);
-
           processor
-        } else {
-          None
         }
-      }
+      },
+
       _ => None,
     }
   }
