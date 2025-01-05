@@ -323,10 +323,7 @@ impl<'a> TraverseHooks<'a> for MetaCollector<'a> {
           );
 
           let import = self.meta.imports.find_by_symbol(symbol);
-          println!("Import: {:?}", import);
           let processor = import.and_then(|import| import.processor(self.processors));
-          println!("Processors: {:?}", self.processors);
-          println!("Processor: {:?}", processor);
 
           if let Some(processor) = processor {
             let idx = self.meta.processor_calls.len();
@@ -1547,6 +1544,41 @@ mod tests {
   use wyw_processor::{Processor, ProcessorTarget};
   use wyw_shaker::default_resolver::create_resolver;
 
+  #[derive(Debug, Clone)]
+  struct LinariaFakeProcessor {}
+
+  impl Processor for LinariaFakeProcessor {
+    fn id(&self) -> &str {
+      "sample-tag-processor"
+    }
+
+    fn transform(&self) -> String {
+      "Hello, World!".to_string()
+    }
+  }
+
+  fn setup(path: &PathBuf) -> (Allocator, Resolver, String, SourceType, Processors) {
+    let resolver = create_resolver(path);
+    let allocator = Allocator::default();
+    let file_content = std::fs::read_to_string(path).unwrap();
+    let source_type = SourceType::from_path(path).unwrap();
+
+    let processors = Processors::new(vec![
+      ProcessorTarget {
+        specifier: "css".to_string(),
+        source: "@linaria/core".to_string(),
+        processor: &LinariaFakeProcessor {},
+      },
+      ProcessorTarget {
+        specifier: "styled".to_string(),
+        source: "@linaria/react".to_string(),
+        processor: &LinariaFakeProcessor {},
+      },
+    ]);
+
+    (allocator, resolver, file_content, source_type, processors)
+  }
+
   pub fn parse_js_file_from_source<'a>(
     allocator: &'a Allocator,
     path: &'a Path,
@@ -1634,41 +1666,11 @@ mod tests {
 
   #[testing::fixture("tests/fixture/**/*.input.?s")]
   fn fixture(input: PathBuf) {
-    #[derive(Debug)]
-    struct LinariaFakeProcessor {}
-
-    impl Processor for LinariaFakeProcessor {
-      fn id(&self) -> &str {
-        "sample-tag-processor"
-      }
-
-      fn transform(&self) -> String {
-        "Hello, World!".to_string()
-      }
-    }
-
     let root = std::env::current_dir().unwrap();
     let snapshot_path = input.parent().unwrap();
     let snapshot_name = input.file_stem().and_then(|s| s.to_str()).unwrap();
 
-    let resolver = create_resolver(&input);
-    let allocator = Allocator::default();
-    let file_content = std::fs::read_to_string(&input).unwrap();
-    let source_type = SourceType::from_path(&input).unwrap();
-
-    let processor = LinariaFakeProcessor {};
-    let processors = Processors::new(vec![
-      ProcessorTarget {
-        specifier: "css".to_string(),
-        source: "@linaria/core".to_string(),
-        processor: &processor,
-      },
-      ProcessorTarget {
-        specifier: "styled".to_string(),
-        source: "@linaria/react".to_string(),
-        processor: &processor,
-      },
-    ]);
+    let (allocator, resolver, file_content, source_type, processors) = setup(&input);
 
     let result = parse_and_collect(
       &allocator,
@@ -1698,19 +1700,6 @@ mod tests {
 
   #[test]
   fn performance() {
-    #[derive(Debug)]
-    struct LinariaFakeProcessor {}
-
-    impl Processor for LinariaFakeProcessor {
-      fn id(&self) -> &str {
-        "sample-tag-processor"
-      }
-
-      fn transform(&self) -> String {
-        "Hello, World!".to_string()
-      }
-    }
-
     // Load all fixtures
     let fixtures = glob("tests/fixture/**/*.input.?s")
       .unwrap()
@@ -1719,24 +1708,7 @@ mod tests {
 
     fn run_for_file(file: &PathBuf, file_content: &str) {
       let root = std::env::current_dir().unwrap();
-
-      let resolver = create_resolver(&file);
-      let allocator = Allocator::default();
-      let source_type = SourceType::from_path(file).unwrap();
-
-      let processor = LinariaFakeProcessor {};
-      let processors = Processors::new(vec![
-        ProcessorTarget {
-          specifier: "css".to_string(),
-          source: "@linaria/core".to_string(),
-          processor: &processor,
-        },
-        ProcessorTarget {
-          specifier: "styled".to_string(),
-          source: "@linaria/react".to_string(),
-          processor: &processor,
-        },
-      ]);
+      let (allocator, resolver, _, source_type, processors) = setup(file);
 
       let result = parse_and_collect(
         &allocator,
