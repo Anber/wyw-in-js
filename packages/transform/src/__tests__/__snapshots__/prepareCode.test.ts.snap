@@ -69,3 +69,22 @@ Map {
 `;
 
 exports[`prepareCode Testing transformation for for-debug: metadata 1`] = `null`;
+
+exports[`prepareCode Testing transformation for unsupported-dynamic-import: code 1`] = `
+""use strict";
+
+Object.defineProperty(exports, "__esModule", {
+  value: true
+});
+exports.foo = foo;
+var random = Math.random() > 0.5 ? "first" : "second";
+function foo(onImport) {
+  (function () {
+    throw new Error("Dynamic import argument must be a string or a template literal");
+  })().then(onImport);
+}"
+`;
+
+exports[`prepareCode Testing transformation for unsupported-dynamic-import: imports 1`] = `Map {}`;
+
+exports[`prepareCode Testing transformation for unsupported-dynamic-import: metadata 1`] = `null`;
