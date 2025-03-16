@@ -1,6 +1,6 @@
 {
   "name": "@wyw-in-js/vite",
-  "version": "0.5.5",
+  "version": "0.6.0",
   "dependencies": {
     "@wyw-in-js/shared": "workspace:*",
     "@wyw-in-js/transform": "workspace:*"

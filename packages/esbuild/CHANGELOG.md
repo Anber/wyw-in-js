@@ -1,5 +1,18 @@
 # @wyw-in-js/esbuild
 
+## 0.6.0
+
+### Minor Changes
+
+- 4c0071d: Configurable code remover can detect and remove from evaluation HOCs and components with specific explicit types.
+
+### Patch Changes
+
+- Updated dependencies [4c0071d]
+- Updated dependencies [fc07b6b]
+  - @wyw-in-js/transform@0.6.0
+  - @wyw-in-js/shared@0.6.0
+
 ## 0.5.5
 
 ### Patch Changes

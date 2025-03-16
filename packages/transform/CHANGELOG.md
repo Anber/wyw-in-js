@@ -1,5 +1,18 @@
 # @wyw-in-js/transform
 
+## 0.6.0
+
+### Minor Changes
+
+- 4c0071d: Configurable code remover can detect and remove from evaluation HOCs and components with specific explicit types.
+
+### Patch Changes
+
+- fc07b6b: The check for unsupported dynamic imports has been moved to the evaluation stage. We don't want to fail if this import is unreachable during evaluation. Fixes #126.
+- Updated dependencies [4c0071d]
+  - @wyw-in-js/shared@0.6.0
+  - @wyw-in-js/processor-utils@0.6.0
+
 ## 0.5.5
 
 ### Patch Changes
