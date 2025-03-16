@@ -1,6 +1,12 @@
 import type { NodePath } from '@babel/core';
 import { types as t } from '@babel/core';
-import type { Identifier, Program } from '@babel/types';
+import type {
+  CallExpression,
+  Expression,
+  Identifier,
+  Program,
+  V8IntrinsicIdentifier,
+} from '@babel/types';
 
 import type { CodeRemoverOptions } from '@wyw-in-js/shared';
 import { nonType } from './findIdentifiers';
@@ -73,7 +79,6 @@ const getImport = (path: NodePath): [string, string] | undefined => {
 
   const { imports } = collectExportsAndImports(programPath);
 
-  // We are looking for either Identifier or TSQualifiedName in path
   if (path.isIdentifier()) {
     const binding = path.scope.getBinding(path.node.name);
     const matched =
@@ -85,6 +90,31 @@ const getImport = (path: NodePath): [string, string] | undefined => {
 
     if (matched) {
       return [matched.source, matched.imported];
+    }
+  }
+
+  if (path.isMemberExpression()) {
+    const leftPath = path.get('object');
+    if (!leftPath.isIdentifier()) {
+      // Nested member expression. Not supported yet.
+      return undefined;
+    }
+
+    const rightPath = path.get('property');
+    if (!rightPath.isIdentifier()) {
+      return undefined;
+    }
+
+    const binding = path.scope.getBinding(leftPath.node.name);
+    const matched =
+      binding &&
+      imports.find(
+        (imp): imp is IImport =>
+          imp.imported !== 'side-effect' && binding.path.isAncestor(imp.local)
+      );
+
+    if (matched) {
+      return [matched.source, rightPath.node.name];
     }
   }
 
@@ -167,21 +197,53 @@ const isTypeMatch = (
   );
 };
 
+const isHOC = (
+  path: NodePath<CallExpression>,
+  hocs: Record<string, string[]>
+) => {
+  let calleePath: NodePath<V8IntrinsicIdentifier | Expression> = path;
+  while (calleePath.isCallExpression()) {
+    calleePath = calleePath.get('callee');
+  }
+
+  const matchedImport = getImport(calleePath);
+  return (
+    matchedImport !== undefined &&
+    matchedImport[0] in hocs &&
+    hocs[matchedImport[0]].includes(matchedImport[1])
+  );
+};
+
+const defaultPlaceholder = '...';
+
+const defaultReactComponentTypes = [
+  'ExoticComponent',
+  'FC',
+  'ForwardRefExoticComponent',
+  'FunctionComponent',
+  'LazyExoticComponent',
+  'MemoExoticComponent',
+  'NamedExoticComponent',
+];
+
 export const removeDangerousCode = (
   programPath: NodePath<Program>,
   options?: CodeRemoverOptions
 ) => {
+  const hocs = options?.hocs ?? {};
+
   const componentTypes = options?.componentTypes ?? {
-    react: [
-      'ExoticComponent',
-      'FC',
-      'ForwardRefExoticComponent',
-      'FunctionComponent',
-      'LazyExoticComponent',
-      'MemoExoticComponent',
-      'NamedExoticComponent',
-    ],
+    react: [defaultPlaceholder],
   };
+
+  if (
+    Array.isArray(componentTypes.react) &&
+    componentTypes.react.includes(defaultPlaceholder)
+  ) {
+    const idx = componentTypes.react.indexOf(defaultPlaceholder);
+    componentTypes.react = [...componentTypes.react];
+    componentTypes.react.splice(idx, 1, ...defaultReactComponentTypes);
+  }
 
   programPath.traverse(
     {
@@ -191,6 +253,14 @@ export const removeDangerousCode = (
         enter(p) {
           if (isUnnecessaryReactCall(p)) {
             JSXElementsRemover(p);
+          }
+
+          if (isHOC(p, hocs)) {
+            applyAction([
+              'replace',
+              p,
+              t.arrowFunctionExpression([], t.nullLiteral()),
+            ]);
           }
         },
       },

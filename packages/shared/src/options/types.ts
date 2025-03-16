@@ -66,7 +66,8 @@ export type FeatureFlags<
 > = Pick<AllFeatureFlags, TOnly>;
 
 export type CodeRemoverOptions = {
-  componentTypes: Record<string, string[]>;
+  componentTypes?: Record<string, string[]>;
+  hocs?: Record<string, string[]>;
 };
 
 export type StrictOptions = {

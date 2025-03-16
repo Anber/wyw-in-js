@@ -1,5 +1,14 @@
 // Jest Snapshot v1, https://goo.gl/fbAQLP
 
+exports[`preeval should keep component as is for unknown type 1`] = `
+"import type { OtherCmp } from "some-other-lib";
+const Component: OtherCmp<{
+  children: string;
+}> = ({
+  children
+}) => children;"
+`;
+
 exports[`preeval should keep getGlobal but remove window-related code 1`] = `
 "function getGlobal() {
   if (typeof globalThis !== "undefined") {
@@ -32,6 +41,10 @@ exports[`preeval should not remove "location" in types only because it looks lik
 }"
 `;
 
+exports[`preeval should remove HOC imported with namespace 1`] = `"const Component = () => null;"`;
+
+exports[`preeval should remove specified HOCs 1`] = `"const Component = () => null;"`;
+
 exports[`preeval should remove usages of window scoped identifiers 1`] = `""`;
 
 exports[`preeval should simplify react component 1`] = `
@@ -40,9 +53,16 @@ exports[`preeval should simplify react component 1`] = `
 };"
 `;
 
-exports[`preeval should simplify react component based on its type 1`] = `
+exports[`preeval should simplify react component based on its type 1 1`] = `
 "import type React from "react";
 const Component: React.FC<{
+  children: string;
+}> = () => null;"
+`;
+
+exports[`preeval should simplify react component based on its type 2 1`] = `
+"import type { Cmp } from "some-other-lib";
+const Component: Cmp<{
   children: string;
 }> = () => null;"
 `;

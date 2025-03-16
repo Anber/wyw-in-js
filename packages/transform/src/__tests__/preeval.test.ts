@@ -23,6 +23,15 @@ const run = (code: TemplateStringsArray) => {
       [
         preeval,
         {
+          codeRemover: {
+            componentTypes: {
+              react: ['...'],
+              'some-other-lib': ['Cmp'],
+            },
+            hocs: {
+              redux: ['connect'],
+            },
+          },
           evaluate: true,
           features: {
             dangerousCodeRemover: true,
@@ -121,10 +130,52 @@ describe('preeval', () => {
     expect(code).toMatchSnapshot();
   });
 
-  it('should simplify react component based on its type', () => {
+  it('should simplify react component based on its type 1', () => {
     const { code } = run`
       import type React from "react";
       const Component: React.FC<{ children: string }> = ({ children }) => children;
+    `;
+
+    expect(code).toMatchSnapshot();
+  });
+
+  it('should simplify react component based on its type 2', () => {
+    const { code } = run`
+      import type { Cmp } from "some-other-lib";
+      const Component: Cmp<{ children: string }> = ({ children }) => children;
+    `;
+
+    expect(code).toMatchSnapshot();
+  });
+
+  it('should keep component as is for unknown type', () => {
+    const { code } = run`
+      import type { OtherCmp } from "some-other-lib";
+      const Component: OtherCmp<{ children: string }> = ({ children }) => children;
+    `;
+
+    expect(code).toMatchSnapshot();
+  });
+
+  it('should remove specified HOCs', () => {
+    const { code } = run`
+      import { connect } from "redux";
+      import { MyComponent } from "ui-kit";
+
+      const mapStateToProps = (state) => ({ todos: state.todos })
+      const Component = connect(mapStateToProps)(MyComponent);
+    `;
+
+    expect(code).toMatchSnapshot();
+  });
+
+  it('should remove HOC imported with namespace', () => {
+    const { code } = run`
+      import Redux from "redux";
+      import { MyComponent } from "ui-kit";
+
+      const mapStateToProps = (state) => ({ todos: state.todos })
+      const Component = Redux.connect(mapStateToProps)(MyComponent);
     `;
 
     expect(code).toMatchSnapshot();

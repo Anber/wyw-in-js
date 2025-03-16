@@ -298,6 +298,24 @@ module.exports = {
 
   A map of feature flags to enable/disable. See [Feature Flags](/feature-flags) for more information.
 
+- `codeRemover: CodeRemoverOptions`
+
+  An object with two keys `componentTypes` and `hocs`. Specifies types of variables and HOCs that will be replaced with an empty function before evaluation.
+
+  ```js
+  {
+    codeRemover: {
+      componentTypes: {
+        react: ['FC', 'FunctionComponent', 'ExoticComponent'],
+        preact: ['FunctionComponent'],
+      },
+      hocs: {
+        redux: ['connect'],
+      },
+    },
+  }
+  ```
+
 ## `@wyw-in-js/babel-preset`
 
 The preset pre-processes and evaluates the CSS. The bundler plugins use this preset under the hood. You also might want to use this preset if you import the components outside of the files handled by your bundler, such as on your server or in unit tests.
