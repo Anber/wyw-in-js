@@ -33,3 +33,16 @@ exports[`preeval should not remove "location" in types only because it looks lik
 `;
 
 exports[`preeval should remove usages of window scoped identifiers 1`] = `""`;
+
+exports[`preeval should simplify react component 1`] = `
+"const Component = () => {
+  return null;
+};"
+`;
+
+exports[`preeval should simplify react component based on its type 1`] = `
+"import type React from "react";
+const Component: React.FC<{
+  children: string;
+}> = () => null;"
+`;
