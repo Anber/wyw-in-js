@@ -1,5 +1,11 @@
 # @wyw-in-js/ts-config
 
+## 0.6.0
+
+### Minor Changes
+
+- 4c0071d: Configurable code remover can detect and remove from evaluation HOCs and components with specific explicit types.
+
 ## 0.5.5
 
 ### Patch Changes
