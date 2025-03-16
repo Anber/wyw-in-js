@@ -1,10 +1,20 @@
 import type { NodePath } from '@babel/core';
-import type { Identifier, Program } from '@babel/types';
+import { types as t } from '@babel/core';
+import type {
+  CallExpression,
+  Expression,
+  Identifier,
+  Program,
+  V8IntrinsicIdentifier,
+} from '@babel/types';
 
+import type { CodeRemoverOptions } from '@wyw-in-js/shared';
 import { nonType } from './findIdentifiers';
 import { isUnnecessaryReactCall } from './isUnnecessaryReactCall';
 import { applyAction, removeWithRelated } from './scopeHelpers';
 import { JSXElementsRemover } from './visitors/JSXElementsRemover';
+import type { IImport } from './collectExportsAndImports';
+import { collectExportsAndImports } from './collectExportsAndImports';
 
 const isGlobal = (id: NodePath<Identifier>): boolean => {
   if (!nonType(id)) {
@@ -59,7 +69,182 @@ const getPropertyName = (path: NodePath): string | null => {
   return null;
 };
 
-export const removeDangerousCode = (programPath: NodePath<Program>) => {
+const getImport = (path: NodePath): [string, string] | undefined => {
+  const programPath = path.findParent((p) => p.isProgram()) as
+    | NodePath<Program>
+    | undefined;
+  if (!programPath) {
+    return undefined;
+  }
+
+  const { imports } = collectExportsAndImports(programPath);
+
+  if (path.isIdentifier()) {
+    const binding = path.scope.getBinding(path.node.name);
+    const matched =
+      binding &&
+      imports.find(
+        (imp): imp is IImport =>
+          imp.imported !== 'side-effect' && binding.path.isAncestor(imp.local)
+      );
+
+    if (matched) {
+      return [matched.source, matched.imported];
+    }
+  }
+
+  if (path.isMemberExpression()) {
+    const leftPath = path.get('object');
+    if (!leftPath.isIdentifier()) {
+      // Nested member expression. Not supported yet.
+      return undefined;
+    }
+
+    const rightPath = path.get('property');
+    if (!rightPath.isIdentifier()) {
+      return undefined;
+    }
+
+    const binding = path.scope.getBinding(leftPath.node.name);
+    const matched =
+      binding &&
+      imports.find(
+        (imp): imp is IImport =>
+          imp.imported !== 'side-effect' && binding.path.isAncestor(imp.local)
+      );
+
+    if (matched) {
+      return [matched.source, rightPath.node.name];
+    }
+  }
+
+  return undefined;
+};
+
+const getTypeImport = (path: NodePath): [string, string] | undefined => {
+  // We are looking for either Identifier or TSQualifiedName in path
+  if (path.isIdentifier()) {
+    const binding = path.scope.getBinding(path.node.name);
+    if (!binding) {
+      return undefined;
+    }
+
+    if (
+      !binding.path.isImportSpecifier() ||
+      !binding.path.parentPath.isImportDeclaration()
+    ) {
+      return undefined;
+    }
+
+    const importDeclaration = binding.path.parentPath;
+    const imported = binding.path.get('imported');
+    const source = importDeclaration.node.source.value;
+    const importedNode = imported.node;
+    return [
+      source,
+      t.isIdentifier(importedNode) ? importedNode.name : importedNode.value,
+    ];
+  }
+
+  if (path.isTSQualifiedName()) {
+    const leftPath = path.get('left');
+    if (!leftPath.isIdentifier()) {
+      // Nested type. Not supported yet.
+      return undefined;
+    }
+
+    const rightPath = path.get('right');
+
+    const binding = path.scope.getBinding(leftPath.node.name);
+    if (!binding) {
+      return undefined;
+    }
+
+    if (
+      (!binding.path.isImportDefaultSpecifier() &&
+        !binding.path.isImportNamespaceSpecifier()) ||
+      !binding.path.parentPath.isImportDeclaration()
+    ) {
+      return undefined;
+    }
+
+    return [binding.path.parentPath.node.source.value, rightPath.node.name];
+  }
+
+  return undefined;
+};
+
+const isTypeMatch = (
+  id: NodePath<Identifier>,
+  types: Record<string, string[]>
+): boolean => {
+  const typeAnnotation = id.get('typeAnnotation');
+  if (!typeAnnotation.isTSTypeAnnotation()) {
+    return false;
+  }
+
+  const typeReference = typeAnnotation.get('typeAnnotation');
+  if (!typeReference.isTSTypeReference()) {
+    return false;
+  }
+
+  const typeName = typeReference.get('typeName');
+  const matchedImport = getTypeImport(typeName);
+  return (
+    matchedImport !== undefined &&
+    matchedImport[0] in types &&
+    types[matchedImport[0]].includes(matchedImport[1])
+  );
+};
+
+const isHOC = (
+  path: NodePath<CallExpression>,
+  hocs: Record<string, string[]>
+) => {
+  let calleePath: NodePath<V8IntrinsicIdentifier | Expression> = path;
+  while (calleePath.isCallExpression()) {
+    calleePath = calleePath.get('callee');
+  }
+
+  const matchedImport = getImport(calleePath);
+  return (
+    matchedImport !== undefined &&
+    matchedImport[0] in hocs &&
+    hocs[matchedImport[0]].includes(matchedImport[1])
+  );
+};
+
+const defaultPlaceholder = '...';
+
+const defaultReactComponentTypes = [
+  'ExoticComponent',
+  'FC',
+  'ForwardRefExoticComponent',
+  'FunctionComponent',
+  'LazyExoticComponent',
+  'MemoExoticComponent',
+  'NamedExoticComponent',
+];
+
+export const removeDangerousCode = (
+  programPath: NodePath<Program>,
+  options?: CodeRemoverOptions
+) => {
+  const hocs = options?.hocs ?? {};
+
+  const componentTypes = options?.componentTypes ?? {
+    react: [defaultPlaceholder],
+  };
+
+  if (
+    Array.isArray(componentTypes.react) &&
+    componentTypes.react.includes(defaultPlaceholder)
+  ) {
+    const idx = componentTypes.react.indexOf(defaultPlaceholder);
+    componentTypes.react = [...componentTypes.react];
+    componentTypes.react.splice(idx, 1, ...defaultReactComponentTypes);
+  }
+
   programPath.traverse(
     {
       // JSX can be replaced with a dummy value,
@@ -68,6 +253,14 @@ export const removeDangerousCode = (programPath: NodePath<Program>) => {
         enter(p) {
           if (isUnnecessaryReactCall(p)) {
             JSXElementsRemover(p);
+          }
+
+          if (isHOC(p, hocs)) {
+            applyAction([
+              'replace',
+              p,
+              t.arrowFunctionExpression([], t.nullLiteral()),
+            ]);
           }
         },
       },
@@ -159,6 +352,22 @@ export const removeDangerousCode = (programPath: NodePath<Program>) => {
           p,
           { type: 'StringLiteral', value: 'undefined' },
         ]);
+      },
+      VariableDeclarator(p) {
+        const id = p.get('id');
+        const init = p.get('init');
+        if (
+          id.isIdentifier() &&
+          isTypeMatch(id, componentTypes) &&
+          init.isExpression()
+        ) {
+          // Variable is typed as a React component. We can replace its value with a null-function.
+          applyAction([
+            'replace',
+            init,
+            t.arrowFunctionExpression([], t.nullLiteral()),
+          ]);
+        }
       },
     },
     {

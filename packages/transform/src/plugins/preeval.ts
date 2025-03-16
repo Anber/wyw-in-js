@@ -19,6 +19,7 @@ import { invalidateTraversalCache } from '../utils/traversalCache';
 export type PreevalOptions = Pick<
   StrictOptions,
   | 'classNameSlug'
+  | 'codeRemover'
   | 'displayName'
   | 'extensions'
   | 'evaluate'
@@ -61,7 +62,7 @@ export function preeval(
       ) {
         log('start', 'Strip all JSX and browser related stuff');
         eventEmitter.perf('transform:preeval:removeDangerousCode', () =>
-          removeDangerousCode(file.path)
+          removeDangerousCode(file.path, options.codeRemover)
         );
       }
     },

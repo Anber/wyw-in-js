@@ -13,6 +13,7 @@ export type { IVariableContext } from './IVariableContext';
 export type {
   ClassNameSlugVars,
   ClassNameFn,
+  CodeRemoverOptions,
   StrictOptions,
   EvalRule,
   Evaluator,

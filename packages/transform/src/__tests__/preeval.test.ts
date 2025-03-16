@@ -6,7 +6,7 @@ import dedent from 'dedent';
 import { preeval } from '../plugins/preeval';
 
 const run = (code: TemplateStringsArray) => {
-  const filename = join(__dirname, 'source.ts');
+  const filename = join(__dirname, 'source.tsx');
   const formattedCode = dedent(code);
 
   const transformed = transformSync(formattedCode, {
@@ -14,10 +14,24 @@ const run = (code: TemplateStringsArray) => {
     configFile: false,
     filename,
     plugins: [
-      '@babel/plugin-syntax-typescript',
+      [
+        '@babel/plugin-syntax-typescript',
+        {
+          isTSX: true,
+        },
+      ],
       [
         preeval,
         {
+          codeRemover: {
+            componentTypes: {
+              react: ['...'],
+              'some-other-lib': ['Cmp'],
+            },
+            hocs: {
+              redux: ['connect'],
+            },
+          },
           evaluate: true,
           features: {
             dangerousCodeRemover: true,
@@ -103,6 +117,65 @@ describe('preeval', () => {
     const { code } = run`
       const blah = window.Foo;
       type FooType = Generic<Foo>;
+    `;
+
+    expect(code).toMatchSnapshot();
+  });
+
+  it('should simplify react component', () => {
+    const { code } = run`
+      const Component = () => <div>Children</div>;
+    `;
+
+    expect(code).toMatchSnapshot();
+  });
+
+  it('should simplify react component based on its type 1', () => {
+    const { code } = run`
+      import type React from "react";
+      const Component: React.FC<{ children: string }> = ({ children }) => children;
+    `;
+
+    expect(code).toMatchSnapshot();
+  });
+
+  it('should simplify react component based on its type 2', () => {
+    const { code } = run`
+      import type { Cmp } from "some-other-lib";
+      const Component: Cmp<{ children: string }> = ({ children }) => children;
+    `;
+
+    expect(code).toMatchSnapshot();
+  });
+
+  it('should keep component as is for unknown type', () => {
+    const { code } = run`
+      import type { OtherCmp } from "some-other-lib";
+      const Component: OtherCmp<{ children: string }> = ({ children }) => children;
+    `;
+
+    expect(code).toMatchSnapshot();
+  });
+
+  it('should remove specified HOCs', () => {
+    const { code } = run`
+      import { connect } from "redux";
+      import { MyComponent } from "ui-kit";
+
+      const mapStateToProps = (state) => ({ todos: state.todos })
+      const Component = connect(mapStateToProps)(MyComponent);
+    `;
+
+    expect(code).toMatchSnapshot();
+  });
+
+  it('should remove HOC imported with namespace', () => {
+    const { code } = run`
+      import Redux from "redux";
+      import { MyComponent } from "ui-kit";
+
+      const mapStateToProps = (state) => ({ todos: state.todos })
+      const Component = Redux.connect(mapStateToProps)(MyComponent);
     `;
 
     expect(code).toMatchSnapshot();

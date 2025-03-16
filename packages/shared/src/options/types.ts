@@ -65,9 +65,15 @@ export type FeatureFlags<
   TOnly extends keyof AllFeatureFlags = keyof AllFeatureFlags,
 > = Pick<AllFeatureFlags, TOnly>;
 
+export type CodeRemoverOptions = {
+  componentTypes?: Record<string, string[]>;
+  hocs?: Record<string, string[]>;
+};
+
 export type StrictOptions = {
   babelOptions: TransformOptions;
   classNameSlug?: string | ClassNameFn;
+  codeRemover?: CodeRemoverOptions;
   displayName: boolean;
   evaluate: boolean;
   extensions: string[];
