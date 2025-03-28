@@ -46,6 +46,7 @@ export default function wywInJS({
     name: 'wyw-in-js',
     setup(build) {
       const cssLookup = new Map<string, string>();
+      const cssResolveDirs = new Map<string, string>();
 
       const { emitter, onDone } = createFileReporter(debug ?? false);
 
@@ -84,7 +85,7 @@ export default function wywInJS({
         return {
           contents: cssLookup.get(args.path),
           loader: 'css',
-          resolveDir: basename(args.path),
+          resolveDir: cssResolveDirs.get(args.path),
         };
       });
 
@@ -138,12 +139,13 @@ export default function wywInJS({
         };
 
         const result = await transform(transformServices, code, asyncResolve);
+        const resolveDir = dirname(args.path)
 
         if (!result.cssText) {
           return {
             contents: code,
             loader,
-            resolveDir: dirname(args.path),
+            resolveDir,
           };
         }
 
@@ -164,11 +166,12 @@ export default function wywInJS({
         }
 
         cssLookup.set(cssFilename, cssText);
+        cssResolveDirs.set(cssFilename, resolveDir)
 
         return {
           contents,
           loader,
-          resolveDir: dirname(args.path),
+          resolveDir,
         };
       });
     },
