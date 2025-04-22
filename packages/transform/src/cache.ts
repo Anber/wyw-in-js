@@ -1,5 +1,5 @@
 import { createHash } from 'crypto';
-
+import fs from 'node:fs';
 import { logger } from '@wyw-in-js/shared';
 
 import type { Entrypoint } from './transform/Entrypoint';
@@ -56,6 +56,10 @@ export class TransformCacheCollection {
     });
 
     cache.set(key, value);
+
+    if ('initialCode' in value) {
+      this.contentHashes.set(key, hashContent(value.initialCode ?? ''));
+    }
   }
 
   public clear(cacheName: CacheNames | 'all'): void {
@@ -114,6 +118,20 @@ export class TransformCacheCollection {
   }
 
   public invalidateIfChanged(filename: string, content: string) {
+    const fileEntrypoint = this.get('entrypoints', filename);
+
+    // We need to check all dependencies of the file
+    // because they might have changed as well.
+    if (fileEntrypoint) {
+      fileEntrypoint.dependencies.values().forEach((dependency) => {
+        const dependencyFilename = dependency.resolved;
+        if (dependencyFilename) {
+          const dependencyContent = fs.readFileSync(dependencyFilename, 'utf8');
+          this.invalidateIfChanged(dependencyFilename, dependencyContent);
+        }
+      });
+    }
+
     const hash = this.contentHashes.get(filename);
     const newHash = hashContent(content);
 

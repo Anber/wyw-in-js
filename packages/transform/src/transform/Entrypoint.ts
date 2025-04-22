@@ -69,10 +69,19 @@ export class Entrypoint extends BaseEntrypoint {
       string,
       Promise<IEntrypointDependency>
     >(),
-    protected readonly dependencies = new Map<string, IEntrypointDependency>(),
+    readonly dependencies = new Map<string, IEntrypointDependency>(),
     generation = 1
   ) {
-    super(services, evaluatedOnly, exports, generation, name, only, parents);
+    super(
+      services,
+      evaluatedOnly,
+      exports,
+      generation,
+      name,
+      only,
+      parents,
+      dependencies
+    );
 
     this.loadedAndParsed =
       loadedAndParsed ??
@@ -191,10 +200,8 @@ export class Entrypoint extends BaseEntrypoint {
 
     const exports = cached?.exports;
     const evaluatedOnly = cached?.evaluatedOnly ?? [];
-    const mergedOnly =
-      !changed && cached?.only
-        ? mergeOnly(cached.only, only).filter((i) => !evaluatedOnly.includes(i))
-        : only;
+
+    const mergedOnly = cached?.only ? mergeOnly(cached.only, only) : only;
 
     if (cached?.evaluated) {
       cached.log('is already evaluated with', cached.evaluatedOnly);
@@ -328,7 +335,8 @@ export class Entrypoint extends BaseEntrypoint {
       this.generation + 1,
       this.name,
       this.only,
-      this.parents
+      this.parents,
+      this.dependencies
     );
   }
 
