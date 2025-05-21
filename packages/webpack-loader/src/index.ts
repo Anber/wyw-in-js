@@ -25,6 +25,7 @@ export type LoaderOptions = {
   cacheProvider?: string | ICache;
   extension?: string;
   preprocessor?: Preprocessor;
+  prefixer?: boolean;
   sourceMap?: boolean;
 };
 type Loader = RawLoaderDefinitionFunction<LoaderOptions>;
@@ -61,6 +62,7 @@ const webpack5Loader: Loader = function webpack5LoaderPlugin(
   const {
     sourceMap = undefined,
     preprocessor = undefined,
+    prefixer = undefined,
     extension = '.wyw-in-js.css',
     cacheProvider,
     ...rest
@@ -93,6 +95,7 @@ const webpack5Loader: Loader = function webpack5LoaderPlugin(
       inputSourceMap: convertSourceMap(inputSourceMap, this.resourcePath),
       root: process.cwd(),
       preprocessor,
+      prefixer,
       pluginOptions: rest,
     },
     cache,
