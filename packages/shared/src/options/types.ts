@@ -85,7 +85,11 @@ export type StrictOptions = {
     filename: string
   ) => Partial<VmContext>;
   rules: EvalRule[];
-  tagResolver?: (source: string, tag: string) => string | null;
+  tagResolver?: (
+    source: string,
+    tag: string,
+    sourceFile: string
+  ) => string | null;
   variableNameConfig?: 'var' | 'dashes' | 'raw';
   variableNameSlug?: string | VariableNameFn;
 };

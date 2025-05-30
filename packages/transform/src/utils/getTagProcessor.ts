@@ -146,12 +146,12 @@ function getProcessorFromFile(processorPath: string): ProcessorClass | null {
 
 export function getProcessorForImport(
   { imported, source }: IImport,
-  filename: string | null | undefined,
+  filename: string,
   options: Pick<StrictOptions, 'tagResolver'>
 ): [ProcessorClass | null, TagSource] {
   const tagResolver = options.tagResolver ?? (() => null);
 
-  const customFile = tagResolver(source, imported);
+  const customFile = tagResolver(source, imported, filename);
   const processor = customFile
     ? getProcessorFromFile(customFile)
     : getProcessorFromPackage(source, imported, filename);
@@ -395,7 +395,7 @@ const getNextIndex = (state: IFileContext) => {
 export function getDefinedProcessors(
   imports: IImport[],
   path: NodePath<Program>,
-  filename: string | null | undefined,
+  filename: string,
   options: Pick<StrictOptions, 'tagResolver'>
 ): DefinedProcessors {
   const cache = getTraversalCache<DefinedProcessors, NodePath<Program>>(
@@ -517,7 +517,7 @@ export function applyProcessors(
   const definedProcessors = getDefinedProcessors(
     imports,
     path,
-    fileContext.filename,
+    fileContext.filename!,
     options
   );
 
