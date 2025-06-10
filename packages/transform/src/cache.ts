@@ -10,8 +10,13 @@ function hashContent(content: string) {
   return createHash('sha256').update(content).digest('hex');
 }
 
-interface ICaches {
-  entrypoints: Map<string, Entrypoint | IEvaluatedEntrypoint>;
+interface IBaseCachedEntrypoint {
+  dependencies: Map<string, { resolved: string | null }>;
+  initialCode?: string;
+}
+
+interface ICaches<TEntrypoint extends IBaseCachedEntrypoint> {
+  entrypoints: Map<string, TEntrypoint>;
   exports: Map<string, string[]>;
 }
 
@@ -30,21 +35,23 @@ const loggers = cacheNames.reduce(
   {} as Record<CacheNames, typeof logger>
 );
 
-export class TransformCacheCollection {
-  public readonly entrypoints: Map<string, Entrypoint | IEvaluatedEntrypoint>;
+export class TransformCacheCollection<
+  TEntrypoint extends IBaseCachedEntrypoint = Entrypoint | IEvaluatedEntrypoint,
+> {
+  public readonly entrypoints: Map<string, TEntrypoint>;
 
   public readonly exports: Map<string, string[]>;
 
   private contentHashes = new Map<string, string>();
 
-  constructor(caches: Partial<ICaches> = {}) {
+  constructor(caches: Partial<ICaches<TEntrypoint>> = {}) {
     this.entrypoints = caches.entrypoints || new Map();
     this.exports = caches.exports || new Map();
   }
 
   public add<
     TCache extends CacheNames,
-    TValue extends MapValue<ICaches[TCache]>,
+    TValue extends MapValue<ICaches<TEntrypoint>[TCache]>,
   >(cacheName: TCache, key: string, value: TValue): void {
     const cache = this[cacheName] as Map<string, TValue>;
     loggers[cacheName]('%s:add %s %f', getFileIdx(key), key, () => {
@@ -83,7 +90,7 @@ export class TransformCacheCollection {
 
   public get<
     TCache extends CacheNames,
-    TValue extends MapValue<ICaches[TCache]>,
+    TValue extends MapValue<ICaches<TEntrypoint>[TCache]>,
   >(cacheName: TCache, key: string): TValue | undefined {
     const cache = this[cacheName] as Map<string, TValue>;
 
@@ -123,13 +130,13 @@ export class TransformCacheCollection {
     // We need to check all dependencies of the file
     // because they might have changed as well.
     if (fileEntrypoint) {
-      fileEntrypoint.dependencies.values().forEach((dependency) => {
+      for (const [, dependency] of fileEntrypoint.dependencies) {
         const dependencyFilename = dependency.resolved;
         if (dependencyFilename) {
           const dependencyContent = fs.readFileSync(dependencyFilename, 'utf8');
           this.invalidateIfChanged(dependencyFilename, dependencyContent);
         }
-      });
+      }
     }
 
     const hash = this.contentHashes.get(filename);

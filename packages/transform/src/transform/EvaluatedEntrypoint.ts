@@ -1,9 +1,10 @@
 import type { Debugger } from '@wyw-in-js/shared';
 
 import { BaseEntrypoint } from './BaseEntrypoint';
-import { IEntrypointDependency } from './Entrypoint.types';
+import type { IEntrypointDependency } from './Entrypoint.types';
 
 export interface IEvaluatedEntrypoint {
+  dependencies: Map<string, IEntrypointDependency>;
   evaluated: true;
   evaluatedOnly: string[];
   exports: Record<string | symbol, unknown>;
@@ -11,7 +12,6 @@ export interface IEvaluatedEntrypoint {
   ignored: false;
   log: Debugger;
   only: string[];
-  dependencies: Map<string, IEntrypointDependency>;
 }
 
 export class EvaluatedEntrypoint

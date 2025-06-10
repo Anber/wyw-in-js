@@ -3,12 +3,13 @@ import fs from 'node:fs';
 
 import { TransformCacheCollection } from '../cache';
 import type { IEntrypointDependency } from '../transform/Entrypoint.types';
+
 // Mocking the minimal interface needed by the cache
 type MockEntrypoint = {
-  name: string;
-  initialCode: string;
   dependencies: Map<string, Pick<IEntrypointDependency, 'resolved'>>;
   generation: number;
+  initialCode: string;
+  name: string;
 };
 
 jest.mock('node:fs');
@@ -24,10 +25,10 @@ const setupCacheWithEntrypoint = (
   content: string,
   dependencies: MockEntrypoint['dependencies'] = new Map()
 ): {
-  cache: TransformCacheCollection;
+  cache: TransformCacheCollection<MockEntrypoint>;
   entrypoint: MockEntrypoint;
 } => {
-  const cache = new TransformCacheCollection();
+  const cache = new TransformCacheCollection<MockEntrypoint>();
   const entrypoint: MockEntrypoint = {
     name: filename,
     initialCode: content,
@@ -35,9 +36,12 @@ const setupCacheWithEntrypoint = (
     generation: 1,
   };
 
-  cache.add('entrypoints', filename, entrypoint as any);
+  cache.add('entrypoints', filename, entrypoint);
+
   // Manually set content hash as `add` does
-  (cache as any).contentHashes.set(filename, hashContent(content));
+  // @ts-expect-error contentHashes is private
+  const { contentHashes } = cache;
+  contentHashes.set(filename, hashContent(content));
 
   return { cache, entrypoint };
 };
