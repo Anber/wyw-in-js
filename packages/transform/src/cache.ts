@@ -1,5 +1,5 @@
 import { createHash } from 'crypto';
-
+import fs from 'node:fs';
 import { logger } from '@wyw-in-js/shared';
 
 import type { Entrypoint } from './transform/Entrypoint';
@@ -10,8 +10,13 @@ function hashContent(content: string) {
   return createHash('sha256').update(content).digest('hex');
 }
 
-interface ICaches {
-  entrypoints: Map<string, Entrypoint | IEvaluatedEntrypoint>;
+interface IBaseCachedEntrypoint {
+  dependencies: Map<string, { resolved: string | null }>;
+  initialCode?: string;
+}
+
+interface ICaches<TEntrypoint extends IBaseCachedEntrypoint> {
+  entrypoints: Map<string, TEntrypoint>;
   exports: Map<string, string[]>;
 }
 
@@ -30,21 +35,23 @@ const loggers = cacheNames.reduce(
   {} as Record<CacheNames, typeof logger>
 );
 
-export class TransformCacheCollection {
-  public readonly entrypoints: Map<string, Entrypoint | IEvaluatedEntrypoint>;
+export class TransformCacheCollection<
+  TEntrypoint extends IBaseCachedEntrypoint = Entrypoint | IEvaluatedEntrypoint,
+> {
+  public readonly entrypoints: Map<string, TEntrypoint>;
 
   public readonly exports: Map<string, string[]>;
 
   private contentHashes = new Map<string, string>();
 
-  constructor(caches: Partial<ICaches> = {}) {
+  constructor(caches: Partial<ICaches<TEntrypoint>> = {}) {
     this.entrypoints = caches.entrypoints || new Map();
     this.exports = caches.exports || new Map();
   }
 
   public add<
     TCache extends CacheNames,
-    TValue extends MapValue<ICaches[TCache]>,
+    TValue extends MapValue<ICaches<TEntrypoint>[TCache]>,
   >(cacheName: TCache, key: string, value: TValue): void {
     const cache = this[cacheName] as Map<string, TValue>;
     loggers[cacheName]('%s:add %s %f', getFileIdx(key), key, () => {
@@ -56,6 +63,10 @@ export class TransformCacheCollection {
     });
 
     cache.set(key, value);
+
+    if ('initialCode' in value) {
+      this.contentHashes.set(key, hashContent(value.initialCode ?? ''));
+    }
   }
 
   public clear(cacheName: CacheNames | 'all'): void {
@@ -79,7 +90,7 @@ export class TransformCacheCollection {
 
   public get<
     TCache extends CacheNames,
-    TValue extends MapValue<ICaches[TCache]>,
+    TValue extends MapValue<ICaches<TEntrypoint>[TCache]>,
   >(cacheName: TCache, key: string): TValue | undefined {
     const cache = this[cacheName] as Map<string, TValue>;
 
@@ -114,6 +125,20 @@ export class TransformCacheCollection {
   }
 
   public invalidateIfChanged(filename: string, content: string) {
+    const fileEntrypoint = this.get('entrypoints', filename);
+
+    // We need to check all dependencies of the file
+    // because they might have changed as well.
+    if (fileEntrypoint) {
+      for (const [, dependency] of fileEntrypoint.dependencies) {
+        const dependencyFilename = dependency.resolved;
+        if (dependencyFilename) {
+          const dependencyContent = fs.readFileSync(dependencyFilename, 'utf8');
+          this.invalidateIfChanged(dependencyFilename, dependencyContent);
+        }
+      }
+    }
+
     const hash = this.contentHashes.get(filename);
     const newHash = hashContent(content);
 

@@ -5,6 +5,7 @@ import type { ParentEntrypoint } from '../types';
 import { getFileIdx } from '../utils/getFileIdx';
 
 import type { Services } from './types';
+import type { IEntrypointDependency } from './Entrypoint.types';
 
 const hasKey = <TKey extends string | symbol>(
   obj: unknown,
@@ -159,11 +160,14 @@ export abstract class BaseEntrypoint {
     public readonly generation: number,
     public readonly name: string,
     public readonly only: string[],
-    public readonly parents: ParentEntrypoint[]
+    public readonly parents: ParentEntrypoint[],
+    public readonly dependencies: Map<string, IEntrypointDependency>
   ) {
     this.idx = getFileIdx(name);
     this.log =
       parents[0]?.log.extend(this.ref, '->') ?? services.log.extend(this.ref);
+
+    this.dependencies = dependencies;
 
     let isExportsInherited = false;
     if (exports) {
