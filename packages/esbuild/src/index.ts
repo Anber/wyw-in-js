@@ -5,7 +5,7 @@
  */
 
 import { readFileSync } from 'fs';
-import { basename, dirname, isAbsolute, join, parse, posix } from 'path';
+import { dirname, isAbsolute, join, parse, posix } from 'path';
 
 import type { Plugin, TransformOptions, Loader } from 'esbuild';
 import { transformSync } from 'esbuild';
@@ -139,7 +139,7 @@ export default function wywInJS({
         };
 
         const result = await transform(transformServices, code, asyncResolve);
-        const resolveDir = dirname(args.path)
+        const resolveDir = dirname(args.path);
 
         if (!result.cssText) {
           return {
@@ -166,7 +166,7 @@ export default function wywInJS({
         }
 
         cssLookup.set(cssFilename, cssText);
-        cssResolveDirs.set(cssFilename, resolveDir)
+        cssResolveDirs.set(cssFilename, resolveDir);
 
         return {
           contents,
