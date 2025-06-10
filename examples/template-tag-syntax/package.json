@@ -1,6 +1,6 @@
 {
   "name": "@wyw-in-js/template-tag-syntax",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "dependencies": {
     "@wyw-in-js/processor-utils": "workspace:*"
   },

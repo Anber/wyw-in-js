@@ -1,6 +1,6 @@
 {
   "name": "@wyw-in-js/sample-processor",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "main": "index.js",
   "types": "index.d.ts",

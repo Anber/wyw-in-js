@@ -1,5 +1,16 @@
 # @wyw-in-js/processor-utils
 
+## 0.7.0
+
+### Minor Changes
+
+- Bump versions
+
+### Patch Changes
+
+- Updated dependencies [58da575]
+  - @wyw-in-js/shared@0.7.0
+
 ## 0.6.0
 
 ### Minor Changes

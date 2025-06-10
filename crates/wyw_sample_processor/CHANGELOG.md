@@ -1,5 +1,11 @@
 # @wyw-in-js/sample-processor
 
+## 0.2.0
+
+### Minor Changes
+
+- Bump versions
+
 ## 0.1.0
 
 ### Minor Changes
