@@ -24,6 +24,7 @@ const outputCssLoader = require.resolve('./outputCssLoader');
 export type LoaderOptions = {
   cacheProvider?: string | ICache;
   extension?: string;
+  prefixer?: boolean;
   preprocessor?: Preprocessor;
   sourceMap?: boolean;
 };
@@ -61,6 +62,7 @@ const webpack5Loader: Loader = function webpack5LoaderPlugin(
   const {
     sourceMap = undefined,
     preprocessor = undefined,
+    prefixer = undefined,
     extension = '.wyw-in-js.css',
     cacheProvider,
     ...rest
@@ -91,9 +93,10 @@ const webpack5Loader: Loader = function webpack5LoaderPlugin(
     options: {
       filename: this.resourcePath,
       inputSourceMap: convertSourceMap(inputSourceMap, this.resourcePath),
-      root: process.cwd(),
-      preprocessor,
       pluginOptions: rest,
+      prefixer,
+      preprocessor,
+      root: process.cwd(),
     },
     cache,
     eventEmitter: sharedState.emitter,

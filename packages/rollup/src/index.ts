@@ -18,6 +18,7 @@ import {
 type RollupPluginOptions = {
   exclude?: string | string[];
   include?: string | string[];
+  prefixer?: boolean;
   preprocessor?: Preprocessor;
   sourceMap?: boolean;
 } & Partial<PluginOptions>;
@@ -25,6 +26,7 @@ type RollupPluginOptions = {
 export default function wywInJS({
   exclude,
   include,
+  prefixer,
   preprocessor,
   sourceMap,
   ...rest
@@ -90,9 +92,10 @@ export default function wywInJS({
       const transformServices = {
         options: {
           filename: id,
-          root: process.cwd(),
-          preprocessor,
           pluginOptions: rest,
+          prefixer,
+          preprocessor,
+          root: process.cwd(),
         },
         cache,
       };

@@ -60,6 +60,7 @@ export type Options = {
   inputSourceMap?: RawSourceMap;
   outputFilename?: string;
   pluginOptions?: Partial<PluginOptions>;
+  prefixer?: boolean;
   preprocessor?: Preprocessor;
   root?: string;
 };
