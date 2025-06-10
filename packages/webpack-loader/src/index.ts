@@ -24,8 +24,8 @@ const outputCssLoader = require.resolve('./outputCssLoader');
 export type LoaderOptions = {
   cacheProvider?: string | ICache;
   extension?: string;
-  preprocessor?: Preprocessor;
   prefixer?: boolean;
+  preprocessor?: Preprocessor;
   sourceMap?: boolean;
 };
 type Loader = RawLoaderDefinitionFunction<LoaderOptions>;
@@ -93,10 +93,10 @@ const webpack5Loader: Loader = function webpack5LoaderPlugin(
     options: {
       filename: this.resourcePath,
       inputSourceMap: convertSourceMap(inputSourceMap, this.resourcePath),
-      root: process.cwd(),
-      preprocessor,
-      prefixer,
       pluginOptions: rest,
+      prefixer,
+      preprocessor,
+      root: process.cwd(),
     },
     cache,
     eventEmitter: sharedState.emitter,

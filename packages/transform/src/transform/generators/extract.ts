@@ -10,7 +10,10 @@ import { createStylisPreprocessor } from './createStylisPreprocessor';
 function extractCssFromAst(
   rules: Rules,
   originalCode: string,
-  options: Pick<Options, 'preprocessor' | 'filename' | 'outputFilename'>
+  options: Pick<
+    Options,
+    'preprocessor' | 'filename' | 'outputFilename' | 'prefixer'
+  >
 ): { cssSourceMapText: string; cssText: string; rules: Rules } {
   const mappings: Mapping[] = [];
 
