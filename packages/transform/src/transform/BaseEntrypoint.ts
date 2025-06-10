@@ -5,7 +5,7 @@ import type { ParentEntrypoint } from '../types';
 import { getFileIdx } from '../utils/getFileIdx';
 
 import type { Services } from './types';
-import { IEntrypointDependency } from './Entrypoint.types';
+import type { IEntrypointDependency } from './Entrypoint.types';
 
 const hasKey = <TKey extends string | symbol>(
   obj: unknown,
