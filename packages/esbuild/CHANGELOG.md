@@ -1,5 +1,20 @@
 # @wyw-in-js/esbuild
 
+## 0.7.0
+
+### Minor Changes
+
+- 168341b: New option `prefixer` that allows disabling the built-in CSS-prefixed.
+- 58da575: Ensure cache invalidates correctly when dependency content changes.
+
+### Patch Changes
+
+- 297bd13: Fix resolving files in esbuild plugin. Closes #132.
+- Updated dependencies [168341b]
+- Updated dependencies [58da575]
+  - @wyw-in-js/transform@0.7.0
+  - @wyw-in-js/shared@0.7.0
+
 ## 0.6.0
 
 ### Minor Changes

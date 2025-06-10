@@ -1,5 +1,18 @@
 # @wyw-in-js/cli
 
+## 0.7.0
+
+### Minor Changes
+
+- 58da575: Ensure cache invalidates correctly when dependency content changes.
+
+### Patch Changes
+
+- Updated dependencies [168341b]
+- Updated dependencies [58da575]
+  - @wyw-in-js/transform@0.7.0
+  - @wyw-in-js/shared@0.7.0
+
 ## 0.6.0
 
 ### Minor Changes

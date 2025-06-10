@@ -1,5 +1,17 @@
 # @wyw-in-js/babel-preset
 
+## 0.7.0
+
+### Minor Changes
+
+- 58da575: Ensure cache invalidates correctly when dependency content changes.
+
+### Patch Changes
+
+- Updated dependencies [168341b]
+- Updated dependencies [58da575]
+  - @wyw-in-js/transform@0.7.0
+
 ## 0.6.0
 
 ### Minor Changes

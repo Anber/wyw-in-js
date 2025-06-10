@@ -1,5 +1,18 @@
 # @wyw-in-js/website
 
+## 0.7.0
+
+### Minor Changes
+
+- 168341b: New option `prefixer` that allows disabling the built-in CSS-prefixed.
+- 58da575: Ensure cache invalidates correctly when dependency content changes.
+
+### Patch Changes
+
+- Updated dependencies [168341b]
+- Updated dependencies [58da575]
+  - wyw-in-js@0.7.0
+
 ## 0.6.0
 
 ### Minor Changes

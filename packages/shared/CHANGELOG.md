@@ -1,5 +1,11 @@
 # @wyw-in-js/shared
 
+## 0.7.0
+
+### Minor Changes
+
+- 58da575: Ensure cache invalidates correctly when dependency content changes.
+
 ## 0.6.0
 
 ### Minor Changes
