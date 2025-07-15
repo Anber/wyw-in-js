@@ -19,8 +19,8 @@ import toCSS, { isCSSable } from './toCSS';
 import type { IOptions } from './types';
 import { units } from './units';
 
-// Match any valid CSS units followed by a separator such as ;, newline etc.
-const unitRegex = new RegExp(`^(?:${units.join('|')})\\b`);
+// Match any valid CSS unit not immediately followed by an alphanumeric character or underscore.
+const unitRegex = new RegExp(`^(?:${units.join('|')}(?![a-zA-Z0-9_]))`);
 
 export default function templateProcessor(
   tagProcessor: TaggedTemplateProcessor,
