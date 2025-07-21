@@ -64,7 +64,7 @@ export class TransformCacheCollection<
 
     cache.set(key, value);
 
-    if ('initialCode' in value) {
+    if (value && 'initialCode' in value) {
       this.contentHashes.set(key, hashContent(value.initialCode ?? ''));
     }
   }
