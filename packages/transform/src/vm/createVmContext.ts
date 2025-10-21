@@ -10,8 +10,10 @@ type Window = any;
 const NOOP = () => {};
 
 function createWindow(): Window {
-  // Use dynamic require to defer loading until needed
-  // This works in CommonJS builds but needs ESM handling in tests
+  // happy-dom v20+ is ESM-only. We use require() here for CommonJS builds.
+  // In Node.js < 22, this will fail at runtime. Users should ensure they use
+  // the ESM build or Node.js 22+ for happy-dom support.
+  // For tests, we provide a Jest mock to avoid ESM/CommonJS conflicts.
   // eslint-disable-next-line @typescript-eslint/no-var-requires, global-require
   const { Window: WindowClass } = require('happy-dom');
   const win = new WindowClass();
