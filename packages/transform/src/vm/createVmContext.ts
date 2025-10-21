@@ -1,18 +1,20 @@
 import * as vm from 'vm';
 
-import type { Window } from 'happy-dom';
-
 import type { FeatureFlags, StrictOptions } from '@wyw-in-js/shared';
 import { isFeatureEnabled } from '@wyw-in-js/shared';
 
 import * as process from './process';
 
+type Window = any;
+
 const NOOP = () => {};
 
 function createWindow(): Window {
-  const { Window, GlobalWindow } = require('happy-dom');
-  const HappyWindow = GlobalWindow || Window;
-  const win = new HappyWindow();
+  // Use dynamic require to defer loading until needed
+  // This works in CommonJS builds but needs ESM handling in tests
+  // eslint-disable-next-line @typescript-eslint/no-var-requires, global-require
+  const { Window: WindowClass } = require('happy-dom');
+  const win = new WindowClass();
 
   // TODO: browser doesn't expose Buffer, but a lot of dependencies use it
   win.Buffer = Buffer;
