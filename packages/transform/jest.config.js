@@ -15,9 +15,7 @@ module.exports = {
       },
     ],
   },
-  transformIgnorePatterns: [
-    'node_modules/(?!happy-dom)',
-  ],
+  transformIgnorePatterns: ['node_modules/(?!happy-dom)'],
   moduleNameMapper: {
     '^happy-dom$': '<rootDir>/src/__mocks__/happy-dom.ts',
   },

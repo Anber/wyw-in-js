@@ -5,6 +5,7 @@ import { isFeatureEnabled } from '@wyw-in-js/shared';
 
 import * as process from './process';
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Window = any;
 
 const NOOP = () => {};
