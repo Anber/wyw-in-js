@@ -68,3 +68,8 @@ The `softErrors` is disabled by default. It is designed to provide a more lenien
 The `useBabelConfigs` feature is enabled by default. If it is enabled, WyW-in-JS will try to resolve the `.babelrc` file for each processed file. Otherwise, it will use the default Babel configuration from `babelOptions` in the configuration.
 
 Please note that the default value of `useBabelConfigs` will be changed to `false` in the next major release.
+
+# `useWeakRefInEval` Feature
+
+The `useWeakRefInEval` feature is enabled by default. If it is enabled, WyW-in-JS will use WeakRef in Module evalutation. WeakRef is a memory optimisation but can cause `EvalError: Module X is disposed` erorrs in some cases. See: https://github.com/callstack/linaria/issues/1352.
+
