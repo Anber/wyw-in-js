@@ -124,17 +124,29 @@ export class TransformCacheCollection<
     });
   }
 
-  public invalidateIfChanged(filename: string, content: string) {
+  public invalidateIfChanged(
+    filename: string,
+    content: string,
+    previousVisitedFiles?: Set<string>
+  ) {
+    const visitedFiles = new Set(previousVisitedFiles);
     const fileEntrypoint = this.get('entrypoints', filename);
 
     // We need to check all dependencies of the file
     // because they might have changed as well.
-    if (fileEntrypoint) {
+    if (fileEntrypoint && !visitedFiles.has(filename)) {
+      visitedFiles.add(filename);
+
       for (const [, dependency] of fileEntrypoint.dependencies) {
         const dependencyFilename = dependency.resolved;
+
         if (dependencyFilename) {
           const dependencyContent = fs.readFileSync(dependencyFilename, 'utf8');
-          this.invalidateIfChanged(dependencyFilename, dependencyContent);
+          this.invalidateIfChanged(
+            dependencyFilename,
+            dependencyContent,
+            visitedFiles
+          );
         }
       }
     }

@@ -191,5 +191,88 @@ describe('TransformCacheCollection', () => {
       expect(mockedReadFileSync).toHaveBeenCalledWith(intermediateName, 'utf8');
       expect(mockedReadFileSync).toHaveBeenCalledWith(leafName, 'utf8');
     });
+
+    it('should invalidate recursive dependency with cycle if its content changed', () => {
+      const rootName = 'root.js';
+      const rootContent =
+        "import {a} from './leaf.js'; import {b} from './intermediate.js'; console.log(a, b);";
+
+      const intermediateName = 'intermediate.js';
+      const intermediateContent =
+        "import {a} from './root.js; export const b = a + 1;";
+
+      const leafName = 'leaf.js';
+      const leafContent = 'export const a = 42;';
+      const newLeafContent = 'export const a = 43;';
+
+      // Setup leaf
+      const { entrypoint: leafEntrypoint } = setupCacheWithEntrypoint(
+        leafName,
+        leafContent
+      );
+
+      // Setup intermediate
+      const intermediateDeps = new Map<
+        string,
+        Pick<IEntrypointDependency, 'resolved'>
+      >([['./root.js', { resolved: rootName }]]);
+
+      const { entrypoint: intermediateEntrypoint } = setupCacheWithEntrypoint(
+        intermediateName,
+        intermediateContent,
+        intermediateDeps
+      );
+
+      // Setup root
+      const rootDeps = new Map<string, Pick<IEntrypointDependency, 'resolved'>>(
+        [
+          ['./leaf.js', { resolved: leafName }],
+          ['./intermediate.js', { resolved: intermediateName }],
+        ]
+      );
+
+      const { cache } = setupCacheWithEntrypoint(
+        rootName,
+        rootContent,
+        rootDeps
+      );
+
+      // Add all to the main cache
+      cache.add('entrypoints', leafName, leafEntrypoint as any);
+      (cache as any).contentHashes.set(leafName, hashContent(leafContent));
+      cache.add('entrypoints', intermediateName, intermediateEntrypoint as any);
+      (cache as any).contentHashes.set(
+        intermediateName,
+        hashContent(intermediateContent)
+      );
+
+      // Mock fs read to return new content for the leaf dependency
+      mockedReadFileSync.mockImplementation((path) => {
+        if (path === leafName) {
+          return newLeafContent;
+        }
+        if (path === intermediateName) {
+          // intermediate content hasn't actually changed on disk
+          return intermediateContent;
+        }
+        if (path === rootName) {
+          // root content hasn't actually changed on disk
+          return rootContent;
+        }
+        throw new Error(`Unexpected readFileSync call: ${path}`);
+      });
+
+      const invalidated = cache.invalidateIfChanged(
+        rootName,
+        rootContent // Root content itself hasn't changed
+      );
+
+      expect(invalidated).toBe(false); // Root itself wasn't invalidated
+      expect(cache.has('entrypoints', rootName)).toBe(true); // Root still in cache
+      expect(cache.has('entrypoints', intermediateName)).toBe(true); // Intermediate still in cache
+      expect(cache.has('entrypoints', leafName)).toBe(false); // Leaf dependency invalidated
+      expect(mockedReadFileSync).toHaveBeenCalledWith(intermediateName, 'utf8');
+      expect(mockedReadFileSync).toHaveBeenCalledWith(leafName, 'utf8');
+    });
   });
 });
