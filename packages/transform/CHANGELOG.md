@@ -1,5 +1,17 @@
 # @wyw-in-js/transform
 
+## 0.8.0
+
+### Minor Changes
+
+- 4212218: chore: bump happy-dom to 20.0.10
+
+### Patch Changes
+
+- Updated dependencies
+  - @wyw-in-js/shared@0.8.0
+  - @wyw-in-js/processor-utils@0.8.0
+
 ## 0.7.0
 
 ### Minor Changes
