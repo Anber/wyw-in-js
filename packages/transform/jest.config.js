@@ -14,5 +14,7 @@ module.exports = {
         isolatedModules: true,
       },
     ],
+    '^.+\\.js$': 'babel-jest',
   },
+  transformIgnorePatterns: ['node_modules/.pnpm/(?!happy-dom)'],
 };
