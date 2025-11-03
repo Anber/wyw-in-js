@@ -1,6 +1,6 @@
 {
   "name": "@wyw-in-js/e2e-vite",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "dependencies": {
     "@wyw-in-js/template-tag-syntax": "workspace:*"
   },
