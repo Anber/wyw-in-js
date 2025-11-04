@@ -192,4 +192,12 @@ describe('TransformCacheCollection', () => {
       expect(mockedReadFileSync).toHaveBeenCalledWith(leafName, 'utf8');
     });
   });
+
+  it('should be able to handle undefined values in the cache', () => {
+    const cache = new TransformCacheCollection<MockEntrypoint>();
+
+    expect(() => {
+      cache.add('entrypoints', 'empty-style.js', undefined as any);
+    }).not.toThrow();
+  });
 });
