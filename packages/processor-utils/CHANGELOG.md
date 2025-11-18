@@ -1,5 +1,12 @@
 # @wyw-in-js/processor-utils
 
+## 0.8.1
+
+### Patch Changes
+
+- Updated dependencies [fcfdf52]
+  - @wyw-in-js/shared@0.8.1
+
 ## 0.8.0
 
 ### Minor Changes
