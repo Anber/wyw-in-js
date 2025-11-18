@@ -17,3 +17,5 @@ crates/*/index.js
 
 target
 *.node
+tmp/*
+AGENTS.md
