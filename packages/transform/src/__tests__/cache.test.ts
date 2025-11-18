@@ -278,4 +278,23 @@ describe('TransformCacheCollection', () => {
       expect(mockedReadFileSync).toHaveBeenCalledWith(fileB, 'utf8');
     });
   });
+
+  it('removes entry and content hash when value is undefined', () => {
+    const filename = 'empty-style.js';
+    const content = '';
+    const { cache } = setupCacheWithEntrypoint(filename, content);
+
+    // @ts-expect-error accessing private field for assertions
+    const { contentHashes } = cache;
+
+    expect(cache.has('entrypoints', filename)).toBe(true);
+    expect(contentHashes.has(filename)).toBe(true);
+
+    expect(() => {
+      cache.add('entrypoints', filename, undefined as any);
+    }).not.toThrow();
+
+    expect(cache.has('entrypoints', filename)).toBe(false);
+    expect(contentHashes.has(filename)).toBe(false);
+  });
 });
