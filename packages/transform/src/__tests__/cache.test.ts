@@ -191,5 +191,91 @@ describe('TransformCacheCollection', () => {
       expect(mockedReadFileSync).toHaveBeenCalledWith(intermediateName, 'utf8');
       expect(mockedReadFileSync).toHaveBeenCalledWith(leafName, 'utf8');
     });
+
+    it('should handle cyclic dependencies without infinite recursion', () => {
+      const fileA = 'a.js';
+      const contentA = 'import { b } from "./b.js"; export const a = () => b;';
+      const fileB = 'b.js';
+      const contentB = 'import { a } from "./a.js"; export const b = () => a;';
+
+      const depsA = new Map<string, Pick<IEntrypointDependency, 'resolved'>>([
+        ['./b.js', { resolved: fileB }],
+      ]);
+      const depsB = new Map<string, Pick<IEntrypointDependency, 'resolved'>>([
+        ['./a.js', { resolved: fileA }],
+      ]);
+
+      const { cache } = setupCacheWithEntrypoint(fileA, contentA, depsA);
+      const { entrypoint: entryB } = setupCacheWithEntrypoint(
+        fileB,
+        contentB,
+        depsB
+      );
+
+      cache.add('entrypoints', fileB, entryB as any);
+      (cache as any).contentHashes.set(fileB, hashContent(contentB));
+
+      mockedReadFileSync.mockImplementation((path) => {
+        if (path === fileB) {
+          return contentB;
+        }
+        if (path === fileA) {
+          return contentA;
+        }
+        throw new Error(`Unexpected readFileSync call: ${path}`);
+      });
+
+      const invalidated = cache.invalidateIfChanged(fileA, contentA);
+
+      expect(invalidated).toBe(false);
+      expect(cache.has('entrypoints', fileA)).toBe(true);
+      expect(cache.has('entrypoints', fileB)).toBe(true);
+      expect(mockedReadFileSync).toHaveBeenCalledWith(fileB, 'utf8');
+      expect(mockedReadFileSync).toHaveBeenCalledWith(fileA, 'utf8');
+      expect(mockedReadFileSync).toHaveBeenCalledTimes(2);
+    });
+
+    it('should still invalidate cyclic dependency content changes', () => {
+      const fileA = 'a.js';
+      const contentA = 'import { b } from "./b.js"; export const a = () => b;';
+      const fileB = 'b.js';
+      const contentB = 'import { a } from "./a.js"; export const b = () => a;';
+      const newContentB = 'import { a } from "./a.js"; export const b = 42;';
+
+      const depsA = new Map<string, Pick<IEntrypointDependency, 'resolved'>>([
+        ['./b.js', { resolved: fileB }],
+      ]);
+      const depsB = new Map<string, Pick<IEntrypointDependency, 'resolved'>>([
+        ['./a.js', { resolved: fileA }],
+      ]);
+
+      const { cache } = setupCacheWithEntrypoint(fileA, contentA, depsA);
+      const { entrypoint: entryB } = setupCacheWithEntrypoint(
+        fileB,
+        contentB,
+        depsB
+      );
+
+      cache.add('entrypoints', fileB, entryB as any);
+      (cache as any).contentHashes.set(fileB, hashContent(contentB));
+
+      mockedReadFileSync.mockImplementation((path) => {
+        if (path === fileA) {
+          return contentA;
+        }
+        if (path === fileB) {
+          return contentB;
+        }
+        throw new Error(`Unexpected readFileSync call: ${path}`);
+      });
+
+      const invalidated = cache.invalidateIfChanged(fileB, newContentB);
+
+      expect(invalidated).toBe(true);
+      expect(cache.has('entrypoints', fileB)).toBe(false);
+      expect(cache.has('entrypoints', fileA)).toBe(true);
+      expect(mockedReadFileSync).toHaveBeenCalledWith(fileA, 'utf8');
+      expect(mockedReadFileSync).toHaveBeenCalledWith(fileB, 'utf8');
+    });
   });
 });
