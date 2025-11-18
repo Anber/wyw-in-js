@@ -192,87 +192,90 @@ describe('TransformCacheCollection', () => {
       expect(mockedReadFileSync).toHaveBeenCalledWith(leafName, 'utf8');
     });
 
-    it('should invalidate recursive dependency with cycle if its content changed', () => {
-      const rootName = 'root.js';
-      const rootContent =
-        "import {a} from './leaf.js'; import {b} from './intermediate.js'; console.log(a, b);";
+    it('should handle cyclic dependencies without infinite recursion', () => {
+      const fileA = 'a.js';
+      const contentA = 'import { b } from "./b.js"; export const a = () => b;';
+      const fileB = 'b.js';
+      const contentB = 'import { a } from "./a.js"; export const b = () => a;';
 
-      const intermediateName = 'intermediate.js';
-      const intermediateContent =
-        "import {a} from './root.js; export const b = a + 1;";
+      const depsA = new Map<string, Pick<IEntrypointDependency, 'resolved'>>([
+        ['./b.js', { resolved: fileB }],
+      ]);
+      const depsB = new Map<string, Pick<IEntrypointDependency, 'resolved'>>([
+        ['./a.js', { resolved: fileA }],
+      ]);
 
-      const leafName = 'leaf.js';
-      const leafContent = 'export const a = 42;';
-      const newLeafContent = 'export const a = 43;';
-
-      // Setup leaf
-      const { entrypoint: leafEntrypoint } = setupCacheWithEntrypoint(
-        leafName,
-        leafContent
+      const { cache } = setupCacheWithEntrypoint(fileA, contentA, depsA);
+      const { entrypoint: entryB } = setupCacheWithEntrypoint(
+        fileB,
+        contentB,
+        depsB
       );
 
-      // Setup intermediate
-      const intermediateDeps = new Map<
-        string,
-        Pick<IEntrypointDependency, 'resolved'>
-      >([['./root.js', { resolved: rootName }]]);
+      cache.add('entrypoints', fileB, entryB as any);
+      (cache as any).contentHashes.set(fileB, hashContent(contentB));
 
-      const { entrypoint: intermediateEntrypoint } = setupCacheWithEntrypoint(
-        intermediateName,
-        intermediateContent,
-        intermediateDeps
-      );
-
-      // Setup root
-      const rootDeps = new Map<string, Pick<IEntrypointDependency, 'resolved'>>(
-        [
-          ['./leaf.js', { resolved: leafName }],
-          ['./intermediate.js', { resolved: intermediateName }],
-        ]
-      );
-
-      const { cache } = setupCacheWithEntrypoint(
-        rootName,
-        rootContent,
-        rootDeps
-      );
-
-      // Add all to the main cache
-      cache.add('entrypoints', leafName, leafEntrypoint as any);
-      (cache as any).contentHashes.set(leafName, hashContent(leafContent));
-      cache.add('entrypoints', intermediateName, intermediateEntrypoint as any);
-      (cache as any).contentHashes.set(
-        intermediateName,
-        hashContent(intermediateContent)
-      );
-
-      // Mock fs read to return new content for the leaf dependency
       mockedReadFileSync.mockImplementation((path) => {
-        if (path === leafName) {
-          return newLeafContent;
+        if (path === fileB) {
+          return contentB;
         }
-        if (path === intermediateName) {
-          // intermediate content hasn't actually changed on disk
-          return intermediateContent;
-        }
-        if (path === rootName) {
-          // root content hasn't actually changed on disk
-          return rootContent;
+        if (path === fileA) {
+          return contentA;
         }
         throw new Error(`Unexpected readFileSync call: ${path}`);
       });
 
-      const invalidated = cache.invalidateIfChanged(
-        rootName,
-        rootContent // Root content itself hasn't changed
+      const invalidated = cache.invalidateIfChanged(fileA, contentA);
+
+      expect(invalidated).toBe(false);
+      expect(cache.has('entrypoints', fileA)).toBe(true);
+      expect(cache.has('entrypoints', fileB)).toBe(true);
+      expect(mockedReadFileSync).toHaveBeenCalledWith(fileB, 'utf8');
+      expect(mockedReadFileSync).toHaveBeenCalledWith(fileA, 'utf8');
+      expect(mockedReadFileSync).toHaveBeenCalledTimes(2);
+    });
+
+    it('should still invalidate cyclic dependency content changes', () => {
+      const fileA = 'a.js';
+      const contentA = 'import { b } from "./b.js"; export const a = () => b;';
+      const fileB = 'b.js';
+      const contentB = 'import { a } from "./a.js"; export const b = () => a;';
+      const newContentB = 'import { a } from "./a.js"; export const b = 42;';
+
+      const depsA = new Map<string, Pick<IEntrypointDependency, 'resolved'>>([
+        ['./b.js', { resolved: fileB }],
+      ]);
+      const depsB = new Map<string, Pick<IEntrypointDependency, 'resolved'>>([
+        ['./a.js', { resolved: fileA }],
+      ]);
+
+      const { cache } = setupCacheWithEntrypoint(fileA, contentA, depsA);
+      const { entrypoint: entryB } = setupCacheWithEntrypoint(
+        fileB,
+        contentB,
+        depsB
       );
 
-      expect(invalidated).toBe(false); // Root itself wasn't invalidated
-      expect(cache.has('entrypoints', rootName)).toBe(true); // Root still in cache
-      expect(cache.has('entrypoints', intermediateName)).toBe(true); // Intermediate still in cache
-      expect(cache.has('entrypoints', leafName)).toBe(false); // Leaf dependency invalidated
-      expect(mockedReadFileSync).toHaveBeenCalledWith(intermediateName, 'utf8');
-      expect(mockedReadFileSync).toHaveBeenCalledWith(leafName, 'utf8');
+      cache.add('entrypoints', fileB, entryB as any);
+      (cache as any).contentHashes.set(fileB, hashContent(contentB));
+
+      mockedReadFileSync.mockImplementation((path) => {
+        if (path === fileA) {
+          return contentA;
+        }
+        if (path === fileB) {
+          return contentB;
+        }
+        throw new Error(`Unexpected readFileSync call: ${path}`);
+      });
+
+      const invalidated = cache.invalidateIfChanged(fileB, newContentB);
+
+      expect(invalidated).toBe(true);
+      expect(cache.has('entrypoints', fileB)).toBe(false);
+      expect(cache.has('entrypoints', fileA)).toBe(true);
+      expect(mockedReadFileSync).toHaveBeenCalledWith(fileA, 'utf8');
+      expect(mockedReadFileSync).toHaveBeenCalledWith(fileB, 'utf8');
     });
   });
 });
