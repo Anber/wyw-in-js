@@ -55,6 +55,10 @@ export class TransformCacheCollection<
   >(cacheName: TCache, key: string, value: TValue): void {
     const cache = this[cacheName] as Map<string, TValue>;
     loggers[cacheName]('%s:add %s %f', getFileIdx(key), key, () => {
+      if (value === undefined) {
+        return cache.has(key) ? 'removed' : 'noop';
+      }
+
       if (!cache.has(key)) {
         return 'added';
       }
@@ -62,9 +66,15 @@ export class TransformCacheCollection<
       return cache.get(key) === value ? 'unchanged' : 'updated';
     });
 
+    if (value === undefined) {
+      cache.delete(key);
+      this.contentHashes.delete(key);
+      return;
+    }
+
     cache.set(key, value);
 
-    if (value && 'initialCode' in value) {
+    if ('initialCode' in value) {
       this.contentHashes.set(key, hashContent(value.initialCode ?? ''));
     }
   }
