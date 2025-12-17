@@ -421,8 +421,8 @@ importers:
   packages/rollup:
     dependencies:
       '@rollup/pluginutils':
-        specifier: ^5.0.4
-        version: 5.0.4(rollup@3.29.4)
+        specifier: ^5.0.5
+        version: 5.3.0(rollup@4.9.0)
       '@wyw-in-js/shared':
         specifier: workspace:*
         version: link:../shared
@@ -446,8 +446,8 @@ importers:
         specifier: workspace:*
         version: link:../../configs/ts
       rollup:
-        specifier: ^3.11.0
-        version: 3.29.4
+        specifier: ^4.0.0
+        version: 4.9.0
       source-map:
         specifier: ^0.7.4
         version: 0.7.4
@@ -2420,11 +2420,11 @@ packages:
     resolution: {integrity: sha512-uQ/nKANqucF0OiUFSSTmPlJc2HVy7ajfqEzMvTAn1t0R/DBHHOpiQxYNSWhSttY+Sos+UVj9d9+7NRyrfR1zzw==}
     engines: {node: '>= 10'}
 
-  '@rollup/pluginutils@5.0.4':
-    resolution: {integrity: sha512-0KJnIoRI8A+a1dqOYLxH8vBf8bphDmty5QvIm2hqm7oFCFYKCAZWWd2hXgMibaPsNDhI0AtpYfQZJG47pt/k4g==}
+  '@rollup/pluginutils@5.3.0':
+    resolution: {integrity: sha512-5EdhGZtnu3V88ces7s53hhfK5KSASnJZv8Lulpc04cWO3REESroJXg73DFsOmgbU2BhwV0E20bu2IDZb3VKW4Q==}
     engines: {node: '>=14.0.0'}
     peerDependencies:
-      rollup: ^1.20.0||^2.0.0||^3.0.0
+      rollup: ^1.20.0||^2.0.0||^3.0.0||^4.0.0
     peerDependenciesMeta:
       rollup:
         optional: true
@@ -5964,6 +5964,7 @@ packages:
   next@13.5.4:
     resolution: {integrity: sha512-+93un5S779gho8y9ASQhb/bTkQF17FNQOtXLKAj3lsNgltEcF0C5PMLLncDmH+8X1EnJH1kbqAERa29nRXqhjA==}
     engines: {node: '>=16.14.0'}
+    deprecated: This version has a security vulnerability. Please upgrade to a patched version. See https://nextjs.org/blog/security-update-2025-12-11 for more details.
     hasBin: true
     peerDependencies:
       '@opentelemetry/api': ^1.1.0
@@ -6337,6 +6338,10 @@ packages:
     resolution: {integrity: sha512-JU3teHTNjmE2VCGFzuY8EXzCDVwEqB2a8fsIvwaStHhAWJEeVd1o1QD80CU6+ZdEXXSLbSsuLwJjkCBWqRQUVA==}
     engines: {node: '>=8.6'}
 
+  picomatch@4.0.3:
+    resolution: {integrity: sha512-5gTmgEY/sqK6gFXLIsQNH19lWb4ebPDLA4SdLP7dsWkIXHWlG66oPuVvXSGFPppYZz8ZDZq0dYYrbHfBCVUb1Q==}
+    engines: {node: '>=12'}
+
   pify@4.0.1:
     resolution: {integrity: sha512-uB80kBFb/tfd68bVleG9T5GGsGPjJrLAUpR5PZIrhBnIaRTQRjqdJSsIKkOP6OAIFbj7GOrcudc5pNjZ+geV2g==}
     engines: {node: '>=6'}
@@ -6676,11 +6681,6 @@ packages:
 
   robust-predicates@3.0.2:
     resolution: {integrity: sha512-IXgzBWvWQwE6PrDI05OvmXUIruQTcoMDzRsOd5CDvHCVLcLHMTSYvOK5Cm46kWqlV3yAbuSpBZdJ5oP5OUoStg==}
-
-  rollup@3.29.4:
-    resolution: {integrity: sha512-oWzmBZwvYrU0iJHtDmhsm662rC15FRXmcjCk1xD771dFDx5jJ02ufAQQTn0etB2emNk4J9EZg/yWKpsn9BWGRw==}
-    engines: {node: '>=14.18.0', npm: '>=8.0.0'}
-    hasBin: true
 
   rollup@4.9.0:
     resolution: {integrity: sha512-bUHW/9N21z64gw8s6tP4c88P382Bq/L5uZDowHlHx6s/QWpjJXivIAbEw6LZthgSvlEizZBfLC4OAvWe7aoF7A==}
@@ -10264,13 +10264,13 @@ snapshots:
       '@reflink/reflink-win32-arm64-msvc': 0.1.7
       '@reflink/reflink-win32-x64-msvc': 0.1.7
 
-  '@rollup/pluginutils@5.0.4(rollup@3.29.4)':
+  '@rollup/pluginutils@5.3.0(rollup@4.9.0)':
     dependencies:
       '@types/estree': 1.0.2
       estree-walker: 2.0.2
-      picomatch: 2.3.1
+      picomatch: 4.0.3
     optionalDependencies:
-      rollup: 3.29.4
+      rollup: 4.9.0
 
   '@rollup/rollup-android-arm-eabi@4.9.0':
     optional: true
@@ -15137,6 +15137,8 @@ snapshots:
 
   picomatch@2.3.1: {}
 
+  picomatch@4.0.3: {}
+
   pify@4.0.1: {}
 
   pirates@4.0.6: {}
@@ -15513,10 +15515,6 @@ snapshots:
       glob: 7.2.3
 
   robust-predicates@3.0.2: {}
-
-  rollup@3.29.4:
-    optionalDependencies:
-      fsevents: 2.3.3
 
   rollup@4.9.0:
     optionalDependencies:

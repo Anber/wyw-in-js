@@ -1,6 +1,7 @@
 # @wyw-in-js/rollup
 
 The package contains WyW-in-JS plugin for [Rollup](https://rollupjs.org/).
+Supports Rollup v1, v2, v3, and v4.
 
 ## Installation
 
