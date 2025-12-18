@@ -2,9 +2,9 @@ import type { TemplateElement } from '@babel/types';
 
 import { ValueType } from '@wyw-in-js/shared';
 
-import type { TaggedTemplateProcessor } from '../TaggedTemplateProcessor';
-import type { Value, ValueCache } from '../types';
-import templateProcessor from './templateProcessor';
+import type { TaggedTemplateProcessor } from '../../TaggedTemplateProcessor';
+import type { Value, ValueCache } from '../../types';
+import templateProcessor from '../templateProcessor';
 
 const buildTemplateElement = (text: string): TemplateElement => ({
   type: 'TemplateElement',
@@ -69,7 +69,12 @@ describe('templateProcessor unit parsing', () => {
       buildTemplateElement('%;'),
     ];
 
-    templateProcessor(tagProcessor, template, new Map(), 'var');
+    templateProcessor(
+      tagProcessor as TaggedTemplateProcessor,
+      template,
+      new Map(),
+      'var'
+    );
 
     expect(tagProcessor.addInterpolation).toHaveBeenCalledWith(
       expect.objectContaining({ name: 'value' }),
@@ -91,7 +96,12 @@ describe('templateProcessor unit parsing', () => {
         buildTemplateElement(suffix),
       ];
 
-      templateProcessor(tagProcessor, template, new Map(), 'var');
+      templateProcessor(
+        tagProcessor as TaggedTemplateProcessor,
+        template,
+        new Map(),
+        'var'
+      );
 
       expect(tagProcessor.addInterpolation).toHaveBeenCalledWith(
         expect.objectContaining({ name: 'value' }),
@@ -111,7 +121,12 @@ describe('templateProcessor unit parsing', () => {
       buildTemplateElement('px;'),
     ];
 
-    templateProcessor(tagProcessor, template, new Map(), 'var');
+    templateProcessor(
+      tagProcessor as TaggedTemplateProcessor,
+      template,
+      new Map(),
+      'var'
+    );
 
     expect(tagProcessor.addInterpolation).toHaveBeenCalledWith(
       expect.objectContaining({ name: 'value' }),
