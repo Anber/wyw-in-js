@@ -80,6 +80,12 @@ const builtins = {
   zlib: true,
 };
 
+const VITE_VIRTUAL_PREFIX = '/@';
+const REACT_REFRESH_VIRTUAL_ID = '/@react-refresh';
+const reactRefreshRuntime = {
+  createSignatureFunctionForTransform: () => () => {},
+};
+
 const NOOP = () => {};
 
 function getUncached(cached: string | string[], test: string[]): string[] {
@@ -130,6 +136,18 @@ export class Module {
     resolve: (id: string) => string;
   } = Object.assign(
     (id: string) => {
+      if (id === REACT_REFRESH_VIRTUAL_ID) {
+        this.dependencies.push(id);
+        this.debug('require', `vite virtual '${id}'`);
+        return reactRefreshRuntime;
+      }
+
+      if (id.startsWith(VITE_VIRTUAL_PREFIX)) {
+        this.dependencies.push(id);
+        this.debug('require', `vite virtual '${id}'`);
+        return {};
+      }
+
       if (id in builtins) {
         // The module is in the allowed list of builtin node modules
         // Ideally we should prevent importing them, but webpack polyfills some
