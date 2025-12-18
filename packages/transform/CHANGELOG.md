@@ -1,5 +1,17 @@
 # @wyw-in-js/transform
 
+## 0.8.1
+
+### Patch Changes
+
+- 691f946: Handle Vite virtual modules like `/@react-refresh` without filesystem lookups to prevent ENOENT in dev.
+- b33ed9c: fix(transform): guard cache entries missing initialCode (#144)
+- fcfdf52: Avoid infinite recursion when encountering import cycles while invalidating the cache.
+- Updated dependencies [7321fd3]
+- Updated dependencies [fcfdf52]
+  - @wyw-in-js/processor-utils@0.8.1
+  - @wyw-in-js/shared@0.8.1
+
 ## 0.8.0
 
 ### Minor Changes

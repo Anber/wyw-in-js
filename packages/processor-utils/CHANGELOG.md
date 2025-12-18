@@ -1,5 +1,13 @@
 # @wyw-in-js/processor-utils
 
+## 0.8.1
+
+### Patch Changes
+
+- 7321fd3: Fix CSS unit detection to handle `%` without overmatching word-like suffixes.
+- Updated dependencies [fcfdf52]
+  - @wyw-in-js/shared@0.8.1
+
 ## 0.8.0
 
 ### Minor Changes

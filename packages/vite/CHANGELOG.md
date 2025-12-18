@@ -1,5 +1,17 @@
 # @wyw-in-js/vite
 
+## 0.8.1
+
+### Patch Changes
+
+- 691f946: Handle Vite virtual modules like `/@react-refresh` without filesystem lookups to prevent ENOENT in dev.
+- fcfdf52: Avoid infinite recursion when encountering import cycles while invalidating the cache.
+- Updated dependencies [691f946]
+- Updated dependencies [b33ed9c]
+- Updated dependencies [fcfdf52]
+  - @wyw-in-js/transform@0.8.1
+  - @wyw-in-js/shared@0.8.1
+
 ## 0.8.0
 
 ### Minor Changes

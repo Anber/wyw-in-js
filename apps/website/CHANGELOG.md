@@ -1,5 +1,13 @@
 # @wyw-in-js/website
 
+## 0.8.1
+
+### Patch Changes
+
+- fcfdf52: Avoid infinite recursion when encountering import cycles while invalidating the cache.
+- Updated dependencies [fcfdf52]
+  - wyw-in-js@0.8.1
+
 ## 0.8.0
 
 ### Minor Changes
