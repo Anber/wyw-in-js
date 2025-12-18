@@ -274,6 +274,23 @@ it('returns null when requiring empty builtin node modules', () => {
   expect(mod.require('fs')).toBe(null);
 });
 
+it('returns refresh runtime stub for Vite virtual module', () => {
+  const { mod } = create``;
+
+  const runtime = safeRequire(mod, '/@react-refresh') as {
+    createSignatureFunctionForTransform: () => () => void;
+  };
+
+  expect(typeof runtime.createSignatureFunctionForTransform).toBe('function');
+  expect(typeof runtime.createSignatureFunctionForTransform()).toBe('function');
+});
+
+it('returns empty object for other Vite virtual modules', () => {
+  const { mod } = create``;
+
+  expect(safeRequire(mod, '/@virtual-dep')).toEqual({});
+});
+
 it('throws when requiring unmocked builtin node modules', () => {
   const { mod } = create``;
 

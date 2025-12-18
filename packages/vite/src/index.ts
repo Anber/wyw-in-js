@@ -142,6 +142,10 @@ export default function wywInJS({
             return null;
           }
 
+          if (resolvedId.startsWith('/@')) {
+            return null;
+          }
+
           if (!existsSync(resolvedId)) {
             await optimizeDeps(config);
           }

@@ -4,7 +4,7 @@
  * @type {import('@jest/types').Config.InitialOptions}
  */
 module.exports = {
-  displayName: 'webpack-loader',
+  displayName: 'vite',
   preset: '@wyw-in-js/jest-preset',
   transform: {
     '^.+\\.ts$': [
