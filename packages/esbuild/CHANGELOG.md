@@ -1,5 +1,16 @@
 # @wyw-in-js/esbuild
 
+## 0.8.1
+
+### Patch Changes
+
+- fcfdf52: Avoid infinite recursion when encountering import cycles while invalidating the cache.
+- Updated dependencies [691f946]
+- Updated dependencies [b33ed9c]
+- Updated dependencies [fcfdf52]
+  - @wyw-in-js/transform@0.8.1
+  - @wyw-in-js/shared@0.8.1
+
 ## 0.8.0
 
 ### Minor Changes

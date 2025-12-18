@@ -1,5 +1,12 @@
 # @wyw-in-js/object-syntax
 
+## 0.8.1
+
+### Patch Changes
+
+- Updated dependencies [7321fd3]
+  - @wyw-in-js/processor-utils@0.8.1
+
 ## 0.8.0
 
 ### Minor Changes
