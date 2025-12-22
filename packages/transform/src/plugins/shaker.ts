@@ -257,11 +257,24 @@ export default function shakerPlugin(
         Object.entries(exports).forEach(([exported, local]) => {
           if (onlyExportsSet.has(exported)) {
             aliveExports.add(local);
-          } else if (
+            return;
+          }
+
+          const binding =
+            local.isIdentifier() && local.scope.getBinding(local.node.name);
+
+          if (
+            binding &&
+            (binding.path.isImportSpecifier() ||
+              binding.path.isImportDefaultSpecifier() ||
+              binding.path.isImportNamespaceSpecifier()) &&
             importNames.includes((local.node as NodeWithName).name || '')
           ) {
             aliveExports.add(local);
-          } else if ([...aliveExports].some((alive) => alive === local)) {
+            return;
+          }
+
+          if ([...aliveExports].some((alive) => alive === local)) {
             // It's possible to export multiple values from a single variable initializer, e.g
             // export const { foo, bar } = baz();
             // We need to treat all of them as used if any of them are used, since otherwise
@@ -391,12 +404,25 @@ export default function shakerPlugin(
           ).filter((i) => !i.referenced);
 
           for (const binding of unreferenced) {
+            if (binding.path.isVariableDeclarator()) {
+              const id = binding.path.get('id');
+              if (!forDeleting.includes(id)) {
+                // Drop dead variable declarations, e.g. `const foo = make();` when `foo` is no longer referenced.
+                forDeleting.push(...binding.constantViolations);
+                forDeleting.push(id);
+                changed = true;
+              }
+            }
+
+            // Drop import specifiers whose bindings lost all references during shaking
+            // (e.g. when we keep only __wywPreval and the rest of the module is removed).
             if (
-              binding.path.isVariableDeclarator() &&
-              !forDeleting.includes(binding.path.get('id'))
+              (binding.path.isImportSpecifier() ||
+                binding.path.isImportDefaultSpecifier() ||
+                binding.path.isImportNamespaceSpecifier()) &&
+              !forDeleting.includes(binding.path)
             ) {
-              forDeleting.push(...binding.constantViolations);
-              forDeleting.push(binding.path.get('id'));
+              forDeleting.push(binding.path);
               changed = true;
             }
           }
