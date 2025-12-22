@@ -126,9 +126,19 @@ export class Entrypoint extends BaseEntrypoint {
     services: Services,
     name: string,
     only: string[],
-    loadedCode: string | undefined
+    loadedCode: string | undefined,
+    options?: {
+      skipCacheOnlyMerge?: boolean;
+    }
   ): Entrypoint {
-    const created = Entrypoint.create(services, null, name, only, loadedCode);
+    const created = Entrypoint.create(
+      services,
+      null,
+      name,
+      only,
+      loadedCode,
+      options
+    );
     invariant(created !== 'loop', 'loop detected');
 
     return created;
@@ -151,7 +161,10 @@ export class Entrypoint extends BaseEntrypoint {
     parent: ParentEntrypoint | null,
     name: string,
     only: string[],
-    loadedCode: string | undefined
+    loadedCode: string | undefined,
+    options?: {
+      skipCacheOnlyMerge?: boolean;
+    }
   ): Entrypoint | 'loop' {
     const { cache, eventEmitter } = services;
     return eventEmitter.perf('createEntrypoint', () => {
@@ -168,7 +181,8 @@ export class Entrypoint extends BaseEntrypoint {
           : null,
         name,
         only,
-        loadedCode
+        loadedCode,
+        options
       );
 
       if (status !== 'cached') {
@@ -184,7 +198,10 @@ export class Entrypoint extends BaseEntrypoint {
     parent: ParentEntrypoint | null,
     name: string,
     only: string[],
-    loadedCode: string | undefined
+    loadedCode: string | undefined,
+    options?: {
+      skipCacheOnlyMerge?: boolean;
+    }
   ): ['loop' | 'created' | 'cached', Entrypoint] {
     const { cache } = services;
 
@@ -201,7 +218,9 @@ export class Entrypoint extends BaseEntrypoint {
     const exports = cached?.exports;
     const evaluatedOnly = cached?.evaluatedOnly ?? [];
 
-    const mergedOnly = cached?.only ? mergeOnly(cached.only, only) : only;
+    const shouldMergeOnly = !options?.skipCacheOnlyMerge;
+    const mergedOnly =
+      cached?.only && shouldMergeOnly ? mergeOnly(cached.only, only) : only;
 
     if (cached?.evaluated) {
       cached.log('is already evaluated with', cached.evaluatedOnly);
