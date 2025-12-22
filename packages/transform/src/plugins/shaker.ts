@@ -366,7 +366,18 @@ export default function shakerPlugin(
             const action = findActionForNode(path);
             const parent = action?.[1];
             const outerReferences = (binding?.referencePaths || []).filter(
-              (ref) => ref !== parent && !parent?.isAncestor(ref)
+              (ref) => {
+                if (ref === parent || parent?.isAncestor(ref)) {
+                  return false;
+                }
+
+                return !forDeleting.some(
+                  (candidate) =>
+                    candidate !== path &&
+                    !isRemoved(candidate) &&
+                    (candidate === ref || candidate.isAncestor(ref))
+                );
+              }
             );
             if (outerReferences.length > 0 && path.isIdentifier()) {
               // Temporary deref it in order to simplify further checks.
