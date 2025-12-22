@@ -5,11 +5,14 @@ import dedent from 'dedent';
 
 import { shaker } from '../shaker';
 
-const run = (only: string[]) => (code: TemplateStringsArray) => {
+const compile = (only: string[]) => (code: TemplateStringsArray) => {
   const filename = join(__dirname, 'source.ts');
   const formattedCode = dedent(code);
   const parsed = babel.parseSync(formattedCode, {
     filename,
+    parserOpts: {
+      plugins: ['typescript', 'jsx'],
+    },
   });
 
   return shaker(
@@ -32,8 +35,11 @@ const run = (only: string[]) => (code: TemplateStringsArray) => {
       onlyExports: only,
     },
     babel
-  )[1];
+  );
 };
+
+const run = (only: string[]) => (code: TemplateStringsArray) =>
+  compile(only)(code)[1];
 
 describe('shaker', () => {
   it('should carefully shake used exports', () => {
@@ -70,5 +76,77 @@ describe('shaker', () => {
     `;
 
     expect(code).toMatchSnapshot();
+  });
+
+  it('should drop imports that become unused when keeping only __wywPreval (tsx)', () => {
+    const code = run(['__wywPreval'])`
+      import * as RAC from 'react-aria-components';
+      import { jsx as _jsx } from 'react/jsx-runtime';
+
+      export const __wywPreval = {
+        value: () => 's1gxjcbn',
+      };
+
+      export function Button(props) {
+        return _jsx(RAC.Button, { ...props });
+      }
+    `;
+
+    expect(code).toContain('__wywPreval');
+    expect(code).not.toContain('react-aria-components');
+    expect(code).not.toContain('react/jsx-runtime');
+  });
+
+  it('should exclude imports metadata when the binding became dead (tsx)', () => {
+    const [, , imports] = compile(['__wywPreval'])`
+      import * as RAC from 'react-aria-components';
+      import { jsx as _jsx } from 'react/jsx-runtime';
+
+      export const __wywPreval = {
+        value: () => 's1gxjcbn',
+      };
+
+      export function Button(props) {
+        return _jsx(RAC.Button, { ...props });
+      }
+    `;
+
+    expect(imports.size).toBe(0);
+  });
+
+  it('should drop imports that become unused when keeping only __wywPreval (tsx, const export)', () => {
+    const code = run(['__wywPreval'])`
+      import * as RAC from 'react-aria-components';
+      import { jsx as _jsx } from 'react/jsx-runtime';
+
+      export const __wywPreval = {
+        value: () => 's1gxjcbn',
+      };
+
+      export const Button = (props) => {
+        return _jsx(RAC.Button, { ...props });
+      };
+    `;
+
+    expect(code).toContain('__wywPreval');
+    expect(code).not.toContain('react-aria-components');
+    expect(code).not.toContain('react/jsx-runtime');
+  });
+
+  it('should exclude imports metadata when the const export becomes dead (tsx)', () => {
+    const [, , imports] = compile(['__wywPreval'])`
+      import * as RAC from 'react-aria-components';
+      import { jsx as _jsx } from 'react/jsx-runtime';
+
+      export const __wywPreval = {
+        value: () => 's1gxjcbn',
+      };
+
+      export const Button = (props) => {
+        return _jsx(RAC.Button, { ...props });
+      };
+    `;
+
+    expect(imports.size).toBe(0);
   });
 });
