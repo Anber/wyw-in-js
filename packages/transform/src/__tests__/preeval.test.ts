@@ -199,4 +199,23 @@ describe('preeval', () => {
       runInNewContext(code);
     }).not.toThrow();
   });
+
+  it('should drop promise callback chains that use forbidden globals', () => {
+    const { code } = run`
+      const css = () => {};
+      const base = Promise.resolve('ok');
+
+      base.then(() => setTimeout(() => {}));
+      base.catch(() => setTimeout(() => {}));
+      base.finally(() => setTimeout(() => {}));
+
+      css\`\`;
+    `;
+
+    expect(code).toContain('css``');
+    expect(code).not.toContain('.then');
+    expect(code).not.toContain('.catch');
+    expect(code).not.toContain('.finally');
+    expect(code).not.toContain('setTimeout');
+  });
 });
