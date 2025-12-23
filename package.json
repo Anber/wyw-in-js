@@ -72,7 +72,7 @@
     "sp:format": "syncpack format",
     "sp:list": "syncpack list-mismatches",
     "validate-versions": "node ./scripts/validate-versions.mjs",
-    "test": "pnpm turbo run test",
+    "test": "pnpm turbo run test --filter=!wyw-in-js",
     "version": "node ./scripts/bump-versions.mjs && changeset version",
     "website": "pnpm run --filter @wyw-in-js/website deploy"
   },
