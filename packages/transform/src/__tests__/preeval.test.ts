@@ -1,4 +1,5 @@
 import { join } from 'path';
+import { runInNewContext } from 'vm';
 
 import { transformSync } from '@babel/core';
 import dedent from 'dedent';
@@ -179,5 +180,23 @@ describe('preeval', () => {
     `;
 
     expect(code).toMatchSnapshot();
+  });
+
+  it('should remove promise callbacks that rely on forbidden globals', () => {
+    const { code } = run`
+      const css = () => {};
+
+      (async function main() {
+        await new Promise((resolve) => setTimeout(resolve));
+        css\`\`;
+      })();
+    `;
+
+    expect(code).toContain('css``');
+    expect(code).not.toContain('new Promise');
+    expect(code).not.toContain('setTimeout');
+    expect(() => {
+      runInNewContext(code);
+    }).not.toThrow();
   });
 });

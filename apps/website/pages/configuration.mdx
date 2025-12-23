@@ -20,7 +20,7 @@ module.exports = {
 
 - `evaluate: boolean` (default: `true`):
 
-  Enabling this will evaluate dynamic expressions in the CSS. You need to enable this if you want to use imported variables in the CSS or interpolate other components. Enabling this also ensures that your styled components wrapping other styled components will have the correct specificity and override styles properly.
+  Controls static evaluation of template expressions during dependency collection. It does **not** disable module evaluation. If there is nothing to evaluate, WyW-in-JS skips evaluation regardless of this flag. The old behavior of `evaluate: false` (throwing on unsupported interpolation) is deprecated and kept only for legacy configs.
 
 - `displayName: boolean` (default: `false`):
 
