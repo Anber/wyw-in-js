@@ -149,4 +149,28 @@ describe('shaker', () => {
 
     expect(imports.size).toBe(0);
   });
+
+  it('should drop property assignments for dead exports', () => {
+    const code = run(['__wywPreval'])`
+      const { expect } = __STORYBOOK_MODULE_TEST__;
+      export const Primary = {};
+      Primary.play = () => {
+        expect(true).toBe(true);
+      };
+      Primary.parameters = {
+        ...Primary.parameters,
+        docs: {
+          ...Primary.parameters?.docs,
+        },
+      };
+
+      exports.__wywPreval = {
+        value: () => 's1gxjcbn',
+      };
+    `;
+
+    expect(code).toContain('__wywPreval');
+    expect(code).not.toContain('__STORYBOOK_MODULE_TEST__');
+    expect(code).not.toContain('Primary.play');
+  });
 });
