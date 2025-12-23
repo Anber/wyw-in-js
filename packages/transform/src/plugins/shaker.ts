@@ -156,6 +156,31 @@ function rearrangeExports(
   return rearranged;
 }
 
+const getPropertyAssignmentStatement = (
+  ref: NodePath,
+  bindingName: string
+): NodePath | null => {
+  const assignment = ref.findParent((parent) =>
+    parent.isAssignmentExpression()
+  );
+  if (!assignment?.isAssignmentExpression()) return null;
+
+  const left = assignment.get('left');
+  if (!left.isMemberExpression()) return null;
+
+  const object = left.get('object');
+  if (!object.isIdentifier({ name: bindingName })) return null;
+
+  const statement = assignment.parentPath;
+  return statement?.isExpressionStatement() ? statement : null;
+};
+
+const isWithinAliveExport = (
+  ref: NodePath,
+  aliveExports: Set<NodePath>
+): boolean =>
+  [...aliveExports].some((alive) => alive === ref || alive.isAncestor(ref));
+
 export default function shakerPlugin(
   babel: Core,
   {
@@ -350,6 +375,7 @@ export default function shakerPlugin(
         }
 
         const deleted = new Set<NodePath>();
+        const forDeletingSet = new Set<NodePath>(forDeleting);
 
         let dereferenced: NodePath<Identifier>[] = [];
         let changed = true;
@@ -379,7 +405,27 @@ export default function shakerPlugin(
                 );
               }
             );
-            if (outerReferences.length > 0 && path.isIdentifier()) {
+            const bindingName = binding?.identifier.name;
+            const removableAssignmentStatements = new Set<NodePath>();
+            const removableOuterReferences = outerReferences.filter((ref) => {
+              if (!bindingName) return false;
+              const statement = getPropertyAssignmentStatement(
+                ref,
+                bindingName
+              );
+              if (!statement || isWithinAliveExport(statement, aliveExports)) {
+                return false;
+              }
+
+              removableAssignmentStatements.add(statement);
+              return true;
+            });
+
+            const blockingReferences = outerReferences.filter(
+              (ref) => !removableOuterReferences.includes(ref)
+            );
+
+            if (blockingReferences.length > 0 && path.isIdentifier()) {
               // Temporary deref it in order to simplify further checks.
               dereference(path);
               dereferenced.push(path);
@@ -387,8 +433,18 @@ export default function shakerPlugin(
 
             if (
               !deleted.has(path) &&
-              (!binding || outerReferences.length === 0)
+              (!binding || blockingReferences.length === 0)
             ) {
+              if (removableAssignmentStatements.size > 0) {
+                removableAssignmentStatements.forEach((statement) => {
+                  if (!forDeletingSet.has(statement)) {
+                    forDeletingSet.add(statement);
+                    forDeleting.push(statement);
+                  }
+                });
+                changed = true;
+              }
+
               if (action) {
                 applyAction(action);
               } else {
