@@ -194,5 +194,4 @@ describe('shaker', () => {
     expect(code).not.toContain('react/jsx-dev-runtime');
     expect(code).not.toContain('@shoelace-style/shoelace');
   });
-  });
 });
