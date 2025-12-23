@@ -193,6 +193,7 @@ describe('preeval', () => {
     `;
 
     expect(code).toContain('css``');
+    expect(code).not.toContain('Promise');
     expect(code).not.toContain('new Promise');
     expect(code).not.toContain('setTimeout');
     expect(() => {
@@ -216,6 +217,7 @@ describe('preeval', () => {
     expect(code).not.toContain('.then');
     expect(code).not.toContain('.catch');
     expect(code).not.toContain('.finally');
+    expect(code).not.toContain('Promise');
     expect(code).not.toContain('setTimeout');
   });
 });
