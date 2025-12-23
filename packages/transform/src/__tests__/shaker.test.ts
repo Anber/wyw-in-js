@@ -173,4 +173,26 @@ describe('shaker', () => {
     expect(code).not.toContain('__STORYBOOK_MODULE_TEST__');
     expect(code).not.toContain('Primary.play');
   });
+
+  it('should drop imports when default and named exports share the same binding', () => {
+    const code = run(['__wywPreval'])`
+      import { jsxDEV as _jsxDEV } from 'react/jsx-dev-runtime';
+      import SlButton from '@shoelace-style/shoelace/dist/react/button/index.js';
+
+      export const __wywPreval = {
+        value: () => 's1gxjcbn',
+      };
+
+      export const App = () => {
+        return _jsxDEV(SlButton, {});
+      };
+
+      export default App;
+    `;
+
+    expect(code).toContain('__wywPreval');
+    expect(code).not.toContain('react/jsx-dev-runtime');
+    expect(code).not.toContain('@shoelace-style/shoelace');
+  });
+  });
 });

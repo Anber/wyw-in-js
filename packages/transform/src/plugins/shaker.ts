@@ -392,10 +392,18 @@ export default function shakerPlugin(
             const action = findActionForNode(path);
             const parent = action?.[1];
             const outerReferences = (binding?.referencePaths || []).filter(
-              (ref) =>
-                ref !== parent &&
-                !parent?.isAncestor(ref) &&
-                !forDeletingSet.has(ref)
+              (ref) => {
+                if (ref === parent || parent?.isAncestor(ref)) {
+                  return false;
+                }
+
+                return !forDeleting.some(
+                  (candidate) =>
+                    candidate !== path &&
+                    !isRemoved(candidate) &&
+                    (candidate === ref || candidate.isAncestor(ref))
+                );
+              }
             );
             const bindingName = binding?.identifier.name;
             const removableAssignmentStatements = new Set<NodePath>();
