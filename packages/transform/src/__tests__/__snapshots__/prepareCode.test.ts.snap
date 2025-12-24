@@ -8,7 +8,7 @@ Object.defineProperty(exports, "__esModule", {
 });
 exports.foo = foo;
 function foo(onImport) {
-  __wyw_dynamic_import("./foo").then(onImport);
+  __wyw_dynamic_import('./foo').then(onImport);
 }"
 `;
 
@@ -96,9 +96,7 @@ Object.defineProperty(exports, "__esModule", {
 exports.foo = foo;
 var random = Math.random() > 0.5 ? "first" : "second";
 function foo(onImport) {
-  (function () {
-    throw new Error("Dynamic import argument must be a string or a template literal");
-  })().then(onImport);
+  __wyw_dynamic_import("" + random).then(onImport);
 }"
 `;
 

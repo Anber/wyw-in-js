@@ -2,4 +2,4 @@
 '@wyw-in-js/transform': patch
 ---
 
-Allow dynamic import arguments built from string concatenations or concat() to avoid eval-time crashes.
+Accept broader dynamic import expressions and coerce non-string-like arguments, avoiding transform-time crashes on non-literal imports.

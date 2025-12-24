@@ -79,6 +79,17 @@ export default function dynamicImport(babel: Core): PluginObj {
     return false;
   };
 
+  const normalizeImportArgument = (node: Expression): Expression => {
+    const unwrapped = unwrapExpression(node);
+    const cloned = t.cloneNode(unwrapped, true, true);
+
+    if (isStringLikeExpression(unwrapped)) {
+      return cloned;
+    }
+
+    return t.binaryExpression('+', t.stringLiteral(''), cloned);
+  };
+
   return {
     name: '@wyw-in-js/transform/dynamic-import',
     visitor: {
@@ -89,44 +100,17 @@ export default function dynamicImport(babel: Core): PluginObj {
             ? unwrapExpression(moduleName.node)
             : null;
 
-          if (argument && t.isStringLiteral(argument)) {
+          if (argument) {
             path.replaceWith(
               t.callExpression(t.identifier('__wyw_dynamic_import'), [
-                t.stringLiteral(argument.value),
+                normalizeImportArgument(argument),
               ])
             );
             return;
           }
 
-          if (argument && isStringLikeExpression(argument)) {
-            path.replaceWith(
-              t.callExpression(t.identifier('__wyw_dynamic_import'), [
-                t.cloneNode(argument, true, true),
-              ])
-            );
-            return;
-          }
-
-          // Throw an error if this import will be reached during evaluation
-          // throw new Error(
-          //   'Dynamic import argument must be a string or a template literal'
-          // );
           path.replaceWith(
-            t.callExpression(
-              t.arrowFunctionExpression(
-                [],
-                t.blockStatement([
-                  t.throwStatement(
-                    t.newExpression(t.identifier('Error'), [
-                      t.stringLiteral(
-                        'Dynamic import argument must be a string or a template literal'
-                      ),
-                    ])
-                  ),
-                ])
-              ),
-              []
-            )
+            t.callExpression(t.identifier('__wyw_dynamic_import'), [])
           );
         }
       },
