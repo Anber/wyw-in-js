@@ -16,6 +16,23 @@ exports[`prepareCode Testing transformation for dynamic-import: imports 1`] = `M
 
 exports[`prepareCode Testing transformation for dynamic-import: metadata 1`] = `null`;
 
+exports[`prepareCode Testing transformation for dynamic-import-concat: code 1`] = `
+""use strict";
+
+Object.defineProperty(exports, "__esModule", {
+  value: true
+});
+exports.foo = foo;
+function foo(locale, onImport) {
+  __wyw_dynamic_import('./foo/' + locale).then(onImport);
+  __wyw_dynamic_import('./foo/'.concat(locale, '.json')).then(onImport);
+}"
+`;
+
+exports[`prepareCode Testing transformation for dynamic-import-concat: imports 1`] = `Map {}`;
+
+exports[`prepareCode Testing transformation for dynamic-import-concat: metadata 1`] = `null`;
+
 exports[`prepareCode Testing transformation for dynamic-import-param: code 1`] = `
 ""use strict";
 
