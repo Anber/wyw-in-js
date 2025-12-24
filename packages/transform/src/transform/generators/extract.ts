@@ -12,7 +12,7 @@ function extractCssFromAst(
   originalCode: string,
   options: Pick<
     Options,
-    'preprocessor' | 'filename' | 'outputFilename' | 'prefixer'
+    'preprocessor' | 'filename' | 'outputFilename' | 'prefixer' | 'keepComments'
   >
 ): { cssSourceMapText: string; cssText: string; rules: Rules } {
   const mappings: Mapping[] = [];

@@ -34,6 +34,7 @@ type VitePluginOptions = {
   exclude?: FilterPattern;
   include?: FilterPattern;
   prefixer?: boolean;
+  keepComments?: boolean | RegExp;
   preprocessor?: Preprocessor;
   sourceMap?: boolean;
 } & Partial<PluginOptions>;
@@ -46,6 +47,7 @@ export default function wywInJS({
   exclude,
   sourceMap,
   prefixer,
+  keepComments,
   preprocessor,
   ...rest
 }: VitePluginOptions = {}): Plugin {
@@ -162,6 +164,7 @@ export default function wywInJS({
           filename: id,
           root: process.cwd(),
           prefixer,
+          keepComments,
           preprocessor,
           pluginOptions: rest,
         },

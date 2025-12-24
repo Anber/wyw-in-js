@@ -27,6 +27,7 @@ type EsbuildPluginOptions = {
   esbuildOptions?: TransformOptions;
   filter?: RegExp | string;
   prefixer?: boolean;
+  keepComments?: boolean | RegExp;
   preprocessor?: Preprocessor;
   sourceMap?: boolean;
 } & Partial<PluginOptions>;
@@ -39,6 +40,7 @@ export default function wywInJS({
   debug,
   sourceMap,
   prefixer,
+  keepComments,
   preprocessor,
   esbuildOptions,
   filter = /\.(js|jsx|ts|tsx)$/,
@@ -175,6 +177,7 @@ export default function wywInJS({
             filename: args.path,
             pluginOptions: rest,
             prefixer,
+            keepComments,
             preprocessor,
             root: process.cwd(),
           },

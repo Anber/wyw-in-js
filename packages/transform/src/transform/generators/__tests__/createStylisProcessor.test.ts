@@ -8,12 +8,47 @@ import {
 } from '../createStylisPreprocessor';
 
 describe('createStylisPreprocessor', () => {
-  const preprocessor = createStylisPreprocessor({
+  const baseOptions = {
     filename: '/path/to/src/file.js',
     outputFilename: '/path/to/assets/file.css',
-  });
+  };
+  const preprocessor = createStylisPreprocessor(baseOptions);
 
   const compileRule = (rule: string) => preprocessor('.foo', rule);
+
+  describe('comments', () => {
+    it('drops comments by default', () => {
+      expect(compileRule('/*rtl:ignore*/ left: 0;')).toMatchInlineSnapshot(
+        `".foo{left:0;}"`
+      );
+    });
+
+    it('keeps comments when enabled', () => {
+      const preprocessorWithComments = createStylisPreprocessor({
+        ...baseOptions,
+        keepComments: true,
+      });
+
+      expect(
+        preprocessorWithComments('.foo', '/*rtl:ignore*/ left: 0;')
+      ).toMatchInlineSnapshot(`".foo{/*rtl:ignore*/left:0;}"`);
+    });
+
+    it('filters comments by pattern', () => {
+      const preprocessorWithComments = createStylisPreprocessor({
+        ...baseOptions,
+        keepComments: /rtl:/,
+      });
+
+      const result = preprocessorWithComments(
+        '.foo',
+        '/*rtl:ignore*/ left: 0; /*keep*/ right: 0;'
+      );
+
+      expect(result).toContain('/*rtl:ignore*/');
+      expect(result).not.toContain('/*keep*/');
+    });
+  });
 
   it('should understand namespace ref', () => {
     expect(compileRule('&:not(.bar) { color: red }')).toMatchInlineSnapshot(
