@@ -26,8 +26,8 @@ type EsbuildPluginOptions = {
   debug?: IFileReporterOptions | false | null | undefined;
   esbuildOptions?: TransformOptions;
   filter?: RegExp | string;
-  prefixer?: boolean;
   keepComments?: boolean | RegExp;
+  prefixer?: boolean;
   preprocessor?: Preprocessor;
   sourceMap?: boolean;
 } & Partial<PluginOptions>;
@@ -39,8 +39,8 @@ const nodeModulesRegex = /^(?:.*[\\/])?node_modules(?:[\\/].*)?$/;
 export default function wywInJS({
   debug,
   sourceMap,
-  prefixer,
   keepComments,
+  prefixer,
   preprocessor,
   esbuildOptions,
   filter = /\.(js|jsx|ts|tsx)$/,

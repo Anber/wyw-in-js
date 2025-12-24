@@ -29,3 +29,17 @@ esbuild
   })
   .catch(() => process.exit(1));
 ```
+
+### Keeping CSS comments
+
+Stylis strips CSS comments by default. To preserve them (for example, `/*rtl:ignore*/`), pass `keepComments`:
+
+```js
+wyw({
+  keepComments: true,
+  // or keep only matching comments:
+  // keepComments: /rtl:/,
+});
+```
+
+Note: esbuild removes CSS comments when `minify: true`. Disable CSS minification if you need comments in the final output.

@@ -8,7 +8,6 @@ const { build } = require('vite');
 const wyw = require('@wyw-in-js/vite');
 
 const PKG_DIR = path.resolve(__dirname, '..');
-const DIST_DIR = path.resolve(PKG_DIR, 'dist');
 
 /**
  * @param {string} value
@@ -18,20 +17,21 @@ function normalizeLineEndings(value) {
   return value.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
 }
 
-async function buildArtefact() {
+async function buildArtefact(outDir, pluginOptions) {
   await build({
     build: {
       manifest: true,
-      outDir: DIST_DIR,
+      outDir,
+      cssMinify: false,
     },
     configFile: false,
-    plugins: [wyw.default()],
+    plugins: [pluginOptions ? wyw.default(pluginOptions) : wyw.default()],
   });
 }
 
-async function getCSSFromManifest() {
-  const manifestPath = path.resolve(DIST_DIR, '.vite', 'manifest.json');
-  const manifest = require(manifestPath);
+async function getCSSFromManifest(outDir) {
+  const manifestPath = path.resolve(outDir, '.vite', 'manifest.json');
+  const manifest = JSON.parse(await fs.readFile(manifestPath, 'utf-8'));
 
   if (!manifest['index.html']) {
     throw new Error('No index.html in manifest');
@@ -45,7 +45,7 @@ async function getCSSFromManifest() {
     throw new Error('More than one CSS in manifest');
   }
 
-  const cssFilePath = path.resolve(DIST_DIR, manifest['index.html'].css[0]);
+  const cssFilePath = path.resolve(outDir, manifest['index.html'].css[0]);
   const cssSnapshot = await fs.readFile(cssFilePath, 'utf-8');
 
   return prettier.format(cssSnapshot, {
@@ -56,24 +56,40 @@ async function getCSSFromManifest() {
 async function main() {
   console.log(colors.blue('Package directory:'), PKG_DIR);
 
-  try {
-    await fs.rm(DIST_DIR, { recursive: true });
-  } catch (err) {}
+  const outDir = path.resolve(PKG_DIR, 'dist');
+  const testCases = [
+    {
+      name: 'default',
+      fixturePath: path.resolve(PKG_DIR, 'fixture.css'),
+    },
+    {
+      name: 'keepComments',
+      fixturePath: path.resolve(PKG_DIR, 'fixture.keep-comments.css'),
+      pluginOptions: { keepComments: true },
+    },
+  ];
 
-  await buildArtefact();
+  for (const testCase of testCases) {
+    console.log(colors.blue('Running case:'), testCase.name);
+    await fs.rm(outDir, { recursive: true, force: true });
 
-  const cssOutput = normalizeLineEndings(await getCSSFromManifest());
-  const cssFixture = normalizeLineEndings(
-    await fs.readFile(path.resolve(PKG_DIR, 'fixture.css'), 'utf-8')
-  );
+    await buildArtefact(outDir, testCase.pluginOptions);
 
-  if (cssOutput !== cssFixture) {
-    console.log(colors.red('Output CSS:'));
-    console.log(cssOutput);
-    console.log(colors.red('Expected CSS:'));
-    console.log(cssFixture);
+    const cssOutput = normalizeLineEndings(
+      await getCSSFromManifest(outDir)
+    );
+    const cssFixture = normalizeLineEndings(
+      await fs.readFile(testCase.fixturePath, 'utf-8')
+    );
 
-    throw new Error('CSS output does not match fixture');
+    if (cssOutput !== cssFixture) {
+      console.log(colors.red(`[${testCase.name}] Output CSS:`));
+      console.log(cssOutput);
+      console.log(colors.red(`[${testCase.name}] Expected CSS:`));
+      console.log(cssFixture);
+
+      throw new Error(`[${testCase.name}] CSS output does not match fixture`);
+    }
   }
 }
 

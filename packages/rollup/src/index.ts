@@ -18,8 +18,8 @@ import {
 type RollupPluginOptions = {
   exclude?: string | string[];
   include?: string | string[];
-  prefixer?: boolean;
   keepComments?: boolean | RegExp;
+  prefixer?: boolean;
   preprocessor?: Preprocessor;
   sourceMap?: boolean;
 } & Partial<PluginOptions>;
@@ -27,8 +27,8 @@ type RollupPluginOptions = {
 export default function wywInJS({
   exclude,
   include,
-  prefixer,
   keepComments,
+  prefixer,
   preprocessor,
   sourceMap,
   ...rest
