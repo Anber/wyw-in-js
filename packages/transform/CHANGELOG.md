@@ -1,5 +1,19 @@
 # @wyw-in-js/transform
 
+## 0.8.2
+
+### Patch Changes
+
+- 485fd7d: Preserve cached exports when evaluating only missing imports to avoid re-running unused code.
+- fcb118a: Add a `keepComments` option for the stylis preprocessor to preserve selected CSS comments.
+- d4cefc9: Avoid leaving empty Promise callbacks when dangerous globals are removed.
+- 485fd7d: fix: drop unused imports when named and default exports share a binding
+- ac44dcc: Avoid retaining unused import specifiers during shaking so eval doesn't load unrelated deps.
+- 782e67f: Drop property assignments on shaken exports so eval doesn't touch Storybook globals.
+- Updated dependencies
+  - @wyw-in-js/shared@0.8.2
+  - @wyw-in-js/processor-utils@0.8.2
+
 ## 0.8.1
 
 ### Patch Changes
