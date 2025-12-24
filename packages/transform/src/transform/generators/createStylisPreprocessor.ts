@@ -7,6 +7,7 @@ import {
   serialize,
   stringify,
   tokenize,
+  COMMENT,
   RULESET,
   KEYFRAMES,
   DECLARATION,
@@ -412,9 +413,41 @@ export function createKeyframeSuffixerPlugin(): Middleware {
 const isMiddleware = (obj: Middleware | null): obj is Middleware =>
   obj !== null;
 
+function createStylisStringifier(
+  keepComments: boolean | RegExp | undefined
+): Middleware {
+  if (!keepComments) {
+    return stringify;
+  }
+
+  const keepAllComments = keepComments === true;
+  const keepCommentsFilter =
+    keepComments instanceof RegExp ? keepComments : null;
+
+  return (element, index, children, callback) => {
+    if (element.type === COMMENT) {
+      if (!keepAllComments && keepCommentsFilter) {
+        const commentValue =
+          typeof element.children === 'string'
+            ? element.children
+            : element.value;
+        keepCommentsFilter.lastIndex = 0;
+        if (!keepCommentsFilter.test(commentValue)) {
+          return '';
+        }
+      }
+      return element.value;
+    }
+
+    return stringify(element, index, children, callback);
+  };
+}
+
 export function createStylisPreprocessor(
   options: Options & { prefixer?: boolean }
 ) {
+  const stringifier = createStylisStringifier(options.keepComments);
+
   function stylisPreprocess(selector: string, text: string): string {
     const compiled = compile(`${selector} {${text}}\n`);
 
@@ -429,7 +462,7 @@ export function createStylisPreprocessor(
           stylisGlobalPlugin,
           options.prefixer === false ? null : prefixer,
           createKeyframeSuffixerPlugin(),
-          stringify,
+          stringifier,
         ].filter(isMiddleware)
       )
     );

@@ -33,6 +33,7 @@ type VitePluginOptions = {
   debug?: IFileReporterOptions | false | null | undefined;
   exclude?: FilterPattern;
   include?: FilterPattern;
+  keepComments?: boolean | RegExp;
   prefixer?: boolean;
   preprocessor?: Preprocessor;
   sourceMap?: boolean;
@@ -45,6 +46,7 @@ export default function wywInJS({
   include,
   exclude,
   sourceMap,
+  keepComments,
   prefixer,
   preprocessor,
   ...rest
@@ -162,6 +164,7 @@ export default function wywInJS({
           filename: id,
           root: process.cwd(),
           prefixer,
+          keepComments,
           preprocessor,
           pluginOptions: rest,
         },

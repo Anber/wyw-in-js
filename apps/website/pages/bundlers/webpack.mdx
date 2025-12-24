@@ -20,3 +20,31 @@ module.exports = {
   },
 };
 ```
+
+### Keeping CSS comments
+
+Stylis strips CSS comments by default. To preserve them (for example, `/*rtl:ignore*/`), pass `keepComments`:
+
+```js
+module.exports = {
+  module: {
+    rules: [
+      {
+        test: /\.js/,
+        use: [
+          {
+            loader: '@wyw-in-js/webpack-loader',
+            options: {
+              keepComments: true,
+              // or keep only matching comments:
+              // keepComments: /rtl:/,
+            },
+          },
+        ],
+      },
+    ],
+  },
+};
+```
+
+Note: if you use a CSS minimizer in production, ensure it preserves comments.

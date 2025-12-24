@@ -58,6 +58,7 @@ export type Result = {
 export type Options = {
   filename: string;
   inputSourceMap?: RawSourceMap;
+  keepComments?: boolean | RegExp;
   outputFilename?: string;
   pluginOptions?: Partial<PluginOptions>;
   prefixer?: boolean;

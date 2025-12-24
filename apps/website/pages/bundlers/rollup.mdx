@@ -28,6 +28,20 @@ export default {
 };
 ```
 
+### Keeping CSS comments
+
+Stylis strips CSS comments by default. To preserve them (for example, `/*rtl:ignore*/`), pass `keepComments`:
+
+```js
+wyw({
+  keepComments: true,
+  // or keep only matching comments:
+  // keepComments: /rtl:/,
+});
+```
+
+Note: if your CSS pipeline minifies output, ensure the minifier keeps comments.
+
 If you are using [@rollup/plugin-babel](https://github.com/rollup/plugins/tree/master/packages/babel) as well, ensure the wyw plugin is declared earlier in the `plugins` array than your babel plugin.
 
 ```js

@@ -20,6 +20,27 @@ export default defineConfig(() => ({
 }));
 ```
 
+### Keeping CSS comments
+
+Stylis strips CSS comments by default. To preserve them (for example, `/*rtl:ignore*/`), pass `keepComments`:
+
+```js
+export default defineConfig(() => ({
+  // ...
+  plugins: [wyw({ keepComments: true })],
+}));
+```
+
+Vite also strips CSS comments during build minification by default. To keep them in the final output, disable CSS minification:
+
+```js
+export default defineConfig(() => ({
+  // ...
+  build: { cssMinify: false },
+  plugins: [wyw({ keepComments: true })],
+}));
+```
+
 If you are using language features that requires a babel transform (such as typescript), ensure the proper babel presets or plugins are passed to wyw.
 
 ```js
