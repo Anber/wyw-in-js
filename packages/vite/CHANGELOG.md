@@ -1,5 +1,20 @@
 # @wyw-in-js/vite
 
+## 0.8.2
+
+### Patch Changes
+
+- fcb118a: Add a `keepComments` option for the stylis preprocessor to preserve selected CSS comments.
+- Updated dependencies [485fd7d]
+- Updated dependencies [fcb118a]
+- Updated dependencies [d4cefc9]
+- Updated dependencies [485fd7d]
+- Updated dependencies [ac44dcc]
+- Updated dependencies
+- Updated dependencies [782e67f]
+  - @wyw-in-js/transform@0.8.2
+  - @wyw-in-js/shared@0.8.2
+
 ## 0.8.1
 
 ### Patch Changes
