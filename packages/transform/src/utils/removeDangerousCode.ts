@@ -4,6 +4,7 @@ import type {
   CallExpression,
   Expression,
   Identifier,
+  NewExpression,
   Program,
   V8IntrinsicIdentifier,
 } from '@babel/types';
@@ -57,6 +58,8 @@ const isSSRCheckField = (id: NodePath<Identifier>) => {
   return ssrCheckFields.has(id.node.name) && isGlobal(id);
 };
 
+const promiseCallbackMethods = new Set(['then', 'catch', 'finally']);
+
 const getPropertyName = (path: NodePath): string | null => {
   if (path.isIdentifier()) {
     return path.node.name;
@@ -67,6 +70,53 @@ const getPropertyName = (path: NodePath): string | null => {
   }
 
   return null;
+};
+
+const isPromiseCallbackArgument = (
+  path: NodePath<CallExpression | NewExpression>,
+  ref: NodePath
+) => {
+  return path
+    .get('arguments')
+    .some((arg) => arg === ref || arg.isAncestor(ref));
+};
+
+const findPromiseCallbackOwner = (
+  path: NodePath
+): NodePath<CallExpression | NewExpression> | null => {
+  const owner = path.findParent((parent) => {
+    if (parent.isNewExpression()) {
+      const callee = parent.get('callee');
+      return (
+        callee.isIdentifier({ name: 'Promise' }) &&
+        isPromiseCallbackArgument(parent, path)
+      );
+    }
+
+    if (parent.isCallExpression()) {
+      const callee = parent.get('callee');
+      if (!callee.isMemberExpression()) return false;
+      const propName = getPropertyName(callee.get('property'));
+      return (
+        propName !== null &&
+        promiseCallbackMethods.has(propName) &&
+        isPromiseCallbackArgument(parent, path)
+      );
+    }
+
+    return false;
+  });
+
+  return owner as NodePath<CallExpression | NewExpression> | null;
+};
+
+const removeForbiddenGlobal = (path: NodePath) => {
+  const promiseOwner = findPromiseCallbackOwner(path);
+  if (promiseOwner) {
+    removeWithRelated([promiseOwner]);
+  } else {
+    removeWithRelated([path]);
+  }
 };
 
 const getImport = (path: NodePath): [string, string] | undefined => {
@@ -324,13 +374,13 @@ export const removeDangerousCode = (
             return;
           }
 
-          removeWithRelated([p]);
+          removeForbiddenGlobal(p);
 
           return;
         }
 
         if (state.windowScoped.has(p.node.name)) {
-          removeWithRelated([p]);
+          removeForbiddenGlobal(p);
         } else if (isGlobal(p)) {
           state.globals.push(p);
         }
