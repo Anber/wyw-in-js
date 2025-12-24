@@ -54,8 +54,10 @@ export default function dynamicImport(babel: Core): PluginObj {
 
     if (t.isBinaryExpression(expression) && expression.operator === '+') {
       return (
-        isStringLikeExpression(expression.left) ||
-        isStringLikeExpression(expression.right)
+        (t.isExpression(expression.left) &&
+          isStringLikeExpression(expression.left)) ||
+        (t.isExpression(expression.right) &&
+          isStringLikeExpression(expression.right))
       );
     }
 
