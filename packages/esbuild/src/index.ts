@@ -31,6 +31,8 @@ type EsbuildPluginOptions = {
   sourceMap?: boolean;
 } & Partial<PluginOptions>;
 
+const supportedFilterFlags = new Set(['i', 'm', 's']);
+
 const nodeModulesRegex = /^(?:.*[\\/])?node_modules(?:[\\/].*)?$/;
 
 export default function wywInJS({
@@ -49,8 +51,45 @@ export default function wywInJS({
     setup(build) {
       const cssLookup = new Map<string, string>();
       const cssResolveDirs = new Map<string, string>();
+      const warnedFilters = new Set<string>();
 
       const { emitter, onDone } = createFileReporter(debug ?? false);
+
+      const warnOnUnsupportedFlags = (
+        filterRegexp: RegExp,
+        removedFlags: string,
+        sanitizedFlags: string
+      ) => {
+        const key = `${filterRegexp.source}/${filterRegexp.flags}`;
+        if (warnedFilters.has(key)) {
+          return;
+        }
+        warnedFilters.add(key);
+        const nextFlags = sanitizedFlags || 'none';
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[wyw-in-js] Ignoring unsupported RegExp flags "${removedFlags}" ` +
+            `in esbuild filter /${filterRegexp.source}/${filterRegexp.flags}. ` +
+            `Using flags "${nextFlags}".`
+        );
+      };
+
+      const sanitizeFilter = (filterRegexp: RegExp): RegExp => {
+        const { flags } = filterRegexp;
+        const sanitizedFlags = flags
+          .split('')
+          .filter((flag) => supportedFilterFlags.has(flag))
+          .join('');
+        if (sanitizedFlags === flags) {
+          return filterRegexp;
+        }
+        const removedFlags = flags
+          .split('')
+          .filter((flag) => !supportedFilterFlags.has(flag))
+          .join('');
+        warnOnUnsupportedFlags(filterRegexp, removedFlags, sanitizedFlags);
+        return new RegExp(filterRegexp.source, sanitizedFlags);
+      };
 
       const asyncResolve = async (
         token: string,
@@ -92,7 +131,9 @@ export default function wywInJS({
       });
 
       const filterRegexp =
-        typeof filter === 'string' ? new RegExp(filter) : filter;
+        typeof filter === 'string'
+          ? new RegExp(filter)
+          : sanitizeFilter(filter);
 
       build.onLoad({ filter: filterRegexp }, async (args) => {
         const rawCode = readFileSync(args.path, 'utf8');
