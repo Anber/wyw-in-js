@@ -36,6 +36,7 @@ import { isExports } from './isExports';
 import { isNotNull } from './isNotNull';
 import { isRequire } from './isRequire';
 import { isTypedNode } from './isTypedNode';
+import { getConstantStringValue } from './getConstantStringValue';
 import { getTraversalCache } from './traversalCache';
 
 export interface ISideEffectImport {
@@ -326,12 +327,15 @@ function collectFromDynamicImport(
   }
 
   const [sourcePath] = callExpression.get('arguments');
-  if (!sourcePath || !sourcePath.isStringLiteral()) {
-    // Import should have at least one argument, and it should be StringLiteral
+  if (!sourcePath || !sourcePath.isExpression()) {
+    // Import should have at least one argument
     return;
   }
 
-  const source = sourcePath.node.value;
+  const source = getConstantStringValue(sourcePath.node);
+  if (source === null) {
+    return;
+  }
 
   let { parentPath: container, key } = callExpression;
   let isAwaited = false;
@@ -510,12 +514,15 @@ function collectFromRequire(
   }
 
   const [sourcePath] = callExpression.get('arguments');
-  if (!sourcePath || !sourcePath.isStringLiteral()) {
-    // Import should have at least one argument, and it should be StringLiteral
+  if (!sourcePath || !sourcePath.isExpression()) {
+    // Import should have at least one argument
     return;
   }
 
-  const source = sourcePath.node.value;
+  const source = getConstantStringValue(sourcePath.node);
+  if (source === null) {
+    return;
+  }
 
   const { parentPath: container, key } = callExpression;
 
@@ -653,6 +660,73 @@ function collectFromRequire(
       source,
     });
   }
+}
+
+function collectFromWywDynamicImport(
+  path: NodePath<Identifier>,
+  state: ILocalState
+): void {
+  if (!path.isIdentifier({ name: '__wyw_dynamic_import' })) {
+    return;
+  }
+
+  const { parentPath: callExpression } = path;
+  if (!callExpression.isCallExpression()) {
+    return;
+  }
+
+  const [sourcePath] = callExpression.get('arguments');
+  if (!sourcePath || !sourcePath.isExpression()) {
+    return;
+  }
+
+  const source = getConstantStringValue(sourcePath.node);
+  if (source === null) {
+    return;
+  }
+
+  let { parentPath: container, key } = callExpression;
+  let isAwaited = false;
+
+  if (container.isAwaitExpression()) {
+    // If it's not awaited import, it imports the full namespace
+    isAwaited = true;
+    key = container.key;
+    container = container.parentPath!;
+  }
+
+  // Is it `const something = await __wyw_dynamic_import("something")`?
+  if (key === 'init' && container.isVariableDeclarator()) {
+    importFromVariableDeclarator(container, isAwaited).forEach((prop) => {
+      if (prop.what === '*') {
+        const unfolded = unfoldNamespaceImport({
+          imported: '*',
+          local: prop.as,
+          source,
+          type: 'dynamic',
+        });
+
+        state.imports.push(...unfolded);
+        return;
+      }
+
+      state.imports.push({
+        imported: prop.what,
+        local: prop.as,
+        source,
+        type: 'dynamic',
+      });
+    });
+
+    return;
+  }
+
+  state.imports.push({
+    imported: '*',
+    local: path,
+    source,
+    type: 'dynamic',
+  });
 }
 
 function collectFromVariableDeclarator(
@@ -910,6 +984,8 @@ function collectFromRequireOrExports(
 ): void {
   if (isRequire(path)) {
     collectFromRequire(path, state);
+  } else if (path.isIdentifier({ name: '__wyw_dynamic_import' })) {
+    collectFromWywDynamicImport(path, state);
   } else if (isExports(path)) {
     collectFromExports(path, state);
   }

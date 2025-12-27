@@ -169,6 +169,7 @@ export default function wywInJS({
           pluginOptions: rest,
         },
         cache,
+        emitWarning: (message: string) => this.warn(message),
         eventEmitter: emitter,
       };
 

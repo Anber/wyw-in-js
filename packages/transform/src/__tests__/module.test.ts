@@ -50,12 +50,13 @@ const createServices = (partial: Partial<Services>): Services => {
   return {
     babel,
     cache: new TransformCacheCollection(),
+    emitWarning: jest.fn(),
     loadAndParseFn,
     log: logger,
     eventEmitter: EventEmitter.dummy,
     options: {
       filename,
-      pluginOptions: options,
+      pluginOptions: { ...options },
     },
     ...partial,
   };
@@ -438,6 +439,69 @@ it('export * compiled by typescript to commonjs works', () => {
   safeEvaluate(mod);
 
   expect(mod.exports).toBe('foo');
+});
+
+it('does not warn when dependency is resolved during prepare stage', () => {
+  const { entrypoint, mod, services } = create`
+    module.exports = require('./sample-script');
+  `;
+
+  services.options.root = path.dirname(filename);
+
+  entrypoint.addDependency({
+    only: ['*'],
+    resolved: require.resolve('./__fixtures__/sample-script.js'),
+    source: './sample-script',
+  });
+
+  safeEvaluate(mod);
+
+  expect(mod.exports).toBe(42);
+  expect(services.emitWarning as jest.Mock).not.toHaveBeenCalled();
+});
+
+it('warns only on eval-time fallback and dedupes by canonical key', () => {
+  const { mod, services } = create``;
+
+  services.options.root = path.dirname(filename);
+
+  safeRequire(mod, './sample-script');
+  safeRequire(mod, './sample-script');
+
+  expect(services.emitWarning as jest.Mock).toHaveBeenCalledTimes(1);
+  expect((services.emitWarning as jest.Mock).mock.calls[0][0]).toContain(
+    'config key: ./sample-script.js'
+  );
+});
+
+it('supports importOverrides.unknown=error for eval-time fallback', () => {
+  const { mod, services } = create``;
+
+  services.options.root = path.dirname(filename);
+  services.options.pluginOptions.importOverrides = {
+    './sample-script.js': {
+      unknown: 'error',
+    },
+  };
+
+  expect(() => safeRequire(mod, './sample-script')).toThrow(
+    'Unknown import reached during eval'
+  );
+});
+
+it('supports importOverrides.mock for eval-time fallback', () => {
+  const { mod, services } = create``;
+
+  services.options.root = path.dirname(filename);
+  services.options.pluginOptions.importOverrides = {
+    './sample-script.js': {
+      mock: './objectExport.js',
+      unknown: 'allow',
+    },
+  };
+
+  expect(safeRequire(mod, './sample-script')).toEqual({ margin: 5 });
+  expect(services.emitWarning as jest.Mock).not.toHaveBeenCalled();
 });
 
 describe('globals', () => {

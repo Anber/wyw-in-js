@@ -3,12 +3,60 @@ import { getFileIdx } from '../../utils/getFileIdx';
 import type { Entrypoint } from '../Entrypoint';
 import { getStack, isSuperSet, mergeOnly } from '../Entrypoint.helpers';
 import type { IEntrypointDependency } from '../Entrypoint.types';
+import {
+  applyImportOverrideToOnly,
+  resolveMockSpecifier,
+  toImportKey,
+} from '../../utils/importOverrides';
 import type {
   AsyncScenarioForAction,
   IResolveImportsAction,
   Services,
   SyncScenarioForAction,
 } from '../types';
+
+function applyImportOverrides(
+  services: Services,
+  entrypoint: Entrypoint,
+  resolvedImports: IEntrypointDependency[]
+): IEntrypointDependency[] {
+  const overrides = services.options.pluginOptions.importOverrides;
+  if (!overrides || Object.keys(overrides).length === 0) {
+    return resolvedImports;
+  }
+
+  const { root } = services.options;
+  const importer = entrypoint.name;
+  const stack = getStack(entrypoint);
+
+  return resolvedImports.map((dependency) => {
+    const { key } = toImportKey({
+      source: dependency.source,
+      resolved: dependency.resolved,
+      root,
+    });
+    const override = overrides[key];
+    if (!override) {
+      return dependency;
+    }
+
+    const nextOnly = applyImportOverrideToOnly(dependency.only, override);
+    const nextResolved = override.mock
+      ? resolveMockSpecifier({
+          mock: override.mock,
+          importer,
+          root,
+          stack,
+        })
+      : dependency.resolved;
+
+    return {
+      ...dependency,
+      only: nextOnly,
+      resolved: nextResolved,
+    };
+  });
+}
 
 function emitDependency(
   emitter: Services['eventEmitter'],
@@ -83,7 +131,12 @@ export function* syncResolveImports(
     };
   });
 
-  const filteredImports = filterUnresolved(entrypoint, resolvedImports);
+  const overriddenImports = applyImportOverrides(
+    this.services,
+    entrypoint,
+    resolvedImports
+  );
+  const filteredImports = filterUnresolved(entrypoint, overriddenImports);
   emitDependency(eventEmitter, entrypoint, filteredImports);
 
   return filteredImports;
@@ -192,7 +245,12 @@ export async function* asyncResolveImports(
 
   log('resolved %d imports', resolvedImports.length);
 
-  const filteredImports = filterUnresolved(entrypoint, resolvedImports);
+  const overriddenImports = applyImportOverrides(
+    this.services,
+    entrypoint,
+    resolvedImports
+  );
+  const filteredImports = filterUnresolved(entrypoint, overriddenImports);
   emitDependency(eventEmitter, entrypoint, filteredImports);
   return filteredImports;
 }

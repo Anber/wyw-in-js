@@ -28,6 +28,11 @@ import type { IEntrypointDependency } from './transform/Entrypoint.types';
 import type { IEvaluatedEntrypoint } from './transform/EvaluatedEntrypoint';
 import { isUnprocessedEntrypointError } from './transform/actions/UnprocessedEntrypointError';
 import type { Services } from './transform/types';
+import {
+  applyImportOverrideToOnly,
+  resolveMockSpecifier,
+  toImportKey,
+} from './utils/importOverrides';
 import { createVmContext } from './vm/createVmContext';
 
 type HiddenModuleMembers = {
@@ -87,6 +92,29 @@ const reactRefreshRuntime = {
 };
 
 const NOOP = () => {};
+
+const warnedUnknownImportsByServices = new WeakMap<Services, Set<string>>();
+
+function emitWarning(services: Services, message: string) {
+  if (services.emitWarning) {
+    services.emitWarning(message);
+    return;
+  }
+
+  // eslint-disable-next-line no-console
+  console.warn(message);
+}
+
+function getWarnedUnknownImports(services: Services): Set<string> {
+  const cached = warnedUnknownImportsByServices.get(services);
+  if (cached) {
+    return cached;
+  }
+
+  const created = new Set<string>();
+  warnedUnknownImportsByServices.set(services, created);
+  return created;
+}
 
 function getUncached(cached: string | string[], test: string[]): string[] {
   const cachedSet = new Set(
@@ -312,7 +340,7 @@ export class Module {
         module: this,
         exports: entrypoint.exports,
         require: this.require,
-        __wyw_dynamic_import: async (id: string) => this.require(id),
+        __wyw_dynamic_import: async (id: unknown) => this.require(String(id)),
         __dirname: path.dirname(filename),
       },
       pluginOptions.overrideContext
@@ -487,10 +515,91 @@ export class Module {
         paths: this.moduleImpl._nodeModulePaths(path.dirname(filename)),
       });
 
+      const { root } = this.services.options;
+      const keyInfo = toImportKey({
+        source: id,
+        resolved,
+        root,
+      });
+
+      const override =
+        this.services.options.pluginOptions.importOverrides?.[keyInfo.key];
+
+      const policy = override?.unknown ?? 'warn';
+      const shouldWarn = !this.ignored && policy === 'warn';
+
+      let finalResolved = resolved;
+      if (override?.mock) {
+        try {
+          finalResolved = resolveMockSpecifier({
+            mock: override.mock,
+            importer: filename,
+            root,
+            stack: this.callstack,
+          });
+        } catch (e) {
+          const errorMessage = String((e as Error)?.message ?? e);
+          throw new Error(
+            `[wyw-in-js] Failed to resolve import mock for "${keyInfo.key}" (${id} from ${filename}): ${errorMessage}`
+          );
+        }
+      }
+
+      if (policy === 'error') {
+        throw new Error(
+          [
+            `[wyw-in-js] Unknown import reached during eval (Node resolver fallback)`,
+            ``,
+            `importer: ${filename}`,
+            `source:   ${id}`,
+            `resolved: ${resolved}`,
+            override?.mock
+              ? `mock:     ${override.mock} -> ${finalResolved}`
+              : ``,
+            ``,
+            `callstack:`,
+            ...this.callstack.map((item) => `  ${item}`),
+            ``,
+            `config key: ${keyInfo.key}`,
+          ]
+            .filter(Boolean)
+            .join('\n')
+        );
+      }
+
+      const warnedUnknownImports = getWarnedUnknownImports(this.services);
+
+      if (shouldWarn && !warnedUnknownImports.has(keyInfo.key)) {
+        warnedUnknownImports.add(keyInfo.key);
+        emitWarning(
+          this.services,
+          [
+            `[wyw-in-js] Unknown import reached during eval (Node resolver fallback)`,
+            ``,
+            `importer: ${filename}`,
+            `source:   ${id}`,
+            `resolved: ${resolved}`,
+            override?.mock
+              ? `mock:     ${override.mock} -> ${finalResolved}`
+              : ``,
+            ``,
+            `callstack:`,
+            ...this.callstack.map((item) => `  ${item}`),
+            ``,
+            `config key: ${keyInfo.key}`,
+            `hint: add { importOverrides: { ${JSON.stringify(
+              keyInfo.key
+            )}: { unknown: 'allow' } } } to silence, or use { mock / noShake }.`,
+          ]
+            .filter(Boolean)
+            .join('\n')
+        );
+      }
+
       return {
         source: id,
-        only: ['*'],
-        resolved,
+        only: applyImportOverrideToOnly(['*'], override),
+        resolved: finalResolved,
       };
     } finally {
       // Cleanup the extensions we added to restore previous behaviour

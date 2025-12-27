@@ -21,6 +21,7 @@ import type {
 export type Services = {
   babel: Core;
   cache: TransformCacheCollection;
+  emitWarning?: (message: string) => void;
   eventEmitter: EventEmitter;
   loadAndParseFn: LoadAndParseFn;
   log: Debugger;

@@ -12,7 +12,13 @@ function foo(onImport) {
 }"
 `;
 
-exports[`prepareCode Testing transformation for dynamic-import: imports 1`] = `Map {}`;
+exports[`prepareCode Testing transformation for dynamic-import: imports 1`] = `
+Map {
+  "./foo" => [
+    "*",
+  ],
+}
+`;
 
 exports[`prepareCode Testing transformation for dynamic-import: metadata 1`] = `null`;
 
