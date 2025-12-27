@@ -199,7 +199,7 @@ module.exports = {
   };
   ```
 
-- `importOverrides: Record<string, { mock?: string; noShake?: boolean; unknown?: "allow" | "warn" | "error" }>`
+- `importOverrides: Record<string, { mock: string } | { noShake: true } | { unknown: "allow" | "warn" | "error" }>`
 
   Overrides how imports are handled during prepare/eval stages.
 
@@ -210,9 +210,11 @@ module.exports = {
 
   - Actions:
 
-    - `mock`: replace the resolved target for the import (raw `source` stays intact).
-    - `noShake`: disable tree-shaking for this import (forces `only=['*']`).
-    - `unknown`: controls behavior when an import reaches eval-time Node resolver fallback (`warn` by default).
+    - Each override value is one of:
+
+      - `mock`: replace the resolved target for the import (raw `source` stays intact).
+      - `noShake`: disable tree-shaking for this import (forces `only=['*']`).
+      - `unknown`: controls behavior when an import reaches eval-time Node resolver fallback (`warn` by default).
 
   Example:
 

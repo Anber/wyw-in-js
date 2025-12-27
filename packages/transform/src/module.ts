@@ -525,7 +525,7 @@ export class Module {
       const override =
         this.services.options.pluginOptions.importOverrides?.[keyInfo.key];
 
-      const policy = override?.unknown ?? 'warn';
+      const policy = override?.unknown ?? (override?.mock ? 'allow' : 'warn');
       const shouldWarn = !this.ignored && policy === 'warn';
 
       let finalResolved = resolved;
@@ -589,7 +589,7 @@ export class Module {
             `config key: ${keyInfo.key}`,
             `hint: add { importOverrides: { ${JSON.stringify(
               keyInfo.key
-            )}: { unknown: 'allow' } } } to silence, or use { mock / noShake }.`,
+            )}: { unknown: 'allow' } } } to silence warnings, or use { mock } / { noShake: true } overrides.`,
           ]
             .filter(Boolean)
             .join('\n')

@@ -496,7 +496,6 @@ it('supports importOverrides.mock for eval-time fallback', () => {
   services.options.pluginOptions.importOverrides = {
     './sample-script.js': {
       mock: './objectExport.js',
-      unknown: 'allow',
     },
   };
 

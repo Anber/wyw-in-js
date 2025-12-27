@@ -52,24 +52,41 @@ export type EvalRule = {
 
 export type FeatureFlag = boolean | string | string[];
 
-export type ImportOverride = {
+type ImportOverrideMock = {
   /**
    * Replaces resolved import with provided specifier (resolved on prepare/eval stages).
    * Raw `source` stays intact; only resolution target changes.
    */
-  mock?: string;
+  mock: string;
+  noShake?: never;
+  unknown?: never;
+};
+
+type ImportOverrideNoShake = {
   /**
    * Disables tree-shaking for this import by forcing `only=['*']`.
    */
-  noShake?: boolean;
+  noShake: true;
+  mock?: never;
+  unknown?: never;
+};
+
+type ImportOverrideUnknown = {
   /**
    * Controls behavior when an import reaches eval-time Node resolver fallback.
    * - 'warn' (default): warn once per canonical import key.
    * - 'error': throw.
    * - 'allow': no warning, keep load-as-is.
    */
-  unknown?: 'allow' | 'error' | 'warn';
+  unknown: 'allow' | 'error' | 'warn';
+  mock?: never;
+  noShake?: never;
 };
+
+export type ImportOverride =
+  | ImportOverrideMock
+  | ImportOverrideNoShake
+  | ImportOverrideUnknown;
 
 export type ImportOverrides = Record<string, ImportOverride>;
 
