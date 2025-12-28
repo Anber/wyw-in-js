@@ -199,6 +199,35 @@ module.exports = {
   };
   ```
 
+- `importOverrides: Record<string, { mock: string } | { noShake: true } | { unknown: "allow" | "warn" | "error" }>`
+
+  Overrides how imports are handled during prepare/eval stages.
+
+  - Keys:
+
+    - File imports (raw specifier starts with `.`) are keyed by a canonical root-relative path of the resolved file, e.g. `./src/foo.ts`.
+    - Package imports are keyed by the raw specifier as written in code, e.g. `react` or `@scope/pkg`.
+
+  - Actions:
+
+    - Each override value is one of:
+
+      - `mock`: replace the resolved target for the import (raw `source` stays intact).
+      - `noShake`: disable tree-shaking for this import (forces `only=['*']`).
+      - `unknown`: controls behavior when an import reaches eval-time Node resolver fallback (`warn` by default).
+
+  Example:
+
+  ```js
+  module.exports = {
+    importOverrides: {
+      './src/i18n/messages/en.json': { unknown: 'allow' },
+      react: { mock: './src/__mocks__/react.ts' },
+      './src/vendor/broken-module.ts': { noShake: true },
+    },
+  };
+  ```
+
 - `rules: EvalRule[]`
 
   The set of rules that defines how the matched files will be transformed during the evaluation.

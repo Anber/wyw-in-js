@@ -8,13 +8,36 @@ Object.defineProperty(exports, "__esModule", {
 });
 exports.foo = foo;
 function foo(onImport) {
-  __wyw_dynamic_import("./foo").then(onImport);
+  __wyw_dynamic_import('./foo').then(onImport);
 }"
 `;
 
-exports[`prepareCode Testing transformation for dynamic-import: imports 1`] = `Map {}`;
+exports[`prepareCode Testing transformation for dynamic-import: imports 1`] = `
+Map {
+  "./foo" => [
+    "*",
+  ],
+}
+`;
 
 exports[`prepareCode Testing transformation for dynamic-import: metadata 1`] = `null`;
+
+exports[`prepareCode Testing transformation for dynamic-import-concat: code 1`] = `
+""use strict";
+
+Object.defineProperty(exports, "__esModule", {
+  value: true
+});
+exports.foo = foo;
+function foo(locale, onImport) {
+  __wyw_dynamic_import('./foo/' + locale).then(onImport);
+  __wyw_dynamic_import('./foo/'.concat(locale, '.json')).then(onImport);
+}"
+`;
+
+exports[`prepareCode Testing transformation for dynamic-import-concat: imports 1`] = `Map {}`;
+
+exports[`prepareCode Testing transformation for dynamic-import-concat: metadata 1`] = `null`;
 
 exports[`prepareCode Testing transformation for dynamic-import-param: code 1`] = `
 ""use strict";
@@ -79,9 +102,7 @@ Object.defineProperty(exports, "__esModule", {
 exports.foo = foo;
 var random = Math.random() > 0.5 ? "first" : "second";
 function foo(onImport) {
-  (function () {
-    throw new Error("Dynamic import argument must be a string or a template literal");
-  })().then(onImport);
+  __wyw_dynamic_import(random).then(onImport);
 }"
 `;
 

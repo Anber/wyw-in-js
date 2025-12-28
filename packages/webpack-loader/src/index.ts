@@ -102,6 +102,7 @@ const webpack5Loader: Loader = function webpack5LoaderPlugin(
       root: process.cwd(),
     },
     cache,
+    emitWarning: (message: string) => this.emitWarning(new Error(message)),
     eventEmitter: sharedState.emitter,
   };
 

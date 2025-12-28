@@ -13,6 +13,7 @@ export type PartialServices = Partial<Omit<Services, RequiredServices>> &
 export const withDefaultServices = ({
   babel = babelCore,
   cache = new TransformCacheCollection(),
+  emitWarning,
   eventEmitter = EventEmitter.dummy,
   loadAndParseFn = loadAndParse,
   log = rootLog,
@@ -20,6 +21,7 @@ export const withDefaultServices = ({
 }: PartialServices): Services => ({
   babel,
   cache,
+  emitWarning,
   eventEmitter,
   loadAndParseFn,
   log,

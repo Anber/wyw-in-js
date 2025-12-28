@@ -101,6 +101,7 @@ export default function wywInJS({
           root: process.cwd(),
         },
         cache,
+        emitWarning: (message: string) => this.warn(message),
       };
 
       const result = await transform(

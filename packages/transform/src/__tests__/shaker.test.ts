@@ -194,4 +194,20 @@ describe('shaker', () => {
     expect(code).not.toContain('react/jsx-dev-runtime');
     expect(code).not.toContain('@shoelace-style/shoelace');
   });
+
+  it('should drop unused exports with dynamic import when keeping only __wywPreval', () => {
+    const code = run(['__wywPreval'])`
+      export const __wywPreval = {
+        value: () => 's1gxjcbn',
+      };
+
+      export async function getStaticData(lang) {
+        return (await import('./i18n/' + lang + '.json')).default;
+      }
+    `;
+
+    expect(code).toContain('__wywPreval');
+    expect(code).not.toContain('getStaticData');
+    expect(code).not.toContain('import(');
+  });
 });

@@ -52,6 +52,44 @@ export type EvalRule = {
 
 export type FeatureFlag = boolean | string | string[];
 
+type ImportOverrideMock = {
+  /**
+   * Replaces resolved import with provided specifier (resolved on prepare/eval stages).
+   * Raw `source` stays intact; only resolution target changes.
+   */
+  mock: string;
+  noShake?: never;
+  unknown?: never;
+};
+
+type ImportOverrideNoShake = {
+  mock?: never;
+  /**
+   * Disables tree-shaking for this import by forcing `only=['*']`.
+   */
+  noShake: true;
+  unknown?: never;
+};
+
+type ImportOverrideUnknown = {
+  mock?: never;
+  noShake?: never;
+  /**
+   * Controls behavior when an import reaches eval-time Node resolver fallback.
+   * - 'warn' (default): warn once per canonical import key.
+   * - 'error': throw.
+   * - 'allow': no warning, keep load-as-is.
+   */
+  unknown: 'allow' | 'error' | 'warn';
+};
+
+export type ImportOverride =
+  | ImportOverrideMock
+  | ImportOverrideNoShake
+  | ImportOverrideUnknown;
+
+export type ImportOverrides = Record<string, ImportOverride>;
+
 type AllFeatureFlags = {
   dangerousCodeRemover: FeatureFlag;
   globalCache: FeatureFlag;
@@ -80,6 +118,7 @@ export type StrictOptions = {
   features: FeatureFlags;
   highPriorityPlugins: string[];
   ignore?: RegExp;
+  importOverrides?: ImportOverrides;
   overrideContext?: (
     context: Partial<VmContext>,
     filename: string

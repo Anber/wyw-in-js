@@ -14,6 +14,8 @@ export type {
   ClassNameSlugVars,
   ClassNameFn,
   CodeRemoverOptions,
+  ImportOverride,
+  ImportOverrides,
   StrictOptions,
   EvalRule,
   Evaluator,
