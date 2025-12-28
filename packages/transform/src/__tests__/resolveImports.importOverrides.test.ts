@@ -9,7 +9,7 @@ import { TransformCacheCollection } from '../cache';
 import { Entrypoint } from '../transform/Entrypoint';
 import type { LoadAndParseFn } from '../transform/Entrypoint.types';
 import { syncResolveImports } from '../transform/generators/resolveImports';
-import type { Services } from '../transform/types';
+import type { IResolveImportsAction, Services } from '../transform/types';
 import { EventEmitter } from '../utils/EventEmitter';
 
 const createPluginOptions = (
@@ -89,9 +89,9 @@ describe('resolveImports: importOverrides', () => {
       data: { imports: new Map([['./foo', ['default']]]) },
       entrypoint: entrypointA,
       services,
-    };
+    } as IResolveImportsAction;
 
-    const depsA = syncResolveImports.call(actionA as any, resolve).next().value;
+    const depsA = syncResolveImports.call(actionA, resolve).next().value;
     expect(depsA).toEqual([
       {
         source: './foo',
@@ -110,9 +110,9 @@ describe('resolveImports: importOverrides', () => {
       data: { imports: new Map([['../src/foo.js', ['named']]]) },
       entrypoint: entrypointB,
       services,
-    };
+    } as IResolveImportsAction;
 
-    const depsB = syncResolveImports.call(actionB as any, resolve).next().value;
+    const depsB = syncResolveImports.call(actionB, resolve).next().value;
     expect(depsB).toEqual([
       {
         source: '../src/foo.js',
@@ -148,10 +148,10 @@ describe('resolveImports: importOverrides', () => {
       data: { imports: new Map([['react', ['default']]]) },
       entrypoint,
       services,
-    };
+    } as IResolveImportsAction;
 
     const deps = syncResolveImports
-      .call(action as any, () => '/external/react.js')
+      .call(action, () => '/external/react.js')
       .next().value;
 
     expect(deps).toEqual([
