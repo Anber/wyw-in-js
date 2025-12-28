@@ -310,6 +310,29 @@ function exportFromVariableDeclarator(
     );
   }
 
+  if (id.isArrayPattern()) {
+    // It is `export const [a, , b, ...rest] = arr;`
+    const exported = new Set<string>();
+    id.traverse({
+      Identifier(identifier) {
+        if (identifier.isBindingIdentifier()) {
+          exported.add(identifier.node.name);
+        }
+      },
+    });
+
+    if (exported.size === 0) {
+      return {};
+    }
+
+    const result: Exports = {};
+    exported.forEach((name) => {
+      result[name] = init;
+    });
+
+    return result;
+  }
+
   // What else it can be?
   debug('exportFromVariableDeclarator: unknown type of id %o', id.node.type);
 
