@@ -79,31 +79,23 @@ export default function dynamicImport(babel: Core): PluginObj {
     return false;
   };
 
-  const normalizeImportArgument = (node: Expression): Expression => {
-    const unwrapped = unwrapExpression(node);
-    const cloned = t.cloneNode(unwrapped, true, true);
-
-    if (isStringLikeExpression(unwrapped)) {
-      return cloned;
-    }
-
-    return t.binaryExpression('+', t.stringLiteral(''), cloned);
-  };
-
   return {
     name: '@wyw-in-js/transform/dynamic-import',
     visitor: {
       CallExpression(path) {
         if (path.get('callee').isImport()) {
           const moduleName = path.get('arguments.0') as NodePath;
-          const argument = moduleName.isExpression()
-            ? unwrapExpression(moduleName.node)
-            : null;
+          const argument = moduleName.isExpression() ? moduleName.node : null;
 
           if (argument) {
+            const unwrappedArgument = unwrapExpression(argument);
+            const nextArgument = isStringLikeExpression(argument)
+              ? t.cloneNode(unwrappedArgument, true, true)
+              : t.cloneNode(argument, true, true);
+
             path.replaceWith(
               t.callExpression(t.identifier('__wyw_dynamic_import'), [
-                normalizeImportArgument(argument),
+                nextArgument,
               ])
             );
             return;

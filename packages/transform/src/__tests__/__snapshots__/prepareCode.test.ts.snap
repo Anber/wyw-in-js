@@ -102,7 +102,7 @@ Object.defineProperty(exports, "__esModule", {
 exports.foo = foo;
 var random = Math.random() > 0.5 ? "first" : "second";
 function foo(onImport) {
-  __wyw_dynamic_import("" + random).then(onImport);
+  __wyw_dynamic_import(random).then(onImport);
 }"
 `;
 
