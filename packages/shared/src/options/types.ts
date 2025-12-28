@@ -63,15 +63,17 @@ type ImportOverrideMock = {
 };
 
 type ImportOverrideNoShake = {
+  mock?: never;
   /**
    * Disables tree-shaking for this import by forcing `only=['*']`.
    */
   noShake: true;
-  mock?: never;
   unknown?: never;
 };
 
 type ImportOverrideUnknown = {
+  mock?: never;
+  noShake?: never;
   /**
    * Controls behavior when an import reaches eval-time Node resolver fallback.
    * - 'warn' (default): warn once per canonical import key.
@@ -79,8 +81,6 @@ type ImportOverrideUnknown = {
    * - 'allow': no warning, keep load-as-is.
    */
   unknown: 'allow' | 'error' | 'warn';
-  mock?: never;
-  noShake?: never;
 };
 
 export type ImportOverride =
