@@ -1,49 +1,15 @@
 import type { NodePath, PluginObj } from '@babel/core';
-import type { Expression, MemberExpression } from '@babel/types';
+import type { Expression } from '@babel/types';
 
 import type { Core } from '../babel';
+import { getMemberExpressionPropertyName } from '../utils/getMemberExpressionPropertyName';
+import { unwrapExpression } from '../utils/unwrapExpression';
 
 /**
  * The plugin that replaces `import()` with `__wyw_dynamic_import` as Node VM does not support dynamic imports yet.
  */
 export default function dynamicImport(babel: Core): PluginObj {
   const { types: t } = babel;
-
-  const unwrapOnce = (node: Expression): Expression => {
-    if (t.isTSAsExpression(node)) {
-      return node.expression;
-    }
-    if (t.isTSTypeAssertion(node)) {
-      return node.expression;
-    }
-    if (t.isTSNonNullExpression(node)) {
-      return node.expression;
-    }
-    if (t.isParenthesizedExpression(node)) {
-      return node.expression;
-    }
-    return node;
-  };
-
-  const unwrapExpression = (node: Expression): Expression => {
-    let current = node;
-    let next = unwrapOnce(current);
-    while (next !== current) {
-      current = next;
-      next = unwrapOnce(current);
-    }
-    return current;
-  };
-
-  const getConcatPropertyName = (node: MemberExpression): string | null => {
-    if (!node.computed && t.isIdentifier(node.property)) {
-      return node.property.name;
-    }
-    if (node.computed && t.isStringLiteral(node.property)) {
-      return node.property.value;
-    }
-    return null;
-  };
 
   const isStringLikeExpression = (node: Expression): boolean => {
     const expression = unwrapExpression(node);
@@ -66,7 +32,7 @@ export default function dynamicImport(babel: Core): PluginObj {
       if (!t.isMemberExpression(callee)) {
         return false;
       }
-      const propertyName = getConcatPropertyName(callee);
+      const propertyName = getMemberExpressionPropertyName(callee);
       if (propertyName !== 'concat') {
         return false;
       }

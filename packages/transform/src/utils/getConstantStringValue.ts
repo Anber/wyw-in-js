@@ -1,38 +1,10 @@
 import type { Expression } from '@babel/types';
 import * as t from '@babel/types';
 
+import { getMemberExpressionPropertyName } from './getMemberExpressionPropertyName';
+import { unwrapExpression } from './unwrapExpression';
+
 export function getConstantStringValue(node: Expression): string | null {
-  const unwrapOnce = (value: Expression): Expression => {
-    if (t.isTSAsExpression(value)) return value.expression;
-    if (t.isTSTypeAssertion(value)) return value.expression;
-    if (t.isTSNonNullExpression(value)) return value.expression;
-    if (t.isParenthesizedExpression(value)) return value.expression;
-    return value;
-  };
-
-  const unwrapExpression = (value: Expression): Expression => {
-    let current = value;
-    let next = unwrapOnce(current);
-    while (next !== current) {
-      current = next;
-      next = unwrapOnce(current);
-    }
-    return current;
-  };
-
-  const getConcatPropertyName = (
-    value: t.Node | null | undefined
-  ): string | null => {
-    if (!t.isMemberExpression(value)) return null;
-    if (!value.computed && t.isIdentifier(value.property)) {
-      return value.property.name;
-    }
-    if (value.computed && t.isStringLiteral(value.property)) {
-      return value.property.value;
-    }
-    return null;
-  };
-
   const fromExpression = (value: Expression): string | null => {
     const expression = unwrapExpression(value);
 
@@ -63,7 +35,9 @@ export function getConstantStringValue(node: Expression): string | null {
     }
 
     if (t.isCallExpression(expression)) {
-      const concatProperty = getConcatPropertyName(expression.callee);
+      const concatProperty = t.isMemberExpression(expression.callee)
+        ? getMemberExpressionPropertyName(expression.callee)
+        : null;
       if (concatProperty !== 'concat') {
         return null;
       }
