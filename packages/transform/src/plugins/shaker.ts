@@ -1,6 +1,7 @@
 import type { BabelFile, PluginObj, NodePath } from '@babel/core';
 import type { Binding } from '@babel/traverse';
 import type {
+  ExportNamedDeclaration,
   Identifier,
   MemberExpression,
   Program,
@@ -46,9 +47,24 @@ interface NodeWithName {
   name: string;
 }
 
+function getNonParamBinding(
+  exportPath: NodePath,
+  name: string
+): Binding | undefined {
+  const binding = exportPath.scope.getBinding(name);
+  if (binding && (binding.kind as string) !== 'param') {
+    return binding;
+  }
+
+  // When `exportPath` is inside a function scope, a parameter can shadow
+  // the actual export binding (e.g. `export function fallback(fallback) {}`).
+  // In such cases we need the binding from the declaration scope.
+  return exportPath.scope.parent?.getBinding(name) ?? binding;
+}
+
 function getBindingForExport(exportPath: NodePath): Binding | undefined {
   if (exportPath.isIdentifier()) {
-    return exportPath.scope.getBinding(exportPath.node.name);
+    return getNonParamBinding(exportPath, exportPath.node.name);
   }
 
   const variableDeclarator = exportPath.findParent((p) =>
@@ -64,12 +80,12 @@ function getBindingForExport(exportPath: NodePath): Binding | undefined {
   if (exportPath.isAssignmentExpression()) {
     const left = exportPath.get('left');
     if (left.isIdentifier()) {
-      return exportPath.scope.getBinding(left.node.name);
+      return getNonParamBinding(exportPath, left.node.name);
     }
   }
 
   if (exportPath.isFunctionDeclaration() || exportPath.isClassDeclaration()) {
-    return exportPath.scope.getBinding(exportPath.node.id!.name);
+    return getNonParamBinding(exportPath, exportPath.node.id!.name);
   }
 
   return undefined;
@@ -180,6 +196,37 @@ const isWithinAliveExport = (
   aliveExports: Set<NodePath>
 ): boolean =>
   [...aliveExports].some((alive) => alive === ref || alive.isAncestor(ref));
+
+function stripExportKeepDeclaration(path: NodePath): boolean {
+  const exportDeclaration = path.findParent((p) =>
+    p.isExportNamedDeclaration()
+  ) as NodePath<ExportNamedDeclaration> | null;
+  if (!exportDeclaration) return false;
+
+  const declaration = exportDeclaration.get('declaration');
+  if (!declaration.node) return false;
+
+  if (
+    declaration.isFunctionDeclaration() ||
+    declaration.isClassDeclaration() ||
+    declaration.isTSEnumDeclaration()
+  ) {
+    exportDeclaration.replaceWith(declaration.node);
+    return true;
+  }
+
+  if (declaration.isVariableDeclaration()) {
+    const declarators = declaration.get('declarations');
+    if (declarators.length !== 1) {
+      return false;
+    }
+
+    exportDeclaration.replaceWith(declaration.node);
+    return true;
+  }
+
+  return false;
+}
 
 export default function shakerPlugin(
   babel: Core,
@@ -429,6 +476,18 @@ export default function shakerPlugin(
               // Temporary deref it in order to simplify further checks.
               dereference(path);
               dereferenced.push(path);
+            }
+
+            if (
+              !deleted.has(path) &&
+              binding &&
+              blockingReferences.length > 0 &&
+              stripExportKeepDeclaration(path)
+            ) {
+              deleted.add(path);
+              changed = true;
+              // eslint-disable-next-line no-continue
+              continue;
             }
 
             if (
