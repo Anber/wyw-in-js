@@ -120,6 +120,48 @@ describe('TransformCacheCollection', () => {
       expect(mockedReadFileSync).toHaveBeenCalledWith(depName, 'utf8');
     });
 
+    it('strips ?query/#hash from dependency filenames before reading', () => {
+      const depName = 'dep.js';
+      const depContent = 'export const b = 2;';
+      const parentName = 'parent.js';
+      const parentContent = 'import { b } from "./dep.js?raw"; console.log(b);';
+
+      const { entrypoint: depEntrypoint } = setupCacheWithEntrypoint(
+        depName,
+        depContent
+      );
+
+      const parentDeps = new Map<
+        string,
+        Pick<IEntrypointDependency, 'resolved'>
+      >([['./dep.js?raw', { resolved: `${depName}?raw` }]]);
+      const { cache } = setupCacheWithEntrypoint(
+        parentName,
+        parentContent,
+        parentDeps
+      );
+
+      cache.add('entrypoints', depName, depEntrypoint as any);
+      (cache as any).contentHashes.set(depName, hashContent(depContent));
+
+      mockedReadFileSync.mockImplementation((path) => {
+        if (path === depName) {
+          return depContent;
+        }
+
+        throw new Error(`Unexpected readFileSync call: ${path}`);
+      });
+
+      expect(() =>
+        cache.invalidateIfChanged(parentName, parentContent)
+      ).not.toThrow();
+      expect(mockedReadFileSync).toHaveBeenCalledWith(depName, 'utf8');
+      expect(mockedReadFileSync).not.toHaveBeenCalledWith(
+        `${depName}?raw`,
+        'utf8'
+      );
+    });
+
     it('should invalidate recursive dependency if its content changed', () => {
       const leafName = 'leaf.js';
       const leafContent = 'export const c = 3;';

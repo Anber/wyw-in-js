@@ -10,7 +10,7 @@ import type { RawSourceMap } from 'source-map';
 import type { RawLoaderDefinitionFunction } from 'webpack';
 
 import { logger } from '@wyw-in-js/shared';
-import type { Preprocessor, Result } from '@wyw-in-js/transform';
+import type { PluginOptions, Preprocessor, Result } from '@wyw-in-js/transform';
 import { transform, TransformCacheCollection } from '@wyw-in-js/transform';
 
 import { sharedState } from './WYWinJSDebugPlugin';
@@ -21,6 +21,18 @@ export { WYWinJSDebugPlugin } from './WYWinJSDebugPlugin';
 
 const outputCssLoader = require.resolve('./outputCssLoader');
 
+const stripQueryAndHash = (request: string) => {
+  const queryIdx = request.indexOf('?');
+  const hashIdx = request.indexOf('#');
+
+  if (queryIdx === -1) {
+    return hashIdx === -1 ? request : request.slice(0, hashIdx);
+  }
+  if (hashIdx === -1) return request.slice(0, queryIdx);
+
+  return request.slice(0, Math.min(queryIdx, hashIdx));
+};
+
 export type LoaderOptions = {
   cacheProvider?: string | ICache;
   extension?: string;
@@ -28,7 +40,7 @@ export type LoaderOptions = {
   prefixer?: boolean;
   preprocessor?: Preprocessor;
   sourceMap?: boolean;
-};
+} & Partial<PluginOptions>;
 type Loader = RawLoaderDefinitionFunction<LoaderOptions>;
 
 const cache = new TransformCacheCollection();
@@ -82,7 +94,10 @@ const webpack5Loader: Loader = function webpack5LoaderPlugin(
         if (err) {
           reject(err);
         } else if (result) {
-          this.addDependency(result);
+          const filePath = stripQueryAndHash(result);
+          if (path.isAbsolute(filePath)) {
+            this.addDependency(filePath);
+          }
           resolve(result);
         } else {
           reject(new Error(`Cannot resolve ${token}`));

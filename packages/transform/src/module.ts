@@ -18,7 +18,12 @@ import vm from 'vm';
 
 import { invariant } from 'ts-invariant';
 
-import { isFeatureEnabled, type Debugger } from '@wyw-in-js/shared';
+import {
+  isFeatureEnabled,
+  type Debugger,
+  type ImportLoaderContext,
+  type ImportLoaders,
+} from '@wyw-in-js/shared';
 
 import './utils/dispose-polyfill';
 import type { TransformCacheCollection } from './cache';
@@ -33,6 +38,7 @@ import {
   resolveMockSpecifier,
   toImportKey,
 } from './utils/importOverrides';
+import { parseRequest, stripQueryAndHash } from './utils/parseRequest';
 import { createVmContext } from './vm/createVmContext';
 
 type HiddenModuleMembers = {
@@ -137,6 +143,11 @@ function resolve(
   return resolved;
 }
 
+const defaultImportLoaders: ImportLoaders = {
+  raw: 'raw',
+  url: 'url',
+};
+
 export class Module {
   public readonly callstack: string[] = [];
 
@@ -201,6 +212,13 @@ export class Module {
         dependency.resolved,
         `Dependency ${dependency.source} cannot be resolved`
       );
+
+      const loaded = this.loadByImportLoaders(id, dependency.resolved);
+      if (loaded.handled) {
+        this.dependencies.push(id);
+        this.debug('require', `${id} -> ${dependency.resolved} (loader)`);
+        return loaded.value;
+      }
 
       this.dependencies.push(id);
 
@@ -325,7 +343,7 @@ export class Module {
 
     this.isEvaluated = true;
 
-    const { filename } = this;
+    const filename = stripQueryAndHash(this.filename);
 
     if (/\.json$/.test(filename)) {
       // For JSON files, parse it to a JS object similar to Node
@@ -386,7 +404,8 @@ export class Module {
     only: string[],
     log: Debugger
   ): Entrypoint | IEvaluatedEntrypoint | null {
-    const extension = path.extname(filename);
+    const strippedFilename = stripQueryAndHash(filename);
+    const extension = path.extname(strippedFilename);
     if (extension !== '.json' && !this.extensions.includes(extension)) {
       return null;
     }
@@ -412,7 +431,7 @@ export class Module {
       const newEntrypoint = this.entrypoint.createChild(
         filename,
         ['*'],
-        fs.readFileSync(filename, 'utf-8')
+        fs.readFileSync(strippedFilename, 'utf-8')
       );
 
       if (newEntrypoint === 'loop') {
@@ -449,7 +468,7 @@ export class Module {
 
     // If code wasn't extracted from cache, it indicates that we were unable
     // to process some of the imports on stage1. Let's try to reprocess.
-    const code = fs.readFileSync(filename, 'utf-8');
+    const code = fs.readFileSync(strippedFilename, 'utf-8');
     const shouldSkipCacheOnlyMerge = Boolean(
       uncachedExports && entrypoint?.evaluatedOnly?.length
     );
@@ -508,8 +527,9 @@ export class Module {
       });
 
       const { filename } = this;
+      const strippedId = stripQueryAndHash(id);
 
-      const resolved = this.moduleImpl._resolveFilename(id, {
+      const resolved = this.moduleImpl._resolveFilename(strippedId, {
         id: filename,
         filename,
         paths: this.moduleImpl._nodeModulePaths(path.dirname(filename)),
@@ -609,5 +629,72 @@ export class Module {
 
   protected createChild(entrypoint: Entrypoint): Module {
     return new Module(this.services, entrypoint, this, this.moduleImpl);
+  }
+
+  private loadByImportLoaders(
+    request: string,
+    resolved: string
+  ): { handled: boolean; value: unknown } {
+    const { pluginOptions } = this.services.options;
+    const importLoaders =
+      pluginOptions.importLoaders === undefined
+        ? defaultImportLoaders
+        : { ...defaultImportLoaders, ...pluginOptions.importLoaders };
+
+    const { query, hash } = parseRequest(request);
+    if (!query) return { handled: false, value: undefined };
+
+    const params = new URLSearchParams(query);
+    const matchedKey = Array.from(params.keys()).find(
+      (key) => importLoaders[key] !== undefined && importLoaders[key] !== false
+    );
+
+    if (!matchedKey) return { handled: false, value: undefined };
+
+    const loader = importLoaders[matchedKey];
+
+    const filename = stripQueryAndHash(resolved);
+    const importer = stripQueryAndHash(this.filename);
+    const importerDir = path.dirname(importer);
+
+    const toUrl = () => {
+      const relative = path
+        .relative(importerDir, filename)
+        .replace(/\\/g, path.posix.sep);
+
+      if (relative.startsWith('.') || path.isAbsolute(relative)) {
+        return relative;
+      }
+
+      return `./${relative}`;
+    };
+
+    const readFile = () => fs.readFileSync(filename, 'utf-8');
+
+    const context: ImportLoaderContext = {
+      importer,
+      request,
+      resolved,
+      filename,
+      query,
+      hash,
+      emitWarning: (message) => emitWarning(this.services, message),
+      readFile,
+      toUrl,
+    };
+
+    if (loader === 'raw') {
+      return { handled: true, value: context.readFile() };
+    }
+
+    if (loader === 'url') {
+      return { handled: true, value: context.toUrl() };
+    }
+
+    if (typeof loader === 'function') {
+      return { handled: true, value: loader(context) };
+    }
+
+    return { handled: false, value: undefined };
   }
 }

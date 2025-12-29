@@ -21,6 +21,12 @@ module.exports = {
 };
 ```
 
+### Resource queries (`?raw`, `?url`, etc.)
+
+If you import assets with resource queries (e.g. `./arrow.svg?svgUse`), WyW-in-JS ignores `?query/#hash` for file reads and extension checks.
+
+For cases where evaluated code needs a value from such imports, configure `importLoaders` in your WyW config (see `/configuration`).
+
 ### Keeping CSS comments
 
 Stylis strips CSS comments by default. To preserve them (for example, `/*rtl:ignore*/`), pass `keepComments`:

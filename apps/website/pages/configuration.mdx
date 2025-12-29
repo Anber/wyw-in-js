@@ -228,6 +228,36 @@ module.exports = {
   };
   ```
 
+- `importLoaders: Record<string, "raw" | "url" | ((context) => unknown) | false>`
+
+  Allows handling of import resource queries (e.g. `?raw`, `?url`, `?svgUse`) during evaluation.
+
+  Notes:
+
+  - This affects only the WyW evaluation sandbox (values returned from `require()` / dynamic import during build), not your bundler runtime behavior.
+  - If multiple query keys are present, the first matching key is used.
+  - Set a loader to `false` to disable it.
+
+  Built-in loaders:
+
+  - `"raw"`: returns file contents as a string (`utf-8`).
+  - `"url"`: returns a relative (POSIX) path to the resolved file from the importing file directory.
+
+  Example:
+
+  ```js
+  module.exports = {
+    importLoaders: {
+      // Disable defaults if you don't want them
+      // raw: false,
+      // url: false,
+
+      // Custom loader key
+      svgUse: (ctx) => ctx.toUrl(),
+    },
+  };
+  ```
+
 - `rules: EvalRule[]`
 
   The set of rules that defines how the matched files will be transformed during the evaluation.

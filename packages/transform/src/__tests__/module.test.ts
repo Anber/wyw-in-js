@@ -176,6 +176,59 @@ it('requires .json files', () => {
   expect(mod.exports).toBe('Our saviour, Luke Skywalker');
 });
 
+it('supports "?raw" imports during eval', () => {
+  const { entrypoint, mod } = create`
+    module.exports = require('./sample-asset.txt?raw');
+  `;
+
+  entrypoint.addDependency({
+    only: ['*'],
+    resolved: path.resolve(__dirname, './__fixtures__/sample-asset.txt'),
+    source: './sample-asset.txt?raw',
+  });
+
+  safeEvaluate(mod);
+
+  // Git checkout on Windows may convert text files to CRLF.
+  expect(String(mod.exports).replace(/\r\n/g, '\n')).toBe('Hello from asset\n');
+});
+
+it('supports "?url" imports during eval', () => {
+  const { entrypoint, mod } = create`
+    module.exports = require('./sample-asset.txt?url');
+  `;
+
+  entrypoint.addDependency({
+    only: ['*'],
+    resolved: path.resolve(__dirname, './__fixtures__/sample-asset.txt'),
+    source: './sample-asset.txt?url',
+  });
+
+  safeEvaluate(mod);
+
+  expect(mod.exports).toBe('./sample-asset.txt');
+});
+
+it('allows custom query loaders via pluginOptions.importLoaders', () => {
+  const { entrypoint, mod, services } = create`
+    module.exports = require('./sample-asset.txt?svgUse');
+  `;
+
+  services.options.pluginOptions.importLoaders = {
+    svgUse: (ctx) => ({ ok: true, url: ctx.toUrl() }),
+  };
+
+  entrypoint.addDependency({
+    only: ['*'],
+    resolved: path.resolve(__dirname, './__fixtures__/sample-asset.txt'),
+    source: './sample-asset.txt?svgUse',
+  });
+
+  safeEvaluate(mod);
+
+  expect(mod.exports).toEqual({ ok: true, url: './sample-asset.txt' });
+});
+
 it('returns module from the cache', () => {
   const { entrypoint, mod, services } = create``;
 
