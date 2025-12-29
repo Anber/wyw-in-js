@@ -90,6 +90,25 @@ export type ImportOverride =
 
 export type ImportOverrides = Record<string, ImportOverride>;
 
+export type ImportLoaderContext = {
+  emitWarning: (message: string) => void;
+  filename: string;
+  hash: string;
+  importer: string;
+  query: string;
+  readFile: () => string;
+  request: string;
+  resolved: string;
+  toUrl: () => string;
+};
+
+export type ImportLoader =
+  | 'raw'
+  | 'url'
+  | ((context: ImportLoaderContext) => unknown);
+
+export type ImportLoaders = Record<string, ImportLoader | false>;
+
 type AllFeatureFlags = {
   dangerousCodeRemover: FeatureFlag;
   globalCache: FeatureFlag;
@@ -118,6 +137,7 @@ export type StrictOptions = {
   features: FeatureFlags;
   highPriorityPlugins: string[];
   ignore?: RegExp;
+  importLoaders?: ImportLoaders;
   importOverrides?: ImportOverrides;
   overrideContext?: (
     context: Partial<VmContext>,

@@ -21,6 +21,7 @@ import { getPluginKey } from '../utils/getPluginKey';
 
 import type { IEntrypointCode, IIgnoredEntrypoint } from './Entrypoint.types';
 import type { Services } from './types';
+import { stripQueryAndHash } from '../utils/parseRequest';
 
 export function getMatchedRule(
   rules: EvalRule[],
@@ -162,33 +163,28 @@ export function loadAndParse(
     options: { pluginOptions },
   } = services;
 
-  const extension = extname(name);
+  const filename = stripQueryAndHash(name);
+  const extension = extname(filename);
 
   if (!pluginOptions.extensions.includes(extension)) {
     log(
       '[createEntrypoint] %s is ignored. If you want it to be processed, you should add \'%s\' to the "extensions" option.',
-      name,
+      filename,
       extension
     );
 
     return {
-      get code() {
-        if (isAbsolute(name)) {
-          return loadedCode ?? readFileSync(name, 'utf-8');
-        }
-
-        return ''; // it is a built-in module
-      },
+      code: isAbsolute(filename) ? loadedCode : '',
       evaluator: 'ignored',
       reason: 'extension',
     };
   }
 
-  const code = loadedCode ?? readFileSync(name, 'utf-8');
+  const code = loadedCode ?? readFileSync(filename, 'utf-8');
 
   const { action, babelOptions } = getMatchedRule(
     pluginOptions.rules,
-    name,
+    filename,
     code
   );
 
@@ -196,7 +192,7 @@ export function loadAndParse(
 
   const { evalConfig, parseConfig } = buildConfigs(
     services,
-    name,
+    filename,
     pluginOptions,
     babelOptions
   );
@@ -227,7 +223,7 @@ export function loadAndParse(
       ? action
       : require(
           require.resolve(action, {
-            paths: [dirname(name)],
+            paths: [dirname(filename)],
           })
         ).default;
 

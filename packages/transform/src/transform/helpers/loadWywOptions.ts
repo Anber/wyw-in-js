@@ -1,6 +1,10 @@
 import { cosmiconfigSync } from 'cosmiconfig';
 
-import type { FeatureFlags, StrictOptions } from '@wyw-in-js/shared';
+import type {
+  FeatureFlags,
+  ImportLoaders,
+  StrictOptions,
+} from '@wyw-in-js/shared';
 
 import { shaker } from '../../shaker';
 import type { PluginOptions } from '../../types';
@@ -31,6 +35,10 @@ export type PartialOptions = Partial<Omit<PluginOptions, 'features'>> & {
 const cache = new WeakMap<Partial<PartialOptions>, StrictOptions>();
 const defaultOverrides = {};
 const nodeModulesRegExp = /[\\/]node_modules[\\/]/;
+const defaultImportLoaders: ImportLoaders = {
+  raw: 'raw',
+  url: 'url',
+};
 
 export function loadWywOptions(
   overrides: PartialOptions = defaultOverrides
@@ -39,7 +47,14 @@ export function loadWywOptions(
     return cache.get(overrides)!;
   }
 
-  const { configFile, ignore, rules, babelOptions = {}, ...rest } = overrides;
+  const {
+    configFile,
+    ignore,
+    rules,
+    babelOptions = {},
+    importLoaders: overridesImportLoaders,
+    ...rest
+  } = overrides;
 
   const result =
     // eslint-disable-next-line no-nested-ternary
@@ -57,6 +72,10 @@ export function loadWywOptions(
     useBabelConfigs: true,
     useWeakRefInEval: true,
   };
+
+  const config = (result?.config ?? {}) as Partial<StrictOptions>;
+  const configImportLoaders = config.importLoaders;
+  const configFeatures = config.features;
 
   const options: StrictOptions = {
     displayName: false,
@@ -86,11 +105,16 @@ export function loadWywOptions(
     ],
     babelOptions,
     highPriorityPlugins: ['module-resolver'],
-    ...(result ? result.config : {}),
+    ...config,
     ...rest,
+    importLoaders: {
+      ...defaultImportLoaders,
+      ...(configImportLoaders ?? {}),
+      ...(overridesImportLoaders ?? {}),
+    },
     features: {
       ...defaultFeatures,
-      ...(result ? result.config.features : {}),
+      ...(configFeatures ?? {}),
       ...rest.features,
     },
   };

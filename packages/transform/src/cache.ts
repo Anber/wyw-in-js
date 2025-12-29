@@ -5,6 +5,7 @@ import { logger } from '@wyw-in-js/shared';
 import type { Entrypoint } from './transform/Entrypoint';
 import type { IEvaluatedEntrypoint } from './transform/EvaluatedEntrypoint';
 import { getFileIdx } from './utils/getFileIdx';
+import { stripQueryAndHash } from './utils/parseRequest';
 
 function hashContent(content: string) {
   return createHash('sha256').update(content).digest('hex');
@@ -151,7 +152,10 @@ export class TransformCacheCollection<
         const dependencyFilename = dependency.resolved;
 
         if (dependencyFilename) {
-          const dependencyContent = fs.readFileSync(dependencyFilename, 'utf8');
+          const dependencyContent = fs.readFileSync(
+            stripQueryAndHash(dependencyFilename),
+            'utf8'
+          );
           this.invalidateIfChanged(
             dependencyFilename,
             dependencyContent,
