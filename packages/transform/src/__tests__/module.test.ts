@@ -189,7 +189,8 @@ it('supports "?raw" imports during eval', () => {
 
   safeEvaluate(mod);
 
-  expect(mod.exports).toBe('Hello from asset\n');
+  // Git checkout on Windows may convert text files to CRLF.
+  expect(String(mod.exports).replace(/\r\n/g, '\n')).toBe('Hello from asset\n');
 });
 
 it('supports "?url" imports during eval', () => {
