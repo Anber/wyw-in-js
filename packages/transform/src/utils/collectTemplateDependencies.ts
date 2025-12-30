@@ -50,7 +50,7 @@ function staticEval(
 }
 
 const expressionDeclarationTpl = statement(
-  'const %%expId%% = /*#__PURE__*/ () => %%expression%%',
+  'const %%expId%% = () => %%expression%%',
   {
     preserveComments: true,
   }
