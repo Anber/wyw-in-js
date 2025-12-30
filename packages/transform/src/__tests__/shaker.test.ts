@@ -5,38 +5,41 @@ import dedent from 'dedent';
 
 import { shaker } from '../shaker';
 
-const compile = (only: string[]) => (code: TemplateStringsArray) => {
-  const filename = join(__dirname, 'source.ts');
-  const formattedCode = dedent(code);
-  const parsed = babel.parseSync(formattedCode, {
-    filename,
-    parserOpts: {
-      plugins: ['typescript', 'jsx'],
-    },
-  });
-
-  return shaker(
-    {
+const compile =
+  (only: string[], extraConfig: Record<string, unknown> = {}) =>
+  (code: TemplateStringsArray) => {
+    const filename = join(__dirname, 'source.ts');
+    const formattedCode = dedent(code);
+    const parsed = babel.parseSync(formattedCode, {
       filename,
-      plugins: [],
-    },
-    parsed!,
-    formattedCode,
-    {
-      features: {
-        dangerousCodeRemover: true,
-        globalCache: false,
-        happyDOM: false,
-        softErrors: false,
-        useBabelConfigs: false,
-        useWeakRefInEval: true,
+      parserOpts: {
+        plugins: ['typescript', 'jsx'],
       },
-      highPriorityPlugins: [],
-      onlyExports: only,
-    },
-    babel
-  );
-};
+    });
+
+    return shaker(
+      {
+        filename,
+        plugins: [],
+      },
+      parsed!,
+      formattedCode,
+      {
+        features: {
+          dangerousCodeRemover: true,
+          globalCache: false,
+          happyDOM: false,
+          softErrors: false,
+          useBabelConfigs: false,
+          useWeakRefInEval: true,
+        },
+        highPriorityPlugins: [],
+        onlyExports: only,
+        ...extraConfig,
+      },
+      babel
+    );
+  };
 
 const run = (only: string[]) => (code: TemplateStringsArray) =>
   compile(only)(code)[1];
@@ -148,6 +151,77 @@ describe('shaker', () => {
     `;
 
     expect(imports.size).toBe(0);
+  });
+
+  it('should drop unused named imports when keeping only __wywPreval (no other deletions)', () => {
+    const [, code, imports] = compile(['__wywPreval'])`
+      import { Tooltip } from '@radix-ui/react-tooltip';
+
+      export const __wywPreval = {
+        value: () => 's1gxjcbn',
+      };
+    `;
+
+    expect(code).toContain('__wywPreval');
+    expect(code).not.toContain('@radix-ui/react-tooltip');
+    expect(imports.size).toBe(0);
+  });
+
+  it('should drop unused namespace imports when keeping only __wywPreval (no other deletions)', () => {
+    const [, code, imports] = compile(['__wywPreval'])`
+      import * as Tooltip from '@radix-ui/react-tooltip';
+
+      export const __wywPreval = {
+        value: () => 's1gxjcbn',
+      };
+    `;
+
+    expect(code).toContain('__wywPreval');
+    expect(code).not.toContain('@radix-ui/react-tooltip');
+    expect(imports.size).toBe(0);
+  });
+
+  it('should drop side-effect imports when keeping only __wywPreval (no other deletions)', () => {
+    const [, code, imports] = compile(['__wywPreval'])`
+      import '@radix-ui/react-tooltip';
+
+      export const __wywPreval = {
+        value: () => 's1gxjcbn',
+      };
+    `;
+
+    expect(code).toContain('__wywPreval');
+    expect(code).not.toContain('@radix-ui/react-tooltip');
+    expect(imports.size).toBe(0);
+  });
+
+  it('should keep side-effect imports when imported as side-effect', () => {
+    const code = run(['side-effect'])`
+      import '@radix-ui/react-tooltip';
+
+      export const __wywPreval = {
+        value: () => 's1gxjcbn',
+      };
+    `;
+
+    expect(code).toContain('@radix-ui/react-tooltip');
+  });
+
+  it('should keep side-effect imports when they have importOverrides', () => {
+    const [, code, imports] = compile(['__wywPreval'], {
+      importOverrides: {
+        '@radix-ui/react-tooltip': { noShake: true },
+      },
+    })`
+      import '@radix-ui/react-tooltip';
+
+      export const __wywPreval = {
+        value: () => 's1gxjcbn',
+      };
+    `;
+
+    expect(code).toContain('@radix-ui/react-tooltip');
+    expect(imports.get('@radix-ui/react-tooltip')).toEqual(['side-effect']);
   });
 
   it('should drop property assignments for dead exports', () => {

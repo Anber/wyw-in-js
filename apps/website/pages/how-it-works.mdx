@@ -247,6 +247,8 @@ export const __wywPreval = { /* collect all dependencies in this object */
 
 Finds all irrelevant code and cuts it out of the file. We use the `shaker` plugin by default. For the root entrypoint, we only care about the `__wywPreval` named export. For child entrypoints like the one for `get-color.js` in our example, all its code will be shaked out except for the `getColor` named export and its dependencies.
 
+Note about side-effect imports: during `__wywPreval` evaluation WyW may drop `import '...';` side-effect imports from the eval bundle, to avoid executing unrelated runtime code in Node.js. If you rely on a side-effect import at eval time, use [`importOverrides`](/configuration#importoverrides) to keep it (`noShake`) or replace it with a mock (`mock`).
+
 ## ProcessImports Action
 
 Creates new entrypoints and emits `processEntrypoint` for each resolved import. In our example, we create a child entrypoint for the `get-color` module to process `getColor`.

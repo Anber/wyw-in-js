@@ -1,3 +1,5 @@
+import pathLib from 'path';
+
 import type { BabelFile, PluginObj, NodePath } from '@babel/core';
 import type { Binding } from '@babel/traverse';
 import type {
@@ -8,7 +10,8 @@ import type {
   VariableDeclarator,
 } from '@babel/types';
 
-import { logger } from '@wyw-in-js/shared';
+import { logger, syncResolve } from '@wyw-in-js/shared';
+import type { ImportOverride, ImportOverrides } from '@wyw-in-js/shared';
 
 import type { Core } from '../babel';
 import type { IMetadata } from '../utils/ShakerMetadata';
@@ -27,20 +30,15 @@ import {
   removeWithRelated,
 } from '../utils/scopeHelpers';
 import { invalidateTraversalCache } from '../utils/traversalCache';
-
-const EXT_REGEX = /\.[0-9a-z]+$/;
-const ALLOWED_EXTENSIONS = ['.js', '.cjs', '.mjs'];
-
-function shouldKeepSideEffect(importPath: string) {
-  const [ext] = importPath.match(EXT_REGEX) || [''];
-
-  return ext === '' || ALLOWED_EXTENSIONS.includes(ext);
-}
+import { stripQueryAndHash } from '../utils/parseRequest';
+import { toImportKey } from '../utils/importOverrides';
 
 export interface IShakerOptions {
   ifUnknownExport?: 'error' | 'ignore' | 'reexport-all' | 'skip-shaking';
+  importOverrides?: ImportOverrides;
   keepSideEffects?: boolean;
   onlyExports: string[];
+  root?: string;
 }
 
 interface NodeWithName {
@@ -233,7 +231,9 @@ export default function shakerPlugin(
   {
     keepSideEffects = false,
     ifUnknownExport = 'skip-shaking',
+    importOverrides,
     onlyExports,
+    root,
   }: IShakerOptions
 ): PluginObj<IState & { filename: string }> {
   const shakerLogger = logger.extend('shaker');
@@ -246,6 +246,62 @@ export default function shakerPlugin(
 
       log('start', `${this.filename}, onlyExports: ${onlyExports.join(',')}`);
       const onlyExportsSet = new Set(onlyExports);
+
+      const shouldKeepOverride = (
+        override: ImportOverride | undefined
+      ): boolean => !!override && ('mock' in override || 'noShake' in override);
+
+      const hasImportOverride = (() => {
+        if (!importOverrides || Object.keys(importOverrides).length === 0) {
+          return () => false;
+        }
+
+        const cache = new Map<string, boolean>();
+
+        return (source: string): boolean => {
+          const cached = cache.get(source);
+          if (cached !== undefined) {
+            return cached;
+          }
+
+          const strippedSource = stripQueryAndHash(source);
+
+          const direct =
+            importOverrides[source] ??
+            (strippedSource !== source
+              ? importOverrides[strippedSource]
+              : null);
+          if (direct) {
+            const result = shouldKeepOverride(direct);
+            cache.set(source, result);
+            return result;
+          }
+
+          const isFileImport =
+            strippedSource.startsWith('.') ||
+            pathLib.isAbsolute(strippedSource);
+          if (!isFileImport) {
+            cache.set(source, false);
+            return false;
+          }
+
+          try {
+            const resolved = syncResolve(strippedSource, this.filename, []);
+            const { key } = toImportKey({
+              source: strippedSource,
+              resolved,
+              root,
+            });
+            const override = importOverrides[key];
+            const result = shouldKeepOverride(override);
+            cache.set(source, result);
+            return result;
+          } catch {
+            cache.set(source, false);
+            return false;
+          }
+        };
+      })();
 
       const collected = collectExportsAndImports(file.path);
       const sideEffectImports = collected.imports.filter(sideEffectImport);
@@ -412,21 +468,34 @@ export default function shakerPlugin(
           ...collected.reexports.map((i) => i.local),
         ].filter((exp) => !aliveExports.has(exp));
 
+        const forDeletingSet = new Set<NodePath>(forDeleting);
+        const queueForDeleting = (path: NodePath): boolean => {
+          if (isRemoved(path) || forDeletingSet.has(path)) {
+            return false;
+          }
+
+          forDeletingSet.add(path);
+          forDeleting.push(path);
+          return true;
+        };
+
         if (!keepSideEffects && !importedAsSideEffect) {
-          // Remove all imports that don't import something explicitly and should not be kept
+          // Drop side-effect imports for eval-only builds unless they were explicitly requested.
+          // This prevents evaluating unrelated runtime code (e.g. Radix) during __wywPreval eval.
           sideEffectImports.forEach((i) => {
-            if (!shouldKeepSideEffect(i.source)) {
-              forDeleting.push(i.local);
+            if (hasImportOverride(i.source)) {
+              return;
             }
+
+            queueForDeleting(i.local);
           });
         }
 
         const deleted = new Set<NodePath>();
-        const forDeletingSet = new Set<NodePath>(forDeleting);
 
         let dereferenced: NodePath<Identifier>[] = [];
         let changed = true;
-        while (changed && deleted.size < forDeleting.length) {
+        while (changed) {
           changed = false;
           // eslint-disable-next-line no-restricted-syntax
           for (const path of forDeleting) {
@@ -495,13 +564,11 @@ export default function shakerPlugin(
               (!binding || blockingReferences.length === 0)
             ) {
               if (removableAssignmentStatements.size > 0) {
-                removableAssignmentStatements.forEach((statement) => {
-                  if (!forDeletingSet.has(statement)) {
-                    forDeletingSet.add(statement);
-                    forDeleting.push(statement);
+                for (const statement of removableAssignmentStatements) {
+                  if (queueForDeleting(statement)) {
+                    changed = true;
                   }
-                });
-                changed = true;
+                }
               }
 
               if (action) {
@@ -532,11 +599,17 @@ export default function shakerPlugin(
           for (const binding of unreferenced) {
             if (binding.path.isVariableDeclarator()) {
               const id = binding.path.get('id');
-              if (!forDeleting.includes(id)) {
+              if (!isRemoved(id) && !forDeletingSet.has(id)) {
                 // Drop dead variable declarations, e.g. `const foo = make();` when `foo` is no longer referenced.
-                forDeleting.push(...binding.constantViolations);
-                forDeleting.push(id);
-                changed = true;
+                for (const violation of binding.constantViolations) {
+                  if (queueForDeleting(violation)) {
+                    changed = true;
+                  }
+                }
+
+                if (queueForDeleting(id)) {
+                  changed = true;
+                }
               }
             }
 
@@ -546,10 +619,12 @@ export default function shakerPlugin(
               (binding.path.isImportSpecifier() ||
                 binding.path.isImportDefaultSpecifier() ||
                 binding.path.isImportNamespaceSpecifier()) &&
-              !forDeleting.includes(binding.path)
+              !isRemoved(binding.path) &&
+              !forDeletingSet.has(binding.path)
             ) {
-              forDeleting.push(binding.path);
-              changed = true;
+              if (queueForDeleting(binding.path)) {
+                changed = true;
+              }
             }
           }
         }
