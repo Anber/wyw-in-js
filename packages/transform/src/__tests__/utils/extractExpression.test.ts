@@ -63,7 +63,20 @@ describe('extractExpression', () => {
     `;
 
     expect(code).toMatchSnapshot();
+    expect(code).not.toContain('/*#__PURE__*/');
     expect(bindings).toEqual(['_exp', 'a', 'b', 'foo']);
+  });
+
+  it('does not emit PURE annotation for extracted function expressions', () => {
+    const { bindings, code } = runWithoutEval`
+      function foo() {
+        return /* extract */((props: { bgColor: string }) => props.bgColor);
+      }
+    `;
+
+    expect(code).toMatchSnapshot();
+    expect(code).not.toContain('/*#__PURE__*/');
+    expect(bindings).toEqual(['_exp', 'foo']);
   });
 
   it('should rename identifier if it already exists in the root', () => {
@@ -79,6 +92,7 @@ describe('extractExpression', () => {
     `;
 
     expect(code).toMatchSnapshot();
+    expect(code).not.toContain('/*#__PURE__*/');
     expect(bindings).toEqual(['_a', '_exp', 'a', 'b', 'foo']);
   });
 
@@ -93,6 +107,7 @@ describe('extractExpression', () => {
     `;
 
     expect(code).toMatchSnapshot();
+    expect(code).not.toContain('/*#__PURE__*/');
     expect(bindings).toEqual(['_exp', 'foo']);
   });
 
@@ -108,6 +123,7 @@ describe('extractExpression', () => {
     `;
 
     expect(code).toMatchSnapshot();
+    expect(code).not.toContain('/*#__PURE__*/');
     expect(bindings).toEqual(['_exp', 'a', 'fn', 'foo']);
   });
 
@@ -124,6 +140,7 @@ describe('extractExpression', () => {
     `;
 
     expect(code).toMatchSnapshot();
+    expect(code).not.toContain('/*#__PURE__*/');
     expect(bindings).toEqual(['_exp', 'a', 'fn', 'foo']);
   });
 });

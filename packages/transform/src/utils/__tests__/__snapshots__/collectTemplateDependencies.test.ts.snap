@@ -4,7 +4,7 @@ exports[`collectTemplateDependencies hoist chain of statements 1`] = `
 "import str from "module";
 let arg = str;
 let variable = arg + "2";
-const _exp = /*#__PURE__*/() => variable;
+const _exp = () => variable;
 function fn() {
   {
     const template = tag\`\${_exp()}\`;
@@ -14,10 +14,10 @@ function fn() {
 
 exports[`collectTemplateDependencies hoist expressions 1`] = `
 "import x from "module";
-const _exp = /*#__PURE__*/() => 42;
-const _exp2 = /*#__PURE__*/() => "test";
-const _exp3 = /*#__PURE__*/() => () => "result";
-const _exp4 = /*#__PURE__*/() => 21 * x;
+const _exp = () => 42;
+const _exp2 = () => "test";
+const _exp3 = () => () => "result";
+const _exp4 = () => 21 * x;
 function fn() {
   const template = tag\`\${_exp()}\${_exp2()}\${_exp3()}\${_exp4()}\`;
 }"
@@ -30,14 +30,14 @@ let {
 } = {
   variable: result
 };
-const _exp = /*#__PURE__*/() => variable;
+const _exp = () => variable;
 function fn() {
   const template = tag\`\${_exp()}\`;
 }"
 `;
 
 exports[`collectTemplateDependencies hoistExpression with object 1`] = `
-"const _exp = /*#__PURE__*/() => ({
+"const _exp = () => ({
   variable: "test"
 }).variable;
 function fn() {
@@ -57,7 +57,7 @@ exports[`collectTemplateDependencies non-hoistable expression 1`] = `
 exports[`collectTemplateDependencies should hoist expressions after imports 1`] = `
 "import { styled } from '@linaria/react';
 import slugify from '../__fixtures__/slugify';
-const _exp = /*#__PURE__*/() => slugify('test');
+const _exp = () => slugify('test');
 export const Title = styled.h1\`
   &:before {
     content: "\${_exp()}"
