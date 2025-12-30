@@ -118,6 +118,8 @@ export const prepareCode = (
     onlyExports: only,
     highPriorityPlugins: pluginOptions.highPriorityPlugins,
     features: pluginOptions.features,
+    importOverrides: pluginOptions.importOverrides,
+    root: options.root,
   };
 
   const [, transformedCode, imports] = eventEmitter.perf(

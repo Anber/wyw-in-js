@@ -28,7 +28,9 @@ export type VariableNameFn = (context: IVariableContext) => string;
 export type EvaluatorConfig = {
   features: StrictOptions['features'];
   highPriorityPlugins: string[];
+  importOverrides?: StrictOptions['importOverrides'];
   onlyExports: string[];
+  root?: string;
 };
 
 export type Evaluator = (

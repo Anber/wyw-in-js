@@ -228,6 +228,23 @@ module.exports = {
   };
   ```
 
+  Notes:
+
+  - When WyW evaluates `__wywPreval`, it tree-shakes the module and removes `import '...';` side-effect imports by default, to avoid executing unrelated runtime code in Node.js (some libraries touch `document`, `window`, etc).
+  - If you need a side-effect import to run during evaluation, or you need to stub a problematic side-effect import, add an override for that import:
+    - `{ noShake: true }` keeps the import and disables tree-shaking for that dependency.
+    - `{ mock: './path/to/mock' }` keeps the import but redirects it to a mock module.
+
+  Example (stub a problematic side-effect import during evaluation):
+
+  ```js
+  module.exports = {
+    importOverrides: {
+      '@radix-ui/react-tooltip': { mock: './src/__mocks__/radix-tooltip.ts' },
+    },
+  };
+  ```
+
 - `importLoaders: Record<string, "raw" | "url" | ((context) => unknown) | false>`
 
   Allows handling of import resource queries (e.g. `?raw`, `?url`, `?svgUse`) during evaluation.
