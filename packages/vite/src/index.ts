@@ -54,10 +54,31 @@ export default function wywInJS({
   const filter = createFilter(include, exclude);
   const cssLookup: { [key: string]: string } = {};
   const cssFileLookup: { [key: string]: string } = {};
+  const pendingCssReloads = new Set<string>();
+  let pendingCssReloadTimer: ReturnType<typeof setTimeout> | undefined;
   let config: ResolvedConfig;
   let devServer: ViteDevServer;
 
   const { emitter, onDone } = createFileReporter(debug ?? false);
+
+  const scheduleCssReload = (cssFilename: string) => {
+    if (!devServer?.moduleGraph) return;
+
+    pendingCssReloads.add(cssFilename);
+
+    if (pendingCssReloadTimer) return;
+    pendingCssReloadTimer = setTimeout(() => {
+      pendingCssReloadTimer = undefined;
+
+      const ids = Array.from(pendingCssReloads);
+      pendingCssReloads.clear();
+
+      for (const id of ids) {
+        const module = devServer.moduleGraph.getModuleById(id);
+        if (module) devServer.reloadModule(module);
+      }
+    }, 0);
+  };
 
   // <dependency id, targets>
   const targets: { dependencies: string[]; id: string }[] = [];
@@ -211,6 +232,7 @@ export default function wywInJS({
         cssText += `/*# sourceMappingURL=data:application/json;base64,${map}*/`;
       }
 
+      const didCssChange = cssLookup[cssFilename] !== cssText;
       cssLookup[cssFilename] = cssText;
       cssFileLookup[cssId] = cssFilename;
 
@@ -227,13 +249,7 @@ export default function wywInJS({
       if (!target) targets.push({ id, dependencies });
       else target.dependencies = dependencies;
 
-      if (devServer?.moduleGraph) {
-        const module = devServer.moduleGraph.getModuleById(cssFilename);
-
-        if (module) {
-          devServer.reloadModule(module);
-        }
-      }
+      if (didCssChange) scheduleCssReload(cssFilename);
       /* eslint-disable-next-line consistent-return */
       return { code: result.code, map: result.sourceMap };
     },
