@@ -210,4 +210,26 @@ describe('shaker', () => {
     expect(code).not.toContain('getStaticData');
     expect(code).not.toContain('import(');
   });
+
+  it('should keep bindings referenced via object shorthand', () => {
+    const code = run(['Spring'])`
+      export function spring() {
+        return 'spring';
+      }
+
+      export function fallback(fallback) {
+        return 'fallback';
+      }
+
+      export const Spring = {
+        fallback,
+        create: spring,
+      };
+    `;
+
+    expect(code).toContain('exports.Spring');
+    expect(code).toContain('function spring');
+    expect(code).toContain('function fallback');
+    expect(code).not.toContain('exports.fallback');
+  });
 });
