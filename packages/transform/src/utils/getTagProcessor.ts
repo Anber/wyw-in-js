@@ -373,7 +373,7 @@ function isTagReferenced(path: NodePath): boolean {
       const id = parent.get('id');
       // FIXME: replace with id.isReferencedIdentifier()
       if (id.isIdentifier()) {
-        const { referencePaths } = path.scope.getBinding(id.node.name) || {
+        const { referencePaths } = id.scope.getBinding(id.node.name) || {
           referencePaths: [],
         };
 
