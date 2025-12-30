@@ -58,22 +58,23 @@ export function* explodeReexports(
     resolvedImports
   );
 
-  const replacements = new Map<ExportAllDeclaration, Node | null>();
+  const replacements = new Map<ExportAllDeclaration, Node>();
   for (const importedEntrypoint of importedEntrypoints) {
-    const exports = yield* this.getNext(
-      'getExports',
-      importedEntrypoint.entrypoint,
-      undefined
-    );
+    if (importedEntrypoint.entrypoint.loadedAndParsed.evaluator !== 'ignored') {
+      const reexport = reexportsFrom.find(
+        (i) => i.source === importedEntrypoint.import
+      );
+      if (reexport) {
+        const exports = yield* this.getNext(
+          'getExports',
+          importedEntrypoint.entrypoint,
+          undefined
+        );
 
-    const reexport = reexportsFrom.find(
-      (i) => i.source === importedEntrypoint.import
-    );
-    if (reexport) {
-      replacements.set(
-        reexport.node,
-        exports.length
-          ? babel.types.exportNamedDeclaration(
+        if (exports.length !== 0) {
+          replacements.set(
+            reexport.node,
+            babel.types.exportNamedDeclaration(
               null,
               exports.map((i) =>
                 babel.types.exportSpecifier(
@@ -83,20 +84,17 @@ export function* explodeReexports(
               ),
               babel.types.stringLiteral(importedEntrypoint.import)
             )
-          : null
-      );
+          );
+        }
+      }
     }
   }
 
   // Replace wildcard reexport with named reexports
   babel.traverse(loadedAndParsed.ast, {
     ExportAllDeclaration(path) {
-      const replacement = replacements.get(path.node);
-      if (replacement) {
-        path.replaceWith(replacement);
-      } else {
-        path.remove();
-      }
+      if (!replacements.has(path.node)) return;
+      path.replaceWith(replacements.get(path.node)!);
     },
   });
 
