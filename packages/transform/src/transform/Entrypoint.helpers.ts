@@ -77,6 +77,125 @@ const isModuleResolver = (plugin: PluginItem) => {
 
 let moduleResolverWarned = false;
 
+const normalizeBabelKey = (key: string) => key.replace(/\\/g, '/');
+
+const isBabelPresetTypescript = (key: string) => {
+  const normalized = normalizeBabelKey(key);
+
+  if (normalized === 'typescript') return true;
+  return normalized.includes('preset-typescript');
+};
+
+const isBabelTransformTypescriptPlugin = (key: string) => {
+  const normalized = normalizeBabelKey(key);
+
+  if (normalized === 'transform-typescript') return true;
+  return normalized.includes('plugin-transform-typescript');
+};
+
+const withAllowDeclareFields = (item: PluginItem): PluginItem => {
+  if (!Array.isArray(item)) {
+    return [item, { allowDeclareFields: true }];
+  }
+
+  const [target, rawOptions, ...rest] = item;
+  const options =
+    typeof rawOptions === 'object' &&
+    rawOptions !== null &&
+    !Array.isArray(rawOptions)
+      ? rawOptions
+      : {};
+
+  if ('allowDeclareFields' in options) {
+    return item;
+  }
+
+  return [target, { ...options, allowDeclareFields: true }, ...rest];
+};
+
+type AllowDeclareFieldsPatchScope = 'top' | 'env' | 'override';
+
+const ensureAllowDeclareFieldsInBabelOptions = (
+  babelOptions: TransformOptions,
+  scope: AllowDeclareFieldsPatchScope = 'top'
+): TransformOptions => {
+  let presetsChanged = false;
+  let pluginsChanged = false;
+  let overridesChanged = false;
+  let envChanged = false;
+
+  const presets = babelOptions.presets?.map((item) => {
+    const key = getPluginKey(item);
+    if (!key || !isBabelPresetTypescript(key)) {
+      return item;
+    }
+
+    presetsChanged = true;
+    return withAllowDeclareFields(item);
+  });
+
+  const plugins = babelOptions.plugins?.map((item) => {
+    const key = getPluginKey(item);
+    if (!key || !isBabelTransformTypescriptPlugin(key)) {
+      return item;
+    }
+
+    pluginsChanged = true;
+    return withAllowDeclareFields(item);
+  });
+
+  const { overrides: baseOverrides } = babelOptions;
+  let overrides = baseOverrides;
+  if (scope === 'top' && baseOverrides) {
+    const patchedOverrides = baseOverrides.map((override) =>
+      ensureAllowDeclareFieldsInBabelOptions(
+        override as TransformOptions,
+        'override'
+      )
+    );
+
+    if (
+      patchedOverrides.some(
+        (patchedOverride, idx) => patchedOverride !== baseOverrides[idx]
+      )
+    ) {
+      overridesChanged = true;
+      overrides = patchedOverrides;
+    }
+  }
+
+  const { env: baseEnv } = babelOptions;
+  let env = baseEnv;
+  if (scope === 'top' && baseEnv) {
+    const entries = Object.entries(baseEnv);
+    const patchedEntries = entries.map(([envName, envOptions]) => [
+      envName,
+      envOptions
+        ? ensureAllowDeclareFieldsInBabelOptions(envOptions, 'env')
+        : envOptions,
+    ]) as Array<[string, TransformOptions | null | undefined]>;
+
+    if (
+      patchedEntries.some(([, patched], idx) => patched !== entries[idx][1])
+    ) {
+      envChanged = true;
+      env = Object.fromEntries(patchedEntries);
+    }
+  }
+
+  if (!presetsChanged && !pluginsChanged && !overridesChanged && !envChanged) {
+    return babelOptions;
+  }
+
+  const next: TransformOptions = { ...babelOptions };
+  if (presetsChanged) next.presets = presets;
+  if (pluginsChanged) next.plugins = plugins;
+  if (overridesChanged) next.overrides = overrides;
+  if (envChanged) next.env = env;
+
+  return next;
+};
+
 function buildConfigs(
   services: Services,
   name: string,
@@ -97,11 +216,21 @@ function buildConfigs(
     sourceMaps: true,
   };
 
-  const rawConfig = buildOptions(
+  const isTypescriptFile =
+    name.endsWith('.ts') ||
+    name.endsWith('.tsx') ||
+    name.endsWith('.mts') ||
+    name.endsWith('.cts');
+
+  let rawConfig = buildOptions(
     pluginOptions?.babelOptions,
     babelOptions,
     commonOptions
   );
+
+  if (isTypescriptFile) {
+    rawConfig = ensureAllowDeclareFieldsInBabelOptions(rawConfig);
+  }
 
   const useBabelConfigs = isFeatureEnabled(
     pluginOptions.features,
@@ -110,7 +239,10 @@ function buildConfigs(
   );
 
   if (!useBabelConfigs) {
-    rawConfig.configFile = false;
+    rawConfig = {
+      ...rawConfig,
+      configFile: false,
+    };
   }
 
   const parseConfig = loadBabelOptions(babel, name, {
@@ -133,11 +265,14 @@ function buildConfigs(
       moduleResolverWarned = true;
     }
 
-    rawConfig.plugins = [
-      ...(parseConfig.plugins?.filter((plugin) => isModuleResolver(plugin)) ??
-        []),
-      ...(rawConfig.plugins ?? []),
-    ];
+    rawConfig = {
+      ...rawConfig,
+      plugins: [
+        ...(parseConfig.plugins?.filter((plugin) => isModuleResolver(plugin)) ??
+          []),
+        ...(rawConfig.plugins ?? []),
+      ],
+    };
   }
 
   const evalConfig = loadBabelOptions(babel, name, {

@@ -49,7 +49,9 @@ export const shaker: Evaluator = (
 
   if (
     evalConfig.filename?.endsWith('.ts') ||
-    evalConfig.filename?.endsWith('.tsx')
+    evalConfig.filename?.endsWith('.tsx') ||
+    evalConfig.filename?.endsWith('.mts') ||
+    evalConfig.filename?.endsWith('.cts')
   ) {
     const hasTypescriptPlugin = evalConfig.plugins?.some(
       (i) => getPluginKey(i) === 'transform-typescript'
@@ -65,7 +67,7 @@ export const shaker: Evaluator = (
       ]);
 
       if (plugin) {
-        plugins.push(plugin);
+        plugins.push([plugin, { allowDeclareFields: true }]);
       }
     }
   }
