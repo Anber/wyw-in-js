@@ -1,7 +1,5 @@
 import path from 'path';
 
-import wywInJS from '..';
-
 const transformMock = jest.fn();
 
 jest.mock('vite', () => ({
@@ -34,6 +32,7 @@ describe('vite HMR', () => {
   });
 
   it('defers reloadModule for generated CSS until after transform()', async () => {
+    const { default: wywInJS } = await import('../index');
     transformMock.mockResolvedValue({
       code: 'export const x = 1;',
       sourceMap: null,
@@ -75,6 +74,7 @@ describe('vite HMR', () => {
   });
 
   it('does not reload CSS when generated CSS is unchanged', async () => {
+    const { default: wywInJS } = await import('../index');
     const root = process.cwd();
     const entryId = path.join(root, 'src', 'entry.tsx');
 

@@ -31,7 +31,6 @@
     "@types/stylis": "^4.2.4",
     "@wyw-in-js/babel-config": "workspace:*",
     "@wyw-in-js/eslint-config": "workspace:*",
-    "@wyw-in-js/jest-preset": "workspace:*",
     "@wyw-in-js/ts-config": "workspace:*",
     "babel-plugin-istanbul": "^6.1.1",
     "babel-plugin-module-resolver": "^4.1.0",
@@ -60,7 +59,7 @@
     "build:lib": "cross-env NODE_ENV=legacy babel src --out-dir lib --extensions '.js,.jsx,.ts,.tsx' --source-maps --delete-dir-on-start",
     "build:types": "tsc --project ./tsconfig.lib.json --baseUrl . --rootDir ./src",
     "lint": "eslint --ext .js,.ts .",
-    "test": "jest --config ./jest.config.js"
+    "test": "bun test src"
   },
   "types": "types/index.d.ts"
 }

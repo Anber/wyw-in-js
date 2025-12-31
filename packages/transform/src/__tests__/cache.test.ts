@@ -12,9 +12,7 @@ type MockEntrypoint = {
   name: string;
 };
 
-jest.mock('node:fs');
-
-const mockedReadFileSync = jest.mocked(fs.readFileSync);
+const mockedReadFileSync = jest.spyOn(fs, 'readFileSync');
 
 function hashContent(content: string) {
   return createHash('sha256').update(content).digest('hex');
@@ -47,8 +45,15 @@ const setupCacheWithEntrypoint = (
 };
 
 describe('TransformCacheCollection', () => {
+  afterAll(() => {
+    mockedReadFileSync.mockRestore();
+  });
+
   beforeEach(() => {
-    mockedReadFileSync.mockClear();
+    mockedReadFileSync.mockReset();
+    mockedReadFileSync.mockImplementation(() => {
+      throw new Error('Unexpected readFileSync call.');
+    });
   });
 
   describe('invalidateIfChanged', () => {

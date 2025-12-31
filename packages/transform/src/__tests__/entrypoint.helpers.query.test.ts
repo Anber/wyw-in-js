@@ -1,15 +1,6 @@
 describe('loadAndParse', () => {
-  beforeEach(() => {
-    jest.resetModules();
-    jest.clearAllMocks();
-  });
-
-  it('does not read from filesystem for ignored extensions with ?query', () => {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { loadAndParse } = require('../transform/Entrypoint.helpers') as {
-      loadAndParse: (...args: unknown[]) => unknown;
-    };
-
+  it('does not read from filesystem for ignored extensions with ?query', async () => {
+    const { loadAndParse } = await import('../transform/Entrypoint.helpers');
     const log = jest.fn();
 
     const res = loadAndParse(
