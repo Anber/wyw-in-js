@@ -1,7 +1,24 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
+
 import wywInJS from '..';
 
 const optimizeDepsMock = jest.fn();
 const asyncResolveResults: Array<string | null> = [];
+const syncResolveMock = jest.fn();
+
+let requestedId = '/@react-refresh';
+let requestedImporter = '/entry.tsx';
+
+jest.mock('@wyw-in-js/shared', () => {
+  const actual = jest.requireActual('@wyw-in-js/shared');
+  return {
+    __esModule: true,
+    ...actual,
+    syncResolve: (...args: unknown[]) => syncResolveMock(...args),
+  };
+});
 
 jest.mock('vite', () => ({
   __esModule: true,
@@ -19,7 +36,7 @@ jest.mock('@wyw-in-js/transform', () => {
     getFileIdx: () => '1',
     TransformCacheCollection: class TransformCacheCollection {},
     transform: jest.fn(async (_services, _code, asyncResolve) => {
-      const resolved = await asyncResolve('/@react-refresh', '/entry.tsx', []);
+      const resolved = await asyncResolve(requestedId, requestedImporter, []);
       asyncResolveResults.push(resolved);
       return {
         code: _code,
@@ -32,6 +49,14 @@ jest.mock('@wyw-in-js/transform', () => {
 });
 
 describe('vite asyncResolve', () => {
+  beforeEach(() => {
+    optimizeDepsMock.mockClear();
+    syncResolveMock.mockClear();
+    asyncResolveResults.length = 0;
+    requestedId = '/@react-refresh';
+    requestedImporter = '/entry.tsx';
+  });
+
   it('ignores Vite virtual ids like /@react-refresh', async () => {
     const plugin = wywInJS();
 
@@ -50,5 +75,81 @@ describe('vite asyncResolve', () => {
 
     expect(optimizeDepsMock).not.toHaveBeenCalled();
     expect(asyncResolveResults).toContain(null);
+  });
+
+  it('falls back to syncResolve when Vite resolves to missing cache entry', async () => {
+    requestedId = 'react';
+    const cacheDir = join(__dirname, '.vite-cache');
+    const missingCacheEntry = join(cacheDir, 'deps', 'react.js');
+    const fallbackPath = join(__dirname, 'node_modules', 'react.js');
+
+    syncResolveMock.mockReturnValue(fallbackPath);
+
+    const plugin = wywInJS();
+    plugin.configResolved({ root: process.cwd(), cacheDir } as any);
+
+    const resolveMock = jest.fn().mockResolvedValue({
+      id: `${missingCacheEntry}?v=deadbeef`,
+      external: false,
+    });
+
+    await plugin.transform?.call(
+      { resolve: resolveMock } as any,
+      'console.log("test")',
+      '/entry.tsx'
+    );
+
+    expect(optimizeDepsMock).not.toHaveBeenCalled();
+    expect(syncResolveMock).toHaveBeenCalledWith('react', '/entry.tsx', []);
+    expect(asyncResolveResults).toContain(fallbackPath);
+  });
+
+  it('waits for depsOptimizer to finish processing optimized deps files', async () => {
+    requestedId = 'react';
+
+    const cacheDir = mkdtempSync(join(tmpdir(), 'wyw-vite-cache-'));
+    try {
+      const missingCacheEntry = join(cacheDir, 'deps', 'react.js');
+
+      const processing = new Promise<void>((resolve) => {
+        setTimeout(() => {
+          mkdirSync(join(cacheDir, 'deps'), { recursive: true });
+          writeFileSync(missingCacheEntry, 'export default {};', 'utf8');
+          resolve();
+        }, 0);
+      });
+
+      const depsOptimizer = {
+        init: jest.fn().mockResolvedValue(undefined),
+        isOptimizedDepFile: jest.fn().mockReturnValue(true),
+        scanProcessing: Promise.resolve(),
+        metadata: {
+          depInfoList: [{ file: missingCacheEntry, processing }],
+        },
+      };
+
+      const plugin = wywInJS();
+      plugin.configResolved({ root: process.cwd(), cacheDir } as any);
+      plugin.configureServer?.({
+        environments: { client: { depsOptimizer } },
+      } as any);
+
+      const resolveMock = jest.fn().mockResolvedValue({
+        id: `${missingCacheEntry}?v=deadbeef`,
+        external: false,
+      });
+
+      await plugin.transform?.call(
+        { resolve: resolveMock } as any,
+        'console.log("test")',
+        '/entry.tsx'
+      );
+
+      expect(optimizeDepsMock).not.toHaveBeenCalled();
+      expect(syncResolveMock).not.toHaveBeenCalled();
+      expect(asyncResolveResults).toContain(missingCacheEntry);
+    } finally {
+      rmSync(cacheDir, { recursive: true, force: true });
+    }
   });
 });
