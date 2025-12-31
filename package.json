@@ -56,7 +56,10 @@
   "private": true,
   "repository": "git@github.com:Anber/wyw-in-js.git",
   "scripts": {
-    "build": "bun run --filter './packages/*' --filter './examples/*' --if-present build:esm && bun run --filter './packages/*' --filter './examples/*' --if-present build:lib && bun run --filter './packages/*' --filter './examples/*' --if-present build:types",
+    "build": "bun run build:esm && bun run build:lib && bun run build:types",
+    "build:esm": "bun run --filter './packages/*' --filter './examples/*' --if-present build:esm",
+    "build:lib": "bun run --filter './packages/*' --filter './examples/*' --if-present build:lib",
+    "build:types": "bun run --filter @wyw-in-js/shared --if-present build:types && bun run --filter @wyw-in-js/processor-utils --if-present build:types && bun run --filter @wyw-in-js/transform --if-present build:types && bun run --filter './packages/*' --filter './examples/*' --if-present build:types",
     "check": "bun run lint && bun run test",
     "clean": "del '{e2e,examples,packages}/*/{coverage,dist,esm,lib,types,tsconfig.tsbuildinfo}'",
     "idea-exclude:artifacts": "idea-exclude artifacts \"{configs,e2e,examples,packages}/*/{.turbo,esm,lib,types}\"",
