@@ -2,6 +2,7 @@ import type { TransformOptions, PluginItem } from '@babel/core';
 
 import type { Evaluator } from '@wyw-in-js/shared';
 
+import shakerPlugin from './plugins/shaker';
 import { hasShakerMetadata } from './utils/ShakerMetadata';
 import { getPluginKey } from './utils/getPluginKey';
 
@@ -33,7 +34,7 @@ export const shaker: Evaluator = (
 
   const plugins = [
     ...preShakePlugins,
-    [require.resolve('./plugins/shaker'), config],
+    [shakerPlugin, config],
     ...(evalConfig.plugins ?? []).filter(
       (i) => !hasKeyInList(i, highPriorityPlugins)
     ),
