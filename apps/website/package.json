@@ -6,17 +6,18 @@
     "nextra": "^2.13.1",
     "nextra-theme-docs": "^2.13.1",
     "react": "^18.2.0",
-    "react-dom": "^18.2.0",
-    "wyw-in-js": "workspace:*"
+    "react-dom": "^18.2.0"
   },
   "devDependencies": {
+    "@types/node": "^16.18.55",
+    "@types/react": "^18.2.0",
     "@wyw-in-js/eslint-config": "workspace:*",
     "@wyw-in-js/ts-config": "workspace:*"
   },
   "private": true,
   "scripts": {
-    "deploy": "next build && next export --outdir dist && touch ./dist/.nojekyll",
+    "deploy": "node ./scripts/sync-root-docs.cjs && next build && next export --outdir dist && touch ./dist/.nojekyll",
     "lint": "eslint --ext .js,.ts .",
-    "start": "next dev"
+    "start": "node ./scripts/sync-root-docs.cjs && next dev"
   }
 }

@@ -19,3 +19,7 @@ target
 *.node
 tmp/*
 AGENTS.md
+
+# apps/website copies root docs at build time
+apps/website/content/README.md
+apps/website/content/CHANGELOG.md

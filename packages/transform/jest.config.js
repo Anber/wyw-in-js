@@ -16,5 +16,5 @@ module.exports = {
     ],
     '^.+\\.js$': 'babel-jest',
   },
-  transformIgnorePatterns: ['node_modules/.pnpm/(?!happy-dom)'],
+  transformIgnorePatterns: ['node_modules/(?!.*happy-dom)'],
 };
