@@ -16,7 +16,7 @@
     "artifacts": "napi artifacts",
     "build:lib": "napi build --platform --release",
     "build:debug": "napi build --platform",
-    "test": "jest --config ./jest.config.js",
+    "test": "bun test __tests__",
     "universal": "napi universal"
   }
 }

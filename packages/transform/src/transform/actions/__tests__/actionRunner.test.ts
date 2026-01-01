@@ -154,7 +154,7 @@ describe('actionRunner', () => {
     const action = entrypoint.createAction('workflow', undefined, null);
 
     expect(() => syncActionRunner(action, handlers)).toThrowError(
-      'workflow@00001#1'
+      /^workflow@\d{5}#1$/
     );
   });
 
@@ -199,12 +199,12 @@ describe('actionRunner', () => {
     const action = entrypoint.createAction('workflow', undefined, null);
 
     expect(() => syncActionRunner(action, handlers)).toThrowError(
-      'workflow@00001#1'
+      /^workflow@\d{5}#1$/
     );
 
     expect(processEntrypointMock.recover).toHaveBeenCalledWith(
       expect.objectContaining({
-        message: 'workflow@00001#1',
+        message: expect.stringMatching(/^workflow@\d{5}#1$/),
         name: 'AbortError',
       }),
       expect.objectContaining({ type: 'processEntrypoint' })

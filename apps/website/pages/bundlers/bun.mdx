@@ -1,0 +1,39 @@
+# Usage with Bun
+
+### Installation
+
+```sh npm2yarn
+npm i -D @wyw-in-js/bun
+```
+
+### Configuration
+
+Bun plugins are configured via the `Bun.build()` API:
+
+```js
+import wyw from '@wyw-in-js/bun';
+
+await Bun.build({
+  entrypoints: ['src/index.ts'],
+  outdir: 'dist',
+  plugins: [
+    wyw({
+      filter: /\.[cm]?[jt]sx?$/,
+    }),
+  ],
+});
+```
+
+### Keeping CSS comments
+
+WyW can preserve CSS comments (for example, `/*rtl:ignore*/`) via `keepComments`.
+
+Bun currently strips CSS comments in the final extracted CSS output (including directives like `/*rtl:ignore*/`). Bun may keep top-level `/*!...*/` license comments, but comments inside rules are dropped.
+
+```js
+wyw({
+  keepComments: true,
+  // or keep only matching comments:
+  // keepComments: /rtl:/,
+});
+```

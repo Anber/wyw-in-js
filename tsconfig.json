@@ -11,7 +11,8 @@
       "@wyw-in-js/template-tag-syntax": [
         "examples/template-tag-syntax/src/index.ts"
       ],
-      "@wyw-in-js/webpack-loader": ["packages/webpack-loader/src/index.ts"]
+      "@wyw-in-js/webpack-loader": ["packages/webpack-loader/src/index.ts"],
+      "@wyw-in-js/vite": ["packages/vite/src/index.ts"]
     }
   },
   "display": "Aliases configuration"
