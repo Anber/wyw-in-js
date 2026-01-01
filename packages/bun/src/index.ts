@@ -94,6 +94,32 @@ function getShebang(code: string): string | null {
   return match ? match[0] : null;
 }
 
+function splitQueryAndHash(request: string): {
+  specifier: string;
+  suffix: string;
+} {
+  const queryIdx = request.indexOf('?');
+  const hashIdx = request.indexOf('#');
+
+  if (queryIdx === -1 && hashIdx === -1) {
+    return { specifier: request, suffix: '' };
+  }
+
+  let startIdx: number;
+  if (queryIdx === -1) {
+    startIdx = hashIdx;
+  } else if (hashIdx === -1) {
+    startIdx = queryIdx;
+  } else {
+    startIdx = Math.min(queryIdx, hashIdx);
+  }
+
+  return {
+    specifier: request.slice(0, startIdx),
+    suffix: request.slice(startIdx),
+  };
+}
+
 function uniq<T>(items: Iterable<T>): T[] {
   return Array.from(new Set(items));
 }
@@ -194,6 +220,7 @@ export default function wywInJS({
 
       const cssLookup = new Map<string, string>();
       const cssResolveDirs = new Map<string, string>();
+      const emittedWarnings = new Set<string>();
 
       const { emitter, onDone } = createFileReporter(debug ?? false);
 
@@ -214,18 +241,33 @@ export default function wywInJS({
         importer: string,
         stack: string[]
       ): Promise<string | null> => {
+        const { specifier, suffix } = splitQueryAndHash(what);
         try {
-          return (await asyncResolveFallback(what, importer, stack)).replace(
-            /\\/g,
-            path.posix.sep
-          );
+          return (await asyncResolveFallback(specifier, importer, stack))
+            .replace(/\\/g, path.posix.sep)
+            .concat(suffix);
         } catch {
           if (typeof bun.resolveSync !== 'function') {
             throw new Error(`Could not resolve ${what}`);
           }
 
-          return bun.resolveSync(what, importer).replace(/\\/g, path.posix.sep);
+          return bun
+            .resolveSync(specifier, importer)
+            .replace(/\\/g, path.posix.sep)
+            .concat(suffix);
         }
+      };
+
+      const emitWarning = (message: string) => {
+        const match = message.match(/\nconfig key: (.+)\n/);
+        const key = match?.[1] ?? message;
+        if (emittedWarnings.has(key)) {
+          return;
+        }
+
+        emittedWarnings.add(key);
+        // eslint-disable-next-line no-console
+        console.warn(message);
       };
 
       build.onEnd(() => {
@@ -273,6 +315,7 @@ export default function wywInJS({
             root: process.cwd(),
           },
           cache,
+          emitWarning,
           eventEmitter: emitter,
         };
 
@@ -287,8 +330,17 @@ export default function wywInJS({
         const resolveDir = path.dirname(args.path);
 
         if (cssText === '') {
+          let contents = result.code;
+
+          if (sourceMap && result.sourceMap) {
+            const map = Buffer.from(JSON.stringify(result.sourceMap)).toString(
+              'base64'
+            );
+            contents += `\n//# sourceMappingURL=data:application/json;base64,${map}`;
+          }
+
           return {
-            contents: result.code,
+            contents,
             loader,
             resolveDir,
           };
@@ -301,13 +353,20 @@ export default function wywInJS({
         )}_${slug}.wyw.css`.replace(/\\/g, path.posix.sep);
 
         let nextCssText = cssText;
-        const contents = `import ${JSON.stringify(cssFilename)};\n${
-          result.code
-        }`;
+        let contents = `${result.code}\nimport ${JSON.stringify(
+          cssFilename
+        )};\n`;
 
         if (sourceMap && result.cssSourceMapText) {
           const map = Buffer.from(result.cssSourceMapText).toString('base64');
           nextCssText += `/*# sourceMappingURL=data:application/json;base64,${map}*/`;
+        }
+
+        if (sourceMap && result.sourceMap) {
+          const map = Buffer.from(JSON.stringify(result.sourceMap)).toString(
+            'base64'
+          );
+          contents += `//# sourceMappingURL=data:application/json;base64,${map}\n`;
         }
 
         cssLookup.set(cssFilename, nextCssText);

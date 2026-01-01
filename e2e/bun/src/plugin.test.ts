@@ -30,9 +30,13 @@ function stripBunCssSourceComment(cssText: string): string {
   return cssText.slice(match[0].length);
 }
 
-async function buildArtefact(outDir: string, pluginOptions?: object) {
+async function buildArtefact(
+  outDir: string,
+  pluginOptions?: object,
+  entrypoint = 'index.ts'
+) {
   const result = await Bun.build({
-    entrypoints: [path.resolve(PKG_DIR, 'src', 'index.ts')],
+    entrypoints: [path.resolve(PKG_DIR, 'src', entrypoint)],
     outdir: outDir,
     minify: false,
     plugins: [pluginOptions ? wyw(pluginOptions) : wyw()],
@@ -77,5 +81,16 @@ describe('Bun bundler', () => {
       await readFile(path.resolve(PKG_DIR, 'fixture.keep-comments.css'), 'utf8')
     );
     expect(cssOutput).toBe(cssFixture);
+  });
+
+  it('supports resource query loaders (?raw/?url)', async () => {
+    await rm(outDir, { recursive: true, force: true });
+
+    const cssOutput = normalizeLineEndings(
+      await buildArtefact(outDir, undefined, 'resource-query.ts')
+    );
+
+    expect(cssOutput).toContain('Hello from asset');
+    expect(cssOutput).toContain('./sample-asset.txt');
   });
 });
