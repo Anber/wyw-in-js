@@ -77,6 +77,16 @@
         "@napi-rs/cli": "^2.18.4",
       },
     },
+    "e2e/bun": {
+      "name": "@wyw-in-js/e2e-bun",
+      "version": "0.8.1",
+      "dependencies": {
+        "@wyw-in-js/template-tag-syntax": "workspace:*",
+      },
+      "devDependencies": {
+        "@wyw-in-js/bun": "workspace:*",
+      },
+    },
     "e2e/vite": {
       "name": "@wyw-in-js/e2e-vite",
       "version": "0.8.1",
@@ -155,6 +165,21 @@
       },
       "devDependencies": {
         "@types/babel__core": "^7.20.5",
+        "@wyw-in-js/babel-config": "workspace:*",
+        "@wyw-in-js/eslint-config": "workspace:*",
+        "@wyw-in-js/ts-config": "workspace:*",
+      },
+    },
+    "packages/bun": {
+      "name": "@wyw-in-js/bun",
+      "version": "0.8.1",
+      "dependencies": {
+        "@rollup/pluginutils": "^5.1.4",
+        "@wyw-in-js/shared": "workspace:*",
+        "@wyw-in-js/transform": "workspace:*",
+      },
+      "devDependencies": {
+        "@types/node": "^16.18.55",
         "@wyw-in-js/babel-config": "workspace:*",
         "@wyw-in-js/eslint-config": "workspace:*",
         "@wyw-in-js/ts-config": "workspace:*",
@@ -988,7 +1013,11 @@
 
     "@wyw-in-js/babel-preset": ["@wyw-in-js/babel-preset@workspace:packages/babel-preset"],
 
+    "@wyw-in-js/bun": ["@wyw-in-js/bun@workspace:packages/bun"],
+
     "@wyw-in-js/cli": ["@wyw-in-js/cli@workspace:packages/cli"],
+
+    "@wyw-in-js/e2e-bun": ["@wyw-in-js/e2e-bun@workspace:e2e/bun"],
 
     "@wyw-in-js/e2e-vite": ["@wyw-in-js/e2e-vite@workspace:e2e/vite"],
 
