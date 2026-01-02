@@ -40,4 +40,4 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Validate versions
-        run: bun run validate-versions >> $GITHUB_OUTPUT
+        run: bun run validate-versions
