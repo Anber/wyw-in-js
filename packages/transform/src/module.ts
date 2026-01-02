@@ -535,7 +535,11 @@ export class Module {
         paths: this.moduleImpl._nodeModulePaths(path.dirname(filename)),
       });
 
+      const isFileSpecifier =
+        strippedId.startsWith('.') || path.isAbsolute(strippedId);
+
       if (
+        isFileSpecifier &&
         path.extname(strippedId) === '' &&
         resolved.endsWith('.cjs') &&
         fs.existsSync(`${resolved.slice(0, -4)}.js`)

@@ -200,6 +200,38 @@ it('prefers .js when extensionless import resolves to .cjs and .js exists', () =
   );
 });
 
+it('does not rewrite bare imports when extensionless import resolves to .cjs and .js exists', () => {
+  const code = dedent`
+    module.exports = require('prefer-js');
+  `;
+  const cache = new TransformCacheCollection();
+  const services = createServices({ cache });
+  const entrypoint = createEntrypoint(services, filename, ['*'], code);
+
+  const resolveFilename = jest.fn((id: string) => {
+    if (id === 'prefer-js') {
+      return path.resolve(__dirname, './__fixtures__/prefer-js.cjs');
+    }
+
+    return id;
+  });
+
+  const moduleImpl = {
+    _extensions: DefaultModuleImplementation._extensions,
+    _nodeModulePaths: DefaultModuleImplementation._nodeModulePaths.bind(
+      DefaultModuleImplementation
+    ),
+    _resolveFilename: resolveFilename as any,
+  };
+
+  const mod = new Module(services, entrypoint, undefined, moduleImpl as any);
+
+  safeEvaluate(mod);
+
+  expect(mod.exports).toBe('cjs');
+  expect(resolveFilename).toHaveBeenCalledWith('prefer-js', expect.anything());
+});
+
 it('requires .json files', () => {
   const { mod } = create`
     const data = require('./sample-data.json');
