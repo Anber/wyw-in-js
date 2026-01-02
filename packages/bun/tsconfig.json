@@ -1,5 +1,8 @@
 {
   "extends": "@wyw-in-js/ts-config/node.json",
+  "compilerOptions": {
+    "types": ["bun-types", "node"]
+  },
   "files": [],
   "include": [],
   "references": [
@@ -11,4 +14,3 @@
     }
   ]
 }
-

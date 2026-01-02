@@ -3,6 +3,8 @@ import path from 'path';
 
 import { createFilter } from '@rollup/pluginutils';
 import type { FilterPattern } from '@rollup/pluginutils';
+import type { BunPlugin, JavaScriptLoader, PluginBuilder } from 'bun';
+import { resolveSync, Transpiler } from 'bun';
 
 import { asyncResolveFallback } from '@wyw-in-js/shared';
 import type {
@@ -17,34 +19,6 @@ import {
   TransformCacheCollection,
 } from '@wyw-in-js/transform';
 
-type BunLoader = 'js' | 'jsx' | 'ts' | 'tsx' | 'css';
-
-type BunPluginBuild = {
-  initialOptions: Record<string, unknown>;
-  onEnd: (callback: () => void) => void;
-  onLoad: (
-    options: { filter: RegExp; namespace?: string },
-    callback: (args: { namespace: string; path: string }) => Promise<
-      | {
-          contents?: string;
-          loader?: BunLoader;
-          resolveDir?: string;
-        }
-      | null
-      | undefined
-    >
-  ) => void;
-  onResolve: (
-    options: { filter: RegExp; namespace?: string },
-    callback: (args: { path: string }) => { namespace?: string; path: string }
-  ) => void;
-};
-
-export type BunPlugin = {
-  name: string;
-  setup: (build: BunPluginBuild) => void;
-};
-
 export type BunPluginOptions = {
   debug?: IFileReporterOptions | false | null | undefined;
   exclude?: FilterPattern;
@@ -57,25 +31,9 @@ export type BunPluginOptions = {
   sourceMap?: boolean;
 } & Partial<PluginOptions>;
 
-type BunTranspiler = {
-  transformSync: (code: string) => string;
-};
-
-type BunRuntime = {
-  Transpiler: new (options: {
-    autoImportJSX?: boolean;
-    loader: BunLoader;
-  }) => BunTranspiler;
-  resolveSync?: (specifier: string, from: string) => string;
-};
-
 const nodeModulesRegex = /^(?:.*[\\/])?node_modules(?:[\\/].*)?$/;
 
-function getBunRuntime(): BunRuntime | undefined {
-  return (globalThis as typeof globalThis & { Bun?: BunRuntime }).Bun;
-}
-
-function getLoader(filename: string): BunLoader {
+function getLoader(filename: string): JavaScriptLoader {
   const ext = path.extname(filename);
   switch (ext) {
     case '.jsx':
@@ -134,28 +92,25 @@ export default function wywInJS({
 
   return {
     name: 'wyw-in-js',
-    setup(build) {
-      const bun = getBunRuntime();
-      if (!bun?.Transpiler) {
-        throw new Error(
-          '[wyw-in-js] @wyw-in-js/bun must be used in Bun runtime (Bun.build).'
-        );
-      }
-
+    setup(build: PluginBuilder) {
       const cssLookup = new Map<string, string>();
-      const cssResolveDirs = new Map<string, string>();
       const emittedWarnings = new Set<string>();
 
       const { emitter, onDone } = createFileReporter(debug ?? false);
 
-      const transpilers = new Map<BunLoader, BunTranspiler>();
-      const getTranspiler = (loader: BunLoader): BunTranspiler => {
+      const transpilers = new Map<
+        JavaScriptLoader,
+        InstanceType<typeof Transpiler>
+      >();
+      const getTranspiler = (
+        loader: JavaScriptLoader
+      ): InstanceType<typeof Transpiler> => {
         const cached = transpilers.get(loader);
         if (cached) {
           return cached;
         }
 
-        const created = new bun.Transpiler({ loader, autoImportJSX: true });
+        const created = new Transpiler({ loader, autoImportJSX: true });
         transpilers.set(loader, created);
         return created;
       };
@@ -171,12 +126,7 @@ export default function wywInJS({
             .replace(/\\/g, path.posix.sep)
             .concat(suffix);
         } catch {
-          if (typeof bun.resolveSync !== 'function') {
-            throw new Error(`Could not resolve ${what}`);
-          }
-
-          return bun
-            .resolveSync(specifier, importer)
+          return resolveSync(specifier, importer)
             .replace(/\\/g, path.posix.sep)
             .concat(suffix);
         }
@@ -203,22 +153,28 @@ export default function wywInJS({
         path: args.path,
       }));
 
-      build.onLoad({ filter: /.*/, namespace: 'wyw-in-js' }, async (args) => ({
-        contents: cssLookup.get(args.path),
-        loader: 'css',
-        resolveDir: cssResolveDirs.get(args.path),
-      }));
+      build.onLoad({ filter: /.*/, namespace: 'wyw-in-js' }, async (args) => {
+        const contents = cssLookup.get(args.path);
+        if (typeof contents === 'undefined') {
+          return undefined;
+        }
+
+        return {
+          contents,
+          loader: 'css',
+        };
+      });
 
       const filterRegexp =
         typeof filter === 'string' ? new RegExp(filter) : filter;
 
       build.onLoad({ filter: filterRegexp }, async (args) => {
         if (!filterFn(args.path)) {
-          return null;
+          return undefined;
         }
 
         if (!nodeModules && nodeModulesRegex.test(args.path)) {
-          return null;
+          return undefined;
         }
 
         const rawCode = readFileSync(args.path, 'utf8');
@@ -246,10 +202,8 @@ export default function wywInJS({
         const { cssText } = result;
 
         if (typeof cssText === 'undefined') {
-          return null;
+          return undefined;
         }
-
-        const resolveDir = path.dirname(args.path);
 
         if (cssText === '') {
           let contents = result.code;
@@ -264,7 +218,6 @@ export default function wywInJS({
           return {
             contents,
             loader,
-            resolveDir,
           };
         }
 
@@ -292,12 +245,10 @@ export default function wywInJS({
         }
 
         cssLookup.set(cssFilename, nextCssText);
-        cssResolveDirs.set(cssFilename, resolveDir);
 
         return {
           contents,
           loader,
-          resolveDir,
         };
       });
     },
