@@ -9,6 +9,8 @@ The package contains WyW-in-JS plugin for [esbuild](https://esbuild.github.io/).
 npm i -D @wyw-in-js/esbuild
 # yarn
 yarn add --dev @wyw-in-js/esbuild
+# pnpm
+pnpm add -D @wyw-in-js/esbuild
 # bun
 bun add -d @wyw-in-js/esbuild
 ```

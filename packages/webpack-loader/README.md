@@ -9,6 +9,8 @@ The package contains WyW-in-JS loader for [Webpack](https://webpack.js.org/).
 npm i -D @wyw-in-js/webpack-loader
 # yarn
 yarn add --dev @wyw-in-js/webpack-loader
+# pnpm
+pnpm add -D @wyw-in-js/webpack-loader
 # bun
 bun add -d @wyw-in-js/webpack-loader
 ```

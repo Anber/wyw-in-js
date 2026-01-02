@@ -10,6 +10,8 @@ Supports Rollup v1, v2, v3, and v4.
 npm i -D @wyw-in-js/rollup
 # yarn
 yarn add --dev @wyw-in-js/rollup
+# pnpm
+pnpm add -D @wyw-in-js/rollup
 # bun
 bun add -d @wyw-in-js/rollup
 ```

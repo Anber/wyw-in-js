@@ -9,6 +9,8 @@ The package contains WyW-in-JS plugin for [Bun](https://bun.sh/) bundler.
 npm i -D @wyw-in-js/bun
 # yarn
 yarn add --dev @wyw-in-js/bun
+# pnpm
+pnpm add -D @wyw-in-js/bun
 # bun
 bun add -d @wyw-in-js/bun
 ```
@@ -26,4 +28,3 @@ await Bun.build({
 ```
 
 To get details about supported options by the plugin, please check [documentation](https://wyw-in-js.dev/bundlers/bun).
-
