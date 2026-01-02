@@ -58,12 +58,14 @@ export type BunPluginOptions = {
 } & Partial<PluginOptions>;
 
 type BunTranspiler = {
-  scanImports: (code: string) => Array<{ kind: string; path: string }>;
   transformSync: (code: string) => string;
 };
 
 type BunRuntime = {
-  Transpiler: new (options: { loader: BunLoader }) => BunTranspiler;
+  Transpiler: new (options: {
+    autoImportJSX?: boolean;
+    loader: BunLoader;
+  }) => BunTranspiler;
   resolveSync?: (specifier: string, from: string) => string;
 };
 
@@ -87,11 +89,6 @@ function getLoader(filename: string): BunLoader {
     default:
       return 'js';
   }
-}
-
-function getShebang(code: string): string | null {
-  const match = code.match(/^#!.*\n/);
-  return match ? match[0] : null;
 }
 
 function splitQueryAndHash(request: string): {
@@ -118,79 +115,6 @@ function splitQueryAndHash(request: string): {
     specifier: request.slice(0, startIdx),
     suffix: request.slice(startIdx),
   };
-}
-
-function uniq<T>(items: Iterable<T>): T[] {
-  return Array.from(new Set(items));
-}
-
-function getMatches(code: string, re: RegExp): string[] {
-  return uniq(Array.from(code.matchAll(re), (m) => m[0]));
-}
-
-function injectJsxRuntimeImports(
-  code: string,
-  imports: Array<{ kind: string; path: string }>
-): string {
-  const runtimeDev = imports.find((i) => i.path.endsWith('/jsx-dev-runtime'))
-    ?.path;
-  const runtimeProd = imports.find((i) => i.path.endsWith('/jsx-runtime'))
-    ?.path;
-
-  const jsxDevIds = getMatches(code, /\bjsxDEV_[A-Za-z0-9]+\b/g);
-  const jsxIds = getMatches(code, /\bjsx_[A-Za-z0-9]+\b/g);
-  const jsxsIds = getMatches(code, /\bjsxs_[A-Za-z0-9]+\b/g);
-  const fragmentIds = getMatches(code, /\bFragment_[A-Za-z0-9]+\b/g);
-
-  const runtime =
-    jsxDevIds.length > 0 || (runtimeDev && runtimeProd === undefined)
-      ? runtimeDev
-      : runtimeProd;
-
-  if (!runtime) {
-    return code;
-  }
-
-  const specifiers: string[] = [];
-  const assignments: string[] = [];
-
-  const addImport = (exportName: string, ids: string[]) => {
-    if (ids.length === 0) {
-      return;
-    }
-
-    const [first, ...rest] = ids;
-    specifiers.push(`${exportName} as ${first}`);
-    for (const id of rest) {
-      assignments.push(`const ${id} = ${first};`);
-    }
-  };
-
-  if (runtime.endsWith('/jsx-dev-runtime')) {
-    addImport('jsxDEV', jsxDevIds);
-    addImport('Fragment', fragmentIds);
-  } else {
-    addImport('jsx', jsxIds);
-    addImport('jsxs', jsxsIds);
-    addImport('Fragment', fragmentIds);
-  }
-
-  if (specifiers.length === 0) {
-    return code;
-  }
-
-  const prelude = [
-    `import { ${specifiers.join(', ')} } from ${JSON.stringify(runtime)};`,
-    ...assignments,
-    '',
-  ].join('\n');
-
-  const shebang = getShebang(code);
-  if (!shebang) {
-    return prelude + code;
-  }
-
-  return shebang + prelude + code.slice(shebang.length);
 }
 
 export default function wywInJS({
@@ -231,7 +155,7 @@ export default function wywInJS({
           return cached;
         }
 
-        const created = new bun.Transpiler({ loader });
+        const created = new bun.Transpiler({ loader, autoImportJSX: true });
         transpilers.set(loader, created);
         return created;
       };
@@ -301,9 +225,7 @@ export default function wywInJS({
         const loader = getLoader(args.path);
         const transpiler = getTranspiler(loader);
 
-        const transpiled = transpiler.transformSync(rawCode);
-        const imports = transpiler.scanImports(rawCode);
-        const code = injectJsxRuntimeImports(transpiled, imports);
+        const code = transpiler.transformSync(rawCode);
 
         const transformServices = {
           options: {
