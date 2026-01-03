@@ -15,7 +15,7 @@ import { transform, TransformCacheCollection } from '@wyw-in-js/transform';
 
 import { sharedState } from './WYWinJSDebugPlugin';
 import type { ICache } from './cache';
-import { getCacheInstance } from './cache';
+import { getCacheInstance, registerCacheProvider } from './cache';
 
 export { WYWinJSDebugPlugin } from './WYWinJSDebugPlugin';
 
@@ -141,6 +141,10 @@ const webpack5Loader: Loader = function webpack5LoaderPlugin(
 
           try {
             const cacheInstance = await getCacheInstance(cacheProvider);
+            const cacheProviderId =
+              cacheProvider && typeof cacheProvider === 'object'
+                ? registerCacheProvider(cacheInstance)
+                : '';
 
             await cacheInstance.set(this.resourcePath, cssText);
 
@@ -151,7 +155,9 @@ const webpack5Loader: Loader = function webpack5LoaderPlugin(
 
             const request = `${outputFileName}!=!${outputCssLoader}?cacheProvider=${encodeURIComponent(
               typeof cacheProvider === 'string' ? cacheProvider : ''
-            )}!${this.resourcePath}`;
+            )}&cacheProviderId=${encodeURIComponent(cacheProviderId)}!${
+              this.resourcePath
+            }`;
             const stringifiedRequest = JSON.stringify(
               this.utils.contextify(this.context || this.rootContext, request)
             );
