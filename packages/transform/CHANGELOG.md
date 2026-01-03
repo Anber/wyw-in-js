@@ -1,5 +1,41 @@
 # @wyw-in-js/transform
 
+## 0.9.0
+
+### Minor Changes
+
+- 62fef83: Fix shaker keeping unused imports in eval bundles (named/namespace/side-effect imports), which could trigger build-time evaluation crashes (e.g. `@radix-ui/react-tooltip`).
+
+  `@wyw-in-js/shared` now passes `importOverrides`/`root` through the evaluator config so the shaker can keep or mock side-effect imports when configured.
+
+  Note: eval bundles for `__wywPreval` now drop `import '...';` side-effect imports by default, to avoid executing unrelated runtime code in Node.js during build. If you rely on a side-effect import at eval time, keep it or stub it via `importOverrides`:
+
+  - `{ noShake: true }` to keep the import (and disable tree-shaking for that dependency).
+  - `{ mock: './path/to/mock' }` to redirect the import to a mock module.
+
+### Patch Changes
+
+- 7144b0c: Fix Babel TypeScript transform crashing on `declare` class fields by ensuring `allowDeclareFields` is enabled when using the TypeScript preset/plugin.
+- 0477b30: Fix export detection for array destructuring declarations (e.g. `export const [B] = ...`).
+- fad6207: Fix config merging with `@babel/core@7.25.7` by avoiding `babel-merge`'s `resolvePreset` regression.
+- 485fd7d: Preserve cached exports when evaluating only missing imports to avoid re-running unused code.
+- 9715eee: Fix `export * from` being dropped when the reexport target is ignored (e.g. via `extensions`).
+- 45ef60a: Fix missing CSS emission for tags inside named function expressions (e.g. `export const a = function a() { return css\`\`; }`).
+- 908968b: Fix Rollup/Vite warnings about `/*#__PURE__*/` annotations emitted for extracted template expressions.
+- d2f5472: Fix shaker removing referenced bindings when dropping unused exports (e.g. object shorthand `{ fallback }`).
+- fcb118a: Add a `keepComments` option for the stylis preprocessor to preserve selected CSS comments.
+- d4cefc9: Avoid leaving empty Promise callbacks when dangerous globals are removed.
+- 485fd7d: fix: drop unused imports when named and default exports share a binding
+- ac44dcc: Avoid retaining unused import specifiers during shaking so eval doesn't load unrelated deps.
+- 782e67f: Drop property assignments on shaken exports so eval doesn't touch Storybook globals.
+- 870b07b: Handle unknown/dynamic import specifiers without transform-time crashes, add `importOverrides` (mock/noShake/unknown policy), and emit a deduped warning only when eval reaches Node resolver fallback (bundler-native where possible).
+- 26ec4a3: Fix handling of import resource queries (e.g. `?raw`, `?url`) to avoid crashes and allow minimal eval-time loaders.
+- Updated dependencies
+- Updated dependencies [62fef83]
+- Updated dependencies [870b07b]
+  - @wyw-in-js/shared@0.9.0
+  - @wyw-in-js/processor-utils@0.9.0
+
 ## 0.8.1
 
 ### Patch Changes

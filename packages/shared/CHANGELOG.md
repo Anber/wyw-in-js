@@ -1,5 +1,24 @@
 # @wyw-in-js/shared
 
+## 0.9.0
+
+### Minor Changes
+
+- Bump versions
+
+### Patch Changes
+
+- 62fef83: Fix shaker keeping unused imports in eval bundles (named/namespace/side-effect imports), which could trigger build-time evaluation crashes (e.g. `@radix-ui/react-tooltip`).
+
+  `@wyw-in-js/shared` now passes `importOverrides`/`root` through the evaluator config so the shaker can keep or mock side-effect imports when configured.
+
+  Note: eval bundles for `__wywPreval` now drop `import '...';` side-effect imports by default, to avoid executing unrelated runtime code in Node.js during build. If you rely on a side-effect import at eval time, keep it or stub it via `importOverrides`:
+
+  - `{ noShake: true }` to keep the import (and disable tree-shaking for that dependency).
+  - `{ mock: './path/to/mock' }` to redirect the import to a mock module.
+
+- 870b07b: Handle unknown/dynamic import specifiers without transform-time crashes, add `importOverrides` (mock/noShake/unknown policy), and emit a deduped warning only when eval reaches Node resolver fallback (bundler-native where possible).
+
 ## 0.8.1
 
 ### Patch Changes

@@ -1,5 +1,11 @@
 # wyw-in-js
 
+## 0.9.0
+
+### Minor Changes
+
+- Bump versions
+
 ## 0.8.1
 
 ### Patch Changes
