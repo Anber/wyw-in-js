@@ -1,5 +1,38 @@
 # @wyw-in-js/vite
 
+## 0.9.0
+
+### Minor Changes
+
+- Bump versions
+
+### Patch Changes
+
+- 908968b: Fix Rollup/Vite warnings about `/*#__PURE__*/` annotations emitted for extracted template expressions.
+- fcb118a: Add a `keepComments` option for the stylis preprocessor to preserve selected CSS comments.
+- 870b07b: Handle unknown/dynamic import specifiers without transform-time crashes, add `importOverrides` (mock/noShake/unknown policy), and emit a deduped warning only when eval reaches Node resolver fallback (bundler-native where possible).
+- f8744ad: Avoid manually calling `optimizeDeps()` from the plugin resolve path when Vite returns a missing optimized-deps entry. This prevents Vite 7 deprecation spam and reduces dev server startup overhead.
+- a5302b2: Defer reloading generated `*.wyw-in-js.css` modules to avoid Vite dev-server soft-invalidation errors.
+- Updated dependencies [7144b0c]
+- Updated dependencies [0477b30]
+- Updated dependencies [fad6207]
+- Updated dependencies [485fd7d]
+- Updated dependencies
+- Updated dependencies [9715eee]
+- Updated dependencies [45ef60a]
+- Updated dependencies [908968b]
+- Updated dependencies [d2f5472]
+- Updated dependencies [62fef83]
+- Updated dependencies [fcb118a]
+- Updated dependencies [d4cefc9]
+- Updated dependencies [485fd7d]
+- Updated dependencies [ac44dcc]
+- Updated dependencies [782e67f]
+- Updated dependencies [870b07b]
+- Updated dependencies [26ec4a3]
+  - @wyw-in-js/transform@0.9.0
+  - @wyw-in-js/shared@0.9.0
+
 ## 0.8.1
 
 ### Patch Changes

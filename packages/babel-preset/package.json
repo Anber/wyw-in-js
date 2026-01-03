@@ -1,6 +1,6 @@
 {
   "name": "@wyw-in-js/babel-preset",
-  "version": "0.8.1",
+  "version": "0.9.0",
   "dependencies": {
     "@babel/core": "^7.23.5",
     "@wyw-in-js/transform": "workspace:*"
