@@ -12,6 +12,8 @@ npm i -D @wyw-in-js/rollup
 yarn add --dev @wyw-in-js/rollup
 # pnpm
 pnpm add -D @wyw-in-js/rollup
+# bun
+bun add -d @wyw-in-js/rollup
 ```
 
 ## Usage

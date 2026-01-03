@@ -10,7 +10,6 @@
     "@types/node": "^16.18.55",
     "@wyw-in-js/babel-config": "workspace:*",
     "@wyw-in-js/eslint-config": "workspace:*",
-    "@wyw-in-js/jest-preset": "workspace:*",
     "@wyw-in-js/ts-config": "workspace:*",
     "rollup": "^4.0.0",
     "source-map": "^0.7.4"

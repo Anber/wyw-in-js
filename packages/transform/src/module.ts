@@ -529,11 +529,26 @@ export class Module {
       const { filename } = this;
       const strippedId = stripQueryAndHash(id);
 
-      const resolved = this.moduleImpl._resolveFilename(strippedId, {
+      let resolved = this.moduleImpl._resolveFilename(strippedId, {
         id: filename,
         filename,
         paths: this.moduleImpl._nodeModulePaths(path.dirname(filename)),
       });
+
+      const isFileSpecifier =
+        strippedId.startsWith('.') || path.isAbsolute(strippedId);
+
+      if (
+        isFileSpecifier &&
+        path.extname(strippedId) === '' &&
+        resolved.endsWith('.cjs') &&
+        fs.existsSync(`${resolved.slice(0, -4)}.js`)
+      ) {
+        // When both `.cjs` and `.js` exist for an extensionless specifier, the
+        // resolver may pick `.cjs` depending on the environment/extensions.
+        // Prefer `.js` to keep resolved paths stable (e.g. importOverrides keys).
+        resolved = `${resolved.slice(0, -4)}.js`;
+      }
 
       const { root } = this.services.options;
       const keyInfo = toImportKey({

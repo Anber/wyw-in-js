@@ -1,0 +1,16 @@
+{
+  "extends": "@wyw-in-js/ts-config/node.json",
+  "compilerOptions": {
+    "types": ["bun-types", "node"]
+  },
+  "files": [],
+  "include": [],
+  "references": [
+    {
+      "path": "./tsconfig.lib.json"
+    },
+    {
+      "path": "./tsconfig.spec.json"
+    }
+  ]
+}

@@ -9,6 +9,8 @@ import type { EvaluatorConfig, StrictOptions } from '@wyw-in-js/shared';
 
 import type { Core } from '../../babel';
 import { buildOptions } from '../../options/buildOptions';
+import dynamicImportPlugin from '../../plugins/dynamic-import';
+import preevalPlugin from '../../plugins/preeval';
 import type { EventEmitter } from '../../utils/EventEmitter';
 import type { WYWTransformMetadata } from '../../utils/TransformMetadata';
 import { getTransformMetadata } from '../../utils/TransformMetadata';
@@ -43,10 +45,13 @@ function runPreevalStage(
   const plugins = [
     ...preShakePlugins,
     [
-      require.resolve('../../plugins/preeval'),
-      { ...pluginOptions, eventEmitter },
+      preevalPlugin,
+      {
+        ...pluginOptions,
+        eventEmitter,
+      },
     ],
-    [require.resolve('../../plugins/dynamic-import')],
+    dynamicImportPlugin,
     ...(evalConfig.plugins ?? []).filter(
       (i) => !hasKeyInList(i, pluginOptions.highPriorityPlugins)
     ),

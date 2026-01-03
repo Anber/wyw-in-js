@@ -11,6 +11,8 @@ npm i -D @wyw-in-js/esbuild
 yarn add --dev @wyw-in-js/esbuild
 # pnpm
 pnpm add -D @wyw-in-js/esbuild
+# bun
+bun add -d @wyw-in-js/esbuild
 ```
 
 ## Usage

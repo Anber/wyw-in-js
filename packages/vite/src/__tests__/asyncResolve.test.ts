@@ -2,8 +2,6 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 
-import wywInJS from '..';
-
 const optimizeDepsMock = jest.fn();
 const asyncResolveResults: Array<string | null> = [];
 const syncResolveMock = jest.fn();
@@ -11,14 +9,20 @@ const syncResolveMock = jest.fn();
 let requestedId = '/@react-refresh';
 let requestedImporter = '/entry.tsx';
 
-jest.mock('@wyw-in-js/shared', () => {
-  const actual = jest.requireActual('@wyw-in-js/shared');
-  return {
-    __esModule: true,
-    ...actual,
-    syncResolve: (...args: unknown[]) => syncResolveMock(...args),
+const createLogger = () => {
+  const log = (() => undefined) as unknown as ((...args: unknown[]) => void) & {
+    extend: (...args: unknown[]) => unknown;
   };
-});
+
+  log.extend = () => log;
+  return log;
+};
+
+jest.mock('@wyw-in-js/shared', () => ({
+  __esModule: true,
+  logger: createLogger(),
+  syncResolve: (...args: unknown[]) => syncResolveMock(...args),
+}));
 
 jest.mock('vite', () => ({
   __esModule: true,
@@ -26,27 +30,25 @@ jest.mock('vite', () => ({
   createFilter: () => () => true,
 }));
 
-jest.mock('@wyw-in-js/transform', () => {
-  return {
-    __esModule: true,
-    createFileReporter: () => ({
-      emitter: { single: jest.fn() },
-      onDone: jest.fn(),
-    }),
-    getFileIdx: () => '1',
-    TransformCacheCollection: class TransformCacheCollection {},
-    transform: jest.fn(async (_services, _code, asyncResolve) => {
-      const resolved = await asyncResolve(requestedId, requestedImporter, []);
-      asyncResolveResults.push(resolved);
-      return {
-        code: _code,
-        sourceMap: null,
-        cssText: undefined,
-        dependencies: [],
-      };
-    }),
-  };
-});
+jest.mock('@wyw-in-js/transform', () => ({
+  __esModule: true,
+  createFileReporter: () => ({
+    emitter: { single: jest.fn() },
+    onDone: jest.fn(),
+  }),
+  getFileIdx: () => '1',
+  TransformCacheCollection: class TransformCacheCollection {},
+  transform: jest.fn(async (_services, _code, asyncResolve) => {
+    const resolved = await asyncResolve(requestedId, requestedImporter, []);
+    asyncResolveResults.push(resolved);
+    return {
+      code: _code,
+      sourceMap: null,
+      cssText: undefined,
+      dependencies: [],
+    };
+  }),
+}));
 
 describe('vite asyncResolve', () => {
   beforeEach(() => {
@@ -58,6 +60,7 @@ describe('vite asyncResolve', () => {
   });
 
   it('ignores Vite virtual ids like /@react-refresh', async () => {
+    const { default: wywInJS } = await import('../index');
     const plugin = wywInJS();
 
     plugin.configResolved({ root: process.cwd() } as any);
@@ -78,6 +81,7 @@ describe('vite asyncResolve', () => {
   });
 
   it('falls back to syncResolve when Vite resolves to missing cache entry', async () => {
+    const { default: wywInJS } = await import('../index');
     requestedId = 'react';
     const cacheDir = join(__dirname, '.vite-cache');
     const missingCacheEntry = join(cacheDir, 'deps', 'react.js');
@@ -105,6 +109,7 @@ describe('vite asyncResolve', () => {
   });
 
   it('waits for depsOptimizer to finish processing optimized deps files', async () => {
+    const { default: wywInJS } = await import('../index');
     requestedId = 'react';
 
     const cacheDir = mkdtempSync(join(tmpdir(), 'wyw-vite-cache-'));

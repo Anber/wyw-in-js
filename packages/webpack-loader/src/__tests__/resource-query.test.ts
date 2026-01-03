@@ -1,11 +1,18 @@
 import path from 'path';
 
-import webpackLoader from '..';
-
 const transformMock = jest.fn();
+
+jest.mock('@wyw-in-js/shared', () => ({
+  __esModule: true,
+  logger: jest.fn(),
+}));
 
 jest.mock('@wyw-in-js/transform', () => ({
   __esModule: true,
+  createFileReporter: () => ({
+    emitter: { single: jest.fn() },
+    onDone: jest.fn(),
+  }),
   TransformCacheCollection: class TransformCacheCollection {},
   transform: (...args: unknown[]) => transformMock(...args),
 }));
@@ -16,6 +23,7 @@ describe('webpack-loader asyncResolve', () => {
   });
 
   it('adds dependency without ?query/#hash', async () => {
+    const { default: webpackLoader } = await import('../index');
     const addDependency = jest.fn();
     const resolveResult = `${path.resolve('assets/icon.svg')}?svgUse`;
 

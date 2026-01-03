@@ -1,7 +1,22 @@
+import { readFileSync } from 'fs';
 import { dirname, isAbsolute } from 'path';
 import findUp from 'find-up';
 
 const cache = new Map<string, string | undefined>();
+
+function findSelfPackageJSON(pkgName: string, filename: string) {
+  const packageJSONPath = findUp.sync('package.json', {
+    cwd: dirname(filename),
+  });
+  if (!packageJSONPath) return undefined;
+
+  try {
+    const packageJSON = JSON.parse(readFileSync(packageJSONPath, 'utf8'));
+    return packageJSON?.name === pkgName ? packageJSONPath : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 export function findPackageJSON(
   pkgName: string,
@@ -31,6 +46,40 @@ export function findPackageJSON(
         : undefined;
 
     if (code === 'MODULE_NOT_FOUND') {
+      if (filename) {
+        // Bun doesn't expose workspace packages via `require.resolve`, but tests
+        // and tooling can still reference the current package by name.
+        const selfPackageJSON = findSelfPackageJSON(pkgName, filename);
+        if (selfPackageJSON) {
+          return selfPackageJSON;
+        }
+
+        const bun = (
+          globalThis as typeof globalThis & {
+            Bun?: {
+              resolveSync?: (specifier: string, from: string) => string;
+            };
+          }
+        ).Bun;
+        if (bun && typeof bun.resolveSync === 'function') {
+          try {
+            const resolved = bun.resolveSync(pkgName, filename);
+            if (!cache.has(resolved)) {
+              cache.set(
+                resolved,
+                findUp.sync('package.json', {
+                  cwd: resolved,
+                })
+              );
+            }
+
+            return cache.get(resolved);
+          } catch {
+            // fall through to the existing resolution heuristics
+          }
+        }
+      }
+
       if (skipPathsOptions && filename) {
         return findPackageJSON(pkgName, null);
       }

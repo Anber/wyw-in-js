@@ -11,6 +11,8 @@ npm i -D @wyw-in-js/webpack-loader
 yarn add --dev @wyw-in-js/webpack-loader
 # pnpm
 pnpm add -D @wyw-in-js/webpack-loader
+# bun
+bun add -d @wyw-in-js/webpack-loader
 ```
 
 ## Usage

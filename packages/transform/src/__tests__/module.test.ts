@@ -165,6 +165,73 @@ it('requires .cjs files', () => {
   expect(mod.exports).toBe('The answer is 42');
 });
 
+it('prefers .js when extensionless import resolves to .cjs and .js exists', () => {
+  const code = dedent`
+    module.exports = require('./prefer-js');
+  `;
+  const cache = new TransformCacheCollection();
+  const services = createServices({ cache });
+  const entrypoint = createEntrypoint(services, filename, ['*'], code);
+
+  const resolveFilename = jest.fn((id: string) => {
+    if (id === './prefer-js') {
+      return path.resolve(__dirname, './__fixtures__/prefer-js.cjs');
+    }
+
+    return id;
+  });
+
+  const moduleImpl = {
+    _extensions: DefaultModuleImplementation._extensions,
+    _nodeModulePaths: DefaultModuleImplementation._nodeModulePaths.bind(
+      DefaultModuleImplementation
+    ),
+    _resolveFilename: resolveFilename as any,
+  };
+
+  const mod = new Module(services, entrypoint, undefined, moduleImpl as any);
+
+  safeEvaluate(mod);
+
+  expect(mod.exports).toBe('js');
+  expect(resolveFilename).toHaveBeenCalledWith(
+    './prefer-js',
+    expect.anything()
+  );
+});
+
+it('does not rewrite bare imports when extensionless import resolves to .cjs and .js exists', () => {
+  const code = dedent`
+    module.exports = require('prefer-js');
+  `;
+  const cache = new TransformCacheCollection();
+  const services = createServices({ cache });
+  const entrypoint = createEntrypoint(services, filename, ['*'], code);
+
+  const resolveFilename = jest.fn((id: string) => {
+    if (id === 'prefer-js') {
+      return path.resolve(__dirname, './__fixtures__/prefer-js.cjs');
+    }
+
+    return id;
+  });
+
+  const moduleImpl = {
+    _extensions: DefaultModuleImplementation._extensions,
+    _nodeModulePaths: DefaultModuleImplementation._nodeModulePaths.bind(
+      DefaultModuleImplementation
+    ),
+    _resolveFilename: resolveFilename as any,
+  };
+
+  const mod = new Module(services, entrypoint, undefined, moduleImpl as any);
+
+  safeEvaluate(mod);
+
+  expect(mod.exports).toBe('cjs');
+  expect(resolveFilename).toHaveBeenCalledWith('prefer-js', expect.anything());
+});
+
 it('requires .json files', () => {
   const { mod } = create`
     const data = require('./sample-data.json');
@@ -418,37 +485,59 @@ it('has require.ensure available', () => {
 });
 
 it('changes resolve behaviour on overriding _resolveFilename', () => {
-  const resolveFilename = jest
-    .spyOn(DefaultModuleImplementation, '_resolveFilename')
-    .mockImplementation((id) => (id === 'foo' ? 'bar' : id));
-
-  const { mod } = create`
+  const code = dedent`
     module.exports = [
       require.resolve('foo'),
       require.resolve('test'),
     ];
   `;
+  const cache = new TransformCacheCollection();
+  const services = createServices({ cache });
+  const entrypoint = createEntrypoint(services, filename, ['*'], code);
+
+  const resolveFilename = jest.fn((id: string) => (id === 'foo' ? 'bar' : id));
+  const moduleImpl = {
+    _extensions: DefaultModuleImplementation._extensions,
+    _nodeModulePaths: DefaultModuleImplementation._nodeModulePaths.bind(
+      DefaultModuleImplementation
+    ),
+    _resolveFilename: resolveFilename as any,
+  };
+
+  const mod = new Module(services, entrypoint, undefined, moduleImpl as any);
 
   safeEvaluate(mod);
 
   expect(mod.exports).toEqual(['bar', 'test']);
   expect(resolveFilename).toHaveBeenCalledTimes(2);
-
-  resolveFilename.mockRestore();
 });
 
 it('should resolve from the cache', () => {
-  const resolveFilename = jest.spyOn(
-    DefaultModuleImplementation,
-    '_resolveFilename'
-  );
-
-  const { mod, entrypoint } = create`
+  const code = dedent`
     module.exports = [
       require.resolve('foo'),
       require.resolve('test'),
     ];
   `;
+  const cache = new TransformCacheCollection();
+  const services = createServices({ cache });
+  const entrypoint = createEntrypoint(services, filename, ['*'], code);
+
+  const resolveFilename = jest.fn((...args: unknown[]) =>
+    DefaultModuleImplementation._resolveFilename.call(
+      DefaultModuleImplementation as any,
+      ...args
+    )
+  );
+  const moduleImpl = {
+    _extensions: DefaultModuleImplementation._extensions,
+    _nodeModulePaths: DefaultModuleImplementation._nodeModulePaths.bind(
+      DefaultModuleImplementation
+    ),
+    _resolveFilename: resolveFilename as any,
+  };
+
+  const mod = new Module(services, entrypoint, undefined, moduleImpl as any);
 
   entrypoint.addDependency({
     only: ['*'],
@@ -465,8 +554,6 @@ it('should resolve from the cache', () => {
 
   expect(mod.exports).toEqual(['resolved foo', 'resolved test']);
   expect(resolveFilename).toHaveBeenCalledTimes(0);
-
-  resolveFilename.mockRestore();
 });
 
 it('correctly processes export declarations in strict mode', () => {

@@ -1,0 +1,43 @@
+{
+  "name": "@wyw-in-js/bun",
+  "version": "0.8.1",
+  "dependencies": {
+    "@rollup/pluginutils": "^5.1.4",
+    "bun-types": "^1.3.5",
+    "@wyw-in-js/shared": "workspace:*",
+    "@wyw-in-js/transform": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^16.18.55",
+    "@wyw-in-js/babel-config": "workspace:*",
+    "@wyw-in-js/eslint-config": "workspace:*",
+    "@wyw-in-js/ts-config": "workspace:*"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  },
+  "exports": {
+    "import": "./esm/index.mjs",
+    "require": "./lib/index.js",
+    "types": "./types/index.d.ts"
+  },
+  "files": [
+    "esm/",
+    "lib/",
+    "types/"
+  ],
+  "license": "MIT",
+  "main": "lib/index.js",
+  "module": "esm/index.mjs",
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build:esm": "babel src --out-dir esm --out-file-extension .mjs --extensions '.js,.jsx,.ts,.tsx' --source-maps --delete-dir-on-start",
+    "build:lib": "cross-env NODE_ENV=legacy babel src --out-dir lib --extensions '.js,.jsx,.ts,.tsx' --source-maps --delete-dir-on-start",
+    "build:types": "tsc --project ./tsconfig.lib.json --baseUrl . --rootDir ./src",
+    "lint": "eslint --ext .js,.ts .",
+    "test": "bun test src"
+  },
+  "types": "types/index.d.ts"
+}

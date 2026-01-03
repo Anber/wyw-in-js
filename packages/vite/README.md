@@ -11,6 +11,8 @@ npm i -D @wyw-in-js/vite
 yarn add --dev @wyw-in-js/vite
 # pnpm
 pnpm add -D @wyw-in-js/vite
+# bun
+bun add -d @wyw-in-js/vite
 ```
 
 ## Usage

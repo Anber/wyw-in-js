@@ -1,0 +1,15 @@
+{
+  "name": "@wyw-in-js/e2e-bun",
+  "version": "0.8.1",
+  "dependencies": {
+    "@wyw-in-js/template-tag-syntax": "workspace:*"
+  },
+  "devDependencies": {
+    "@wyw-in-js/bun": "workspace:*"
+  },
+  "private": true,
+  "scripts": {
+    "test": "bun test src"
+  }
+}
+

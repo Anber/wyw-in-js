@@ -3,6 +3,6 @@
   "compilerOptions": {
     "outDir": "./types"
   },
-  "exclude": ["**/__tests__/*"],
+  "exclude": ["**/__tests__/**", "**/*.test.ts", "**/*.test.tsx"],
   "include": ["./src/**/*.ts"]
 }
