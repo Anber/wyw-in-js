@@ -31,12 +31,9 @@ it('does not keep stale imported objects between rebuilds when globalCache is en
 
   fs.writeFileSync(
     tokensFile,
-    [
-      `export const colors = (() => ({`,
-      `  blue: 'blue',`,
-      `}))();`,
-      ``,
-    ].join('\n')
+    [`export const colors = (() => ({`, `  blue: 'blue',`, `}))();`, ``].join(
+      '\n'
+    )
   );
 
   fs.writeFileSync(
@@ -85,16 +82,16 @@ it('does not keep stale imported objects between rebuilds when globalCache is en
     const initialCss = getCssText(build);
     expect(initialCss).toContain('blue');
 
-  fs.writeFileSync(
-    tokensFile,
-    [
-      `export const colors = (() => ({`,
-      `  blue: 'blue',`,
-      `  red: 'red',`,
-      `}))();`,
-      ``,
-    ].join('\n')
-  );
+    fs.writeFileSync(
+      tokensFile,
+      [
+        `export const colors = (() => ({`,
+        `  blue: 'blue',`,
+        `  red: 'red',`,
+        `}))();`,
+        ``,
+      ].join('\n')
+    );
 
     await build.rebuild();
 
