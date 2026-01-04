@@ -28,7 +28,11 @@ import {
 import './utils/dispose-polyfill';
 import type { TransformCacheCollection } from './cache';
 import { Entrypoint } from './transform/Entrypoint';
-import { getStack, isSuperSet } from './transform/Entrypoint.helpers';
+import {
+  getStack,
+  isSuperSet,
+  mergeOnly,
+} from './transform/Entrypoint.helpers';
 import type { IEntrypointDependency } from './transform/Entrypoint.types';
 import type { IEvaluatedEntrypoint } from './transform/EvaluatedEntrypoint';
 import { isUnprocessedEntrypointError } from './transform/actions/UnprocessedEntrypointError';
@@ -445,6 +449,7 @@ export class Module {
     }
 
     let uncachedExports: string[] | null = null;
+    let reprocessOnly: string[] = only;
     // Requested file can be already prepared for evaluation on the stage 1
     if (only && entrypoint) {
       const evaluatedExports =
@@ -455,6 +460,10 @@ export class Module {
       if (uncachedExports.length === 0) {
         log('✅ ready for evaluation');
         return entrypoint;
+      }
+
+      if (entrypoint.evaluatedOnly?.length) {
+        reprocessOnly = mergeOnly(evaluatedExports, only);
       }
 
       log(
@@ -469,15 +478,11 @@ export class Module {
     // If code wasn't extracted from cache, it indicates that we were unable
     // to process some of the imports on stage1. Let's try to reprocess.
     const code = fs.readFileSync(strippedFilename, 'utf-8');
-    const shouldSkipCacheOnlyMerge = Boolean(
-      uncachedExports && entrypoint?.evaluatedOnly?.length
-    );
     const newEntrypoint = Entrypoint.createRoot(
       this.services,
       filename,
-      uncachedExports ?? only,
-      code,
-      shouldSkipCacheOnlyMerge ? { skipCacheOnlyMerge: true } : undefined
+      reprocessOnly,
+      code
     );
 
     if (newEntrypoint.evaluated) {
