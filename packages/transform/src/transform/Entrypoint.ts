@@ -216,7 +216,7 @@ export class Entrypoint extends BaseEntrypoint {
     }
 
     const exports = cached?.exports;
-    const evaluatedOnly = cached?.evaluatedOnly ?? [];
+    const evaluatedOnly = changed ? [] : (cached?.evaluatedOnly ?? []);
 
     const shouldMergeOnly = !options?.skipCacheOnlyMerge;
     const mergedOnly =
