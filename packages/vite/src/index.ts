@@ -39,6 +39,8 @@ type VitePluginOptions = {
   sourceMap?: boolean;
 } & Partial<PluginOptions>;
 
+type OverrideContext = NonNullable<PluginOptions['overrideContext']>;
+
 export { Plugin };
 
 export default function wywInJS({
@@ -286,6 +288,21 @@ export default function wywInJS({
         throw new Error(`Could not resolve ${what}`);
       };
 
+      const overrideContext: OverrideContext = (context, filename) => {
+        const isSsr =
+          typeof transformOptions === 'boolean'
+            ? transformOptions
+            : Boolean(transformOptions?.ssr);
+        const env = importMetaEnvForEval?.[isSsr ? 'ssr' : 'client'];
+        const withEnv = env
+          ? { ...context, __wyw_import_meta_env: env }
+          : context;
+
+        return rest.overrideContext
+          ? rest.overrideContext(withEnv, filename)
+          : withEnv;
+      };
+
       const transformServices = {
         options: {
           filename: id,
@@ -295,20 +312,7 @@ export default function wywInJS({
           preprocessor,
           pluginOptions: {
             ...rest,
-            overrideContext: (context, filename) => {
-              const isSsr =
-                typeof transformOptions === 'boolean'
-                  ? transformOptions
-                  : Boolean(transformOptions?.ssr);
-              const env = importMetaEnvForEval?.[isSsr ? 'ssr' : 'client'];
-              const withEnv = env
-                ? { ...context, __wyw_import_meta_env: env }
-                : context;
-
-              return rest.overrideContext
-                ? rest.overrideContext(withEnv, filename)
-                : withEnv;
-            },
+            overrideContext,
           },
         },
         cache,
