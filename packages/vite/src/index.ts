@@ -7,7 +7,7 @@
 import { existsSync } from 'fs';
 import path from 'path';
 
-import { createFilter } from 'vite';
+import { createFilter, loadEnv } from 'vite';
 import type {
   ModuleNode,
   Plugin,
@@ -39,6 +39,8 @@ type VitePluginOptions = {
   sourceMap?: boolean;
 } & Partial<PluginOptions>;
 
+type OverrideContext = NonNullable<PluginOptions['overrideContext']>;
+
 export { Plugin };
 
 export default function wywInJS({
@@ -58,6 +60,10 @@ export default function wywInJS({
   let pendingCssReloadTimer: ReturnType<typeof setTimeout> | undefined;
   let config: ResolvedConfig;
   let devServer: ViteDevServer;
+  let importMetaEnvForEval: {
+    client: Record<string, unknown>;
+    ssr: Record<string, unknown>;
+  } | null = null;
 
   const { emitter, onDone } = createFileReporter(debug ?? false);
 
@@ -91,6 +97,27 @@ export default function wywInJS({
     },
     configResolved(resolvedConfig: ResolvedConfig) {
       config = resolvedConfig;
+
+      const envPrefix = config.envPrefix ?? 'VITE_';
+      const envDir =
+        // envDir is absolute in modern Vite, but keep a fallback for older versions
+        'envDir' in config && typeof config.envDir === 'string'
+          ? config.envDir
+          : config.root;
+
+      const loaded = loadEnv(config.mode, envDir, envPrefix);
+      const base = {
+        ...loaded,
+        BASE_URL: config.base,
+        MODE: config.mode,
+        DEV: config.command === 'serve',
+        PROD: config.command === 'build',
+      };
+
+      importMetaEnvForEval = {
+        client: { ...base, SSR: false },
+        ssr: { ...base, SSR: true },
+      };
     },
     configureServer(_server) {
       devServer = _server;
@@ -129,7 +156,11 @@ export default function wywInJS({
         .concat(ctx.modules)
         .filter((m): m is ModuleNode => !!m);
     },
-    async transform(code: string, url: string) {
+    async transform(
+      code: string,
+      url: string,
+      transformOptions?: boolean | { ssr?: boolean }
+    ) {
       const [id] = url.split('?', 1);
 
       // Do not transform ignored and generated files
@@ -257,6 +288,21 @@ export default function wywInJS({
         throw new Error(`Could not resolve ${what}`);
       };
 
+      const overrideContext: OverrideContext = (context, filename) => {
+        const isSsr =
+          typeof transformOptions === 'boolean'
+            ? transformOptions
+            : Boolean(transformOptions?.ssr);
+        const env = importMetaEnvForEval?.[isSsr ? 'ssr' : 'client'];
+        const withEnv = env
+          ? { ...context, __wyw_import_meta_env: env }
+          : context;
+
+        return rest.overrideContext
+          ? rest.overrideContext(withEnv, filename)
+          : withEnv;
+      };
+
       const transformServices = {
         options: {
           filename: id,
@@ -264,7 +310,10 @@ export default function wywInJS({
           prefixer,
           keepComments,
           preprocessor,
-          pluginOptions: rest,
+          pluginOptions: {
+            ...rest,
+            overrideContext,
+          },
         },
         cache,
         emitWarning: (message: string) => this.warn(message),

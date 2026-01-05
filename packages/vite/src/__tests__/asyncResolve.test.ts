@@ -28,6 +28,7 @@ jest.mock('vite', () => ({
   __esModule: true,
   optimizeDeps: (...args: unknown[]) => optimizeDepsMock(...args),
   createFilter: () => () => true,
+  loadEnv: jest.fn(() => ({})),
 }));
 
 jest.mock('@wyw-in-js/transform', () => ({
@@ -63,7 +64,12 @@ describe('vite asyncResolve', () => {
     const { default: wywInJS } = await import('../index');
     const plugin = wywInJS();
 
-    plugin.configResolved({ root: process.cwd() } as any);
+    plugin.configResolved({
+      root: process.cwd(),
+      mode: 'development',
+      command: 'serve',
+      base: '/',
+    } as any);
 
     const resolveMock = jest.fn().mockResolvedValue({
       id: '/@react-refresh',
@@ -90,7 +96,13 @@ describe('vite asyncResolve', () => {
     syncResolveMock.mockReturnValue(fallbackPath);
 
     const plugin = wywInJS();
-    plugin.configResolved({ root: process.cwd(), cacheDir } as any);
+    plugin.configResolved({
+      root: process.cwd(),
+      mode: 'development',
+      command: 'serve',
+      base: '/',
+      cacheDir,
+    } as any);
 
     const resolveMock = jest.fn().mockResolvedValue({
       id: `${missingCacheEntry}?v=deadbeef`,
@@ -134,7 +146,13 @@ describe('vite asyncResolve', () => {
       };
 
       const plugin = wywInJS();
-      plugin.configResolved({ root: process.cwd(), cacheDir } as any);
+      plugin.configResolved({
+        root: process.cwd(),
+        mode: 'development',
+        command: 'serve',
+        base: '/',
+        cacheDir,
+      } as any);
       plugin.configureServer?.({
         environments: { client: { depsOptimizer } },
       } as any);
