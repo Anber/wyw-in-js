@@ -39,6 +39,39 @@ The injected object is available as `__wyw_import_meta_env` and includes:
 
 If you need to override values, you can provide your own `overrideContext` option and set `__wyw_import_meta_env` explicitly.
 
+### SSR dev FOUC (styles after hydration)
+
+When using Vite SSR in **dev** mode (`middlewareMode` + `ssrLoadModule`), the server-rendered HTML may not include the
+generated WyW CSS. The page then renders unstyled until the client runtime loads the CSS after hydration (FOUC).
+
+To avoid this, enable `ssrDevCss` to make the plugin:
+
+- collect generated CSS in memory,
+- expose it as a virtual stylesheet (`/_wyw-in-js/ssr.css` by default),
+- inject `<link rel="stylesheet">` via `transformIndexHtml()`.
+
+```js
+export default defineConfig(() => ({
+  // ...
+  plugins: [wyw({ ssrDevCss: true }), react()],
+}));
+```
+
+You can customize the URL via `ssrDevCssPath`:
+
+```js
+plugins: [wyw({ ssrDevCss: true, ssrDevCssPath: '/_wyw-in-js/ssr.css' }), react()],
+```
+
+This is **dev-only** and does not change production builds.
+
+Notes:
+
+- The served stylesheet is the raw WyW output (before Vite's CSS pipeline), so some edge cases like `url(...)` rewriting
+  may behave differently.
+- The `<link>` tag is injected on each HTML transform; CSS HMR does not “re-inject” the link on the client without a
+  page reload (which is fine for avoiding initial FOUC).
+
 ### Keeping CSS comments
 
 Stylis strips CSS comments by default. To preserve them (for example, `/*rtl:ignore*/`), pass `keepComments`:
