@@ -27,6 +27,18 @@ export default defineConfig(() => ({
 }));
 ```
 
+### `import.meta.env` during evaluation
+
+WyW-in-JS evaluates a subset of your code at build time to extract styles. When that code relies on Vite's `import.meta.env.*`,
+the Vite plugin injects Vite env values into the evaluation context so the expressions behave like they do in Vite runtime.
+
+The injected object is available as `__wyw_import_meta_env` and includes:
+
+- Vite's `MODE`, `BASE_URL`, `DEV`, `PROD`, `SSR`
+- variables loaded via `loadEnv()` respecting `envPrefix` (by default `VITE_`)
+
+If you need to override values, you can provide your own `overrideContext` option and set `__wyw_import_meta_env` explicitly.
+
 ### Keeping CSS comments
 
 Stylis strips CSS comments by default. To preserve them (for example, `/*rtl:ignore*/`), pass `keepComments`:

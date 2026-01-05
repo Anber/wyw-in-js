@@ -8,6 +8,60 @@ import { isFeatureEnabled } from '@wyw-in-js/shared';
 import * as process from './process';
 
 const NOOP = () => {};
+const IMPORT_META_ENV = '__wyw_import_meta_env';
+
+let importMetaEnvWarned = false;
+
+function createImportMetaEnvProxy(): Record<string, unknown> {
+  const target = Object.create(null) as Record<string, unknown>;
+
+  const warnOnce = () => {
+    if (importMetaEnvWarned) return;
+    importMetaEnvWarned = true;
+    // eslint-disable-next-line no-console
+    console.warn(
+      [
+        `[wyw-in-js] import.meta.env was accessed during build-time evaluation, but no env values were provided.`,
+        ``,
+        `If you're using Vite, make sure @wyw-in-js/vite plugin is enabled (it injects Vite env for evaluation).`,
+        `Otherwise provide "__wyw_import_meta_env" via pluginOptions.overrideContext.`,
+      ].join('\n')
+    );
+  };
+
+  return new Proxy(target, {
+    get(obj, key) {
+      if (typeof key === 'symbol') {
+        return Reflect.get(obj, key);
+      }
+
+      warnOnce();
+      return obj[key];
+    },
+    has(obj, key) {
+      if (typeof key === 'symbol') {
+        return Reflect.has(obj, key);
+      }
+
+      warnOnce();
+      return Reflect.has(obj, key);
+    },
+    getOwnPropertyDescriptor(obj, key) {
+      return Reflect.getOwnPropertyDescriptor(obj, key);
+    },
+    ownKeys(obj) {
+      return Reflect.ownKeys(obj);
+    },
+    set(obj, key, value) {
+      if (typeof key === 'symbol') {
+        return Reflect.set(obj, key, value);
+      }
+
+      warnOnce();
+      return Reflect.set(obj, key, value);
+    },
+  });
+}
 
 function createWindow(): Window {
   const { Window, GlobalWindow } = require('happy-dom');
@@ -96,11 +150,15 @@ export function createVmContext(
   const { teardown, window } = isHappyDOMEnabled
     ? createHappyDOMWindow()
     : createNothing();
+  const envContext: Partial<vm.Context> = {
+    [IMPORT_META_ENV]: createImportMetaEnvProxy(),
+  };
   const baseContext = createBaseContext(
     window,
     overrideContext(
       {
         __filename: filename,
+        ...envContext,
         ...additionalContext,
       },
       filename

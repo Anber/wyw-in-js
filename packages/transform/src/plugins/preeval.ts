@@ -14,6 +14,7 @@ import { EventEmitter } from '../utils/EventEmitter';
 import { addIdentifierToWywPreval } from '../utils/addIdentifierToWywPreval';
 import { getFileIdx } from '../utils/getFileIdx';
 import { removeDangerousCode } from '../utils/removeDangerousCode';
+import { replaceImportMetaEnv } from '../utils/replaceImportMetaEnv';
 import { invalidateTraversalCache } from '../utils/traversalCache';
 
 export type PreevalOptions = Pick<
@@ -55,6 +56,10 @@ export function preeval(
           processor.doEvaltimeReplacement();
           this.processors.push(processor);
         });
+      });
+
+      eventEmitter.perf('transform:preeval:importMetaEnv', () => {
+        replaceImportMetaEnv(file.path, t);
       });
 
       if (

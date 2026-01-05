@@ -6,6 +6,7 @@ jest.mock('vite', () => ({
   __esModule: true,
   optimizeDeps: jest.fn(),
   createFilter: () => () => true,
+  loadEnv: jest.fn(() => ({})),
 }));
 
 jest.mock('@wyw-in-js/transform', () => {
@@ -53,7 +54,12 @@ describe('vite HMR', () => {
       .mockImplementation((id: string) => ({ id }));
 
     const plugin = wywInJS();
-    plugin.configResolved?.({ root } as any);
+    plugin.configResolved?.({
+      root,
+      mode: 'development',
+      command: 'serve',
+      base: '/',
+    } as any);
     plugin.configureServer?.({
       moduleGraph: { getModuleById },
       reloadModule,
@@ -84,7 +90,12 @@ describe('vite HMR', () => {
       .mockImplementation((id: string) => ({ id }));
 
     const plugin = wywInJS();
-    plugin.configResolved?.({ root } as any);
+    plugin.configResolved?.({
+      root,
+      mode: 'development',
+      command: 'serve',
+      base: '/',
+    } as any);
     plugin.configureServer?.({
       moduleGraph: { getModuleById },
       reloadModule,

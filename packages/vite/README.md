@@ -29,4 +29,9 @@ export default defineConfig({
 });
 ```
 
+## `import.meta.env` during evaluation
+
+WyW-in-JS evaluates part of your code at build time to extract styles. The Vite plugin injects Vite's `import.meta.env` values
+into the evaluation context so `import.meta.env.*` works as expected.
+
 To get details about supported options by the plugin, please check [documentation](https://wyw-in-js.dev/bundlers/vite).
