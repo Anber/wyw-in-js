@@ -40,7 +40,7 @@ const filename = path.resolve(__dirname, './__fixtures__/test.js');
 const createServices = (partial: Partial<Services>): Services => {
   const loadAndParseFn: LoadAndParseFn = (services, name, loadedCode) => ({
     get ast() {
-      return services.babel.parseSync(loadedCode ?? '')!;
+      return services.babel.parseSync(loadedCode ?? '', { filename: name })!;
     },
     code: loadedCode!,
     evaluator: jest.fn(),

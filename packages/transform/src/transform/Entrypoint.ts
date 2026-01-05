@@ -4,6 +4,7 @@ import type { ParentEntrypoint, ITransformFileResult } from '../types';
 
 import { BaseEntrypoint } from './BaseEntrypoint';
 import { isSuperSet, mergeOnly } from './Entrypoint.helpers';
+import { isStaticallyEvaluatableModule } from './isStaticallyEvaluatableModule';
 import type {
   IEntrypointCode,
   IEntrypointDependency,
@@ -201,7 +202,7 @@ export class Entrypoint extends BaseEntrypoint {
     const exports = cached?.exports;
     const evaluatedOnly = changed ? [] : cached?.evaluatedOnly ?? [];
 
-    const mergedOnly = cached?.only ? mergeOnly(cached.only, only) : only;
+    const mergedOnly = cached?.only ? mergeOnly(cached.only, only) : [...only];
 
     if (cached?.evaluated) {
       cached.log('is already evaluated with', cached.evaluatedOnly);
@@ -244,6 +245,23 @@ export class Entrypoint extends BaseEntrypoint {
       cached && 'dependencies' in cached ? cached.dependencies : undefined,
       cached ? cached.generation + 1 : 1
     );
+
+    if (
+      !newEntrypoint.ignored &&
+      !newEntrypoint.only.includes('*') &&
+      !newEntrypoint.only.includes('__wywPreval') &&
+      !newEntrypoint.only.includes('side-effect')
+    ) {
+      const { ast } = newEntrypoint.loadedAndParsed;
+
+      if (ast && isStaticallyEvaluatableModule(ast)) {
+        newEntrypoint.log(
+          '[entrypoint] promote `only` to "*" for statically evaluatable module'
+        );
+        newEntrypoint.only.length = 0;
+        newEntrypoint.only.push('*');
+      }
+    }
 
     if (cached && !cached.evaluated) {
       cached.log('is cached, but with different code');
