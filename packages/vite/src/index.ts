@@ -5,6 +5,7 @@
  */
 
 import { existsSync } from 'fs';
+import type { IncomingMessage, ServerResponse } from 'http';
 import path from 'path';
 
 import { createFilter, loadEnv } from 'vite';
@@ -37,6 +38,8 @@ type VitePluginOptions = {
   prefixer?: boolean;
   preprocessor?: Preprocessor;
   sourceMap?: boolean;
+  ssrDevCss?: boolean;
+  ssrDevCssPath?: string;
 } & Partial<PluginOptions>;
 
 type OverrideContext = NonNullable<PluginOptions['overrideContext']>;
@@ -51,6 +54,8 @@ export default function wywInJS({
   keepComments,
   prefixer,
   preprocessor,
+  ssrDevCss,
+  ssrDevCssPath,
   ...rest
 }: VitePluginOptions = {}): Plugin {
   const filter = createFilter(include, exclude);
@@ -58,12 +63,40 @@ export default function wywInJS({
   const cssFileLookup: { [key: string]: string } = {};
   const pendingCssReloads = new Set<string>();
   let pendingCssReloadTimer: ReturnType<typeof setTimeout> | undefined;
+  let ssrDevCssVersion = 0;
   let config: ResolvedConfig;
   let devServer: ViteDevServer;
   let importMetaEnvForEval: {
     client: Record<string, unknown>;
     ssr: Record<string, unknown>;
   } | null = null;
+
+  const ssrDevCssEnabled = Boolean(ssrDevCss);
+  const [ssrDevCssPathname, ssrDevCssQuery] = (
+    ssrDevCssPath ?? '/_wyw-in-js/ssr.css'
+  ).split('?', 2);
+  const ssrDevCssRoute = ssrDevCssPathname.startsWith('/')
+    ? ssrDevCssPathname
+    : `/${ssrDevCssPathname}`;
+
+  const getSsrDevCssHref = () => {
+    const versionParam = `v=${ssrDevCssVersion}`;
+    const query = ssrDevCssQuery
+      ? `${ssrDevCssQuery}&${versionParam}`
+      : versionParam;
+    return `${ssrDevCssRoute}?${query}`;
+  };
+
+  const getSsrDevCssContents = () => {
+    const entries = Object.entries(cssLookup);
+    if (entries.length === 0) return '';
+
+    const merged = entries
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([, cssText]) => cssText)
+      .join('\n');
+    return `${merged}\n`;
+  };
 
   const { emitter, onDone } = createFileReporter(debug ?? false);
 
@@ -121,6 +154,52 @@ export default function wywInJS({
     },
     configureServer(_server) {
       devServer = _server;
+
+      if (!ssrDevCssEnabled || config.command !== 'serve') return;
+
+      devServer.middlewares.use(
+        (req: IncomingMessage, res: ServerResponse, next: () => void) => {
+          const { url } = req;
+          if (!url) {
+            next();
+            return;
+          }
+
+          const [pathname] = url.split('?', 1);
+          if (pathname !== ssrDevCssRoute) {
+            next();
+            return;
+          }
+
+          const etag = `W/"${ssrDevCssVersion}"`;
+          const ifNoneMatch = req.headers['if-none-match'];
+          if (ifNoneMatch === etag) {
+            res.statusCode = 304;
+            res.end();
+            return;
+          }
+
+          res.statusCode = 200;
+          res.setHeader('Content-Type', 'text/css; charset=utf-8');
+          res.setHeader('Cache-Control', 'no-cache');
+          res.setHeader('ETag', etag);
+          res.end(getSsrDevCssContents());
+        }
+      );
+    },
+    transformIndexHtml(html) {
+      if (!ssrDevCssEnabled || config.command !== 'serve') return undefined;
+
+      return {
+        html,
+        tags: [
+          {
+            tag: 'link',
+            attrs: { rel: 'stylesheet', href: getSsrDevCssHref() },
+            injectTo: 'head-prepend',
+          },
+        ],
+      };
     },
     load(url: string) {
       const [id] = url.split('?', 1);
@@ -375,7 +454,12 @@ export default function wywInJS({
       if (!target) targets.push({ id, dependencies });
       else target.dependencies = dependencies;
 
-      if (didCssChange) scheduleCssReload(cssFilename);
+      if (didCssChange) {
+        scheduleCssReload(cssFilename);
+        if (ssrDevCssEnabled && config.command === 'serve') {
+          ssrDevCssVersion += 1;
+        }
+      }
       /* eslint-disable-next-line consistent-return */
       return { code: result.code, map: result.sourceMap };
     },
