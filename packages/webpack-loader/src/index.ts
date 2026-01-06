@@ -35,6 +35,7 @@ const stripQueryAndHash = (request: string) => {
 
 export type LoaderOptions = {
   cacheProvider?: string | ICache;
+  cssImport?: 'require' | 'import';
   extension?: string;
   keepComments?: boolean | RegExp;
   prefixer?: boolean;
@@ -78,6 +79,7 @@ const webpack5Loader: Loader = function webpack5LoaderPlugin(
     keepComments = undefined,
     prefixer = undefined,
     extension = '.wyw-in-js.css',
+    cssImport = 'require',
     cacheProvider,
     ...rest
   } = this.getOptions() || {};
@@ -153,18 +155,27 @@ const webpack5Loader: Loader = function webpack5LoaderPlugin(
               this.getDependencies()
             );
 
+            const resourcePathWithQuery = `${
+              this.resourcePath
+            }?wyw=${encodeURIComponent(extension.replace(/^\./, ''))}`;
+
             const request = `${outputFileName}!=!${outputCssLoader}?cacheProvider=${encodeURIComponent(
               typeof cacheProvider === 'string' ? cacheProvider : ''
-            )}&cacheProviderId=${encodeURIComponent(cacheProviderId)}!${
-              this.resourcePath
-            }`;
+            )}&cacheProviderId=${encodeURIComponent(
+              cacheProviderId
+            )}!${resourcePathWithQuery}`;
             const stringifiedRequest = JSON.stringify(
               this.utils.contextify(this.context || this.rootContext, request)
             );
 
+            const importCss =
+              cssImport === 'import'
+                ? `import ${stringifiedRequest};`
+                : `require(${stringifiedRequest});`;
+
             this.callback(
               null,
-              `${result.code}\n\nrequire(${stringifiedRequest});`,
+              `${result.code}\n\n${importCss}`,
               result.sourceMap ?? undefined
             );
           } catch (err) {
