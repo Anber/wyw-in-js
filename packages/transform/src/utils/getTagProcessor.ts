@@ -250,10 +250,12 @@ function getBuilderForIdentifier(
     isPure: boolean
   ) => {
     mutate(prev, (p) => {
-      p.replaceWith(
-        typeof replacement === 'function' ? replacement(p) : replacement
-      );
-      if (isPure) {
+      const next =
+        typeof replacement === 'function' ? replacement(p) : replacement;
+
+      p.replaceWith(next);
+
+      if (isPure && (p.isCallExpression() || p.isNewExpression())) {
         p.addComment('leading', '#__PURE__');
       }
     });
