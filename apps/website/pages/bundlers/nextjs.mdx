@@ -1,0 +1,52 @@
+# Usage with Next.js
+
+Next.js integration for WyW is provided via `@wyw-in-js/nextjs` (webpack-based builds).
+
+### Installation
+
+```sh
+# npm
+npm i -D @wyw-in-js/nextjs
+# yarn
+yarn add --dev @wyw-in-js/nextjs
+# pnpm
+pnpm add -D @wyw-in-js/nextjs
+# bun
+bun add -d @wyw-in-js/nextjs
+```
+
+### Configuration
+
+```js
+// next.config.js
+const { withWyw } = require('@wyw-in-js/nextjs');
+
+module.exports = withWyw({
+  // your Next config
+});
+```
+
+### Customizing the loader
+
+Pass `loaderOptions` through to `@wyw-in-js/webpack-loader`:
+
+```js
+// next.config.js
+const { withWyw } = require('@wyw-in-js/nextjs');
+
+module.exports = withWyw(
+  {
+    reactStrictMode: true,
+  },
+  {
+    loaderOptions: {
+      // see /bundlers/webpack for common loader options
+    },
+  }
+);
+```
+
+### Notes
+
+- The plugin emits styles as `*.wyw-in-js.module.css` so imports are allowed from any module.
+- This is webpack integration; it does not apply to Turbopack.
