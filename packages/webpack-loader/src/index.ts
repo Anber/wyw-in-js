@@ -5,6 +5,7 @@
  */
 
 import path from 'path';
+import crypto from 'crypto';
 
 import type { RawSourceMap } from 'source-map';
 import type { RawLoaderDefinitionFunction } from 'webpack';
@@ -32,6 +33,9 @@ const stripQueryAndHash = (request: string) => {
 
   return request.slice(0, Math.min(queryIdx, hashIdx));
 };
+
+const hashText = (text: string): string =>
+  crypto.createHash('sha256').update(text).digest('hex').slice(0, 12);
 
 export type LoaderOptions = {
   cacheProvider?: string | ICache;
@@ -126,22 +130,22 @@ const webpack5Loader: Loader = function webpack5LoaderPlugin(
   transform(transformServices, content.toString(), asyncResolve)
     .then(
       async (result: Result) => {
-        if (result.cssText) {
-          let { cssText } = result;
+        try {
+          if (result.cssText) {
+            let { cssText } = result;
 
-          if (sourceMap) {
-            cssText += `/*# sourceMappingURL=data:application/json;base64,${Buffer.from(
-              result.cssSourceMapText || ''
-            ).toString('base64')}*/`;
-          }
+            if (sourceMap) {
+              cssText += `/*# sourceMappingURL=data:application/json;base64,${Buffer.from(
+                result.cssSourceMapText || ''
+              ).toString('base64')}*/`;
+            }
 
-          await Promise.all(
-            result.dependencies?.map((dep) =>
-              asyncResolve(dep, this.resourcePath)
-            ) ?? []
-          );
+            await Promise.all(
+              result.dependencies?.map((dep) =>
+                asyncResolve(dep, this.resourcePath)
+              ) ?? []
+            );
 
-          try {
             const cacheInstance = await getCacheInstance(cacheProvider);
             const cacheProviderId =
               cacheProvider && typeof cacheProvider === 'object'
@@ -155,9 +159,17 @@ const webpack5Loader: Loader = function webpack5LoaderPlugin(
               this.getDependencies()
             );
 
-            const resourcePathWithQuery = `${
-              this.resourcePath
-            }?wyw=${encodeURIComponent(extension.replace(/^\./, ''))}`;
+            const wywQuery = [
+              `wyw=${encodeURIComponent(extension.replace(/^\./, ''))}`,
+            ];
+
+            if (this.hot) {
+              wywQuery.push(`v=${encodeURIComponent(hashText(cssText))}`);
+            }
+
+            const resourcePathWithQuery = `${this.resourcePath}?${wywQuery.join(
+              '&'
+            )}`;
 
             const request = `${outputFileName}!=!${outputCssLoader}?cacheProvider=${encodeURIComponent(
               typeof cacheProvider === 'string' ? cacheProvider : ''
@@ -178,18 +190,22 @@ const webpack5Loader: Loader = function webpack5LoaderPlugin(
               `${result.code}\n\n${importCss}`,
               result.sourceMap ?? undefined
             );
-          } catch (err) {
-            this.callback(err as Error);
+
+            return;
           }
 
-          return;
+          this.callback(null, result.code, result.sourceMap ?? undefined);
+        } catch (err) {
+          this.callback(err as Error);
         }
-
-        this.callback(null, result.code, result.sourceMap ?? undefined);
       },
-      (err: Error) => this.callback(err)
+      (err: Error) => {
+        this.callback(err);
+      }
     )
-    .catch((err: Error) => this.callback(err));
+    .catch((err: Error) => {
+      this.callback(err);
+    });
 };
 
 export default webpack5Loader;
