@@ -1,25 +1,20 @@
 {
-  "name": "@wyw-in-js/nextjs",
+  "name": "@wyw-in-js/turbopack-loader",
   "version": "0.8.1",
   "dependencies": {
-    "@wyw-in-js/turbopack-loader": "workspace:*",
-    "@wyw-in-js/webpack-loader": "workspace:*"
+    "@wyw-in-js/shared": "workspace:*",
+    "@wyw-in-js/transform": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^16.18.55",
     "@wyw-in-js/babel-config": "workspace:*",
     "@wyw-in-js/eslint-config": "workspace:*",
     "@wyw-in-js/ts-config": "workspace:*",
-    "next": ">=13.0.0",
+    "source-map": "^0.7.4",
     "webpack": "^5.76.0"
   },
   "engines": {
     "node": ">=16.0.0"
-  },
-  "exports": {
-    "import": "./esm/index.mjs",
-    "require": "./lib/index.js",
-    "types": "./types/index.d.ts"
   },
   "files": [
     "esm/",
@@ -28,16 +23,12 @@
   ],
   "license": "MIT",
   "main": "lib/index.js",
-  "module": "esm/index.mjs",
-  "peerDependencies": {
-    "next": ">=13.0.0",
-    "webpack": "^5.76.0"
-  },
+  "module": "esm/index.js",
   "publishConfig": {
     "access": "public"
   },
   "scripts": {
-    "build:esm": "babel src --out-dir esm --out-file-extension .mjs --extensions '.js,.jsx,.ts,.tsx' --source-maps --delete-dir-on-start",
+    "build:esm": "babel src --out-dir esm --extensions '.js,.jsx,.ts,.tsx' --source-maps --delete-dir-on-start",
     "build:lib": "cross-env NODE_ENV=legacy babel src --out-dir lib --extensions '.js,.jsx,.ts,.tsx' --source-maps --delete-dir-on-start",
     "build:types": "tsc --project ./tsconfig.lib.json --baseUrl . --rootDir ./src",
     "lint": "eslint --ext .js,.ts .",
@@ -45,3 +36,4 @@
   },
   "types": "types/index.d.ts"
 }
+

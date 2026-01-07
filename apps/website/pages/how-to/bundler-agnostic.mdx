@@ -1,0 +1,48 @@
+# Bundler-agnostic extraction with `@wyw-in-js/cli`
+
+If your bundler does not support WyW integration (or you want to avoid bundler-specific loader hooks), you can run WyW as
+an explicit precompile/extraction step.
+
+This approach:
+
+- runs `@wyw-in-js/transform` outside of the bundler,
+- extracts CSS into standalone `.css` files,
+- optionally injects `import`/`require` statements into the compiled JS output.
+
+## CLI usage
+
+Install the CLI:
+
+```sh
+# npm
+npm i -D @wyw-in-js/cli
+# yarn
+yarn add --dev @wyw-in-js/cli
+# pnpm
+pnpm add -D @wyw-in-js/cli
+# bun
+bun add -d @wyw-in-js/cli
+```
+
+Typical flow:
+
+1) Compile your sources to an output directory (for example `dist/`).
+
+2) Run extraction for the original source files, and inject CSS imports into the compiled output:
+
+```sh
+wyw-in-js \
+  --config ./wyw-in-js.config.js \
+  --source-root ./src \
+  --out-dir ./dist/wyw-css \
+  --insert-css-requires ./dist \
+  --modules esnext \
+  --transform \
+  "src/**/*.{ts,tsx,js,jsx}"
+```
+
+Notes:
+
+- CLI options must be filesystem paths + plain values; use `--config` for advanced configuration.
+- Keep generated output out of Git (for example `dist/` or whatever directory you choose).
+- Avoid transforming `node_modules` (it is slow and usually unnecessary).
