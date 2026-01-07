@@ -9,6 +9,7 @@ esm
 lib
 tsconfig.tsbuildinfo
 types
+**/*.wyw-in-js.module.css
 
 # Rust related
 

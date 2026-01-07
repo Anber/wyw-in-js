@@ -3,6 +3,61 @@ import type { Configuration, RuleSetRule } from 'webpack';
 import { withWyw } from '../index';
 
 describe('withWyw', () => {
+  it('injects Turbopack rules (turbopack.rules or experimental.turbo.rules)', () => {
+    const nextConfig = withWyw();
+
+    const rules =
+      (nextConfig as any).turbopack?.rules ??
+      (nextConfig as any).experimental?.turbo?.rules;
+
+    expect(rules).toBeTruthy();
+    expect(Object.keys(rules)).toContain('*.ts');
+
+    const tsRule = rules['*.ts'];
+
+    if (Array.isArray(tsRule)) {
+      expect(tsRule[0].loader).toContain('turbopack-loader');
+    } else {
+      expect(tsRule.loaders[0].loader).toContain('turbopack-loader');
+    }
+  });
+
+  it('lets user-defined Turbopack rule keys win', () => {
+    const nextConfig = withWyw(
+      {
+        experimental: {
+          turbo: {
+            rules: {
+              '*.ts': ['custom-loader'],
+            },
+          },
+        },
+      } as any,
+      {}
+    );
+
+    const rules = (nextConfig as any).experimental?.turbo?.rules;
+    expect(rules['*.ts']).toEqual(['custom-loader']);
+  });
+
+  it('merges into turbopack.rules when turbopack config is present', () => {
+    const nextConfig = withWyw(
+      {
+        turbopack: {
+          rules: {
+            '*.ts': ['custom-loader'],
+          },
+        },
+      } as any,
+      {}
+    );
+
+    const rules = (nextConfig as any).turbopack?.rules;
+    expect(rules).toBeTruthy();
+    expect(rules['*.ts']).toEqual(['custom-loader']);
+    expect(rules['*.tsx']).toBeTruthy();
+  });
+
   it('injects @wyw-in-js/webpack-loader into Next transpile rules', () => {
     const config: Configuration = {
       module: {

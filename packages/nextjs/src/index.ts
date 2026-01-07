@@ -1,12 +1,26 @@
+import fs from 'fs';
+import path from 'path';
+
 import type { LoaderOptions as WywWebpackLoaderOptions } from '@wyw-in-js/webpack-loader';
 import type { NextConfig } from 'next';
 import type { Configuration, RuleSetRule, RuleSetUseItem } from 'webpack';
 
 const DEFAULT_EXTENSION = '.wyw-in-js.module.css';
 
+const DEFAULT_TURBO_RULE_KEYS = ['*.js', '*.jsx', '*.ts', '*.tsx'];
+
+const PLACEHOLDER_EXTENSIONS = new Set(['.js', '.jsx', '.ts', '.tsx']);
+const PLACEHOLDER_IGNORED_DIRS = new Set([
+  '.git',
+  '.next',
+  '.turbo',
+  'node_modules',
+]);
+
 export type WywNextPluginOptions = {
   loaderOptions?: Omit<WywWebpackLoaderOptions, 'extension' | 'sourceMap'> &
     Partial<Pick<WywWebpackLoaderOptions, 'extension' | 'sourceMap'>>;
+  turbopackLoaderOptions?: Record<string, unknown>;
 };
 
 type NextWebpackConfigFn = NonNullable<NextConfig['webpack']>;
@@ -99,6 +113,47 @@ function traverseRules(rules: unknown[], visitor: (rule: RuleSetRule) => void) {
 
 function escapeRegExp(value: string) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (!isObject(value)) return false;
+  const proto = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
+}
+
+function assertNoFunctions(value: unknown, name: string) {
+  const queue: Array<{ path: string; value: unknown }> = [
+    { path: name, value },
+  ];
+  const seen = new Set<unknown>();
+
+  while (queue.length) {
+    const current = queue.shift()!;
+
+    if (typeof current.value === 'function') {
+      throw new Error(
+        `${current.path} must be JSON-serializable (functions are not supported in Turbopack loader options). Use "configFile" to pass non-JSON config.`
+      );
+    }
+
+    if (current.value === null) {
+      // skip
+    } else if (Array.isArray(current.value)) {
+      if (!seen.has(current.value)) {
+        seen.add(current.value);
+        current.value.forEach((item, idx) =>
+          queue.push({ path: `${current.path}[${idx}]`, value: item })
+        );
+      }
+    } else if (isPlainObject(current.value)) {
+      if (!seen.has(current.value)) {
+        seen.add(current.value);
+        Object.entries(current.value).forEach(([key, item]) =>
+          queue.push({ path: `${current.path}.${key}`, value: item })
+        );
+      }
+    }
+  }
 }
 
 function createWywCssModuleRule(
@@ -211,7 +266,9 @@ function injectWywLoader(
   wywNext: WywNextPluginOptions
 ) {
   const loader = require.resolve('@wyw-in-js/webpack-loader');
-  const nextBabelPreset = require.resolve('next/babel');
+  const nextBabelPreset = require.resolve('next/babel', {
+    paths: [process.cwd()],
+  });
 
   const extension = wywNext.loaderOptions?.extension ?? DEFAULT_EXTENSION;
   const babelOptions = wywNext.loaderOptions?.babelOptions ?? {
@@ -258,6 +315,172 @@ function injectWywLoader(
   ensureWywCssModuleRules(config, extension);
 }
 
+function ensureTurbopackCssPlaceholders(projectRoot: string) {
+  const queue: string[] = [projectRoot];
+
+  while (queue.length) {
+    const dir = queue.pop()!;
+    let entries: fs.Dirent[];
+
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      entries = [];
+    }
+
+    for (const entry of entries) {
+      if (entry.name !== '.' && entry.name !== '..') {
+        const entryPath = path.join(dir, entry.name);
+
+        if (entry.isDirectory()) {
+          if (!PLACEHOLDER_IGNORED_DIRS.has(entry.name)) {
+            queue.push(entryPath);
+          }
+        } else if (entry.isFile()) {
+          const shouldIgnore =
+            entry.name.startsWith('middleware.') ||
+            entry.name.endsWith('.d.ts');
+
+          if (!shouldIgnore) {
+            const ext = path.extname(entry.name);
+            if (PLACEHOLDER_EXTENSIONS.has(ext)) {
+              const baseName = path.basename(entry.name, ext);
+              const cssFilePath = path.join(
+                path.dirname(entryPath),
+                `${baseName}${DEFAULT_EXTENSION}`
+              );
+
+              try {
+                fs.writeFileSync(cssFilePath, '', { flag: 'wx' });
+              } catch (err) {
+                if ((err as NodeJS.ErrnoException).code !== 'EEXIST') {
+                  throw err;
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+function shouldUseTurbopackConfig(nextConfig: NextConfig) {
+  const explicit = (nextConfig as unknown as Record<string, unknown>).turbopack;
+  if (typeof explicit !== 'undefined') {
+    return true;
+  }
+
+  try {
+    const pkgPath = require.resolve('next/package.json', {
+      paths: [process.cwd()],
+    });
+    const pkg = require(pkgPath) as { version?: unknown };
+    const version = typeof pkg.version === 'string' ? pkg.version : '';
+    const major = Number.parseInt(version.split('.')[0] ?? '', 10);
+    return Number.isFinite(major) && major >= 16;
+  } catch {
+    return false;
+  }
+}
+
+function injectWywTurbopackRules(
+  nextConfig: NextConfig,
+  wywNext: WywNextPluginOptions
+): NextConfig {
+  const loader = require.resolve('@wyw-in-js/turbopack-loader');
+  const nextBabelPreset = require.resolve('next/babel', {
+    paths: [process.cwd()],
+  });
+
+  const userOptions = wywNext.turbopackLoaderOptions ?? {};
+
+  assertNoFunctions(userOptions, 'turbopackLoaderOptions');
+
+  const loaderOptions = {
+    babelOptions: { presets: [nextBabelPreset] },
+    sourceMap: process.env.NODE_ENV !== 'production',
+    ...userOptions,
+  };
+
+  const useTurbopackConfig = shouldUseTurbopackConfig(nextConfig);
+
+  const isNextBuild = process.argv.includes('build');
+  const isWebpackBuild = process.argv.includes('--webpack');
+
+  if (
+    useTurbopackConfig &&
+    process.env.NODE_ENV === 'production' &&
+    isNextBuild &&
+    !isWebpackBuild
+  ) {
+    ensureTurbopackCssPlaceholders(process.cwd());
+  }
+
+  const ruleValue = useTurbopackConfig
+    ? {
+        loaders: [{ loader, options: loaderOptions }],
+        condition: {
+          all: [
+            { not: 'foreign' },
+            { not: { path: /(?:^|[\\/])middleware\.[jt]sx?$/ } },
+          ],
+        },
+      }
+    : [{ loader, options: loaderOptions }];
+
+  const wywRules = Object.fromEntries(
+    DEFAULT_TURBO_RULE_KEYS.map((key) => [key, ruleValue])
+  );
+
+  if (useTurbopackConfig) {
+    const turbopackConfig = (nextConfig as unknown as Record<string, unknown>)
+      .turbopack;
+    const userTurbopack = isPlainObject(turbopackConfig) ? turbopackConfig : {};
+
+    const userRules = isPlainObject(userTurbopack.rules)
+      ? (userTurbopack.rules as Record<string, unknown>)
+      : {};
+
+    return {
+      ...nextConfig,
+      turbopack: {
+        ...userTurbopack,
+        rules: {
+          ...wywRules,
+          ...userRules,
+        },
+      },
+    } as NextConfig;
+  }
+
+  const userExperimental = isPlainObject(nextConfig.experimental)
+    ? (nextConfig.experimental as Record<string, unknown>)
+    : {};
+
+  const userTurbo = isPlainObject(userExperimental.turbo)
+    ? (userExperimental.turbo as Record<string, unknown>)
+    : {};
+
+  const userRules = isPlainObject(userTurbo.rules)
+    ? (userTurbo.rules as Record<string, unknown>)
+    : {};
+
+  return {
+    ...nextConfig,
+    experimental: {
+      ...userExperimental,
+      turbo: {
+        ...userTurbo,
+        rules: {
+          ...wywRules,
+          ...userRules,
+        },
+      },
+    },
+  } as NextConfig;
+}
+
 export function withWyw(
   nextConfig: NextConfig = {},
   wywNext: WywNextPluginOptions = {}
@@ -265,7 +488,7 @@ export function withWyw(
   const userWebpack = nextConfig.webpack;
 
   return {
-    ...nextConfig,
+    ...injectWywTurbopackRules(nextConfig, wywNext),
     webpack(config: Configuration, options: NextWebpackOptions) {
       const resolvedConfig =
         typeof userWebpack === 'function'

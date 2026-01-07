@@ -2,7 +2,10 @@
 
 Next.js integration for WyW via `@wyw-in-js/webpack-loader`.
 
-This package targets webpack-based Next.js builds (`next dev` / `next build`) and does not apply to Turbopack.
+This package supports:
+
+- Webpack pipeline (`next dev --webpack`, `next build`) via `@wyw-in-js/webpack-loader`.
+- Turbopack pipeline (`next dev`) via `turbopack.rules` and `@wyw-in-js/turbopack-loader`.
 
 ## Installation
 
@@ -32,7 +35,7 @@ By default, the plugin:
 
 - injects `@wyw-in-js/webpack-loader` into Next's JS/TS pipeline;
 - emits styles as `*.wyw-in-js.module.css` so imports are allowed from any module;
-- ensures generated class names are not re-hashed by Next's CSS Modules pipeline.
+- keeps generated class names stable under Next CSS Modules (selectors are emitted as `:global(...)`).
 - defaults `babelOptions` to `presets: ['next/babel']` so TS/JSX parsing works out of the box.
 
 ## Options
@@ -42,3 +45,6 @@ import type { WywNextPluginOptions } from '@wyw-in-js/nextjs';
 ```
 
 Use `loaderOptions` to pass options through to `@wyw-in-js/webpack-loader`.
+
+Use `turbopackLoaderOptions` to pass JSON-serializable options to `@wyw-in-js/turbopack-loader` (use `configFile` for
+function-based config).
