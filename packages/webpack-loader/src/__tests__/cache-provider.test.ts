@@ -7,6 +7,10 @@ jest.mock('@wyw-in-js/shared', () => ({
 
 jest.mock('@wyw-in-js/transform', () => ({
   __esModule: true,
+  createFileReporter: () => ({
+    emitter: { single: jest.fn() },
+    onDone: jest.fn(),
+  }),
   TransformCacheCollection: function TransformCacheCollection() {},
   transform: (...args: unknown[]) => transformMock(...args),
 }));

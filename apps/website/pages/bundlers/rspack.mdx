@@ -1,0 +1,51 @@
+# Usage with Rspack / Rsbuild
+
+Rspack-based bundlers (including Rsbuild) can use WyW-in-JS through the webpack loader compatibility layer.
+
+### Installation
+
+```sh
+# npm
+npm i -D @wyw-in-js/webpack-loader
+# yarn
+yarn add --dev @wyw-in-js/webpack-loader
+# pnpm
+pnpm add -D @wyw-in-js/webpack-loader
+# bun
+bun add -d @wyw-in-js/webpack-loader
+```
+
+### Rsbuild configuration
+
+```ts
+import { defineConfig } from '@rsbuild/core';
+import { pluginReact } from '@rsbuild/plugin-react';
+import { pluginBabel } from '@rsbuild/plugin-babel';
+
+export default defineConfig({
+  plugins: [
+    pluginReact(),
+    pluginBabel({
+      babelLoaderOptions: (_, { addPresets }) => {
+        addPresets([['@babel/preset-react', { runtime: 'automatic' }]]);
+      },
+    }),
+  ],
+  tools: {
+    bundlerChain: (chain, { CHAIN_ID }) => {
+      chain.module
+        .rule(CHAIN_ID.RULE.JS)
+        .use(CHAIN_ID.USE.SWC)
+        .after(CHAIN_ID.USE.BABEL)
+        .loader('@wyw-in-js/webpack-loader');
+    },
+  },
+});
+```
+
+### HMR note
+
+Some Rspack setups may rebuild the generated CSS module before the JS loader finishes updating the in-memory CSS cache, which can make style updates appear “one edit behind”.
+
+WyW-in-JS avoids this by adding an internal version query to the injected CSS import when HMR is enabled, so the CSS module is invalidated on every CSS change.
+
