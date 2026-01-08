@@ -32,4 +32,16 @@ export default {
 };
 ```
 
+### Concurrency (tsdown/rolldown)
+
+Some Rollup-compatible bundlers may execute plugin hooks concurrently (e.g. tsdown/rolldown). To keep evaluation deterministic, `@wyw-in-js/rollup` serializes `transform()` calls by default.
+
+To opt out, pass:
+
+```js
+wyw({
+  serializeTransform: false,
+});
+```
+
 To get details about supported options by the plugin, please check [documentation](https://wyw-in-js.dev/bundlers/rollup).
