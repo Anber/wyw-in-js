@@ -29,6 +29,19 @@ export default defineConfig({
 });
 ```
 
+## Transforming libraries in `node_modules`
+
+By default, the Vite plugin skips transforming files from `node_modules` for performance.
+
+To transform a specific library, enable `transformLibraries` and narrow `include`/`exclude`:
+
+```js
+wyw({
+  transformLibraries: true,
+  include: [/node_modules\\/(?:@fluentui)\\//],
+});
+```
+
 ## `import.meta.env` during evaluation
 
 WyW-in-JS evaluates part of your code at build time to extract styles. The Vite plugin injects Vite's `import.meta.env` values

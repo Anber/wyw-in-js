@@ -40,6 +40,7 @@ type VitePluginOptions = {
   sourceMap?: boolean;
   ssrDevCss?: boolean;
   ssrDevCssPath?: string;
+  transformLibraries?: boolean;
 } & Partial<PluginOptions>;
 
 type OverrideContext = NonNullable<PluginOptions['overrideContext']>;
@@ -56,6 +57,7 @@ export default function wywInJS({
   preprocessor,
   ssrDevCss,
   ssrDevCssPath,
+  transformLibraries,
   ...rest
 }: VitePluginOptions = {}): Plugin {
   const filter = createFilter(include, exclude);
@@ -243,7 +245,11 @@ export default function wywInJS({
       const [id] = url.split('?', 1);
 
       // Do not transform ignored and generated files
-      if (url.includes('node_modules') || !filter(url) || id in cssLookup)
+      if (
+        (!transformLibraries && url.includes('node_modules')) ||
+        !filter(url) ||
+        id in cssLookup
+      )
         return;
 
       const log = logger.extend('vite').extend(getFileIdx(id));

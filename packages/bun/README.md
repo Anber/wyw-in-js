@@ -27,4 +27,17 @@ await Bun.build({
 });
 ```
 
+## Transforming libraries in `node_modules`
+
+By default, the Bun plugin skips transforming files from `node_modules` for performance.
+
+To transform a specific library, enable `transformLibraries` and narrow `include`/`exclude`:
+
+```js
+wyw({
+  transformLibraries: true,
+  include: [/node_modules\\/(?:@fluentui)\\//],
+});
+```
+
 To get details about supported options by the plugin, please check [documentation](https://wyw-in-js.dev/bundlers/bun).
