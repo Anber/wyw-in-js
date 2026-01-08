@@ -87,3 +87,6 @@ jobs:
 
       - name: Node smoke
         run: bun run --filter @wyw-in-js/e2e-vite test
+
+      - name: Parcel smoke
+        run: bun run --filter @wyw-in-js/e2e-parcel test

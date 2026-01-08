@@ -1,0 +1,17 @@
+{
+  "name": "@wyw-in-js/e2e-parcel",
+  "version": "0.8.1",
+  "dependencies": {
+    "@wyw-in-js/template-tag-syntax": "workspace:*"
+  },
+  "devDependencies": {
+    "@parcel/config-default": "^2.16.3",
+    "@wyw-in-js/parcel-transformer": "workspace:*",
+    "parcel": "^2.16.3",
+    "picocolors": "^1.0.0"
+  },
+  "private": true,
+  "scripts": {
+    "test": "node ./scripts/test.cjs"
+  }
+}

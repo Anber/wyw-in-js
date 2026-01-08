@@ -1,0 +1,46 @@
+{
+  "name": "@wyw-in-js/parcel-transformer",
+  "version": "0.8.1",
+  "dependencies": {
+    "@parcel/plugin": "^2.16.3",
+    "@parcel/source-map": "^2.1.1",
+    "@wyw-in-js/shared": "workspace:*",
+    "@wyw-in-js/transform": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^16.18.55",
+    "@wyw-in-js/babel-config": "workspace:*",
+    "@wyw-in-js/eslint-config": "workspace:*",
+    "@wyw-in-js/ts-config": "workspace:*"
+  },
+  "engines": {
+    "node": ">=16.0.0",
+    "parcel": "^2.0.0"
+  },
+  "exports": {
+    "import": "./esm/index.mjs",
+    "require": "./lib/index.js",
+    "types": "./types/index.d.ts"
+  },
+  "files": [
+    "esm/",
+    "lib/",
+    "types/"
+  ],
+  "license": "MIT",
+  "main": "lib/index.js",
+  "module": "esm/index.mjs",
+  "peerDependencies": {
+    "parcel": ">=2.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build:esm": "babel src --out-dir esm --out-file-extension .mjs --extensions '.js,.jsx,.ts,.tsx' --source-maps --delete-dir-on-start",
+    "build:lib": "cross-env NODE_ENV=legacy babel src --out-dir lib --extensions '.js,.jsx,.ts,.tsx' --source-maps --delete-dir-on-start",
+    "build:types": "tsc --project ./tsconfig.lib.json --baseUrl . --rootDir ./src",
+    "lint": "eslint --ext .js,.ts ."
+  },
+  "types": "types/index.d.ts"
+}
