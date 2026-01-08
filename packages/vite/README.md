@@ -52,6 +52,30 @@ wyw({
 });
 ```
 
+## Preserving generated CSS paths
+
+When `build.rollupOptions.output.preserveModules` is enabled, older Rollup versions (used by Vite 3/4) flatten asset names
+and drop directories for WyW-generated `*.wyw-in-js.css` files.
+
+To preserve the original directory layout for WyW CSS assets, enable `preserveCssPaths`:
+
+```js
+import { defineConfig } from 'vite';
+import wyw from '@wyw-in-js/vite';
+
+export default defineConfig({
+  plugins: [wyw({ preserveCssPaths: true })],
+  build: {
+    rollupOptions: {
+      output: {
+        preserveModules: true,
+        preserveModulesRoot: 'src',
+      },
+    },
+  },
+});
+```
+
 ## `import.meta.env` during evaluation
 
 WyW-in-JS evaluates part of your code at build time to extract styles. The Vite plugin injects Vite's `import.meta.env` values
