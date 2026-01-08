@@ -37,6 +37,7 @@ type VitePluginOptions = {
   keepComments?: boolean | RegExp;
   prefixer?: boolean;
   preprocessor?: Preprocessor;
+  preserveCssPaths?: boolean;
   sourceMap?: boolean;
   ssrDevCss?: boolean;
   ssrDevCssPath?: string;
@@ -47,11 +48,157 @@ type OverrideContext = NonNullable<PluginOptions['overrideContext']>;
 
 export { Plugin };
 
+type AssetInfoLike = { name?: unknown };
+type AssetFileNames = string | ((assetInfo: AssetInfoLike) => string);
+type RollupOutputLike = {
+  assetFileNames?: AssetFileNames;
+  preserveModules?: boolean;
+  preserveModulesRoot?: unknown;
+} & Record<string, unknown>;
+
+const isWindowsAbsolutePath = (value: string): boolean =>
+  /^[a-zA-Z]:[\\/]/.test(value);
+
+const normalizeToPosix = (value: string): string =>
+  value.replace(/\\/g, path.posix.sep);
+
+const isInside = (childPath: string, parentPath: string): boolean => {
+  const rel = path.relative(parentPath, childPath);
+  return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
+};
+
+const isWywCssAssetName = (value: string): boolean =>
+  value.endsWith('.wyw-in-js.css');
+
+const normalizeAssetRelativePath = (value: string): string | null => {
+  const normalized = path.posix.normalize(
+    normalizeToPosix(value).replace(/^\/+/, '')
+  );
+  if (normalized.startsWith('..') || path.posix.isAbsolute(normalized)) {
+    return null;
+  }
+
+  return normalized;
+};
+
+const stripExtension = (value: string): string => {
+  const ext = path.posix.extname(value);
+  return ext ? value.slice(0, -ext.length) : value;
+};
+
+const getWywCssAssetFileNames = (
+  resolvedConfig: ResolvedConfig,
+  output: RollupOutputLike,
+  originalAssetFileNames: AssetFileNames
+): ((assetInfo: AssetInfoLike) => string) | null => {
+  if (!output.preserveModules) return null;
+
+  const rootDir = resolvedConfig.root;
+
+  const preserveModulesRootValue = output.preserveModulesRoot;
+  let preserveModulesRootAbs: string | null = null;
+  if (typeof preserveModulesRootValue === 'string') {
+    preserveModulesRootAbs = path.isAbsolute(preserveModulesRootValue)
+      ? preserveModulesRootValue
+      : path.resolve(rootDir, preserveModulesRootValue);
+  }
+
+  const preserveModulesRootRel =
+    preserveModulesRootAbs && isInside(preserveModulesRootAbs, rootDir)
+      ? normalizeToPosix(path.relative(rootDir, preserveModulesRootAbs))
+      : null;
+
+  return (assetInfo) => {
+    const template =
+      typeof originalAssetFileNames === 'function'
+        ? originalAssetFileNames(assetInfo)
+        : originalAssetFileNames;
+
+    const assetName = assetInfo?.name;
+    if (typeof assetName !== 'string' || !isWywCssAssetName(assetName)) {
+      return template;
+    }
+
+    if (!template.includes('[')) {
+      return template;
+    }
+
+    let relativePath: string | null = null;
+
+    const assetNameNormalized = normalizeToPosix(assetName);
+
+    if (
+      path.isAbsolute(assetName) ||
+      isWindowsAbsolutePath(assetNameNormalized)
+    ) {
+      const preserveRel =
+        preserveModulesRootAbs && isInside(assetName, preserveModulesRootAbs)
+          ? path.relative(preserveModulesRootAbs, assetName)
+          : null;
+
+      if (
+        preserveRel &&
+        !path.isAbsolute(preserveRel) &&
+        !preserveRel.startsWith('..')
+      ) {
+        relativePath = preserveRel;
+      } else if (isInside(assetName, rootDir)) {
+        relativePath = path.relative(rootDir, assetName);
+      }
+    } else if (
+      preserveModulesRootRel &&
+      assetNameNormalized.startsWith(`${preserveModulesRootRel}/`)
+    ) {
+      relativePath = assetNameNormalized.slice(
+        preserveModulesRootRel.length + 1
+      );
+    } else {
+      relativePath = assetNameNormalized;
+    }
+
+    const normalized = relativePath
+      ? normalizeAssetRelativePath(relativePath)
+      : null;
+    if (!normalized) {
+      return template;
+    }
+
+    const withoutExt = stripExtension(normalized);
+
+    if (template.includes('[name]')) {
+      const dir = path.posix.dirname(withoutExt);
+      if (dir === '.' || dir === '') {
+        return template;
+      }
+
+      return template.replace(/\[name\]/g, `${dir}/[name]`);
+    }
+
+    const dir = path.posix.dirname(withoutExt);
+    if (dir === '.' || dir === '') {
+      return template;
+    }
+
+    const idx = template.indexOf('[');
+    if (idx < 0) {
+      return template;
+    }
+
+    const prefix = template.slice(0, idx);
+    if (prefix !== '' && !prefix.endsWith('/')) {
+      return template;
+    }
+
+    return `${prefix}${dir}/${template.slice(idx)}`;
+  };
+};
+
 export default function wywInJS({
   debug,
   include,
   exclude,
   sourceMap,
+  preserveCssPaths,
   keepComments,
   prefixer,
   preprocessor,
@@ -132,6 +279,34 @@ export default function wywInJS({
     },
     configResolved(resolvedConfig: ResolvedConfig) {
       config = resolvedConfig;
+
+      if (preserveCssPaths && config.command === 'build') {
+        const outputs = config.build.rollupOptions.output;
+        let outputEntries: unknown[] = [];
+        if (Array.isArray(outputs)) {
+          outputEntries = outputs;
+        } else if (outputs) {
+          outputEntries = [outputs];
+        }
+
+        outputEntries.forEach((entry) => {
+          if (!entry || typeof entry !== 'object') return;
+
+          const output = entry as RollupOutputLike;
+          if (!output.preserveModules) return;
+
+          const template: AssetFileNames =
+            output.assetFileNames ??
+            `${config.build.assetsDir ?? 'assets'}/[name].[hash].[ext]`;
+
+          const assetFileNames = getWywCssAssetFileNames(
+            config,
+            output,
+            template
+          );
+          if (assetFileNames) output.assetFileNames = assetFileNames;
+        });
+      }
 
       const envPrefix = config.envPrefix ?? 'VITE_';
       const envDir =
