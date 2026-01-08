@@ -30,6 +30,7 @@ type EsbuildPluginOptions = {
   prefixer?: boolean;
   preprocessor?: Preprocessor;
   sourceMap?: boolean;
+  transformLibraries?: boolean;
 } & Partial<PluginOptions>;
 
 const supportedFilterFlags = new Set(['i', 'm', 's']);
@@ -44,6 +45,7 @@ export default function wywInJS({
   preprocessor,
   esbuildOptions,
   filter = /\.(js|jsx|ts|tsx)$/,
+  transformLibraries,
   ...rest
 }: EsbuildPluginOptions = {}): Plugin {
   let options = esbuildOptions;
@@ -142,7 +144,7 @@ export default function wywInJS({
         const { ext, name: filename } = parse(args.path);
         const loader = ext.replace(/^\./, '') as Loader;
 
-        if (nodeModulesRegex.test(args.path)) {
+        if (!transformLibraries && nodeModulesRegex.test(args.path)) {
           return {
             loader,
             contents: rawCode,

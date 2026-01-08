@@ -1,0 +1,90 @@
+const transformMock = jest.fn();
+const filterMock = jest.fn();
+
+const createLogger = () => {
+  const log = (() => undefined) as unknown as ((...args: unknown[]) => void) & {
+    extend: (...args: unknown[]) => unknown;
+  };
+
+  log.extend = () => log;
+  return log;
+};
+
+jest.mock('@wyw-in-js/shared', () => ({
+  __esModule: true,
+  logger: createLogger(),
+  syncResolve: jest.fn(),
+}));
+
+jest.mock('vite', () => ({
+  __esModule: true,
+  createFilter: (...args: unknown[]) => filterMock(...args),
+  loadEnv: jest.fn(() => ({})),
+}));
+
+jest.mock('@wyw-in-js/transform', () => ({
+  __esModule: true,
+  createFileReporter: () => ({
+    emitter: { single: jest.fn() },
+    onDone: jest.fn(),
+  }),
+  getFileIdx: () => '1',
+  TransformCacheCollection: class TransformCacheCollection {},
+  transform: (...args: unknown[]) => transformMock(...args),
+}));
+
+describe('vite transformLibraries', () => {
+  beforeEach(() => {
+    transformMock.mockReset();
+    filterMock.mockReset();
+    filterMock.mockReturnValue(() => true);
+
+    transformMock.mockResolvedValue({
+      code: 'export {}',
+      sourceMap: null,
+      cssText: undefined,
+      dependencies: [],
+    });
+  });
+
+  it('skips node_modules by default even when filter matches', async () => {
+    const { default: wywInJS } = await import('../index');
+    const plugin = wywInJS();
+
+    await plugin.transform?.call(
+      { resolve: jest.fn(), warn: jest.fn() } as any,
+      'export {}',
+      '/node_modules/test-lib/index.js'
+    );
+
+    expect(transformMock).not.toHaveBeenCalled();
+  });
+
+  it('allows transforming node_modules when transformLibraries is true', async () => {
+    const { default: wywInJS } = await import('../index');
+    const plugin = wywInJS({ transformLibraries: true });
+
+    await plugin.transform?.call(
+      { resolve: jest.fn(), warn: jest.fn() } as any,
+      'export {}',
+      '/node_modules/test-lib/index.js'
+    );
+
+    expect(transformMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('still respects include/exclude filter', async () => {
+    filterMock.mockReturnValue(() => false);
+
+    const { default: wywInJS } = await import('../index');
+    const plugin = wywInJS({ transformLibraries: true });
+
+    await plugin.transform?.call(
+      { resolve: jest.fn(), warn: jest.fn() } as any,
+      'export {}',
+      '/node_modules/test-lib/index.js'
+    );
+
+    expect(transformMock).not.toHaveBeenCalled();
+  });
+});

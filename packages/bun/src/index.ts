@@ -29,6 +29,7 @@ export type BunPluginOptions = {
   prefixer?: boolean;
   preprocessor?: Preprocessor;
   sourceMap?: boolean;
+  transformLibraries?: boolean;
 } & Partial<PluginOptions>;
 
 const nodeModulesRegex = /^(?:.*[\\/])?node_modules(?:[\\/].*)?$/;
@@ -81,6 +82,7 @@ export default function wywInJS({
   exclude,
   filter = /\.[cm]?[jt]sx?$/,
   nodeModules = false,
+  transformLibraries,
   sourceMap,
   keepComments,
   prefixer,
@@ -89,6 +91,7 @@ export default function wywInJS({
 }: BunPluginOptions = {}): BunPlugin {
   const cache = new TransformCacheCollection();
   const filterFn = createFilter(include, exclude);
+  const allowNodeModules = transformLibraries ?? nodeModules;
 
   return {
     name: 'wyw-in-js',
@@ -173,7 +176,7 @@ export default function wywInJS({
           return undefined;
         }
 
-        if (!nodeModules && nodeModulesRegex.test(args.path)) {
+        if (!allowNodeModules && nodeModulesRegex.test(args.path)) {
           return undefined;
         }
 

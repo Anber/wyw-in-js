@@ -34,4 +34,17 @@ esbuild
   .catch(() => process.exit(1));
 ```
 
+## Transforming libraries in `node_modules`
+
+By default, the esbuild plugin skips transforming files from `node_modules` for performance.
+
+To transform a specific library, enable `transformLibraries` and narrow `filter`:
+
+```js
+wyw({
+  transformLibraries: true,
+  filter: /node_modules\\/(?:@fluentui)\\//,
+});
+```
+
 To get details about supported options by the plugin, please check [documentation](https://wyw-in-js.dev/bundlers/esbuild).
