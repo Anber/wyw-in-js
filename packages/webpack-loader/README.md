@@ -33,4 +33,22 @@ module.exports = {
 };
 ```
 
+## Disabling vendor prefixing
+
+Stylis adds vendor-prefixed CSS by default. To disable it (and reduce CSS size), pass `prefixer: false`:
+
+```js
+module.exports = {
+  test: /\.js$/,
+  use: [
+    {
+      loader: '@wyw-in-js/webpack-loader',
+      options: {
+        prefixer: false,
+      },
+    },
+  ],
+};
+```
+
 To get details about supported options by the plugin, please check [documentation](https://wyw-in-js.dev/bundlers/webpack).

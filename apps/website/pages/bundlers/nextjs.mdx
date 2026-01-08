@@ -46,6 +46,27 @@ module.exports = withWyw(
 );
 ```
 
+### Disabling vendor prefixing
+
+Stylis adds vendor-prefixed CSS by default. To disable it (and reduce CSS size), pass `prefixer: false`:
+
+```js
+// next.config.js
+const { withWyw } = require('@wyw-in-js/nextjs');
+
+module.exports = withWyw(
+  {},
+  {
+    loaderOptions: {
+      prefixer: false,
+    },
+    turbopackLoaderOptions: {
+      prefixer: false,
+    },
+  }
+);
+```
+
 ### Notes
 
 - The plugin emits styles as `*.wyw-in-js.module.css` so imports are allowed from any module.

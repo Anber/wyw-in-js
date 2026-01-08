@@ -59,6 +59,16 @@ may run both before esbuild and again during WyW's internal Babel stage. Prefer 
 
 This is an opt-in feature and may increase build times, so it's recommended to keep `filter` narrow.
 
+## Disabling vendor prefixing
+
+Stylis adds vendor-prefixed CSS by default. To disable it (and reduce CSS size), pass `prefixer: false`:
+
+```js
+wyw({
+  prefixer: false,
+});
+```
+
 ## Transforming libraries in `node_modules`
 
 By default, the esbuild plugin skips transforming files from `node_modules` for performance.
