@@ -34,6 +34,30 @@ If you import assets with resource queries (e.g. `./arrow.svg?svgUse`), WyW-in-J
 
 For cases where evaluated code needs a value from such imports, configure `importLoaders` in your WyW config (see `/configuration`).
 
+### Disabling vendor prefixing
+
+Stylis adds vendor-prefixed CSS by default. To disable it (and reduce CSS size), pass `prefixer: false`:
+
+```js
+module.exports = {
+  module: {
+    rules: [
+      {
+        test: /\.js/,
+        use: [
+          {
+            loader: '@wyw-in-js/webpack-loader',
+            options: {
+              prefixer: false,
+            },
+          },
+        ],
+      },
+    ],
+  },
+};
+```
+
 ### Keeping CSS comments
 
 Stylis strips CSS comments by default. To preserve them (for example, `/*rtl:ignore*/`), pass `keepComments`:

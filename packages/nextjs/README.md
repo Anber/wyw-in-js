@@ -48,3 +48,5 @@ Use `loaderOptions` to pass options through to `@wyw-in-js/webpack-loader`.
 
 Use `turbopackLoaderOptions` to pass JSON-serializable options to `@wyw-in-js/turbopack-loader` (use `configFile` for
 function-based config).
+
+To disable vendor prefixing (Stylis prefixer), set `prefixer: false` in `loaderOptions` and/or `turbopackLoaderOptions`.

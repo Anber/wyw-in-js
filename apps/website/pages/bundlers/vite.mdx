@@ -89,6 +89,17 @@ Notes:
 - The `<link>` tag is injected on each HTML transform; CSS HMR does not “re-inject” the link on the client without a
   page reload (which is fine for avoiding initial FOUC).
 
+### Disabling vendor prefixing
+
+Stylis adds vendor-prefixed CSS by default. To disable it (and reduce CSS size), pass `prefixer: false`:
+
+```js
+export default defineConfig(() => ({
+  // ...
+  plugins: [wyw({ prefixer: false })],
+}));
+```
+
 ### Keeping CSS comments
 
 Stylis strips CSS comments by default. To preserve them (for example, `/*rtl:ignore*/`), pass `keepComments`:

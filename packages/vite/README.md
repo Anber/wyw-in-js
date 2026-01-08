@@ -42,6 +42,16 @@ wyw({
 });
 ```
 
+## Disabling vendor prefixing
+
+Stylis adds vendor-prefixed CSS by default. To disable it (and reduce CSS size), pass `prefixer: false`:
+
+```js
+wyw({
+  prefixer: false,
+});
+```
+
 ## `import.meta.env` during evaluation
 
 WyW-in-JS evaluates part of your code at build time to extract styles. The Vite plugin injects Vite's `import.meta.env` values
