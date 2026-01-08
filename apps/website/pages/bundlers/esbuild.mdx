@@ -37,6 +37,29 @@ esbuild
   .catch(() => process.exit(1));
 ```
 
+### Additional Babel transformations
+
+esbuild doesn't support chaining multiple `onLoad` transforms for the same file. If your project needs extra Babel plugins
+to run before WyW evaluation (for example, plugins that operate on TS/JSX), enable `babelTransform`:
+
+```js
+wyw({
+  babelTransform: true,
+  babelOptions: {
+    plugins: [
+      // your custom Babel plugins
+    ],
+  },
+});
+```
+
+Order: `Babel(source) → esbuild.transform() → WyW transform`.
+
+Note: `babelOptions` are still used by WyW when parsing/evaluating modules. With `babelTransform: true`, the same plugins
+may run both before esbuild and again during WyW's internal Babel stage. Prefer idempotent plugins.
+
+This is opt-in and may impact performance, so keep `filter` narrow when possible.
+
 ### Transforming libraries in `node_modules`
 
 By default, the esbuild plugin skips transforming files from `node_modules` for performance.
