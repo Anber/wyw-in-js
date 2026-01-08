@@ -35,6 +35,18 @@ export default {
 };
 ```
 
+### Concurrency (tsdown/rolldown)
+
+Some Rollup-compatible bundlers may execute plugin hooks concurrently (e.g. tsdown/rolldown). To keep evaluation deterministic, `@wyw-in-js/rollup` serializes `transform()` calls by default.
+
+If you are sure your bundler runs transforms sequentially, you can opt out:
+
+```js
+wyw({
+  serializeTransform: false,
+});
+```
+
 ### Keeping CSS comments
 
 Stylis strips CSS comments by default. To preserve them (for example, `/*rtl:ignore*/`), pass `keepComments`:
