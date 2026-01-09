@@ -23,7 +23,7 @@ jobs:
           bun-version: 1.3.5
 
       - name: Setup Bun cache
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: ~/.bun/install/cache
           key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
@@ -72,12 +72,20 @@ jobs:
           bun-version: 1.3.5
 
       - name: Setup Bun cache
-        uses: actions/cache@v3
+        if: runner.os != 'Windows'
+        uses: actions/cache@v4
         with:
           path: ~/.bun/install/cache
           key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
           restore-keys: |
             ${{ runner.os }}-bun-
+
+      - name: Setup Bun cache (Windows exact match only)
+        if: runner.os == 'Windows'
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
 
       - name: Install
         run: bun install --frozen-lockfile
