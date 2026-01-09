@@ -144,6 +144,9 @@ export default defineConfig(() => ({
 
 If you are using language features that requires a babel transform (such as typescript), ensure the proper babel presets or plugins are passed to wyw.
 
+Avoid transforming `node_modules` by default (performance and compatibility). If you need to transform a specific library,
+use `transformLibraries` and narrow `include`/`exclude` (see above).
+
 ```js
 import { defineConfig } from 'vite';
 import wyw from '@wyw-in-js/vite';
@@ -154,6 +157,7 @@ export default defineConfig(() => ({
   plugins: [
     wyw({
       include: ['**/*.{ts,tsx}'],
+      exclude: ['**/node_modules/**'],
       babelOptions: {
         presets: ['@babel/preset-typescript', '@babel/preset-react'],
       },
