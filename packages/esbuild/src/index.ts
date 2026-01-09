@@ -88,7 +88,7 @@ export default function wywInJS({
           ? dirname(importer)
           : join(process.cwd(), dirname(importer)),
         kind: 'import-statement',
-        },
+      },
     ]
   );
   return {
