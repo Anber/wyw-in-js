@@ -308,5 +308,21 @@ describe('BaseAction', () => {
         expect(e).toBe(error);
       }
     });
+
+    it('should throw an error if run against multiple handlers', () => {
+      const handler1: Handler<'sync', ITransformAction> = function* handler() {
+        return emptyResult;
+      };
+
+      const handler2: Handler<'sync', ITransformAction> = function* handler() {
+        return emptyResult;
+      };
+
+      action.run(handler1);
+
+      expect(() => action.run(handler2)).toThrowError(
+        'action handler is already set'
+      );
+    });
   });
 });

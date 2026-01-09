@@ -23,6 +23,7 @@ import {
   loadWywOptions,
   withDefaultServices,
 } from '@wyw-in-js/transform';
+import { asyncResolverFactory } from '@wyw-in-js/shared';
 
 type EsbuildPluginOptions = {
   babelTransform?: boolean;
@@ -66,6 +67,30 @@ export default function wywInJS({
       },
     }).babel;
   }
+  const createAsyncResolver = asyncResolverFactory(
+    async (
+      resolved: {
+        errors: unknown[];
+        path: string;
+      },
+      token: string
+    ): Promise<string> => {
+      if (resolved.errors.length > 0) {
+        throw new Error(`Cannot resolve ${token}`);
+      }
+
+      return resolved.path.replace(/\\/g, posix.sep);
+    },
+    (what, importer) => [
+      what,
+      {
+        resolveDir: isAbsolute(importer)
+          ? dirname(importer)
+          : join(process.cwd(), dirname(importer)),
+        kind: 'import-statement',
+      },
+    ]
+  );
   return {
     name: 'wyw-in-js',
     setup(build) {
@@ -112,25 +137,7 @@ export default function wywInJS({
         return new RegExp(filterRegexp.source, sanitizedFlags);
       };
 
-      const asyncResolve = async (
-        token: string,
-        importer: string
-      ): Promise<string> => {
-        const context = isAbsolute(importer)
-          ? dirname(importer)
-          : join(process.cwd(), dirname(importer));
-
-        const result = await build.resolve(token, {
-          resolveDir: context,
-          kind: 'import-statement',
-        });
-
-        if (result.errors.length > 0) {
-          throw new Error(`Cannot resolve ${token}`);
-        }
-
-        return result.path.replace(/\\/g, posix.sep);
-      };
+      const asyncResolve = createAsyncResolver(build.resolve);
 
       build.onEnd(() => {
         onDone(process.cwd());

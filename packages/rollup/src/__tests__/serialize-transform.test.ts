@@ -11,6 +11,13 @@ const createLogger = () => {
 
 jest.mock('@wyw-in-js/shared', () => ({
   __esModule: true,
+  asyncResolverFactory:
+    (onResolve: any, mapper: any) =>
+    (resolveFn: any) =>
+    (what: any, importer: any, stack: any) =>
+      Promise.resolve(resolveFn(...mapper(what, importer, stack))).then(
+        (resolved) => onResolve(resolved, what, importer, stack)
+      ),
   logger: createLogger(),
   slugify: () => 'slug',
   syncResolve: () => null,
