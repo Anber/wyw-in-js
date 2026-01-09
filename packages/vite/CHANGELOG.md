@@ -1,5 +1,30 @@
 # @wyw-in-js/vite
 
+## 1.0.0
+
+### Major Changes
+
+- 94c5efa: Release **1.0.0** introduces no breaking changes compared to previous releases.
+
+  This release establishes a stable baseline for future development, including upcoming releases focused on performance
+  and build-time optimizations.
+
+### Patch Changes
+
+- 08475ce: Add an opt-in `ssrDevCss` mode to avoid SSR dev FOUC by serving aggregated CSS and injecting a stylesheet link in transformed HTML.
+- 16a64ad: Document the `prefixer: false` option to disable vendor prefixing in bundler plugins.
+- fcb118a: Add a `keepComments` option for the stylis preprocessor to preserve selected CSS comments.
+- 64b7698: Prevent concurrent transforms from reusing cached actions with different handler instances by stabilizing resolvers across bundlers.
+- 870b07b: Handle unknown/dynamic import specifiers without transform-time crashes, add `importOverrides` (mock/noShake/unknown policy), and emit a deduped warning only when eval reaches Node resolver fallback (bundler-native where possible).
+- ae740bf: Add `transformLibraries` option to allow transforming selected dependencies inside `node_modules` (opt-in; still recommended to narrow via filters).
+- f8744ad: Avoid manually calling `optimizeDeps()` from the plugin resolve path when Vite returns a missing optimized-deps entry. This prevents Vite 7 deprecation spam and reduces dev server startup overhead.
+- a5302b2: Defer reloading generated `*.wyw-in-js.css` modules to avoid Vite dev-server soft-invalidation errors.
+- 4c268ad: Support Vite's `import.meta.env.*` during build-time evaluation.
+- bd93f67: Add `preserveCssPaths` option to keep directory structure for generated `*.wyw-in-js.css` assets when using Rollup `preserveModules`.
+- Updated dependencies
+  - @wyw-in-js/shared@1.0.0
+  - @wyw-in-js/transform@1.0.0
+
 ## 0.8.1
 
 ### Patch Changes

@@ -1,5 +1,26 @@
 # @wyw-in-js/esbuild
 
+## 1.0.0
+
+### Major Changes
+
+- 94c5efa: Release **1.0.0** introduces no breaking changes compared to previous releases.
+
+  This release establishes a stable baseline for future development, including upcoming releases focused on performance
+  and build-time optimizations.
+
+### Patch Changes
+
+- 16a64ad: Document the `prefixer: false` option to disable vendor prefixing in bundler plugins.
+- bd00b47: Add `babelTransform` option to apply configured `babelOptions` to source code before the esbuild/WyW pipeline (opt-in).
+- fcb118a: Add a `keepComments` option for the stylis preprocessor to preserve selected CSS comments.
+- 64b7698: Prevent concurrent transforms from reusing cached actions with different handler instances by stabilizing resolvers across bundlers.
+- ca3e49e: Sanitize esbuild plugin filter RegExp flags for Go regex compatibility and warn when unsupported flags are ignored.
+- ae740bf: Add `transformLibraries` option to allow transforming selected dependencies inside `node_modules` (opt-in; still recommended to narrow via filters).
+- Updated dependencies
+  - @wyw-in-js/shared@1.0.0
+  - @wyw-in-js/transform@1.0.0
+
 ## 0.8.1
 
 ### Patch Changes

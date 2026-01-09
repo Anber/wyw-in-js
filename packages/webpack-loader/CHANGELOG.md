@@ -1,5 +1,28 @@
 # @wyw-in-js/webpack-loader
 
+## 1.0.0
+
+### Major Changes
+
+- 94c5efa: Release **1.0.0** introduces no breaking changes compared to previous releases.
+
+  This release establishes a stable baseline for future development, including upcoming releases focused on performance
+  and build-time optimizations.
+
+### Patch Changes
+
+- 0b87b81: Add official Next.js integration via `withWyw()` and make `@wyw-in-js/webpack-loader` compatible with Next.js CSS extraction.
+- 16a64ad: Document the `prefixer: false` option to disable vendor prefixing in bundler plugins.
+- 63c4d7e: Fix Rsbuild/Rspack dev HMR where extracted CSS updates could apply one edit behind.
+- 790e73b: Fix `cacheProvider` object instances so extracted CSS is read from the same cache instance by the internal output loader.
+- fcb118a: Add a `keepComments` option for the stylis preprocessor to preserve selected CSS comments.
+- 64b7698: Prevent concurrent transforms from reusing cached actions with different handler instances by stabilizing resolvers across bundlers.
+- 870b07b: Handle unknown/dynamic import specifiers without transform-time crashes, add `importOverrides` (mock/noShake/unknown policy), and emit a deduped warning only when eval reaches Node resolver fallback (bundler-native where possible).
+- 26ec4a3: Fix handling of import resource queries (e.g. `?raw`, `?url`) to avoid crashes and allow minimal eval-time loaders.
+- Updated dependencies
+  - @wyw-in-js/shared@1.0.0
+  - @wyw-in-js/transform@1.0.0
+
 ## 0.8.1
 
 ### Patch Changes

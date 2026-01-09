@@ -1,4 +1,4 @@
-# @wyw-in-js/bun
+# @wyw-in-js/parcel-transformer
 
 ## 1.0.0
 
@@ -11,9 +11,7 @@
 
 ### Patch Changes
 
-- c54c0a9: Add Bun bundler plugin for wyw-in-js.
-- 16a64ad: Document the `prefixer: false` option to disable vendor prefixing in bundler plugins.
-- ae740bf: Add `transformLibraries` option to allow transforming selected dependencies inside `node_modules` (opt-in; still recommended to narrow via filters).
+- d10d142: Add Parcel 2 transformer for wyw-in-js.
 - Updated dependencies
   - @wyw-in-js/shared@1.0.0
   - @wyw-in-js/transform@1.0.0

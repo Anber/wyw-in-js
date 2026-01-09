@@ -1,6 +1,6 @@
 {
   "name": "@wyw-in-js/webpack-loader",
-  "version": "0.8.1",
+  "version": "1.0.0",
   "dependencies": {
     "@wyw-in-js/shared": "workspace:*",
     "@wyw-in-js/transform": "workspace:*"
