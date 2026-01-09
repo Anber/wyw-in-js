@@ -1,0 +1,50 @@
+# Stability & Production Readiness
+
+WyW-in-JS is used in production build pipelines and aims to provide a predictable upgrade path.
+
+## Versioning (SemVer)
+
+WyW-in-JS follows SemVer for the published `@wyw-in-js/*` packages.
+
+- `1.0.0` is a “stable baseline” release and introduces no breaking changes compared to the pre-`1.0.0` line.
+- `1.x` is the first “stable baseline” line. Breaking changes are introduced only in `2.0.0` and higher.
+- `minor` releases add features in a backwards-compatible way.
+- `patch` releases are for bugfixes and small improvements.
+
+The pre-`1.0.0` (`0.x`) line existed mostly because the project evolved rapidly, despite being used in real production
+setups.
+
+## Why “stable” is non-trivial here
+
+WyW-in-JS does a lot of work at **build time**, including static analysis and evaluating parts of JavaScript to compute
+styles and artifacts.
+
+This means it interacts with:
+
+- unbounded user code patterns,
+- dependencies with various build-time assumptions,
+- bundler-specific resolution behavior.
+
+Because of that, some edge cases are inevitably discovered only on specific codebases. We treat such cases as bugs and
+aim to keep regressions rare, but “perfect stability across all possible JS” is not realistic for a build-time evaluator.
+
+## Upgrading safely
+
+- Read the changelog before upgrading (especially when jumping across minor versions).
+- Validate the new version on a representative project (or a small repro extracted from it).
+- If you hit a regression, please file an issue with:
+  - the exact `@wyw-in-js/*` versions,
+  - bundler/framework + version,
+  - a minimal reproduction (or a small repository/zip), and
+  - error logs and stack traces (ideally with `DEBUG=wyw-in-js:*`).
+
+## Support
+
+- Community support happens via GitHub issues and discussions.
+- If wyw-in-js is critical to your production workflow, consider supporting the project via GitHub Sponsors:
+  https://github.com/sponsors/anber
+
+## Roadmap (high level)
+
+- `2.0.0` will include breaking changes (for example: moving to an ESM-only architecture and requiring newer Node.js).
+- `3.0.0` is focused on performance/scalability work (moving parts of the pipeline to Rust/oxc).

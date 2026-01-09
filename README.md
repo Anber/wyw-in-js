@@ -22,6 +22,7 @@ This library evolved from the CSS-in-JS library [Linaria][1], with the aim of de
 ## Documentation
 
 - Website: https://wyw-in-js.dev/
+- Stability: https://wyw-in-js.dev/stability
 - Configuration: https://wyw-in-js.dev/configuration
 - How it works: https://wyw-in-js.dev/how-it-works
 - Bundlers: https://wyw-in-js.dev/bundlers
