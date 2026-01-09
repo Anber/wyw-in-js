@@ -92,6 +92,22 @@ export default function wywInJS({
     (what, importer) => [what, importer]
   );
 
+  type RollupResolveFn = (
+    what: string,
+    importer: string
+  ) => Promise<ResolvedId | null>;
+  type RollupResolverContext = { resolve: RollupResolveFn };
+
+  const boundResolvers = new WeakMap<object, RollupResolveFn>();
+  const getBoundResolve = (context: RollupResolverContext): RollupResolveFn => {
+    const key = context as object;
+    if (!boundResolvers.has(key)) {
+      boundResolvers.set(key, context.resolve.bind(context));
+    }
+
+    return boundResolvers.get(key)!;
+  };
+
   const plugin: Plugin = {
     name: 'wyw-in-js',
     load(id: string) {
@@ -129,7 +145,9 @@ export default function wywInJS({
         const result = await transform(
           transformServices,
           code,
-          createAsyncResolver(this.resolve),
+          createAsyncResolver(
+            getBoundResolve(this as unknown as RollupResolverContext)
+          ),
           emptyConfig
         );
 

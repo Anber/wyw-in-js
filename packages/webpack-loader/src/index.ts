@@ -50,33 +50,44 @@ type Loader = RawLoaderDefinitionFunction<LoaderOptions>;
 
 const cache = new TransformCacheCollection();
 
-const resolvers: Record<
-  string,
-  ((what: string, importer: string) => Promise<string>)[]
-> = {};
+type Resolver = (
+  what: string,
+  importer: string,
+  stack: string[]
+) => Promise<string>;
 
-const asyncResolve = (what: string, importer: string): Promise<string> => {
-  const resolver = resolvers[importer];
+const resolvers: Record<string, Resolver[]> = {};
+
+const getResolverKey = (importer: string, stack: string[]): string => {
+  const root = stack.length ? stack[stack.length - 1] : importer;
+  return stripQueryAndHash(root);
+};
+
+const asyncResolve = (
+  what: string,
+  importer: string,
+  stack: string[] = [importer]
+): Promise<string> => {
+  const resolver = resolvers[getResolverKey(importer, stack)];
   if (!resolver || resolver.length === 0) {
     throw new Error('No resolver found');
   }
 
   // Every resolver should return the same result, but we need to call all of them
   // to ensure that all side effects are executed (e.g. adding dependencies)
-  return Promise.all(resolver.map((r) => r(what, importer))).then((results) => {
-    const firstResult = results[0];
-    if (results.some((r) => r !== firstResult)) {
-      throw new Error('Resolvers returned different results');
-    }
+  return Promise.all(resolver.map((r) => r(what, importer, stack))).then(
+    (results) => {
+      const firstResult = results[0];
+      if (results.some((r) => r !== firstResult)) {
+        throw new Error('Resolvers returned different results');
+      }
 
-    return firstResult;
-  });
+      return firstResult;
+    }
+  );
 };
 
-function addResolver(
-  resourcePath: string,
-  resolver: (what: string, importer: string) => Promise<string>
-) {
+function addResolver(resourcePath: string, resolver: Resolver) {
   if (!resolvers[resourcePath]) {
     resolvers[resourcePath] = [];
   }
@@ -117,12 +128,55 @@ const webpack5Loader: Loader = function webpack5LoaderPlugin(
 
   const resolveOptions = { dependencyType: 'esm' };
 
-  const removeResolver = addResolver(this.resourcePath, (what, importer) => {
-    const context = path.isAbsolute(importer)
-      ? path.dirname(importer)
-      : path.join(process.cwd(), path.dirname(importer));
+  const resolveModule: (
+    context: string,
+    request: string,
+    callback: (err: unknown, result: unknown) => void
+  ) => unknown = this.getResolve(resolveOptions);
 
-    return this.getResolve(resolveOptions)(context, what).then((result) => {
+  const isPromiseLike = (value: unknown): value is Promise<unknown> =>
+    typeof (value as { then?: unknown } | null)?.then === 'function';
+
+  const resolveModuleAsync = (context: string, request: string) =>
+    new Promise<string>((resolve, reject) => {
+      let settled = false;
+      const finish = (err: unknown, result: unknown) => {
+        if (settled) return;
+        settled = true;
+
+        if (err) {
+          reject(err);
+          return;
+        }
+
+        if (typeof result === 'string') {
+          resolve(result);
+          return;
+        }
+
+        reject(new Error(`Cannot resolve ${request}`));
+      };
+
+      try {
+        const maybePromise = resolveModule(context, request, finish);
+        if (isPromiseLike(maybePromise)) {
+          maybePromise.then(
+            (result) => finish(null, result),
+            (err) => finish(err, null)
+          );
+        }
+      } catch (err) {
+        finish(err, null);
+      }
+    });
+
+  const removeResolver = addResolver(this.resourcePath, (what, importer) => {
+    const importerPath = stripQueryAndHash(importer);
+    const context = path.isAbsolute(importerPath)
+      ? path.dirname(importerPath)
+      : path.join(process.cwd(), path.dirname(importerPath));
+
+    return resolveModuleAsync(context, what).then((result) => {
       const filePath = stripQueryAndHash(result);
       if (path.isAbsolute(filePath)) {
         this.addDependency(filePath);

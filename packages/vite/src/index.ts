@@ -393,6 +393,26 @@ export default function wywInJS({
     (what, importer) => [what, importer]
   );
 
+  type ViteResolveResult = {
+    external: boolean | 'absolute';
+    id: string;
+  } | null;
+  type ViteResolveFn = (
+    what: string,
+    importer: string
+  ) => Promise<ViteResolveResult>;
+  type ViteResolverContext = { resolve: ViteResolveFn };
+
+  const boundResolvers = new WeakMap<object, ViteResolveFn>();
+  const getBoundResolve = (context: ViteResolverContext): ViteResolveFn => {
+    const key = context as object;
+    if (!boundResolvers.has(key)) {
+      boundResolvers.set(key, context.resolve.bind(context));
+    }
+
+    return boundResolvers.get(key)!;
+  };
+
   return {
     name: 'wyw-in-js',
     enforce: 'post',
@@ -588,7 +608,9 @@ export default function wywInJS({
       const result = await transform(
         transformServices,
         code,
-        createAsyncResolver(this.resolve)
+        createAsyncResolver(
+          getBoundResolve(this as unknown as ViteResolverContext)
+        )
       );
 
       let { cssText, dependencies } = result;
