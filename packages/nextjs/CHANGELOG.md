@@ -1,4 +1,4 @@
-# @wyw-in-js/bun
+# @wyw-in-js/nextjs
 
 ## 1.0.0
 
@@ -9,11 +9,14 @@
   This release establishes a stable baseline for future development, including upcoming releases focused on performance
   and build-time optimizations.
 
+### Minor Changes
+
+- 0b87b81: Add official Next.js integration via `withWyw()` and make `@wyw-in-js/webpack-loader` compatible with Next.js CSS extraction.
+- 4cf8447: Add Turbopack support for Next.js via `turbopack.rules` and introduce `@wyw-in-js/turbopack-loader`.
+
 ### Patch Changes
 
-- c54c0a9: Add Bun bundler plugin for wyw-in-js.
 - 16a64ad: Document the `prefixer: false` option to disable vendor prefixing in bundler plugins.
-- ae740bf: Add `transformLibraries` option to allow transforming selected dependencies inside `node_modules` (opt-in; still recommended to narrow via filters).
 - Updated dependencies
-  - @wyw-in-js/shared@1.0.0
-  - @wyw-in-js/transform@1.0.0
+  - @wyw-in-js/turbopack-loader@1.0.0
+  - @wyw-in-js/webpack-loader@1.0.0

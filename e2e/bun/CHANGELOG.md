@@ -1,4 +1,4 @@
-# vite-react-refresh-repro
+# @wyw-in-js/e2e-bun
 
 ## 1.0.0
 
@@ -13,17 +13,3 @@
 
 - Updated dependencies
   - @wyw-in-js/template-tag-syntax@1.0.0
-  - @wyw-in-js/vite@1.0.0
-
-## 0.1.0
-
-### Minor Changes
-
-- Bump versions
-
-### Patch Changes
-
-- Updated dependencies [691f946]
-- Updated dependencies [fcfdf52]
-  - @wyw-in-js/vite@0.8.1
-  - @wyw-in-js/template-tag-syntax@0.8.1
