@@ -80,6 +80,13 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-bun-
 
+      - name: Setup Bun cache (Windows exact match only)
+        if: runner.os == 'Windows'
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
+
       - name: Install
         run: bun install --frozen-lockfile
 
