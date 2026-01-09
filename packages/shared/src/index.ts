@@ -19,6 +19,7 @@ export type {
   ImportLoaders,
   ImportOverride,
   ImportOverrides,
+  TagResolverMeta,
   StrictOptions,
   EvalRule,
   Evaluator,

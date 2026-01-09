@@ -317,21 +317,32 @@ module.exports = {
   ];
   ```
 
-- `tagResolver: (source, tag) => string`
+- `tagResolver: (source, tag, meta) => string`
 
   A custom function to use when resolving template tags.
 
   By default, linaria APIs like `css` and `styled` **must** be imported directly from the package – this is because babel needs to be able to recognize the API's to do static style extraction. `tagResolver` allows `css` and `styled` APIs to be imported from other files too.
 
-  `tagResolver` takes the path for the source module (eg. `@linaria/core`) and the name of imported tag (eg. `css`), and returns the full path to the related processor. If `tagResolver` returns `null`, the default tag processor will be used.
+  `tagResolver` takes the source specifier from the import (eg. `@linaria/core` or `./my-local-folder/linaria`), the imported tag name (eg. `css`), and `meta`:
+
+  - `meta.sourceFile` — the importer file path
+  - `meta.resolvedSource` — best-effort resolved path for `source` (when available)
+
+  It returns the full path to the related processor. If `tagResolver` returns `null`, the default tag processor will be used.
 
   For example, we can use this to map `@linaria/core` , `@linaria/react` or `@linaria/atomic` where we re-export the module.
 
   ```js
   {
-    tagResolver: (source, tag) => {
+    tagResolver: (source, tag, { sourceFile, resolvedSource }) => {
+      const { createRequire } = require('module');
+      const { join } = require('path');
       const pathToLocalFile = join(__dirname, './my-local-folder/linaria.js');
-      if (source === pathToLocalFile) {
+      const resolved =
+        resolvedSource ??
+        (sourceFile ? createRequire(sourceFile).resolve(source) : null);
+
+      if (resolved === pathToLocalFile) {
         if (tag === 'css') {
           return require.resolve('@linaria/core/processors/css');
         }
