@@ -19,5 +19,39 @@ This library evolved from the CSS-in-JS library [Linaria][1], with the aim of de
 - Allows for arbitrary JavaScript in style definitions, including imports, conditionals, and loops.
 - Offers loaders and plugins for popular bundlers (including Webpack, Vite, esbuild) and frameworks (Next.js), ensuring compatibility with various build systems.
 
+## Documentation
+
+- Website: https://wyw-in-js.dev/
+- Configuration: https://wyw-in-js.dev/configuration
+- How it works: https://wyw-in-js.dev/how-it-works
+- Bundlers: https://wyw-in-js.dev/bundlers
+- CLI: https://wyw-in-js.dev/cli
+
+## CLI Quickstart
+
+Install:
+
+```sh
+npm i -D @wyw-in-js/cli
+yarn add -D @wyw-in-js/cli
+pnpm add -D @wyw-in-js/cli
+bun add -d @wyw-in-js/cli
+```
+
+Extract CSS and inject imports into your compiled output:
+
+```sh
+wyw-in-js \
+  --config ./wyw-in-js.config.js \
+  --source-root ./src \
+  --out-dir ./dist/wyw-css \
+  --insert-css-requires ./dist \
+  --modules esnext \
+  --transform \
+  "src/**/*.{ts,tsx,js,jsx}"
+```
+
+See https://wyw-in-js.dev/cli for all options, migration notes from `@linaria/cli`, and notes about dependencies (including `happy-dom`).
+
 [1]: https://github.com/callstack/linaria
 [2]: https://github.com/microsoft/griffel
