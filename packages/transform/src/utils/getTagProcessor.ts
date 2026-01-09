@@ -19,8 +19,12 @@ import type {
   IFileContext,
   TagSource,
 } from '@wyw-in-js/processor-utils';
-import { findPackageJSON } from '@wyw-in-js/shared';
-import type { ExpressionValue, StrictOptions } from '@wyw-in-js/shared';
+import { findPackageJSON, syncResolve } from '@wyw-in-js/shared';
+import type {
+  ExpressionValue,
+  StrictOptions,
+  TagResolverMeta,
+} from '@wyw-in-js/shared';
 
 import type { IImport } from './collectExportsAndImports';
 import {
@@ -77,6 +81,31 @@ function buildCodeFrameError(path: NodePath, message: string): Error {
 }
 
 const definedTagsCache = new Map<string, Record<string, string> | undefined>();
+const resolvedTagResolverSourceCache = new Map<string, string | undefined>();
+
+const getResolvedTagResolverSource = (
+  source: string,
+  sourceFile: string | null | undefined
+): string | undefined => {
+  if (!sourceFile) {
+    return undefined;
+  }
+
+  const key = `${sourceFile}\0${source}`;
+  if (resolvedTagResolverSourceCache.has(key)) {
+    return resolvedTagResolverSourceCache.get(key);
+  }
+
+  try {
+    const resolved = syncResolve(source, sourceFile, []);
+    resolvedTagResolverSourceCache.set(key, resolved);
+    return resolved;
+  } catch {
+    resolvedTagResolverSourceCache.set(key, undefined);
+    return undefined;
+  }
+};
+
 const getDefinedTagsFromPackage = (
   pkgName: string,
   filename: string | null | undefined
@@ -149,9 +178,17 @@ export function getProcessorForImport(
   filename: string | null | undefined,
   options: Pick<StrictOptions, 'tagResolver'>
 ): [ProcessorClass | null, TagSource] {
-  const tagResolver = options.tagResolver ?? (() => null);
+  const { tagResolver } = options;
 
-  const customFile = tagResolver(source, imported);
+  let customFile: string | null = null;
+  if (tagResolver) {
+    const tagResolverMeta: TagResolverMeta = {
+      sourceFile: filename,
+      resolvedSource: getResolvedTagResolverSource(source, filename),
+    };
+
+    customFile = tagResolver(source, imported, tagResolverMeta);
+  }
   const processor = customFile
     ? getProcessorFromFile(customFile)
     : getProcessorFromPackage(source, imported, filename);
