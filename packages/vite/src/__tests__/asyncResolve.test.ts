@@ -1,6 +1,6 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
-import { join } from 'path';
+import { join, normalize } from 'path';
 
 const optimizeDepsMock = jest.fn();
 const asyncResolveResults: Array<string | null> = [];
@@ -173,6 +173,43 @@ describe('vite asyncResolve', () => {
       expect(asyncResolveResults).toContain(missingCacheEntry);
     } finally {
       rmSync(cacheDir, { recursive: true, force: true });
+    }
+  });
+
+  it('resolves Vite /@fs ids to real file paths', async () => {
+    const { default: wywInJS } = await import('../index');
+    const plugin = wywInJS();
+
+    plugin.configResolved({
+      root: process.cwd(),
+      mode: 'development',
+      command: 'serve',
+      base: '/',
+    } as any);
+
+    const tempDir = mkdtempSync(join(tmpdir(), 'wyw-vite-fs-'));
+    try {
+      const filePath = join(tempDir, 'Flex.ts');
+      writeFileSync(filePath, 'export const Flex = () => null;', 'utf8');
+
+      const viteFsId = `/@fs/${filePath.replace(/\\/g, '/')}`;
+      requestedId = viteFsId;
+
+      const resolveMock = jest.fn().mockResolvedValue({
+        id: viteFsId,
+        external: false,
+      });
+
+      await plugin.transform?.call(
+        { resolve: resolveMock } as any,
+        'console.log("test")',
+        '/entry.tsx'
+      );
+
+      expect(syncResolveMock).not.toHaveBeenCalled();
+      expect(asyncResolveResults).toContain(normalize(filePath));
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
     }
   });
 });

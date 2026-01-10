@@ -4,7 +4,10 @@
   "compilerOptions": {
     "allowJs": true,
     "rootDir": "../..",
-    "baseUrl": "../.."
+    "baseUrl": "../..",
+    "paths": {
+      "@/*": ["./e2e/vite/src/*"]
+    }
   },
   "include": ["./src/*", "./scripts/*"],
   "ts-node": {
