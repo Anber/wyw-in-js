@@ -1,5 +1,14 @@
 # @wyw-in-js/vite
 
+## 1.0.2
+
+### Patch Changes
+
+- 30121b1: Handle Vite `/@fs/` resolved ids so alias imports resolve during eval instead of falling back to Node.
+- Updated dependencies
+  - @wyw-in-js/shared@1.0.2
+  - @wyw-in-js/transform@1.0.2
+
 ## 1.0.1
 
 ### Patch Changes

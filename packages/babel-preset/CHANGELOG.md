@@ -1,5 +1,13 @@
 # @wyw-in-js/babel-preset
 
+## 1.0.2
+
+### Patch Changes
+
+- Bump versions
+- Updated dependencies
+  - @wyw-in-js/transform@1.0.2
+
 ## 1.0.1
 
 ### Patch Changes
