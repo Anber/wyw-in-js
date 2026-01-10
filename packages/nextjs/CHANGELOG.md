@@ -1,5 +1,14 @@
 # @wyw-in-js/nextjs
 
+## 1.0.1
+
+### Patch Changes
+
+- 5882514: Fix publishing so released packages don't contain `workspace:*` dependency ranges (npm install compatibility).
+- Updated dependencies
+  - @wyw-in-js/turbopack-loader@1.0.1
+  - @wyw-in-js/webpack-loader@1.0.1
+
 ## 1.0.0
 
 ### Major Changes

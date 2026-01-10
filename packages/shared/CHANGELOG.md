@@ -1,5 +1,11 @@
 # @wyw-in-js/shared
 
+## 1.0.1
+
+### Patch Changes
+
+- 5882514: Fix publishing so released packages don't contain `workspace:*` dependency ranges (npm install compatibility).
+
 ## 1.0.0
 
 ### Major Changes

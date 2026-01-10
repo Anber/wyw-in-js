@@ -1,5 +1,13 @@
 # vite-react-refresh-repro
 
+## 1.0.1
+
+### Patch Changes
+
+- Updated dependencies
+  - @wyw-in-js/template-tag-syntax@1.0.1
+  - @wyw-in-js/vite@1.0.1
+
 ## 1.0.0
 
 ### Major Changes
