@@ -1,5 +1,13 @@
 # @wyw-in-js/e2e-bun
 
+## 1.0.2
+
+### Patch Changes
+
+- Bump versions
+- Updated dependencies
+  - @wyw-in-js/template-tag-syntax@1.0.2
+
 ## 1.0.1
 
 ### Patch Changes
