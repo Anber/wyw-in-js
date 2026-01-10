@@ -63,7 +63,7 @@
     "idea-exclude:nm": "idea-exclude node_modules \"**/node_modules\"",
     "lint": "bun run lint:scripts && bun run --filter './apps/*' --filter './e2e/*' --filter './examples/*' --filter './packages/*' --if-present lint",
     "lint:scripts": "eslint --ext .js,.ts,.mjs scripts",
-    "release": "bun run build && changeset publish",
+    "release": "bun run build && node ./scripts/prepare-publish.mjs && changeset publish",
     "sp:check": "syncpack",
     "sp:fix": "syncpack format && syncpack fix-mismatches",
     "sp:format": "syncpack format",
