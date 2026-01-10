@@ -57,7 +57,11 @@ for (const pkg of packages) {
         continue;
       }
 
-      const resolved = resolveWorkspaceProtocol(depName, depRange, versionByName);
+      const resolved = resolveWorkspaceProtocol(
+        depName,
+        depRange,
+        versionByName
+      );
       if (resolved !== depRange) {
         deps[depName] = resolved;
         changed = true;
@@ -72,13 +76,17 @@ for (const pkg of packages) {
   writeFileSync(pkg.packageJsonPath, JSON.stringify(pkgJson, null, 2) + '\n');
   updated += 1;
 
-  const unresolved = findWorkspaceProtocolRanges(pkgJson, publishDependencyFields);
+  const unresolved = findWorkspaceProtocolRanges(
+    pkgJson,
+    publishDependencyFields
+  );
   if (unresolved.length > 0) {
     throw new Error(
       [
         `Failed to resolve workspace protocol in ${pkg.packageJsonPath} (${packageName}):`,
         ...unresolved.map(
-          ({ field, depName, depRange }) => `- ${field}.${depName} = ${depRange}`
+          ({ field, depName, depRange }) =>
+            `- ${field}.${depName} = ${depRange}`
         ),
       ].join('\n')
     );
@@ -90,7 +98,9 @@ if (touched === 0) {
 } else if (updated === 0) {
   console.log('No workspace protocol ranges to resolve.');
 } else {
-  console.log(`Resolved workspace protocol ranges in ${updated} package.json files.`);
+  console.log(
+    `Resolved workspace protocol ranges in ${updated} package.json files.`
+  );
 }
 
 function resolveWorkspaceProtocol(depName, depRange, versions) {
@@ -152,4 +162,3 @@ function getWorkspacePatterns(pkgJson) {
 
   return [];
 }
-
