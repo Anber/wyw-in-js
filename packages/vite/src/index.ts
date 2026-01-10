@@ -86,6 +86,21 @@ const stripExtension = (value: string): string => {
   return ext ? value.slice(0, -ext.length) : value;
 };
 
+const VITE_FS_PREFIX = '/@fs/';
+
+const safeDecodeURIComponent = (value: string): string => {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+};
+
+const normalizeViteFsPath = (value: string): string => {
+  const fsPath = value.slice(VITE_FS_PREFIX.length);
+  return path.normalize(safeDecodeURIComponent(fsPath));
+};
+
 const getWywCssAssetFileNames = (
   resolvedConfig: ResolvedConfig,
   output: RollupOutputLike,
@@ -351,12 +366,16 @@ export default function wywInJS({
         log("resolve ✅ '%s'@'%s -> %O\n%s", what, importer, resolved);
 
         // Vite adds param like `?v=667939b3` to cached modules
-        const resolvedId = resolved.id.split('?', 1)[0];
+        let resolvedId = resolved.id.split('?', 1)[0];
 
         if (resolvedId.startsWith('\0')) {
           // \0 is a special character in Rollup that tells Rollup to not include this in the bundle
           // https://rollupjs.org/guide/en/#outputexports
           return null;
+        }
+
+        if (resolvedId.startsWith(VITE_FS_PREFIX)) {
+          resolvedId = normalizeViteFsPath(resolvedId);
         }
 
         if (resolvedId.startsWith('/@')) {

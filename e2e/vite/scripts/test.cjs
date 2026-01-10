@@ -25,6 +25,11 @@ async function buildArtefact(outDir, pluginOptions) {
       cssMinify: false,
     },
     configFile: false,
+    resolve: {
+      alias: {
+        '@': path.resolve(PKG_DIR, 'src'),
+      },
+    },
     plugins: [pluginOptions ? wyw.default(pluginOptions) : wyw.default()],
   });
 }
