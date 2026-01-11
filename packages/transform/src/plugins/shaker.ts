@@ -83,7 +83,12 @@ function getBindingForExport(exportPath: NodePath): Binding | undefined {
   }
 
   if (exportPath.isFunctionDeclaration() || exportPath.isClassDeclaration()) {
-    return getNonParamBinding(exportPath, exportPath.node.id!.name);
+    const { id } = exportPath.node;
+    if (!id) {
+      // `export default function() {}` / `export default class {}` (anonymous)
+      return undefined;
+    }
+    return getNonParamBinding(exportPath, id.name);
   }
 
   return undefined;

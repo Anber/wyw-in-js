@@ -136,6 +136,19 @@ describe('shaker', () => {
     expect(code).not.toContain('react/jsx-runtime');
   });
 
+  it('should not crash when dropping an anonymous default export', () => {
+    const code = run(['foo'])`
+      export const foo = 1;
+
+      export default function(nodes) {
+        return nodes;
+      }
+    `;
+
+    expect(code).toContain('foo');
+    expect(code).not.toContain('export default');
+  });
+
   it('should exclude imports metadata when the const export becomes dead (tsx)', () => {
     const [, , imports] = compile(['__wywPreval'])`
       import * as RAC from 'react-aria-components';
