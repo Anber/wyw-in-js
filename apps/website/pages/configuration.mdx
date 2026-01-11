@@ -231,6 +231,7 @@ module.exports = {
   Notes:
 
   - When WyW evaluates `__wywPreval`, it tree-shakes the module and removes `import '...';` side-effect imports by default, to avoid executing unrelated runtime code in Node.js (some libraries touch `document`, `window`, etc).
+  - If your evaluated modules import browser-only packages (e.g. `msw/browser`), evaluation can still fail in Node.js. In that case, move the browser-only initialization out of evaluated modules, or mock the import via `importOverrides`.
   - If you need a side-effect import to run during evaluation, or you need to stub a problematic side-effect import, add an override for that import:
     - `{ noShake: true }` keeps the import and disables tree-shaking for that dependency.
     - `{ mock: './path/to/mock' }` keeps the import but redirects it to a mock module.

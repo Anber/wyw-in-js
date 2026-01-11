@@ -444,6 +444,37 @@ it("doesn't have access to the process object", () => {
   expect(() => mod.evaluate()).toThrow('process.abort is not a function');
 });
 
+it('adds a hint when eval fails due to browser-only globals', () => {
+  const code = dedent`
+    module.exports = window.location.href;
+  `;
+  const cache = new TransformCacheCollection();
+  const services = createServices({
+    cache,
+    options: {
+      filename,
+      pluginOptions: {
+        ...options,
+        features: {
+          ...options.features,
+          happyDOM: false,
+        },
+      },
+    },
+  });
+  const entrypoint = createEntrypoint(services, filename, ['*'], code);
+  const mod = new Module(services, entrypoint);
+
+  try {
+    mod.evaluate();
+    throw new Error('Expected eval to fail');
+  } catch (e) {
+    expect(e).toBeInstanceOf(EvalError);
+    expect((e as Error).message).toContain('[wyw-in-js] Evaluation hint:');
+    expect((e as Error).message).toContain('importOverrides');
+  }
+});
+
 it('has access to a overridden context', () => {
   const { mod } = create`
     module.exports = HighLevelAPI();
