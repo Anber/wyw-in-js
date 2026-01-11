@@ -1,5 +1,13 @@
 # @wyw-in-js/vite
 
+## 1.0.3
+
+### Patch Changes
+
+- adbd48c: Avoid falling back to Node resolution for Vite `external` resolved file ids (incl. `external: "absolute"`), which could break aliased imports during build-time evaluation (SSR/dev).
+- Updated dependencies
+  - @wyw-in-js/transform@1.0.3
+
 ## 1.0.2
 
 ### Patch Changes

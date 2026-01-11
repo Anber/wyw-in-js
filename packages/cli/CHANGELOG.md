@@ -1,5 +1,12 @@
 # @wyw-in-js/cli
 
+## 1.0.3
+
+### Patch Changes
+
+- Updated dependencies
+  - @wyw-in-js/transform@1.0.3
+
 ## 1.0.2
 
 ### Patch Changes
