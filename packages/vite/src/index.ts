@@ -355,14 +355,6 @@ export default function wywInJS({
       const log = logger.extend('vite').extend(getFileIdx(importer));
 
       if (resolved) {
-        if (resolved.external) {
-          // If module is marked as external, Rollup will not resolve it,
-          // so we need to resolve it ourselves with default resolver
-          const resolvedId = syncResolve(what, importer, stack);
-          log("resolve ✅ '%s'@'%s -> %O\n%s", what, importer, resolved);
-          return resolvedId;
-        }
-
         log("resolve ✅ '%s'@'%s -> %O\n%s", what, importer, resolved);
 
         // Vite adds param like `?v=667939b3` to cached modules
@@ -380,6 +372,17 @@ export default function wywInJS({
 
         if (resolvedId.startsWith('/@')) {
           return null;
+        }
+
+        if (resolved.external) {
+          // In SSR mode Vite can mark resolved file ids as `external` (including `external: "absolute"`).
+          // Prefer Vite's resolved file path and only fall back to Node resolution for bare specifiers.
+          if (path.isAbsolute(resolvedId) || existsSync(resolvedId)) {
+            return resolvedId;
+          }
+
+          // If module is marked as external, Rollup will not resolve it further, so resolve it ourselves.
+          return syncResolve(what, importer, stack);
         }
 
         if (!existsSync(resolvedId)) {
