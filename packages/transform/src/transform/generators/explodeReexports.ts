@@ -71,12 +71,13 @@ export function* explodeReexports(
           undefined
         );
 
-        if (exports.length !== 0) {
+        const namedExports = exports.filter((name) => name !== 'default');
+        if (namedExports.length !== 0) {
           replacements.set(
             reexport.node,
             babel.types.exportNamedDeclaration(
               null,
-              exports.map((i) =>
+              namedExports.map((i) =>
                 babel.types.exportSpecifier(
                   babel.types.identifier(i),
                   babel.types.identifier(i)
