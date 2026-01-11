@@ -212,4 +212,71 @@ describe('vite asyncResolve', () => {
       rmSync(tempDir, { recursive: true, force: true });
     }
   });
+
+  it('does not fall back to syncResolve for external resolved file ids', async () => {
+    const { default: wywInJS } = await import('../index');
+    const plugin = wywInJS();
+
+    plugin.configResolved({
+      root: process.cwd(),
+      mode: 'development',
+      command: 'serve',
+      base: '/',
+    } as any);
+
+    const tempDir = mkdtempSync(join(tmpdir(), 'wyw-vite-fs-external-'));
+    try {
+      const filePath = join(tempDir, 'Flex.ts');
+      writeFileSync(filePath, 'export const Flex = () => null;', 'utf8');
+
+      const viteFsId = `/@fs/${filePath.replace(/\\/g, '/')}`;
+      requestedId = viteFsId;
+
+      const resolveMock = jest.fn().mockResolvedValue({
+        id: viteFsId,
+        external: 'absolute',
+      });
+
+      await plugin.transform?.call(
+        { resolve: resolveMock } as any,
+        'console.log("test")',
+        '/entry.tsx'
+      );
+
+      expect(syncResolveMock).not.toHaveBeenCalled();
+      expect(asyncResolveResults).toContain(normalize(filePath));
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('falls back to syncResolve for external bare specifiers', async () => {
+    const { default: wywInJS } = await import('../index');
+    const plugin = wywInJS();
+    requestedId = 'react';
+
+    const resolvedPath = join(__dirname, 'node_modules', 'react.js');
+    syncResolveMock.mockReturnValue(resolvedPath);
+
+    plugin.configResolved({
+      root: process.cwd(),
+      mode: 'development',
+      command: 'serve',
+      base: '/',
+    } as any);
+
+    const resolveMock = jest.fn().mockResolvedValue({
+      id: requestedId,
+      external: true,
+    });
+
+    await plugin.transform?.call(
+      { resolve: resolveMock } as any,
+      'console.log("test")',
+      '/entry.tsx'
+    );
+
+    expect(syncResolveMock).toHaveBeenCalledWith('react', '/entry.tsx', []);
+    expect(asyncResolveResults).toContain(resolvedPath);
+  });
 });
