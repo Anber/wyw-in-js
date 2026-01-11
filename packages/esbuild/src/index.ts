@@ -265,9 +265,26 @@ export default function wywInJS({
         const result = await transform(transformServices, code, asyncResolve);
         const resolveDir = dirname(args.path);
 
-        if (!result.cssText) {
+        if (typeof result.cssText === 'undefined') {
           return {
             contents: code,
+            loader,
+            resolveDir,
+          };
+        }
+
+        if (result.cssText === '') {
+          let contents = result.code;
+
+          if (sourceMap && result.sourceMap) {
+            const wywMap = Buffer.from(
+              JSON.stringify(result.sourceMap)
+            ).toString('base64');
+            contents += `/*# sourceMappingURL=data:application/json;base64,${wywMap}*/`;
+          }
+
+          return {
+            contents,
             loader,
             resolveDir,
           };
