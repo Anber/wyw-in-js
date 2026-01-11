@@ -1,5 +1,13 @@
 # @wyw-in-js/esbuild
 
+## 1.0.3
+
+### Patch Changes
+
+- 6558ea3: Fix handling of empty `cssText` results: return the transformed JS even when WyW extracts no CSS from a module.
+- Updated dependencies
+  - @wyw-in-js/transform@1.0.3
+
 ## 1.0.2
 
 ### Patch Changes

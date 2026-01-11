@@ -1,6 +1,6 @@
 {
   "name": "@wyw-in-js/nextjs",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "dependencies": {
     "@wyw-in-js/turbopack-loader": "workspace:*",
     "@wyw-in-js/webpack-loader": "workspace:*"

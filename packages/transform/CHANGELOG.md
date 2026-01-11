@@ -1,5 +1,13 @@
 # @wyw-in-js/transform
 
+## 1.0.3
+
+### Patch Changes
+
+- a7ece53: Improve eval error diagnostics: when build-time evaluation fails due to browser-only globals (e.g. `window`), include a hint about using `importOverrides` / moving runtime-only code out of evaluated modules.
+- d45b9bd: When expanding `export * from` to named re-exports, never include `default` (ESM export-star semantics). This avoids invalid code like duplicate default exports.
+- f45e458: Fix shaker crash when removing anonymous default exports like `export default function() {}`.
+
 ## 1.0.2
 
 ### Patch Changes

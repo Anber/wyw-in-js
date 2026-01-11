@@ -1,7 +1,7 @@
 {
   "name": "nextjs-wyw-demo",
   "private": true,
-  "version": "1.0.2",
+  "version": "1.0.3",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
