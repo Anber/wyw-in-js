@@ -103,6 +103,33 @@ const reactRefreshRuntime = {
 
 const NOOP = () => {};
 
+const browserOnlyEvalHintTriggers = [
+  'window is not defined',
+  "evaluating 'window",
+  'document is not defined',
+  "evaluating 'document",
+  'navigator is not defined',
+  "evaluating 'navigator",
+  'self is not defined',
+  "evaluating 'self",
+];
+
+const getBrowserOnlyEvalHint = (error: unknown): string | null => {
+  const message = error instanceof Error ? error.message : String(error);
+  const looksLikeBrowserOnly = browserOnlyEvalHintTriggers.some((trigger) =>
+    message.includes(trigger)
+  );
+  if (!looksLikeBrowserOnly) return null;
+
+  return [
+    '',
+    '[wyw-in-js] Evaluation hint:',
+    'This usually means browser-only code ran during build-time evaluation.',
+    'Move browser-only initialization out of evaluated modules, or mock the import via `importOverrides`.',
+    "Example: importOverrides: { 'msw/browser': { mock: './src/__mocks__/msw-browser.js' } }",
+  ].join('\n');
+};
+
 const warnedUnknownImportsByServices = new WeakMap<Services, Set<string>>();
 
 function emitWarning(services: Services, message: string) {
@@ -395,9 +422,12 @@ export class Module {
       }
 
       this.debug('%O\n%O', e, this.callstack);
-      throw new EvalError(
-        `${(e as Error).message} in${this.callstack.join('\n| ')}\n`
-      );
+      const baseMessage = `${(e as Error).message} in${this.callstack.join(
+        '\n| '
+      )}\n`;
+      const hint = getBrowserOnlyEvalHint(e);
+
+      throw new EvalError(hint ? `${baseMessage}${hint}\n` : baseMessage);
     } finally {
       teardown();
     }
