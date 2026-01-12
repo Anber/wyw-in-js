@@ -279,4 +279,40 @@ describe('vite asyncResolve', () => {
     expect(syncResolveMock).toHaveBeenCalledWith('react', '/entry.tsx', []);
     expect(asyncResolveResults).toContain(resolvedPath);
   });
+
+  it('binds Vite plugin context when calling this.resolve', async () => {
+    const { default: wywInJS } = await import('../index');
+    const plugin = wywInJS();
+
+    plugin.configResolved({
+      root: process.cwd(),
+      mode: 'development',
+      command: 'serve',
+      base: '/',
+    } as any);
+
+    requestedId = '@/components/Centered/Centered.ts';
+
+    const resolveMock = jest.fn(function () {
+      'use strict';
+
+      // Vite 8's resolve() relies on internal state stored on `this`.
+      // If WyW calls it as an unbound function, it will throw.
+      // eslint-disable-next-line no-void
+      void (this as any)._resolveSkipCalls;
+
+      return Promise.resolve({
+        id: '/resolved.ts',
+        external: false,
+      });
+    });
+
+    await plugin.transform?.call(
+      { resolve: resolveMock, _resolveSkipCalls: 0 } as any,
+      'console.log("test")',
+      '/entry.tsx'
+    );
+
+    expect(asyncResolveResults).toContain('/resolved.ts');
+  });
 });

@@ -5,7 +5,7 @@
  */
 
 import { createFilter } from '@rollup/pluginutils';
-import type { Plugin, ResolvedId } from 'rollup';
+import type { Plugin, PluginContext, ResolvedId } from 'rollup';
 
 import {
   asyncResolverFactory,
@@ -45,6 +45,24 @@ export default function wywInJS({
   const cache = new TransformCacheCollection();
   const emptyConfig = {};
   let transformQueue = Promise.resolve();
+
+  type ResolveFn = PluginContext['resolve'];
+
+  const boundResolveCache = new WeakMap<
+    PluginContext,
+    { boundResolve: ResolveFn; sourceResolve: ResolveFn }
+  >();
+
+  const getBoundResolve = (ctx: PluginContext): ResolveFn => {
+    const cached = boundResolveCache.get(ctx);
+    if (cached && cached.sourceResolve === ctx.resolve) {
+      return cached.boundResolve;
+    }
+
+    const boundResolve: ResolveFn = ctx.resolve.bind(ctx);
+    boundResolveCache.set(ctx, { sourceResolve: ctx.resolve, boundResolve });
+    return boundResolve;
+  };
 
   const runSerialized = async <T>(fn: () => Promise<T>): Promise<T> => {
     if (!serializeTransform) {
@@ -129,7 +147,7 @@ export default function wywInJS({
         const result = await transform(
           transformServices,
           code,
-          createAsyncResolver(this.resolve),
+          createAsyncResolver(getBoundResolve(this)),
           emptyConfig
         );
 
