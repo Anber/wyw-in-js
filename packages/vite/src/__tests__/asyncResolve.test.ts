@@ -293,9 +293,7 @@ describe('vite asyncResolve', () => {
 
     requestedId = '@/components/Centered/Centered.ts';
 
-    const resolveMock = jest.fn(function () {
-      'use strict';
-
+    const resolveMock = jest.fn(function viteResolve() {
       // Vite 8's resolve() relies on internal state stored on `this`.
       // If WyW calls it as an unbound function, it will throw.
       // eslint-disable-next-line no-void

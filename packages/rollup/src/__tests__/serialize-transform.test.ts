@@ -91,23 +91,23 @@ describe('@wyw-in-js/rollup serializeTransform', () => {
     const plugin = wywInJS({ serializeTransform: false });
 
     let resolvedByAsyncResolver: unknown;
-    transformMock.mockImplementationOnce(async (_services, _code, asyncResolve) => {
-      resolvedByAsyncResolver = await asyncResolve(
-        '@/components/Centered/Centered.ts',
-        '/abs/a.ts',
-        []
-      );
+    transformMock.mockImplementationOnce(
+      async (_services, _code, asyncResolve) => {
+        resolvedByAsyncResolver = await asyncResolve(
+          '@/components/Centered/Centered.ts',
+          '/abs/a.ts',
+          []
+        );
 
-      return {
-        code: _code,
-        cssText: '',
-        sourceMap: null,
-      };
-    });
+        return {
+          code: _code,
+          cssText: '',
+          sourceMap: null,
+        };
+      }
+    );
 
-    const resolveMock = jest.fn(function () {
-      'use strict';
-
+    const resolveMock = jest.fn(function rollupResolve() {
       // Rollup's resolve() may rely on internal state stored on `this`.
       // If WyW calls it as an unbound function, it will throw.
       // eslint-disable-next-line no-void
