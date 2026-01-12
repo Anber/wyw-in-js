@@ -1,9 +1,10 @@
 import genericDebug from 'debug';
-import type { Debugger } from 'debug';
+
+import type { Debugger } from './debugger';
 
 const BASE_NAMESPACE = 'wyw-in-js';
 
-export const logger = genericDebug(BASE_NAMESPACE);
+export const logger: Debugger = genericDebug(BASE_NAMESPACE);
 
 const loggers = new Map<string, Debugger>();
 
