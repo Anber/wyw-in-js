@@ -1,4 +1,4 @@
-export { Debugger } from 'debug';
+export type { Debugger } from './debugger';
 
 export { asyncResolveFallback, syncResolve } from './asyncResolveFallback';
 export { asyncResolverFactory } from './asyncResolverFactory';

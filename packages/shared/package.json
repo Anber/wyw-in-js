@@ -2,7 +2,6 @@
   "name": "@wyw-in-js/shared",
   "version": "1.0.2",
   "dependencies": {
-    "@types/debug": "^4.1.9",
     "debug": "^4.3.4",
     "find-up": "^5.0.0",
     "minimatch": "^9.0.3"
@@ -10,6 +9,7 @@
   "devDependencies": {
     "@babel/types": "^7.23.5",
     "@types/babel__core": "^7.20.5",
+    "@types/debug": "^4.1.9",
     "@types/node": "^16.18.55",
     "@wyw-in-js/babel-config": "workspace:*",
     "@wyw-in-js/eslint-config": "workspace:*",
