@@ -345,9 +345,26 @@ export default function wywInJS({
     return true;
   };
 
+  type ResolveResult = { external?: boolean | 'absolute'; id: string } | null;
+  type ResolveFn = (what: string, importer: string) => Promise<ResolveResult>;
+  type ResolveContext = object & { resolve: ResolveFn };
+
+  const boundResolveCache = new WeakMap<ResolveContext, ResolveFn>();
+
+  const getBoundResolve = (ctx: ResolveContext): ResolveFn => {
+    const cached = boundResolveCache.get(ctx);
+    if (cached) return cached;
+
+    const boundResolve: ResolveFn = (what, importer) =>
+      ctx.resolve(what, importer);
+
+    boundResolveCache.set(ctx, boundResolve);
+    return boundResolve;
+  };
+
   const createAsyncResolver = asyncResolverFactory(
     async (
-      resolved: { external: boolean | 'absolute'; id: string } | null,
+      resolved: { external?: boolean | 'absolute'; id: string } | null,
       what: string,
       importer: string,
       stack: string[]
@@ -610,7 +627,7 @@ export default function wywInJS({
       const result = await transform(
         transformServices,
         code,
-        createAsyncResolver(this.resolve)
+        createAsyncResolver(getBoundResolve(this))
       );
 
       let { cssText, dependencies } = result;
