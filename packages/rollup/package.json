@@ -1,6 +1,6 @@
 {
   "name": "@wyw-in-js/rollup",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "dependencies": {
     "@rollup/pluginutils": "^5.0.5",
     "@wyw-in-js/shared": "workspace:*",
