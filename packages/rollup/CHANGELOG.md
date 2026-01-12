@@ -1,5 +1,14 @@
 # @wyw-in-js/rollup
 
+## 1.0.4
+
+### Patch Changes
+
+- b3bc127: Fix async module resolution by calling the bundler `resolve()` with the correct plugin context.
+- Updated dependencies
+  - @wyw-in-js/shared@1.0.3
+  - @wyw-in-js/transform@1.0.4
+
 ## 1.0.3
 
 ### Patch Changes

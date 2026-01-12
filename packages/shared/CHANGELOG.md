@@ -1,5 +1,11 @@
 # @wyw-in-js/shared
 
+## 1.0.3
+
+### Patch Changes
+
+- 0f443ab: Avoid installing `@types/debug` as a runtime dependency to prevent leaking global `debug` types into consumer TypeScript projects.
+
 ## 1.0.2
 
 ### Patch Changes
