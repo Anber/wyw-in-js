@@ -285,7 +285,18 @@ export default function wywInJS({
 
   // <dependency id, targets>
   const targets: { dependencies: string[]; id: string }[] = [];
-  const cache = new TransformCacheCollection();
+  const cacheByContext = new WeakMap<object, TransformCacheCollection>();
+  const caches = new Set<TransformCacheCollection>();
+
+  const getCache = (ctx: object): TransformCacheCollection => {
+    const cached = cacheByContext.get(ctx);
+    if (cached) return cached;
+
+    const next = new TransformCacheCollection();
+    cacheByContext.set(ctx, next);
+    caches.add(next);
+    return next;
+  };
 
   type DepInfoLike = { file: string; processing?: Promise<void> };
   type DepsOptimizerLike = {
@@ -565,7 +576,9 @@ export default function wywInJS({
 
       // eslint-disable-next-line no-restricted-syntax
       for (const depId of deps) {
-        cache.invalidateForFile(depId);
+        for (const cache of caches) {
+          cache.invalidateForFile(depId);
+        }
       }
 
       return affected
@@ -619,7 +632,7 @@ export default function wywInJS({
             overrideContext,
           },
         },
-        cache,
+        cache: getCache(this),
         emitWarning: (message: string) => this.warn(message),
         eventEmitter: emitter,
       };

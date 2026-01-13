@@ -313,4 +313,44 @@ describe('vite asyncResolve', () => {
 
     expect(asyncResolveResults).toContain('/resolved.ts');
   });
+
+  it('uses a separate TransformCacheCollection per plugin context', async () => {
+    const { default: wywInJS } = await import('../index');
+    const plugin = wywInJS();
+
+    plugin.configResolved({
+      root: process.cwd(),
+      mode: 'development',
+      command: 'serve',
+      base: '/',
+    } as any);
+
+    const transformModule = await import('@wyw-in-js/transform');
+    const transformMock = transformModule.transform as unknown as jest.Mock;
+    transformMock.mockClear();
+
+    const ctxA = {
+      resolve: jest
+        .fn()
+        .mockResolvedValue({ id: requestedId, external: false }),
+      warn: jest.fn(),
+    } as any;
+    const ctxB = {
+      resolve: jest
+        .fn()
+        .mockResolvedValue({ id: requestedId, external: false }),
+      warn: jest.fn(),
+    } as any;
+
+    await plugin.transform?.call(ctxA, 'console.log("a")', '/entry.tsx');
+    await plugin.transform?.call(ctxA, 'console.log("b")', '/entry.tsx');
+    await plugin.transform?.call(ctxB, 'console.log("c")', '/entry.tsx');
+
+    const cacheA1 = transformMock.mock.calls[0][0].cache;
+    const cacheA2 = transformMock.mock.calls[1][0].cache;
+    const cacheB = transformMock.mock.calls[2][0].cache;
+
+    expect(cacheA1).toBe(cacheA2);
+    expect(cacheA1).not.toBe(cacheB);
+  });
 });
