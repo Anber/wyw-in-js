@@ -31,6 +31,7 @@ describe('vite SSR dev CSS', () => {
       mode: 'development',
       command: 'serve',
       base: '/',
+      createResolver: () => jest.fn().mockResolvedValue(undefined),
     } as any);
 
     const result = plugin.transformIndexHtml?.('<html></html>') as any;
@@ -55,6 +56,7 @@ describe('vite SSR dev CSS', () => {
       mode: 'production',
       command: 'build',
       base: '/',
+      createResolver: () => jest.fn().mockResolvedValue(undefined),
     } as any);
 
     expect(plugin.transformIndexHtml?.('<html></html>')).toBeUndefined();
@@ -69,6 +71,7 @@ describe('vite SSR dev CSS', () => {
       mode: 'development',
       command: 'serve',
       base: '/',
+      createResolver: () => jest.fn().mockResolvedValue(undefined),
     } as any);
 
     let middleware: ((req: any, res: any, next: () => void) => void) | null =

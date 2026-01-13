@@ -1,4 +1,3 @@
-import { createHash } from 'crypto';
 import fs from 'node:fs';
 
 import { TransformCacheCollection } from '../cache';
@@ -13,10 +12,6 @@ type MockEntrypoint = {
 };
 
 const mockedReadFileSync = jest.spyOn(fs, 'readFileSync');
-
-function hashContent(content: string) {
-  return createHash('sha256').update(content).digest('hex');
-}
 
 const setupCacheWithEntrypoint = (
   filename: string,
@@ -35,11 +30,6 @@ const setupCacheWithEntrypoint = (
   };
 
   cache.add('entrypoints', filename, entrypoint);
-
-  // Manually set content hash as `add` does
-  // @ts-expect-error contentHashes is private
-  const { contentHashes } = cache;
-  contentHashes.set(filename, hashContent(content));
 
   return { cache, entrypoint };
 };
@@ -63,6 +53,67 @@ describe('TransformCacheCollection', () => {
       const { cache } = setupCacheWithEntrypoint(filename, content);
 
       const invalidated = cache.invalidateIfChanged(filename, content);
+
+      expect(invalidated).toBe(false);
+      expect(cache.has('entrypoints', filename)).toBe(true);
+    });
+
+    it('stores content hashes for filesystem-loaded entrypoints', () => {
+      const filename = 'fs.js';
+      const content = 'export const value = 1;';
+      const cache = new TransformCacheCollection();
+
+      cache.add('entrypoints', filename, {
+        dependencies: new Map(),
+        generation: 1,
+        initialCode: undefined,
+        name: filename,
+        originalCode: content,
+      } as any);
+
+      const invalidated = cache.invalidateIfChanged(
+        filename,
+        content,
+        undefined,
+        'fs'
+      );
+
+      expect(invalidated).toBe(false);
+      expect(cache.has('entrypoints', filename)).toBe(true);
+    });
+
+    it('invalidates if loaded content differs from fs content', () => {
+      const filename = 'fs.tsx';
+      const fsContent = 'export type Foo = string;';
+      const loadedContent = 'export const foo = "string";';
+      const { cache } = setupCacheWithEntrypoint(filename, fsContent);
+
+      cache.invalidateIfChanged(filename, fsContent, undefined, 'fs');
+
+      const invalidated = cache.invalidateIfChanged(
+        filename,
+        loadedContent,
+        undefined,
+        'loaded'
+      );
+
+      expect(invalidated).toBe(true);
+      expect(cache.has('entrypoints', filename)).toBe(false);
+    });
+
+    it('does not invalidate if loaded content matches fs content', () => {
+      const filename = 'fs.tsx';
+      const content = 'export const foo = "string";';
+      const { cache } = setupCacheWithEntrypoint(filename, content);
+
+      cache.invalidateIfChanged(filename, content, undefined, 'fs');
+
+      const invalidated = cache.invalidateIfChanged(
+        filename,
+        content,
+        undefined,
+        'loaded'
+      );
 
       expect(invalidated).toBe(false);
       expect(cache.has('entrypoints', filename)).toBe(true);
@@ -104,7 +155,7 @@ describe('TransformCacheCollection', () => {
 
       // Add the dependency entry to the main cache
       cache.add('entrypoints', depName, depEntrypoint as any);
-      (cache as any).contentHashes.set(depName, hashContent(depContent));
+      cache.invalidateIfChanged(depName, depContent, undefined, 'fs');
 
       // Mock fs read to return new content for the dependency
       mockedReadFileSync.mockImplementation((path) => {
@@ -147,7 +198,7 @@ describe('TransformCacheCollection', () => {
       );
 
       cache.add('entrypoints', depName, depEntrypoint as any);
-      (cache as any).contentHashes.set(depName, hashContent(depContent));
+      cache.invalidateIfChanged(depName, depContent, undefined, 'fs');
 
       mockedReadFileSync.mockImplementation((path) => {
         if (path === depName) {
@@ -207,12 +258,8 @@ describe('TransformCacheCollection', () => {
 
       // Add all to the main cache
       cache.add('entrypoints', leafName, leafEntrypoint as any);
-      (cache as any).contentHashes.set(leafName, hashContent(leafContent));
       cache.add('entrypoints', intermediateName, intermediateEntrypoint as any);
-      (cache as any).contentHashes.set(
-        intermediateName,
-        hashContent(intermediateContent)
-      );
+      cache.invalidateIfChanged(leafName, leafContent, undefined, 'fs');
 
       // Mock fs read to return new content for the leaf dependency
       mockedReadFileSync.mockImplementation((path) => {
@@ -260,7 +307,6 @@ describe('TransformCacheCollection', () => {
       );
 
       cache.add('entrypoints', fileB, entryB as any);
-      (cache as any).contentHashes.set(fileB, hashContent(contentB));
 
       mockedReadFileSync.mockImplementation((path) => {
         if (path === fileB) {
@@ -304,7 +350,6 @@ describe('TransformCacheCollection', () => {
       );
 
       cache.add('entrypoints', fileB, entryB as any);
-      (cache as any).contentHashes.set(fileB, hashContent(contentB));
 
       mockedReadFileSync.mockImplementation((path) => {
         if (path === fileA) {

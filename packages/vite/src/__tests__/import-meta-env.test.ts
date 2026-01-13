@@ -41,6 +41,7 @@ describe('vite import.meta.env injection', () => {
       base: '/base/',
       envDir: '/root',
       envPrefix: 'VITE_',
+      createResolver: () => jest.fn().mockResolvedValue(undefined),
     } as any);
 
     await plugin.transform?.call(

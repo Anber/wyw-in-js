@@ -285,18 +285,12 @@ export default function wywInJS({
 
   // <dependency id, targets>
   const targets: { dependencies: string[]; id: string }[] = [];
-  const cacheByContext = new WeakMap<object, TransformCacheCollection>();
-  const caches = new Set<TransformCacheCollection>();
+  const clientCache = new TransformCacheCollection();
+  const ssrCache = new TransformCacheCollection();
+  const caches = new Set<TransformCacheCollection>([clientCache, ssrCache]);
 
-  const getCache = (ctx: object): TransformCacheCollection => {
-    const cached = cacheByContext.get(ctx);
-    if (cached) return cached;
-
-    const next = new TransformCacheCollection();
-    cacheByContext.set(ctx, next);
-    caches.add(next);
-    return next;
-  };
+  const getCache = (isSsr: boolean): TransformCacheCollection =>
+    isSsr ? ssrCache : clientCache;
 
   type DepInfoLike = { file: string; processing?: Promise<void> };
   type DepsOptimizerLike = {
@@ -356,26 +350,19 @@ export default function wywInJS({
     return true;
   };
 
-  type ResolveResult = { external?: boolean | 'absolute'; id: string } | null;
-  type ResolveFn = (what: string, importer: string) => Promise<ResolveResult>;
-  type ResolveContext = object & { resolve: ResolveFn };
+  type ViteResolver = ReturnType<ResolvedConfig['createResolver']>;
+  type ViteResolverResult = Awaited<ReturnType<ViteResolver>>;
+  type ResolveFn = (
+    what: string,
+    importer: string
+  ) => Promise<ViteResolverResult>;
 
-  const boundResolveCache = new WeakMap<ResolveContext, ResolveFn>();
-
-  const getBoundResolve = (ctx: ResolveContext): ResolveFn => {
-    const cached = boundResolveCache.get(ctx);
-    if (cached) return cached;
-
-    const boundResolve: ResolveFn = (what, importer) =>
-      ctx.resolve(what, importer);
-
-    boundResolveCache.set(ctx, boundResolve);
-    return boundResolve;
-  };
+  let resolveClient: ResolveFn | null = null;
+  let resolveSsr: ResolveFn | null = null;
 
   const createAsyncResolver = asyncResolverFactory(
     async (
-      resolved: { external?: boolean | 'absolute'; id: string } | null,
+      resolved: ViteResolverResult,
       what: string,
       importer: string,
       stack: string[]
@@ -386,7 +373,7 @@ export default function wywInJS({
         log("resolve ✅ '%s'@'%s -> %O\n%s", what, importer, resolved);
 
         // Vite adds param like `?v=667939b3` to cached modules
-        let resolvedId = resolved.id.split('?', 1)[0];
+        let resolvedId = resolved.split('?', 1)[0];
 
         if (resolvedId.startsWith('\0')) {
           // \0 is a special character in Rollup that tells Rollup to not include this in the bundle
@@ -400,17 +387,6 @@ export default function wywInJS({
 
         if (resolvedId.startsWith('/@')) {
           return null;
-        }
-
-        if (resolved.external) {
-          // In SSR mode Vite can mark resolved file ids as `external` (including `external: "absolute"`).
-          // Prefer Vite's resolved file path and only fall back to Node resolution for bare specifiers.
-          if (path.isAbsolute(resolvedId) || existsSync(resolvedId)) {
-            return resolvedId;
-          }
-
-          // If module is marked as external, Rollup will not resolve it further, so resolve it ourselves.
-          return syncResolve(what, importer, stack);
         }
 
         if (!existsSync(resolvedId)) {
@@ -434,10 +410,31 @@ export default function wywInJS({
           }
         }
 
+        if (!existsSync(resolvedId) && !path.isAbsolute(resolvedId)) {
+          // Vite can resolve an import to a bare specifier when bundling for SSR and marking it as external.
+          // In that case we still need a real file path for WyW evaluation.
+          return syncResolve(what, importer, stack);
+        }
+
         return resolvedId;
       }
 
       log("resolve ❌ '%s'@'%s", what, importer);
+
+      // Vite can inject virtual ids like /@react-refresh in dev.
+      if (what.startsWith('/@') || what.startsWith('\0')) {
+        return null;
+      }
+
+      if (
+        !what.startsWith('.') &&
+        !what.startsWith('/') &&
+        !path.isAbsolute(what)
+      ) {
+        // Keep compatibility with SSR externalization: fall back to Node resolution for bare specifiers.
+        return syncResolve(what, importer, stack);
+      }
+
       throw new Error(`Could not resolve ${what}`);
     },
     (what, importer) => [what, importer]
@@ -451,6 +448,11 @@ export default function wywInJS({
     },
     configResolved(resolvedConfig: ResolvedConfig) {
       config = resolvedConfig;
+      const viteResolver = config.createResolver();
+      resolveClient = (what, importer) =>
+        viteResolver(what, importer, false, false);
+      resolveSsr = (what, importer) =>
+        viteResolver(what, importer, false, true);
 
       if (preserveCssPaths && config.command === 'build') {
         const outputs = config.build.rollupOptions.output;
@@ -605,11 +607,12 @@ export default function wywInJS({
 
       log('transform %s', id);
 
+      const isSsr =
+        typeof transformOptions === 'boolean'
+          ? transformOptions
+          : Boolean(transformOptions?.ssr);
+
       const overrideContext: OverrideContext = (context, filename) => {
-        const isSsr =
-          typeof transformOptions === 'boolean'
-            ? transformOptions
-            : Boolean(transformOptions?.ssr);
         const env = importMetaEnvForEval?.[isSsr ? 'ssr' : 'client'];
         const withEnv = env
           ? { ...context, __wyw_import_meta_env: env }
@@ -632,15 +635,20 @@ export default function wywInJS({
             overrideContext,
           },
         },
-        cache: getCache(this),
+        cache: getCache(isSsr),
         emitWarning: (message: string) => this.warn(message),
         eventEmitter: emitter,
       };
 
+      const resolve = isSsr ? resolveSsr : resolveClient;
+      if (!resolve) {
+        throw new Error('Vite resolver is not initialized yet');
+      }
+
       const result = await transform(
         transformServices,
         code,
-        createAsyncResolver(getBoundResolve(this))
+        createAsyncResolver(resolve)
       );
 
       let { cssText, dependencies } = result;

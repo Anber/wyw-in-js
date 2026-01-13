@@ -59,6 +59,7 @@ describe('vite HMR', () => {
       mode: 'development',
       command: 'serve',
       base: '/',
+      createResolver: () => jest.fn().mockResolvedValue(undefined),
     } as any);
     plugin.configureServer?.({
       moduleGraph: { getModuleById },
@@ -95,6 +96,7 @@ describe('vite HMR', () => {
       mode: 'development',
       command: 'serve',
       base: '/',
+      createResolver: () => jest.fn().mockResolvedValue(undefined),
     } as any);
     plugin.configureServer?.({
       moduleGraph: { getModuleById },
