@@ -73,6 +73,7 @@ describe('vite prefixer option', () => {
       mode: 'development',
       command: 'build',
       base: '/',
+      createResolver: () => jest.fn().mockResolvedValue(undefined),
     } as any);
 
     const result = await plugin.transform?.call(
@@ -108,6 +109,7 @@ describe('vite prefixer option', () => {
       mode: 'development',
       command: 'build',
       base: '/',
+      createResolver: () => jest.fn().mockResolvedValue(undefined),
     } as any);
 
     const result = await plugin.transform?.call(

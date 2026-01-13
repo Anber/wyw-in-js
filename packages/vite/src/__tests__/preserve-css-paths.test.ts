@@ -46,6 +46,7 @@ describe('vite preserveCssPaths', () => {
       mode: 'production',
       command: 'build',
       base: '/',
+      createResolver: () => jest.fn().mockResolvedValue(undefined),
       build: { rollupOptions: { output: outputOptions } },
     } as any);
 
@@ -88,6 +89,7 @@ describe('vite preserveCssPaths', () => {
       mode: 'production',
       command: 'build',
       base: '/',
+      createResolver: () => jest.fn().mockResolvedValue(undefined),
       build: { rollupOptions: { output: outputOptions } },
     } as any);
 
@@ -123,6 +125,7 @@ describe('vite preserveCssPaths', () => {
       mode: 'production',
       command: 'build',
       base: '/',
+      createResolver: () => jest.fn().mockResolvedValue(undefined),
       build: { rollupOptions: { output: outputOptions } },
     } as any);
 
@@ -151,6 +154,7 @@ describe('vite preserveCssPaths', () => {
       mode: 'production',
       command: 'build',
       base: '/',
+      createResolver: () => jest.fn().mockResolvedValue(undefined),
       build: { rollupOptions: { output: outputOptions } },
     } as any);
 
