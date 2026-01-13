@@ -94,7 +94,12 @@ export class Entrypoint extends BaseEntrypoint {
       );
 
     if (this.loadedAndParsed.code !== undefined) {
-      services.cache.invalidateIfChanged(name, this.loadedAndParsed.code);
+      services.cache.invalidateIfChanged(
+        name,
+        this.loadedAndParsed.code,
+        undefined,
+        this.initialCode === undefined ? 'fs' : 'loaded'
+      );
     }
 
     const code =
@@ -192,7 +197,7 @@ export class Entrypoint extends BaseEntrypoint {
     const cached = cache.get('entrypoints', name);
     const changed =
       loadedCode !== undefined
-        ? cache.invalidateIfChanged(name, loadedCode)
+        ? cache.invalidateIfChanged(name, loadedCode, undefined, 'loaded')
         : false;
 
     if (!cached?.evaluated && cached?.ignored) {

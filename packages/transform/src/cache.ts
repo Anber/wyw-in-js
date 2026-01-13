@@ -43,7 +43,21 @@ export class TransformCacheCollection<
 
   public readonly exports: Map<string, string[]>;
 
-  private contentHashes = new Map<string, string>();
+  private contentHashes = new Map<string, { fs?: string; loaded?: string }>();
+
+  private setContentHash(
+    filename: string,
+    source: 'fs' | 'loaded',
+    hash: string
+  ) {
+    const current = this.contentHashes.get(filename);
+    if (current) {
+      current[source] = hash;
+      return;
+    }
+
+    this.contentHashes.set(filename, { [source]: hash });
+  }
 
   constructor(caches: Partial<ICaches<TEntrypoint>> = {}) {
     this.entrypoints = caches.entrypoints || new Map();
@@ -76,7 +90,28 @@ export class TransformCacheCollection<
     cache.set(key, value);
 
     if ('initialCode' in value) {
-      this.contentHashes.set(key, hashContent(value.initialCode ?? ''));
+      const maybeOriginalCode = (value as unknown as { originalCode?: unknown })
+        .originalCode;
+      const isLoaded = typeof value.initialCode === 'string';
+      const source = isLoaded ? 'loaded' : 'fs';
+
+      const resolvedCode = isLoaded
+        ? value.initialCode
+        : typeof maybeOriginalCode === 'string'
+          ? maybeOriginalCode
+          : undefined;
+
+      if (resolvedCode !== undefined) {
+        this.setContentHash(key, source, hashContent(resolvedCode));
+        return;
+      }
+
+      try {
+        const fileContent = fs.readFileSync(stripQueryAndHash(key), 'utf8');
+        this.setContentHash(key, source, hashContent(fileContent));
+      } catch {
+        this.setContentHash(key, source, hashContent(''));
+      }
     }
   }
 
@@ -138,7 +173,8 @@ export class TransformCacheCollection<
   public invalidateIfChanged(
     filename: string,
     content: string,
-    previousVisitedFiles?: Set<string>
+    previousVisitedFiles?: Set<string>,
+    source: 'fs' | 'loaded' = 'loaded'
   ) {
     const visitedFiles = new Set(previousVisitedFiles);
     const fileEntrypoint = this.get('entrypoints', filename);
@@ -159,18 +195,25 @@ export class TransformCacheCollection<
           this.invalidateIfChanged(
             dependencyFilename,
             dependencyContent,
-            visitedFiles
+            visitedFiles,
+            'fs'
           );
         }
       }
     }
 
-    const hash = this.contentHashes.get(filename);
+    const existing = this.contentHashes.get(filename);
+    const previousHash = existing?.[source];
     const newHash = hashContent(content);
 
-    if (hash !== newHash) {
+    if (previousHash === undefined) {
+      this.setContentHash(filename, source, newHash);
+      return false;
+    }
+
+    if (previousHash !== newHash) {
       cacheLogger('content has changed, invalidate all for %s', filename);
-      this.contentHashes.set(filename, newHash);
+      this.setContentHash(filename, source, newHash);
       this.invalidateForFile(filename);
 
       return true;
