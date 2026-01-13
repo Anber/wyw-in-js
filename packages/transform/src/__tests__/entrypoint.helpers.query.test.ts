@@ -39,7 +39,9 @@ describe('loadAndParse', () => {
   it('reuses cached initialCode when loadedCode is undefined', async () => {
     const { loadAndParse } = await import('../transform/Entrypoint.helpers');
 
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wyw-load-and-parse-'));
+    const tmpDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'wyw-load-and-parse-')
+    );
     const filename = path.join(tmpDir, 'fixture.ts');
 
     try {

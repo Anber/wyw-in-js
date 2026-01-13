@@ -352,7 +352,10 @@ export default function wywInJS({
 
   type ViteResolver = ReturnType<ResolvedConfig['createResolver']>;
   type ViteResolverResult = Awaited<ReturnType<ViteResolver>>;
-  type ResolveFn = (what: string, importer: string) => Promise<ViteResolverResult>;
+  type ResolveFn = (
+    what: string,
+    importer: string
+  ) => Promise<ViteResolverResult>;
 
   let resolveClient: ResolveFn | null = null;
   let resolveSsr: ResolveFn | null = null;
@@ -448,7 +451,8 @@ export default function wywInJS({
       const viteResolver = config.createResolver();
       resolveClient = (what, importer) =>
         viteResolver(what, importer, false, false);
-      resolveSsr = (what, importer) => viteResolver(what, importer, false, true);
+      resolveSsr = (what, importer) =>
+        viteResolver(what, importer, false, true);
 
       if (preserveCssPaths && config.command === 'build') {
         const outputs = config.build.rollupOptions.output;

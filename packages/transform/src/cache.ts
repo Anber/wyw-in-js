@@ -45,20 +45,6 @@ export class TransformCacheCollection<
 
   private contentHashes = new Map<string, { fs?: string; loaded?: string }>();
 
-  private setContentHash(
-    filename: string,
-    source: 'fs' | 'loaded',
-    hash: string
-  ) {
-    const current = this.contentHashes.get(filename);
-    if (current) {
-      current[source] = hash;
-      return;
-    }
-
-    this.contentHashes.set(filename, { [source]: hash });
-  }
-
   constructor(caches: Partial<ICaches<TEntrypoint>> = {}) {
     this.entrypoints = caches.entrypoints || new Map();
     this.exports = caches.exports || new Map();
@@ -95,11 +81,12 @@ export class TransformCacheCollection<
       const isLoaded = typeof value.initialCode === 'string';
       const source = isLoaded ? 'loaded' : 'fs';
 
-      const resolvedCode = isLoaded
-        ? value.initialCode
-        : typeof maybeOriginalCode === 'string'
-          ? maybeOriginalCode
-          : undefined;
+      let resolvedCode: string | undefined;
+      if (isLoaded) {
+        resolvedCode = value.initialCode;
+      } else if (typeof maybeOriginalCode === 'string') {
+        resolvedCode = maybeOriginalCode;
+      }
 
       if (resolvedCode !== undefined) {
         this.setContentHash(key, source, hashContent(resolvedCode));
@@ -231,5 +218,19 @@ export class TransformCacheCollection<
     }
 
     return false;
+  }
+
+  private setContentHash(
+    filename: string,
+    source: 'fs' | 'loaded',
+    hash: string
+  ) {
+    const current = this.contentHashes.get(filename);
+    if (current) {
+      current[source] = hash;
+      return;
+    }
+
+    this.contentHashes.set(filename, { [source]: hash });
   }
 }

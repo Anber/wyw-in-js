@@ -24,10 +24,12 @@ jest.mock('@wyw-in-js/shared', () => ({
     const memoized = new WeakMap<any, any>();
     return (resolveFn: any) => {
       if (!memoized.has(resolveFn)) {
-        memoized.set(resolveFn, (what: string, importer: string, stack: string[]) =>
-          Promise.resolve(resolveFn(...mapper(what, importer, stack))).then((resolved) =>
-            onResolve(resolved, what, importer, stack)
-          )
+        memoized.set(
+          resolveFn,
+          (what: string, importer: string, stack: string[]) =>
+            Promise.resolve(resolveFn(...mapper(what, importer, stack))).then(
+              (resolved) => onResolve(resolved, what, importer, stack)
+            )
         );
       }
       return memoized.get(resolveFn);
