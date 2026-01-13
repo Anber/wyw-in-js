@@ -82,6 +82,43 @@ describe('TransformCacheCollection', () => {
       expect(cache.has('entrypoints', filename)).toBe(true);
     });
 
+    it('invalidates if loaded content differs from fs content', () => {
+      const filename = 'fs.tsx';
+      const fsContent = 'export type Foo = string;';
+      const loadedContent = 'export const foo = "string";';
+      const { cache } = setupCacheWithEntrypoint(filename, fsContent);
+
+      cache.invalidateIfChanged(filename, fsContent, undefined, 'fs');
+
+      const invalidated = cache.invalidateIfChanged(
+        filename,
+        loadedContent,
+        undefined,
+        'loaded'
+      );
+
+      expect(invalidated).toBe(true);
+      expect(cache.has('entrypoints', filename)).toBe(false);
+    });
+
+    it('does not invalidate if loaded content matches fs content', () => {
+      const filename = 'fs.tsx';
+      const content = 'export const foo = "string";';
+      const { cache } = setupCacheWithEntrypoint(filename, content);
+
+      cache.invalidateIfChanged(filename, content, undefined, 'fs');
+
+      const invalidated = cache.invalidateIfChanged(
+        filename,
+        content,
+        undefined,
+        'loaded'
+      );
+
+      expect(invalidated).toBe(false);
+      expect(cache.has('entrypoints', filename)).toBe(true);
+    });
+
     it('should invalidate if content has changed', () => {
       const filename = 'test.js';
       const content = 'console.log("hello")';
