@@ -1,6 +1,7 @@
 .idea
 node_modules
 
+.worktrees
 .next
 .parcel-cache
 .turbo
