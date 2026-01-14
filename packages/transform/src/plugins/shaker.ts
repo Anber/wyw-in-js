@@ -309,11 +309,14 @@ export default function shakerPlugin(
       })();
 
       const collected = collectExportsAndImports(file.path);
-      const sideEffectImports = collected.imports.filter(sideEffectImport);
+      const imports = collected.imports.filter(
+        (imp) => sideEffectImport(imp) || imp.type !== 'dynamic'
+      );
+      const sideEffectImports = imports.filter(sideEffectImport);
       log(
         'import-and-exports',
         [
-          `imports: ${collected.imports.length} (side-effects: ${sideEffectImports.length})`,
+          `imports: ${imports.length} (side-effects: ${sideEffectImports.length})`,
           `exports: ${Object.values(collected.exports).length}`,
           `reexports: ${collected.reexports.length}`,
         ].join(', ')
@@ -373,7 +376,7 @@ export default function shakerPlugin(
         hasDefault &&
         !collected.isEsModule
       ) {
-        this.imports = collected.imports;
+        this.imports = imports;
         this.exports = exports;
         this.reexports = collected.reexports;
         this.deadExports = [];
@@ -385,7 +388,7 @@ export default function shakerPlugin(
         onlyExportsSet.add('__esModule');
 
         const aliveExports = new Set<NodePath>();
-        const importNames = collected.imports.map(({ imported }) => imported);
+        const importNames = imports.map(({ imported }) => imported);
 
         Object.entries(exports).forEach(([exported, local]) => {
           if (onlyExportsSet.has(exported)) {
@@ -459,7 +462,7 @@ export default function shakerPlugin(
           }
 
           if (ifUnknownExport === 'skip-shaking') {
-            this.imports = collected.imports;
+            this.imports = imports;
             this.exports = exports;
             this.reexports = collected.reexports;
             this.deadExports = [];
@@ -635,7 +638,7 @@ export default function shakerPlugin(
         }
       }
 
-      this.imports = withoutRemoved(collected.imports);
+      this.imports = withoutRemoved(imports);
       this.exports = {};
       this.deadExports = [];
 
