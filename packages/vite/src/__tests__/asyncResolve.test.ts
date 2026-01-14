@@ -256,4 +256,65 @@ describe('vite asyncResolve', () => {
     expect(resolverA1).toBe(resolverA2);
     expect(resolverA1).toBe(resolverB);
   });
+
+  it('keeps resolver stable across repeated configResolved calls', async () => {
+    const { default: wywInJS } = await import('../index');
+    const plugin = wywInJS();
+
+    const tempDir = mkdtempSync(join(tmpdir(), 'wyw-vite-resolver-'));
+    try {
+      const fileA = join(tempDir, 'a.ts');
+      const fileB = join(tempDir, 'b.ts');
+      writeFileSync(fileA, 'export {}', 'utf8');
+      writeFileSync(fileB, 'export {}', 'utf8');
+
+      const resolveFnA = jest.fn().mockResolvedValue(fileA);
+      plugin.configResolved({
+        root: process.cwd(),
+        mode: 'development',
+        command: 'serve',
+        base: '/',
+        createResolver: () => resolveFnA,
+      } as any);
+
+      const transformModule = await import('@wyw-in-js/transform');
+      const transformMock = transformModule.transform as unknown as jest.Mock;
+      transformMock.mockClear();
+
+      requestedId = 'a';
+
+      await plugin.transform?.call(
+        { warn: jest.fn() } as any,
+        'console.log("a")',
+        '/entry.tsx'
+      );
+
+      const resolverA = transformMock.mock.calls[0][2];
+
+      const resolveFnB = jest.fn().mockResolvedValue(fileB);
+      plugin.configResolved({
+        root: process.cwd(),
+        mode: 'development',
+        command: 'serve',
+        base: '/',
+        createResolver: () => resolveFnB,
+      } as any);
+
+      requestedId = 'b';
+
+      await plugin.transform?.call(
+        { warn: jest.fn() } as any,
+        'console.log("b")',
+        '/entry.tsx'
+      );
+
+      const resolverB = transformMock.mock.calls[1][2];
+
+      expect(resolverA).toBe(resolverB);
+      expect(asyncResolveResults).toContain(normalize(fileA));
+      expect(asyncResolveResults).toContain(normalize(fileB));
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
 });

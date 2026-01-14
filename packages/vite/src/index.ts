@@ -357,8 +357,23 @@ export default function wywInJS({
     importer: string
   ) => Promise<ViteResolverResult>;
 
-  let resolveClient: ResolveFn | null = null;
-  let resolveSsr: ResolveFn | null = null;
+  let viteResolver: ViteResolver | null = null;
+
+  const resolveClient: ResolveFn = (what, importer) => {
+    if (!viteResolver) {
+      throw new Error('Vite resolver is not initialized yet');
+    }
+
+    return viteResolver(what, importer, false, false);
+  };
+
+  const resolveSsr: ResolveFn = (what, importer) => {
+    if (!viteResolver) {
+      throw new Error('Vite resolver is not initialized yet');
+    }
+
+    return viteResolver(what, importer, false, true);
+  };
 
   const createAsyncResolver = asyncResolverFactory(
     async (
@@ -440,6 +455,9 @@ export default function wywInJS({
     (what, importer) => [what, importer]
   );
 
+  const asyncResolveClient = createAsyncResolver(resolveClient);
+  const asyncResolveSsr = createAsyncResolver(resolveSsr);
+
   return {
     name: 'wyw-in-js',
     enforce: 'post',
@@ -448,11 +466,7 @@ export default function wywInJS({
     },
     configResolved(resolvedConfig: ResolvedConfig) {
       config = resolvedConfig;
-      const viteResolver = config.createResolver();
-      resolveClient = (what, importer) =>
-        viteResolver(what, importer, false, false);
-      resolveSsr = (what, importer) =>
-        viteResolver(what, importer, false, true);
+      viteResolver = config.createResolver();
 
       if (preserveCssPaths && config.command === 'build') {
         const outputs = config.build.rollupOptions.output;
@@ -640,16 +654,9 @@ export default function wywInJS({
         eventEmitter: emitter,
       };
 
-      const resolve = isSsr ? resolveSsr : resolveClient;
-      if (!resolve) {
-        throw new Error('Vite resolver is not initialized yet');
-      }
+      const asyncResolve = isSsr ? asyncResolveSsr : asyncResolveClient;
 
-      const result = await transform(
-        transformServices,
-        code,
-        createAsyncResolver(resolve)
-      );
+      const result = await transform(transformServices, code, asyncResolve);
 
       let { cssText, dependencies } = result;
 

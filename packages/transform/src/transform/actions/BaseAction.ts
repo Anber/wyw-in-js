@@ -130,7 +130,9 @@ export class BaseAction<TAction extends ActionQueueItem>
     type IterationResult = AnyIteratorResult<TMode, TypeOfResult<TAction>>;
 
     if (this.handler && this.handler !== handler) {
-      throw new Error(`action handler is already set`);
+      throw new Error(
+        `action handler is already set for ${this.ref} (${this.entrypoint.name})`
+      );
     }
 
     this.handler = handler;
