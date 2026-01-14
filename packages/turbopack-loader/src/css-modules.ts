@@ -146,23 +146,6 @@ function wrapSelector(selectorText: string) {
   return selectors.map((selector) => `:global(${selector})`).join(', ');
 }
 
-function wrapKeyframesHeader(prelude: string) {
-  let idx = 0;
-  while (idx < prelude.length && isWhitespace(prelude[idx])) idx += 1;
-
-  if (prelude.slice(idx).startsWith(':global(')) {
-    return prelude;
-  }
-
-  const match = /^[A-Za-z_-][A-Za-z0-9_-]*/.exec(prelude.slice(idx));
-  if (!match) return prelude;
-
-  const name = match[0];
-  const before = prelude.slice(0, idx);
-  const after = prelude.slice(idx + name.length);
-  return `${before}:global(${name})${after}`;
-}
-
 function makeCssModuleGlobalInner(css: string) {
   let idx = 0;
   let out = '';
@@ -208,7 +191,7 @@ function makeCssModuleGlobalInner(css: string) {
         const blockBody = css.slice(terminatorIdx + 1, blockEndIdx);
 
         if (isKeyframesAtRule(atRuleName)) {
-          out += `@${atRuleName}${wrapKeyframesHeader(prelude)}{${blockBody}}`;
+          out += `@${atRuleName}${prelude}{${blockBody}}`;
         } else if (nestingAtRules.has(atRuleName.toLowerCase())) {
           out += `@${atRuleName}${prelude}{${makeCssModuleGlobalInner(
             blockBody

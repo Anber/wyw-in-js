@@ -19,9 +19,17 @@ describe('makeCssModuleGlobal', () => {
     );
   });
 
-  it('marks keyframes names as global', () => {
+  it('keeps keyframes names untouched', () => {
     expect(makeCssModuleGlobal('@keyframes spin{from{a:0}to{a:1}}')).toBe(
-      '@keyframes :global(spin){from{a:0}to{a:1}}'
+      '@keyframes spin{from{a:0}to{a:1}}'
     );
+  });
+
+  it('keeps keyframes names untouched when used in animation', () => {
+    expect(
+      makeCssModuleGlobal(
+        '.a{animation: spin 1s;}@keyframes spin{from{a:0}to{a:1}}'
+      )
+    ).toBe(':global(.a){animation: spin 1s;}@keyframes spin{from{a:0}to{a:1}}');
   });
 });
