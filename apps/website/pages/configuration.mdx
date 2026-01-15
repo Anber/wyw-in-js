@@ -232,6 +232,7 @@ module.exports = {
 
   - When WyW evaluates `__wywPreval`, it tree-shakes the module and removes `import '...';` side-effect imports by default, to avoid executing unrelated runtime code in Node.js (some libraries touch `document`, `window`, etc).
   - If your evaluated modules import browser-only packages (e.g. `msw/browser`), evaluation can still fail in Node.js. In that case, move the browser-only initialization out of evaluated modules, or mock the import via `importOverrides`.
+  - If your evaluated modules contain runtime-only *heavy* dependencies (e.g. code editors, syntax highlighters), build-time evaluation can become much slower even if those dependencies are imported lazily at runtime. In that case, mock the heavy import via `importOverrides` to keep evaluation fast.
   - If you need a side-effect import to run during evaluation, or you need to stub a problematic side-effect import, add an override for that import:
     - `{ noShake: true }` keeps the import and disables tree-shaking for that dependency.
     - `{ mock: './path/to/mock' }` keeps the import but redirects it to a mock module.
@@ -242,6 +243,16 @@ module.exports = {
   module.exports = {
     importOverrides: {
       '@radix-ui/react-tooltip': { mock: './src/__mocks__/radix-tooltip.ts' },
+    },
+  };
+  ```
+
+  Example (speed up evaluation by mocking a heavy runtime-only dependency):
+
+  ```js
+  module.exports = {
+    importOverrides: {
+      '@uiw/react-codemirror': { mock: './src/__mocks__/uiw-react-codemirror.ts' },
     },
   };
   ```

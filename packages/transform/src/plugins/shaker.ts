@@ -33,6 +33,8 @@ import { invalidateTraversalCache } from '../utils/traversalCache';
 import { stripQueryAndHash } from '../utils/parseRequest';
 import { toImportKey } from '../utils/importOverrides';
 
+const warnedDynamicImportFiles = new Set<string>();
+
 export interface IShakerOptions {
   ifUnknownExport?: 'error' | 'ignore' | 'reexport-all' | 'skip-shaking';
   importOverrides?: ImportOverrides;
@@ -309,9 +311,7 @@ export default function shakerPlugin(
       })();
 
       const collected = collectExportsAndImports(file.path);
-      const imports = collected.imports.filter(
-        (imp) => sideEffectImport(imp) || imp.type !== 'dynamic'
-      );
+      const { imports } = collected;
       const sideEffectImports = imports.filter(sideEffectImport);
       log(
         'import-and-exports',
@@ -655,6 +655,81 @@ export default function shakerPlugin(
     visitor: {},
     post(file: BabelFile) {
       const log = shakerLogger.extend(getFileIdx(file.opts.filename!));
+
+      const dynamicImportWarningsEnabled =
+        Boolean(process.env.WYW_WARN_DYNAMIC_IMPORTS) &&
+        process.env.WYW_WARN_DYNAMIC_IMPORTS !== '0' &&
+        process.env.WYW_WARN_DYNAMIC_IMPORTS !== 'false';
+
+      const filename = file.opts.filename!;
+
+      if (
+        dynamicImportWarningsEnabled &&
+        !warnedDynamicImportFiles.has(filename)
+      ) {
+        const dynamicImports = this.imports.filter(
+          (imp) => !sideEffectImport(imp) && imp.type === 'dynamic'
+        );
+        if (dynamicImports.length > 0) {
+          warnedDynamicImportFiles.add(filename);
+          const sources = Array.from(
+            new Set(dynamicImports.map((imp) => imp.source))
+          ).sort();
+          const overrideKeys = sources
+            .map((source) => {
+              const strippedSource = stripQueryAndHash(source);
+              const isFileImport =
+                strippedSource.startsWith('.') ||
+                pathLib.isAbsolute(strippedSource);
+
+              if (!isFileImport) {
+                return { source, key: source };
+              }
+
+              try {
+                const resolved = syncResolve(strippedSource, filename, []);
+                return {
+                  source,
+                  key: toImportKey({
+                    source: strippedSource,
+                    resolved,
+                    root,
+                  }).key,
+                };
+              } catch {
+                return { source, key: strippedSource };
+              }
+            })
+            .filter((item, index, array) => {
+              const firstIndexForKey = array.findIndex(
+                (i) => i.key === item.key
+              );
+              return firstIndexForKey === index;
+            });
+          const warning = [
+            `[wyw-in-js] Dynamic imports reached prepare stage`,
+            ``,
+            `file: ${filename}`,
+            `count: ${sources.length}`,
+            `sources:`,
+            ...sources.map((source) => `  - ${source}`),
+            ``,
+            `note: these imports will be resolved/processed even if they are lazy (e.g. React.lazy(() => import(...)))`,
+            ``,
+            `tip: if the imported module is runtime-only or heavy, mock it during evaluation via importOverrides:`,
+            `  importOverrides: {`,
+            ...overrideKeys.map(
+              ({ key, source }) =>
+                `    '${key}': { mock: './path/to/mock' }, // from ${source}`
+            ),
+            `  }`,
+            ``,
+            `note: importOverrides affects only build-time evaluation (it does not change your bundler runtime behavior)`,
+          ].join('\n');
+          // eslint-disable-next-line no-console
+          console.warn(warning);
+        }
+      }
 
       const processedImports = new Set<string>();
       const imports = new Map<string, string[]>();
