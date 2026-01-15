@@ -14,7 +14,7 @@
     "@wyw-in-js/ts-config": "workspace:*"
   },
   "engines": {
-    "node": ">=16.0.0"
+    "node": ">=20.0.0"
   },
   "exports": {
     "import": "./esm/index.mjs",

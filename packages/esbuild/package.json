@@ -13,7 +13,7 @@
     "esbuild": "^0.15.16"
   },
   "engines": {
-    "node": ">=16.0.0"
+    "node": ">=20.0.0"
   },
   "exports": {
     "import": "./esm/index.mjs",

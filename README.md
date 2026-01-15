@@ -28,6 +28,11 @@ This library evolved from the CSS-in-JS library [Linaria][1], with the aim of de
 - Bundlers: https://wyw-in-js.dev/bundlers
 - CLI: https://wyw-in-js.dev/cli
 
+## Requirements
+
+- Node.js `>=20.0.0` (Node 18 is EOL and not supported).
+- Bun `>=1.0.0` (supported via `@wyw-in-js/bun` and for running the workspace with Bun).
+
 ## CLI Quickstart
 
 Install:
