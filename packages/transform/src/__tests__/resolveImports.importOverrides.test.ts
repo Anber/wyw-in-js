@@ -122,6 +122,42 @@ describe('resolveImports: importOverrides', () => {
     ]);
   });
 
+  it('supports glob patterns for file-key overrides', () => {
+    const root = '/project';
+    const pluginOptions = createPluginOptions({
+      './src/*.js': { noShake: true },
+    });
+
+    const services = createServices({
+      filename: '/project/src/a.js',
+      root,
+      pluginOptions,
+    });
+
+    const resolve = () => '/project/src/foo.js';
+
+    const entrypoint = Entrypoint.createRoot(
+      services,
+      '/project/src/a.js',
+      ['*'],
+      ''
+    );
+    const action = {
+      data: { imports: new Map([['./foo', ['default']]]) },
+      entrypoint,
+      services,
+    } as IResolveImportsAction;
+
+    const deps = syncResolveImports.call(action, resolve).next().value;
+    expect(deps).toEqual([
+      {
+        source: './foo',
+        only: ['*'],
+        resolved: '/project/src/foo.js',
+      },
+    ]);
+  });
+
   it('applies package-key overrides by source specifier', () => {
     const root = __dirname;
     const mockSpecifier = './__fixtures__/sample-script.js';

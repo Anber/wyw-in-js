@@ -10,6 +10,7 @@ export interface IEvaluatedEntrypoint {
   exports: Record<string | symbol, unknown>;
   generation: number;
   ignored: false;
+  initialCode?: string;
   log: Debugger;
   only: string[];
 }
@@ -21,4 +22,6 @@ export class EvaluatedEntrypoint
   public readonly evaluated = true;
 
   public readonly ignored = false;
+
+  public initialCode?: string;
 }

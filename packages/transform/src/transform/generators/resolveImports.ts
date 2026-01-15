@@ -5,6 +5,7 @@ import { getStack, isSuperSet, mergeOnly } from '../Entrypoint.helpers';
 import type { IEntrypointDependency } from '../Entrypoint.types';
 import {
   applyImportOverrideToOnly,
+  getImportOverride,
   resolveMockSpecifier,
   toImportKey,
 } from '../../utils/importOverrides';
@@ -35,7 +36,7 @@ function applyImportOverrides(
       resolved: dependency.resolved,
       root,
     });
-    const override = overrides[key];
+    const override = getImportOverride(overrides, key);
     if (!override) {
       return dependency;
     }

@@ -60,6 +60,20 @@ The CLI options below are based on `wyw-in-js --help`.
 - `--ignore`, `-x`: glob pattern to exclude files (passed to `glob`).
 - `--debug`, `-d`: write debug output (transform events) into a directory.
 
+## Performance warnings (optional)
+
+`@wyw-in-js/cli` runs `@wyw-in-js/transform`, so you can enable the same opt-in performance diagnostics used by bundler plugins:
+
+- `WYW_WARN_DYNAMIC_IMPORTS=1`: warns when `import()` reaches prepare stage (it will be resolved/processed during build-time evaluation even if it’s lazy at runtime).
+- `WYW_WARN_SLOW_IMPORTS=1`: warns when preparing a specific import takes “too long” (tune threshold with `WYW_WARN_SLOW_IMPORTS_MS`, default: `50`).
+
+Example:
+
+```sh
+WYW_WARN_DYNAMIC_IMPORTS=1 WYW_WARN_SLOW_IMPORTS=1 WYW_WARN_SLOW_IMPORTS_MS=200 \
+  wyw-in-js --config ./wyw-in-js.config.js --source-root ./src --out-dir ./dist/wyw-css "src/**/*.{ts,tsx}"
+```
+
 ## Migration notes (`@linaria/cli` → `@wyw-in-js/cli`)
 
 - The binary name is `wyw-in-js`.

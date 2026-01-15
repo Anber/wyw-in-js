@@ -351,7 +351,7 @@ export class Entrypoint extends BaseEntrypoint {
     const evaluatedOnly = mergeOnly(this.evaluatedOnly, this.only);
     this.log('create EvaluatedEntrypoint for %o', evaluatedOnly);
 
-    return new EvaluatedEntrypoint(
+    const evaluated = new EvaluatedEntrypoint(
       this.services,
       evaluatedOnly,
       this.exportsProxy,
@@ -361,6 +361,10 @@ export class Entrypoint extends BaseEntrypoint {
       this.parents,
       this.dependencies
     );
+
+    evaluated.initialCode = this.initialCode;
+
+    return evaluated;
   }
 
   public getDependency(name: string): IEntrypointDependency | undefined {

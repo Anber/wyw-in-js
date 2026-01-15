@@ -321,7 +321,7 @@ describe('BaseAction', () => {
       action.run(handler1);
 
       expect(() => action.run(handler2)).toThrowError(
-        'action handler is already set'
+        /action handler is already set for/
       );
     });
   });

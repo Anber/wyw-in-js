@@ -207,6 +207,9 @@ module.exports = {
 
     - File imports (raw specifier starts with `.`) are keyed by a canonical root-relative path of the resolved file, e.g. `./src/foo.ts`.
     - Package imports are keyed by the raw specifier as written in code, e.g. `react` or `@scope/pkg`.
+    - Keys support minimatch patterns. Exact keys take precedence; if multiple patterns match, the most specific one wins.
+
+      **note** `?` is a minimatch wildcard. To match Vite query imports like `./icon.svg?react`, escape the question mark: `./icon.svg\\?react`.
 
   - Actions:
 
@@ -232,9 +235,25 @@ module.exports = {
 
   - When WyW evaluates `__wywPreval`, it tree-shakes the module and removes `import '...';` side-effect imports by default, to avoid executing unrelated runtime code in Node.js (some libraries touch `document`, `window`, etc).
   - If your evaluated modules import browser-only packages (e.g. `msw/browser`), evaluation can still fail in Node.js. In that case, move the browser-only initialization out of evaluated modules, or mock the import via `importOverrides`.
+  - If your evaluated modules contain runtime-only *heavy* dependencies (e.g. code editors, syntax highlighters), build-time evaluation can become much slower even if those dependencies are imported lazily at runtime. In that case, mock the heavy import via `importOverrides` to keep evaluation fast.
+  - If a module re-exports many values (e.g. a large “barrel” module like an icons index), WyW may need to re-run prepare for it multiple times as the required export set grows. If it shows up in slow-import warnings even after mocking the heavy leaf imports, add `{ noShake: true }` for the barrel module to force `only=['*']` and avoid incremental reprocessing.
   - If you need a side-effect import to run during evaluation, or you need to stub a problematic side-effect import, add an override for that import:
     - `{ noShake: true }` keeps the import and disables tree-shaking for that dependency.
     - `{ mock: './path/to/mock' }` keeps the import but redirects it to a mock module.
+
+  Performance warnings (optional):
+
+  - `WYW_WARN_DYNAMIC_IMPORTS=1` prints a warning when a module being prepared for evaluation contains `import()` that makes it to prepare stage. Even if it’s lazy at runtime (e.g. `React.lazy(() => import(...))`), WyW still needs to resolve/process it during build-time evaluation. If the target module is runtime-only or heavy, mock it via `importOverrides`.
+  - `WYW_WARN_SLOW_IMPORTS=1` prints a warning when preparing a specific import takes “too long”. Tune the threshold via `WYW_WARN_SLOW_IMPORTS_MS` (default: `50`).
+
+  Example:
+
+  ```sh
+  WYW_WARN_DYNAMIC_IMPORTS=1 \
+  WYW_WARN_SLOW_IMPORTS=1 \
+  WYW_WARN_SLOW_IMPORTS_MS=200 \
+  <your build command>
+  ```
 
   Example (stub a problematic side-effect import during evaluation):
 
@@ -242,6 +261,26 @@ module.exports = {
   module.exports = {
     importOverrides: {
       '@radix-ui/react-tooltip': { mock: './src/__mocks__/radix-tooltip.ts' },
+    },
+  };
+  ```
+
+  Example (speed up evaluation by mocking a heavy runtime-only dependency):
+
+  ```js
+  module.exports = {
+    importOverrides: {
+      '@uiw/react-codemirror': { mock: './src/__mocks__/uiw-react-codemirror.ts' },
+    },
+  };
+  ```
+
+  Example (mock a whole group of query imports, e.g. SVGR `?react`):
+
+  ```js
+  module.exports = {
+    importOverrides: {
+      '@/icons/svg/*.svg\\?react': { mock: './src/__mocks__/svg-react.ts' },
     },
   };
   ```

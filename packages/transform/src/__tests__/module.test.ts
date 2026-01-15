@@ -660,6 +660,21 @@ it('supports importOverrides.unknown=error for eval-time fallback', () => {
   );
 });
 
+it('supports glob patterns in importOverrides for eval-time fallback', () => {
+  const { mod, services } = create``;
+
+  services.options.root = path.dirname(filename);
+  services.options.pluginOptions.importOverrides = {
+    './sample-*.js': {
+      unknown: 'error',
+    },
+  };
+
+  expect(() => safeRequire(mod, './sample-script')).toThrow(
+    'Unknown import reached during eval'
+  );
+});
+
 it('supports importOverrides.mock for eval-time fallback', () => {
   const { mod, services } = create``;
 
