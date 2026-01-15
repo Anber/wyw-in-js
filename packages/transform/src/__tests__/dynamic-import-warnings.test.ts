@@ -31,6 +31,25 @@ const pluginOptions = loadWywOptions({
   },
 });
 
+const pluginOptionsWithOverrides = loadWywOptions({
+  configFile: false,
+  rules,
+  babelOptions: {
+    babelrc: false,
+    configFile: false,
+    presets: [
+      ['@babel/preset-env', { loose: true }],
+      '@babel/preset-react',
+      '@babel/preset-typescript',
+    ],
+  },
+  importOverrides: {
+    '@uiw/react-codemirror': {
+      mock: './src/__mocks__/uiw-react-codemirror.ts',
+    },
+  },
+});
+
 describe('dynamic import warnings', () => {
   const originalWarningsFlag = process.env.WYW_WARN_DYNAMIC_IMPORTS;
 
@@ -91,6 +110,52 @@ describe('dynamic import warnings', () => {
 
       expect(warning).toContain('importOverrides');
       expect(warning).toContain("mock: './path/to/mock'");
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('does not warn when dynamic import is overridden', () => {
+    process.env.WYW_WARN_DYNAMIC_IMPORTS = '1';
+
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const root = __dirname;
+      const inputFilePath = join(root, 'inline.ts');
+      const sourceCode = `
+export function foo() {
+  import('@uiw/react-codemirror');
+}
+`;
+      const services = withDefaultServices({
+        babel,
+        options: {
+          root,
+          filename: inputFilePath,
+          pluginOptions: pluginOptionsWithOverrides,
+        },
+      });
+      const entrypoint = Entrypoint.createRoot(
+        services,
+        inputFilePath,
+        ['*'],
+        sourceCode
+      );
+
+      if (entrypoint.ignored) {
+        throw new Error('Unexpected ignored entrypoint in test');
+      }
+
+      const ast = parseFile(babel, inputFilePath, sourceCode, {
+        root,
+      });
+
+      prepareCode(services, entrypoint, ast);
+
+      const hasDynamicImportWarning = warnSpy.mock.calls.some((call) =>
+        String(call[0]).includes('Dynamic imports reached prepare stage')
+      );
+      expect(hasDynamicImportWarning).toBe(false);
     } finally {
       warnSpy.mockRestore();
     }

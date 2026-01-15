@@ -671,63 +671,104 @@ export default function shakerPlugin(
           (imp) => !sideEffectImport(imp) && imp.type === 'dynamic'
         );
         if (dynamicImports.length > 0) {
-          warnedDynamicImportFiles.add(filename);
           const sources = Array.from(
             new Set(dynamicImports.map((imp) => imp.source))
           ).sort();
-          const overrideKeys = sources
-            .map((source) => {
+          const sourcesToWarn = (() => {
+            if (!importOverrides || Object.keys(importOverrides).length === 0) {
+              return sources;
+            }
+
+            const shouldWarn = (source: string): boolean => {
               const strippedSource = stripQueryAndHash(source);
+              const direct =
+                importOverrides[source] ??
+                (strippedSource !== source
+                  ? importOverrides[strippedSource]
+                  : null);
+              if (direct) {
+                return false;
+              }
+
               const isFileImport =
                 strippedSource.startsWith('.') ||
                 pathLib.isAbsolute(strippedSource);
-
               if (!isFileImport) {
-                return { source, key: source };
+                return true;
               }
 
               try {
                 const resolved = syncResolve(strippedSource, filename, []);
-                return {
-                  source,
-                  key: toImportKey({
-                    source: strippedSource,
-                    resolved,
-                    root,
-                  }).key,
-                };
+                const importKey = toImportKey({
+                  source: strippedSource,
+                  resolved,
+                  root,
+                }).key;
+                return importOverrides[importKey] === undefined;
               } catch {
-                return { source, key: strippedSource };
+                return true;
               }
-            })
-            .filter((item, index, array) => {
-              const firstIndexForKey = array.findIndex(
-                (i) => i.key === item.key
-              );
-              return firstIndexForKey === index;
-            });
-          const warning = [
-            `[wyw-in-js] Dynamic imports reached prepare stage`,
-            ``,
-            `file: ${filename}`,
-            `count: ${sources.length}`,
-            `sources:`,
-            ...sources.map((source) => `  - ${source}`),
-            ``,
-            `note: these imports will be resolved/processed even if they are lazy (e.g. React.lazy(() => import(...)))`,
-            ``,
-            `tip: if the imported module is runtime-only or heavy, mock it during evaluation via importOverrides:`,
-            `  importOverrides: {`,
-            ...overrideKeys.map(
-              ({ key, source }) =>
-                `    '${key}': { mock: './path/to/mock' }, // from ${source}`
-            ),
-            `  }`,
-            ``,
-            `note: importOverrides affects only build-time evaluation (it does not change your bundler runtime behavior)`,
-          ].join('\n');
-          // eslint-disable-next-line no-console
-          console.warn(warning);
+            };
+
+            return sources.filter(shouldWarn);
+          })();
+
+          if (sourcesToWarn.length > 0) {
+            warnedDynamicImportFiles.add(filename);
+            const overrideKeys = sourcesToWarn
+              .map((source) => {
+                const strippedSource = stripQueryAndHash(source);
+                const isFileImport =
+                  strippedSource.startsWith('.') ||
+                  pathLib.isAbsolute(strippedSource);
+
+                if (!isFileImport) {
+                  return { source, key: source };
+                }
+
+                try {
+                  const resolved = syncResolve(strippedSource, filename, []);
+                  return {
+                    source,
+                    key: toImportKey({
+                      source: strippedSource,
+                      resolved,
+                      root,
+                    }).key,
+                  };
+                } catch {
+                  return { source, key: strippedSource };
+                }
+              })
+              .filter((item, index, array) => {
+                const firstIndexForKey = array.findIndex(
+                  (i) => i.key === item.key
+                );
+                return firstIndexForKey === index;
+              });
+            const warning = [
+              `[wyw-in-js] Dynamic imports reached prepare stage`,
+              ``,
+              `file: ${filename}`,
+              `count: ${sourcesToWarn.length}`,
+              `sources:`,
+              ...sourcesToWarn.map((source) => `  - ${source}`),
+              ``,
+              `note: these imports will be resolved/processed even if they are lazy (e.g. React.lazy(() => import(...)))`,
+              ``,
+              `tip: if the imported module is runtime-only or heavy, mock it during evaluation via importOverrides:`,
+              `  importOverrides: {`,
+              ...overrideKeys.map(
+                ({ key, source }) =>
+                  `    '${key}': { mock: './path/to/mock' }, // from ${source}`
+              ),
+              `  }`,
+              ``,
+              `note: importOverrides affects only build-time evaluation (it does not change your bundler runtime behavior)`,
+            ].join('\n');
+            // eslint-disable-next-line no-console
+            console.warn(warning);
+          }
         }
       }
 
