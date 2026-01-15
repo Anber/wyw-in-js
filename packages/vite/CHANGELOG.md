@@ -1,5 +1,24 @@
 # @wyw-in-js/vite
 
+## 1.0.5
+
+### Patch Changes
+
+- 3dec017: Fix cache invalidation storms when loader-provided code differs from filesystem code, keep the Vite resolver stable across repeated `configResolved` calls, and avoid eagerly walking dynamic import targets during eval-only runs (prevents `action handler is already set` and improves build performance on large projects).
+- a936749: Drop Node.js <20 support (Node 18 is EOL).
+
+  Note: WyW `1.0.0` already effectively required Node 20 in practice; this change makes the support policy explicit and
+  aligns docs/CI accordingly.
+
+  If DOM emulation is enabled (`features.happyDOM`), but `happy-dom` cannot be loaded via `require()` (ESM-only), WyW will
+  fall back to running without DOM and print a one-time warning with guidance.
+
+- 9e08238: Fix cache invalidation when a file is first read from the filesystem and later provided by a bundler/loader, preventing stale transforms and related Vite build/dev issues.
+- ed6a3e6: Fix a Vite dev error ("action handler is already set") by isolating WyW transform cache per plugin context.
+- Updated dependencies
+  - @wyw-in-js/shared@1.0.4
+  - @wyw-in-js/transform@1.0.5
+
 ## 1.0.4
 
 ### Patch Changes
