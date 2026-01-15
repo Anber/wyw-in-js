@@ -1,5 +1,20 @@
 # @wyw-in-js/processor-utils
 
+## 1.0.4
+
+### Patch Changes
+
+- a936749: Drop Node.js <20 support (Node 18 is EOL).
+
+  Note: WyW `1.0.0` already effectively required Node 20 in practice; this change makes the support policy explicit and
+  aligns docs/CI accordingly.
+
+  If DOM emulation is enabled (`features.happyDOM`), but `happy-dom` cannot be loaded via `require()` (ESM-only), WyW will
+  fall back to running without DOM and print a one-time warning with guidance.
+
+- Updated dependencies
+  - @wyw-in-js/shared@1.0.4
+
 ## 1.0.3
 
 ### Patch Changes
