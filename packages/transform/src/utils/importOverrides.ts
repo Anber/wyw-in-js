@@ -1,6 +1,11 @@
 import path from 'path';
 
-import { syncResolve, type ImportOverride } from '@wyw-in-js/shared';
+import {
+  syncResolve,
+  type ImportOverride,
+  type ImportOverrides,
+} from '@wyw-in-js/shared';
+import { Minimatch } from 'minimatch';
 
 export type ImportKeyKind = 'file' | 'package';
 
@@ -72,4 +77,91 @@ export function applyImportOverrideToOnly(
   }
 
   return only;
+}
+
+type CompiledImportOverrides = {
+  matchers: Array<{
+    matcher: Minimatch;
+    override: ImportOverride;
+    pattern: string;
+    specificity: number;
+  }>;
+};
+
+const compiledImportOverridesCache = new WeakMap<
+  ImportOverrides,
+  CompiledImportOverrides
+>();
+
+const minimatchOptions = {
+  dot: true,
+  nocomment: true,
+  nonegate: true,
+} as const;
+
+function getPatternSpecificity(pattern: string): number {
+  let wildcardCount = 0;
+  let escaped = false;
+  for (const char of pattern) {
+    if (escaped) {
+      escaped = false;
+    } else if (char === '\\') {
+      escaped = true;
+    } else if (char === '*' || char === '?') {
+      wildcardCount += 1;
+    }
+  }
+
+  return pattern.length - wildcardCount * 10;
+}
+
+function compileImportOverrides(
+  importOverrides: ImportOverrides
+): CompiledImportOverrides {
+  const matchers = Object.entries(importOverrides)
+    .map(([pattern, override]) => {
+      return {
+        matcher: new Minimatch(pattern, minimatchOptions),
+        override,
+        pattern,
+        specificity: getPatternSpecificity(pattern),
+      };
+    })
+    .sort((a, b) => {
+      const bySpecificity = b.specificity - a.specificity;
+      if (bySpecificity !== 0) return bySpecificity;
+
+      const byLength = b.pattern.length - a.pattern.length;
+      if (byLength !== 0) return byLength;
+
+      return a.pattern.localeCompare(b.pattern);
+    });
+
+  return { matchers };
+}
+
+function getCompiledImportOverrides(
+  importOverrides: ImportOverrides
+): CompiledImportOverrides {
+  const cached = compiledImportOverridesCache.get(importOverrides);
+  if (cached) return cached;
+
+  const compiled = compileImportOverrides(importOverrides);
+  compiledImportOverridesCache.set(importOverrides, compiled);
+  return compiled;
+}
+
+export function getImportOverride(
+  importOverrides: ImportOverrides | undefined,
+  key: string
+): ImportOverride | undefined {
+  if (!importOverrides) {
+    return undefined;
+  }
+
+  const direct = importOverrides[key];
+  if (direct) return direct;
+
+  const { matchers } = getCompiledImportOverrides(importOverrides);
+  return matchers.find(({ matcher }) => matcher.match(key))?.override;
 }

@@ -39,6 +39,7 @@ import { isUnprocessedEntrypointError } from './transform/actions/UnprocessedEnt
 import type { Services } from './transform/types';
 import {
   applyImportOverrideToOnly,
+  getImportOverride,
   resolveMockSpecifier,
   toImportKey,
 } from './utils/importOverrides';
@@ -592,8 +593,10 @@ export class Module {
         root,
       });
 
-      const override =
-        this.services.options.pluginOptions.importOverrides?.[keyInfo.key];
+      const override = getImportOverride(
+        this.services.options.pluginOptions.importOverrides,
+        keyInfo.key
+      );
 
       const policy = override?.unknown ?? (override?.mock ? 'allow' : 'warn');
       const shouldWarn = !this.ignored && policy === 'warn';

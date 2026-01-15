@@ -31,7 +31,7 @@ const pluginOptions = loadWywOptions({
   },
 });
 
-const pluginOptionsWithOverrides = loadWywOptions({
+const pluginOptionsWithGlobOverrides = loadWywOptions({
   configFile: false,
   rules,
   babelOptions: {
@@ -44,7 +44,7 @@ const pluginOptionsWithOverrides = loadWywOptions({
     ],
   },
   importOverrides: {
-    '@uiw/react-codemirror': {
+    '@uiw/*': {
       mock: './src/__mocks__/uiw-react-codemirror.ts',
     },
   },
@@ -132,7 +132,7 @@ export function foo() {
         options: {
           root,
           filename: inputFilePath,
-          pluginOptions: pluginOptionsWithOverrides,
+          pluginOptions: pluginOptionsWithGlobOverrides,
         },
       });
       const entrypoint = Entrypoint.createRoot(

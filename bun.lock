@@ -43,7 +43,7 @@
     },
     "apps/website": {
       "name": "@wyw-in-js/website",
-      "version": "0.8.1",
+      "version": "1.0.2",
       "dependencies": {
         "next": "^13.5.4",
         "nextra": "^2.13.1",
@@ -60,26 +60,26 @@
     },
     "configs/babel": {
       "name": "@wyw-in-js/babel-config",
-      "version": "0.8.1",
+      "version": "1.0.2",
     },
     "configs/eslint": {
       "name": "@wyw-in-js/eslint-config",
-      "version": "0.8.1",
+      "version": "1.0.2",
     },
     "configs/ts": {
       "name": "@wyw-in-js/ts-config",
-      "version": "0.8.1",
+      "version": "1.0.2",
     },
     "crates/wyw_sample_processor": {
       "name": "@wyw-in-js/sample-processor",
-      "version": "0.4.0",
+      "version": "1.0.2",
       "devDependencies": {
         "@napi-rs/cli": "^2.18.4",
       },
     },
     "e2e/bun": {
       "name": "@wyw-in-js/e2e-bun",
-      "version": "0.8.1",
+      "version": "1.0.3",
       "dependencies": {
         "@wyw-in-js/template-tag-syntax": "workspace:*",
       },
@@ -89,7 +89,7 @@
     },
     "e2e/parcel": {
       "name": "@wyw-in-js/e2e-parcel",
-      "version": "0.8.1",
+      "version": "1.0.3",
       "dependencies": {
         "@wyw-in-js/template-tag-syntax": "workspace:*",
       },
@@ -102,7 +102,7 @@
     },
     "e2e/vite": {
       "name": "@wyw-in-js/e2e-vite",
-      "version": "0.8.1",
+      "version": "1.0.3",
       "dependencies": {
         "@wyw-in-js/template-tag-syntax": "workspace:*",
       },
@@ -117,7 +117,7 @@
     },
     "examples/nextjs-wyw-demo": {
       "name": "nextjs-wyw-demo",
-      "version": "0.1.0",
+      "version": "1.0.4",
       "dependencies": {
         "@linaria/core": "^6.0.0",
         "@linaria/react": "^6.0.0",
@@ -135,7 +135,7 @@
     },
     "examples/object-syntax": {
       "name": "@wyw-in-js/object-syntax",
-      "version": "0.8.1",
+      "version": "1.0.3",
       "dependencies": {
         "@griffel/core": "1.5.0",
         "@wyw-in-js/processor-utils": "workspace:*",
@@ -157,7 +157,7 @@
     },
     "examples/template-tag-syntax": {
       "name": "@wyw-in-js/template-tag-syntax",
-      "version": "0.8.1",
+      "version": "1.0.3",
       "dependencies": {
         "@wyw-in-js/processor-utils": "workspace:*",
       },
@@ -177,7 +177,7 @@
     },
     "examples/vite-react-refresh": {
       "name": "vite-react-refresh-repro",
-      "version": "0.1.0",
+      "version": "1.0.4",
       "dependencies": {
         "@vitejs/plugin-react": "^5.0.3",
         "@wyw-in-js/template-tag-syntax": "workspace:*",
@@ -189,7 +189,7 @@
     },
     "packages/babel-preset": {
       "name": "@wyw-in-js/babel-preset",
-      "version": "0.8.1",
+      "version": "1.0.4",
       "dependencies": {
         "@babel/core": "^7.23.5",
         "@wyw-in-js/transform": "workspace:*",
@@ -203,7 +203,7 @@
     },
     "packages/bun": {
       "name": "@wyw-in-js/bun",
-      "version": "0.8.1",
+      "version": "1.0.4",
       "dependencies": {
         "@rollup/pluginutils": "^5.1.4",
         "@wyw-in-js/shared": "workspace:*",
@@ -219,7 +219,7 @@
     },
     "packages/cli": {
       "name": "@wyw-in-js/cli",
-      "version": "0.8.1",
+      "version": "1.0.4",
       "bin": {
         "wyw-in-js": "bin/wyw-in-js.js",
       },
@@ -243,7 +243,7 @@
     },
     "packages/esbuild": {
       "name": "@wyw-in-js/esbuild",
-      "version": "0.8.1",
+      "version": "1.0.4",
       "dependencies": {
         "@wyw-in-js/shared": "workspace:*",
         "@wyw-in-js/transform": "workspace:*",
@@ -261,7 +261,7 @@
     },
     "packages/nextjs": {
       "name": "@wyw-in-js/nextjs",
-      "version": "0.8.1",
+      "version": "1.0.4",
       "dependencies": {
         "@wyw-in-js/turbopack-loader": "workspace:*",
         "@wyw-in-js/webpack-loader": "workspace:*",
@@ -281,7 +281,7 @@
     },
     "packages/parcel-transformer": {
       "name": "@wyw-in-js/parcel-transformer",
-      "version": "0.8.1",
+      "version": "1.0.4",
       "dependencies": {
         "@parcel/plugin": "^2.16.3",
         "@parcel/source-map": "^2.1.1",
@@ -300,7 +300,7 @@
     },
     "packages/processor-utils": {
       "name": "@wyw-in-js/processor-utils",
-      "version": "0.8.1",
+      "version": "1.0.3",
       "dependencies": {
         "@babel/generator": "^7.23.5",
         "@wyw-in-js/shared": "workspace:*",
@@ -318,7 +318,7 @@
     },
     "packages/rollup": {
       "name": "@wyw-in-js/rollup",
-      "version": "0.8.1",
+      "version": "1.0.4",
       "dependencies": {
         "@rollup/pluginutils": "^5.0.5",
         "@wyw-in-js/shared": "workspace:*",
@@ -338,9 +338,8 @@
     },
     "packages/shared": {
       "name": "@wyw-in-js/shared",
-      "version": "0.8.1",
+      "version": "1.0.3",
       "dependencies": {
-        "@types/debug": "^4.1.9",
         "debug": "^4.3.4",
         "find-up": "^5.0.0",
         "minimatch": "^9.0.3",
@@ -348,6 +347,7 @@
       "devDependencies": {
         "@babel/types": "^7.23.5",
         "@types/babel__core": "^7.20.5",
+        "@types/debug": "^4.1.9",
         "@types/node": "^16.18.55",
         "@wyw-in-js/babel-config": "workspace:*",
         "@wyw-in-js/eslint-config": "workspace:*",
@@ -357,7 +357,7 @@
     },
     "packages/transform": {
       "name": "@wyw-in-js/transform",
-      "version": "0.8.1",
+      "version": "1.0.4",
       "dependencies": {
         "@babel/core": "^7.23.5",
         "@babel/generator": "^7.23.5",
@@ -370,6 +370,7 @@
         "@wyw-in-js/shared": "workspace:*",
         "cosmiconfig": "^8.0.0",
         "happy-dom": "^20.1.0",
+        "minimatch": "^9.0.5",
         "source-map": "^0.7.4",
         "stylis": "^4.3.0",
         "ts-invariant": "^0.10.3",
@@ -400,7 +401,7 @@
     },
     "packages/turbopack-loader": {
       "name": "@wyw-in-js/turbopack-loader",
-      "version": "0.8.1",
+      "version": "1.0.4",
       "dependencies": {
         "@wyw-in-js/shared": "workspace:*",
         "@wyw-in-js/transform": "workspace:*",
@@ -416,7 +417,7 @@
     },
     "packages/vite": {
       "name": "@wyw-in-js/vite",
-      "version": "0.8.1",
+      "version": "1.0.4",
       "dependencies": {
         "@wyw-in-js/shared": "workspace:*",
         "@wyw-in-js/transform": "workspace:*",
@@ -435,7 +436,7 @@
     },
     "packages/webpack-loader": {
       "name": "@wyw-in-js/webpack-loader",
-      "version": "0.8.1",
+      "version": "1.0.4",
       "dependencies": {
         "@wyw-in-js/shared": "workspace:*",
         "@wyw-in-js/transform": "workspace:*",

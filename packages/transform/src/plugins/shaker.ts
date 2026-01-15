@@ -31,7 +31,7 @@ import {
 } from '../utils/scopeHelpers';
 import { invalidateTraversalCache } from '../utils/traversalCache';
 import { stripQueryAndHash } from '../utils/parseRequest';
-import { toImportKey } from '../utils/importOverrides';
+import { getImportOverride, toImportKey } from '../utils/importOverrides';
 
 const warnedDynamicImportFiles = new Set<string>();
 
@@ -274,9 +274,9 @@ export default function shakerPlugin(
           const strippedSource = stripQueryAndHash(source);
 
           const direct =
-            importOverrides[source] ??
+            getImportOverride(importOverrides, source) ??
             (strippedSource !== source
-              ? importOverrides[strippedSource]
+              ? getImportOverride(importOverrides, strippedSource)
               : null);
           if (direct) {
             const result = shouldKeepOverride(direct);
@@ -299,7 +299,7 @@ export default function shakerPlugin(
               resolved,
               root,
             });
-            const override = importOverrides[key];
+            const override = getImportOverride(importOverrides, key);
             const result = shouldKeepOverride(override);
             cache.set(source, result);
             return result;
@@ -682,11 +682,11 @@ export default function shakerPlugin(
             const shouldWarn = (source: string): boolean => {
               const strippedSource = stripQueryAndHash(source);
               const direct =
-                importOverrides[source] ??
+                getImportOverride(importOverrides, source) ??
                 (strippedSource !== source
-                  ? importOverrides[strippedSource]
-                  : null);
-              if (direct) {
+                  ? getImportOverride(importOverrides, strippedSource)
+                  : undefined);
+              if (direct !== undefined) {
                 return false;
               }
 
@@ -704,7 +704,9 @@ export default function shakerPlugin(
                   resolved,
                   root,
                 }).key;
-                return importOverrides[importKey] === undefined;
+                return (
+                  getImportOverride(importOverrides, importKey) === undefined
+                );
               } catch {
                 return true;
               }
