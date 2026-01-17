@@ -526,7 +526,7 @@ function createProcessorInstance(
         cache.set(path.node, null);
       }
     } catch (e) {
-      if (e === BaseProcessor.SKIP) {
+      if (typeof e === 'symbol' && e.description === BaseProcessor.SKIP.description) {
         cache.set(path.node, null);
         return null;
       }
