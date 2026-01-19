@@ -1,6 +1,7 @@
 {
   "index": "Introduction",
   "stability": "Stability",
+  "troubleshooting": "Troubleshooting",
   "how-it-works": "How it works?",
   "how-to": "How to use",
   "bundlers": "Supported bundlers",

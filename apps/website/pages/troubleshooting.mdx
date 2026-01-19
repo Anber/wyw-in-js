@@ -1,0 +1,215 @@
+# Troubleshooting: Stability & Performance
+
+WyW runs part of your code at **build time** to extract styles. When something becomes unstable or slow, it usually means
+WyW had to execute or traverse code that was meant to run only at runtime.
+
+This page focuses on the most common “gotchas” and the practical workarounds.
+
+## Quick checklist
+
+When you hit a crash or a sudden slowdown:
+
+- Confirm the problem is in WyW’s build-time pipeline (not runtime): does it reproduce in a fresh build?
+- Turn on debug logs: `DEBUG=wyw-in-js:*`.
+- Turn on optional performance hints:
+  - `WYW_WARN_DYNAMIC_IMPORTS=1` (warns when `import()` makes it into the eval bundle),
+  - `WYW_WARN_SLOW_IMPORTS=1` (warns when preparing a single import takes “too long”),
+  - `WYW_WARN_SLOW_IMPORTS_MS=200` (raise/lower threshold).
+- If logs mention Node resolution fallback, use [`importOverrides`](/configuration#importoverrides) with `{ unknown:
+  "error" }` temporarily to make the first unresolved import fail fast (and show you the exact specifier).
+
+## Pitfall 1: Side effects (and extra runtime code) in style modules
+
+### Why this is a bottleneck
+
+WyW evaluates modules (or parts of them) in Node.js. Top-level side effects are risky because they may:
+
+- rely on browser globals (`document`, `window`, `HTMLElement`),
+- initialize singletons (event listeners, global registries),
+- perform I/O or start timers,
+- pull in large amounts of runtime-only code that is irrelevant for style extraction.
+
+WyW’s shaker tries to keep the eval bundle minimal, but it cannot always prove that a piece of code is irrelevant.
+
+### Typical symptoms
+
+- `ReferenceError: document is not defined` during build.
+- Build hanging or spending minutes in “prepare/eval” even though the runtime code is lazy.
+- A lot of repeated “processing” logs for the same modules.
+
+### How to fix it
+
+1) Keep style modules as “pure” as possible:
+
+- Avoid top-level initialization near `styled/css` usage.
+- Move browser-only code into runtime entrypoints (or into functions that are called only at runtime).
+
+2) If a dependency is needed at runtime but problematic at build time, mock it during evaluation:
+
+```js
+// wyw-in-js.config.js
+module.exports = {
+  importOverrides: {
+    'some-browser-only-lib': { mock: './src/__mocks__/some-browser-only-lib.ts' },
+  },
+};
+```
+
+3) If you actually need a side-effect import to run during evaluation (rare), keep it explicitly:
+
+```js
+module.exports = {
+  importOverrides: {
+    './src/polyfills.ts': { noShake: true },
+  },
+};
+```
+
+## Pitfall 2: Heavy arguments to WyW tags (`styled(SomeComponent)`)
+
+### Why this is a bottleneck
+
+When you pass a value into a tag (e.g. `styled(SomeComponent)`), WyW often has to resolve that value at build time to
+produce metadata. If `SomeComponent` comes from a heavy module, the evaluation graph becomes heavy too.
+
+The most common sources of accidental heaviness:
+
+- third‑party components with large dependency trees (editors, charts, syntax highlighters),
+- components wrapped in HOCs (because the HOC itself is executed to compute metadata),
+- “barrel” imports that pull in many re‑exports.
+
+### Typical symptoms
+
+- The build becomes much slower after introducing `styled(SomeComponent)` (even if the component is rendered lazily at
+  runtime).
+- Errors during evaluation coming from the dependency tree of the component (DOM assumptions, global state).
+
+### How to fix it
+
+1) Prefer styling DOM tags (or tiny local components) and render heavy components inside:
+
+```tsx
+import { styled } from '@linaria/react';
+import { CodeEditor } from './code-editor';
+
+export const EditorShell = styled.div`
+  border: 1px solid #ddd;
+`;
+
+export function Editor(props: unknown) {
+  return (
+    <EditorShell>
+      <CodeEditor {...props} />
+    </EditorShell>
+  );
+}
+```
+
+2) Be careful with HOC-wrapped components:
+
+```tsx
+import { styled } from '@linaria/react';
+import { withTracking } from './with-tracking';
+import { Button } from './button';
+
+const TrackedButton = withTracking(Button);
+
+export const StyledButton = styled(TrackedButton)`
+  padding: 8px 12px;
+`;
+```
+
+Even if `withTracking` has no import-time side effects, WyW still needs to execute `withTracking(Button)` to compute tag
+metadata. That means the HOC code (and its dependency tree) can run during build-time extraction.
+
+Recommended approach: list “regular” HOCs in [`codeRemover`](/configuration#coderemover), so WyW replaces them with a
+no-op wrapper during evaluation. This is safe as long as the HOC does not participate in WyW metadata (which is true for
+most third‑party HOCs).
+
+```js
+// wyw-in-js.config.js
+module.exports = {
+  codeRemover: {
+    hocs: {
+      app: ['withTracking'],
+      redux: ['connect'],
+      mobx: ['observer'],
+    },
+  },
+};
+```
+
+3) If you must style a heavy third‑party component directly, mock it during evaluation:
+
+```js
+module.exports = {
+  importOverrides: {
+    '@some/editor': { mock: './src/__mocks__/some-editor.ts' },
+  },
+};
+```
+
+Note: if you use `displayName`-based naming (for example `displayName: true` or a slug function depending on
+`componentName`), mocking a component can change generated class names. Prefer stable slugs (or disable displayName) if
+you want output to remain identical.
+
+## Pitfall 3: “Barrel” modules and re-exports (`export *`)
+
+### Why this is a bottleneck
+
+Barrel modules (`export * from ...`) can be convenient, but they often:
+
+- pull in a large dependency surface (even when you import one symbol),
+- make it harder for the shaker to isolate a small set of exports,
+- cause incremental “only” expansion (a module may be prepared again when another export becomes required).
+
+### Typical symptoms
+
+- Slow import warnings point to an index file (icons, design-system entrypoint, `components/index.ts`).
+- The same barrel is processed multiple times during one build.
+
+### How to fix it
+
+1) Prefer importing from leaf modules in style files:
+
+```ts
+// Prefer this:
+import { Dialog } from '@scope/ui-dialog';
+
+// Instead of this:
+import { Dialog } from '@scope/ui';
+```
+
+The same applies to WyW tags and helpers. Avoid importing `styled/css` (or your custom tags) from a “kitchen sink”
+entrypoint that re-exports everything:
+
+```ts
+// Prefer a direct tag import:
+import { styled } from '@linaria/react';
+
+// Instead of a wide barrel:
+import { styled } from '@scope/ui';
+```
+
+2) Mock heavy leaf imports, then (if needed) mark the barrel as `noShake` to avoid repeated incremental passes:
+
+```js
+module.exports = {
+  importOverrides: {
+    '@scope/ui-dialog': { mock: './src/__mocks__/ui-dialog.ts' },
+    '@scope/ui': { noShake: true },
+  },
+};
+```
+
+This is a trade‑off: `noShake` can be faster for “reprocessed many times” barrels, but it also makes the eval bundle for
+that dependency larger.
+
+## When to file an issue
+
+If none of the above helps, please open an issue with:
+
+- exact `@wyw-in-js/*` versions,
+- bundler/framework + version,
+- a minimal reproduction (or a small repo),
+- logs with `DEBUG=wyw-in-js:*` (and slow/dynamic import warnings if applicable).

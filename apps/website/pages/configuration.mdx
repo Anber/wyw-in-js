@@ -425,9 +425,10 @@ module.exports = {
 
   A map of feature flags to enable/disable. See [Feature Flags](/feature-flags) for more information.
 
-- `codeRemover: CodeRemoverOptions`
+- <a id="coderemover"></a> `codeRemover: CodeRemoverOptions`
 
-  An object with two keys `componentTypes` and `hocs`. Specifies types of variables and HOCs that will be replaced with an empty function before evaluation.
+  An object with two keys `componentTypes` and `hocs`. It specifies types of variables and HOCs that will be replaced
+  with an empty function before evaluation (useful to avoid executing runtime-only component/HOC code at build time).
 
   ```js
   {
