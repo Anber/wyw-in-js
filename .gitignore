@@ -10,6 +10,7 @@ dist
 esm
 lib
 tsconfig.tsbuildinfo
+*.tsbuildinfo
 types
 **/*.wyw-in-js.module.css
 

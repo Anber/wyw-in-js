@@ -15,6 +15,8 @@ When you hit a crash or a sudden slowdown:
   - `WYW_WARN_DYNAMIC_IMPORTS=1` (warns when `import()` makes it into the eval bundle),
   - `WYW_WARN_SLOW_IMPORTS=1` (warns when preparing a single import takes “too long”),
   - `WYW_WARN_SLOW_IMPORTS_MS=200` (raise/lower threshold).
+- If you generated WyW debug logs (`actions.jsonl`, `dependencies.jsonl`, `entrypoints.jsonl`), inspect them with the
+  [log analyzer](/debug/log-analyzer).
 - If logs mention Node resolution fallback, use [`importOverrides`](/configuration#importoverrides) with `{ unknown:
   "error" }` temporarily to make the first unresolved import fail fast (and show you the exact specifier).
 
