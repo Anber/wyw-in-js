@@ -22,6 +22,7 @@ crates/*/index.js
 target
 *.node
 tmp/*
+.tmp/*
 AGENTS.md
 
 # apps/website copies root docs at build time

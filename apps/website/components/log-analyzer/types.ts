@@ -113,6 +113,7 @@ export type DependenciesStats = {
   topImports: ImportStats[];
   topPackages: PackageStats[];
   importersByFrom: Map<string, Set<string>>;
+  importCountByFrom: Map<string, number>;
 };
 
 export type ActionsSummary = {

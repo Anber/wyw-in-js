@@ -1,0 +1,486 @@
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  line-height: 1.25;
+  user-select: none;
+  white-space: nowrap;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease,
+    opacity 120ms ease;
+}
+
+.buttonPrimary {
+  background: #171717;
+  color: #fff;
+}
+
+.buttonPrimary:hover:not(:disabled) {
+  background: #262626;
+}
+
+.buttonPrimary:active:not(:disabled) {
+  background: #0a0a0a;
+}
+
+.buttonPrimary:disabled {
+  background: #e5e7eb;
+  color: #6b7280;
+  cursor: not-allowed;
+}
+
+:global(html.dark) .buttonPrimary {
+  background: #f5f5f5;
+  color: #111827;
+}
+
+:global(html.dark) .buttonPrimary:hover:not(:disabled) {
+  background: #fff;
+}
+
+:global(html.dark) .buttonPrimary:active:not(:disabled) {
+  background: #e5e7eb;
+}
+
+:global(html.dark) .buttonPrimary:disabled {
+  background: #262626;
+  color: #737373;
+}
+
+.buttonSecondary {
+  border: 1px solid #d1d5db;
+  background: transparent;
+  color: #111827;
+}
+
+.buttonSecondary:hover:not(:disabled) {
+  background: #f3f4f6;
+}
+
+.buttonSecondary:active:not(:disabled) {
+  background: #e5e7eb;
+}
+
+.buttonSecondary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+:global(html.dark) .buttonSecondary {
+  border-color: #404040;
+  color: #f5f5f5;
+}
+
+:global(html.dark) .buttonSecondary:hover:not(:disabled) {
+  background: #171717;
+}
+
+:global(html.dark) .buttonSecondary:active:not(:disabled) {
+  background: #0f0f0f;
+}
+
+.tabButton {
+  border: 1px solid #e5e7eb;
+  background: transparent;
+  color: #374151;
+  border-radius: 0.5rem;
+  padding: 0.375rem 0.75rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.tabButton:hover {
+  background: #f3f4f6;
+}
+
+.tabButtonActive {
+  border-color: #171717;
+  background: #171717;
+  color: #fff;
+}
+
+.tabButtonActive:hover {
+  background: #262626;
+}
+
+:global(html.dark) .tabButton {
+  border-color: #262626;
+  color: #e5e7eb;
+}
+
+:global(html.dark) .tabButton:hover {
+  background: #171717;
+}
+
+:global(html.dark) .tabButtonActive {
+  border-color: #f5f5f5;
+  background: #f5f5f5;
+  color: #111827;
+}
+
+:global(html.dark) .tabButtonActive:hover {
+  background: #fff;
+}
+
+.pathDisplayControls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.pathDisplayInput {
+  flex: 1 1 260px;
+  min-width: 240px;
+}
+
+.pageSections {
+  margin-top: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 2.5rem;
+}
+
+.stackSm {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.stackMd {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.stackLg {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.bulletList {
+  margin-top: 0.5rem;
+  padding-left: 1.25rem;
+  list-style: disc;
+}
+
+.bulletList > li + li {
+  margin-top: 0.25rem;
+}
+
+.inlineFieldRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.fieldFlex {
+  flex: 1 1 240px;
+  min-width: 220px;
+}
+
+.fieldInput {
+  display: block;
+  width: 100%;
+  border-radius: 0.5rem;
+  border: 1px solid #d1d5db;
+  background: #fff;
+  color: #111827;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.875rem;
+  line-height: 1.25;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    box-shadow 120ms ease,
+    color 120ms ease,
+    opacity 120ms ease;
+}
+
+.fieldInput::placeholder {
+  color: #9ca3af;
+}
+
+.fieldInput:focus {
+  outline: none;
+  border-color: #111827;
+  box-shadow: 0 0 0 3px rgba(17, 24, 39, 0.12);
+}
+
+.fieldInput:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+  background: #f9fafb;
+}
+
+.fieldInput[type='file'] {
+  padding: 0.375rem 0.75rem;
+}
+
+.fieldInput::file-selector-button {
+  margin-right: 0.75rem;
+  border: 1px solid #d1d5db;
+  background: #f3f4f6;
+  color: #111827;
+  border-radius: 0.375rem;
+  padding: 0.375rem 0.75rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  line-height: 1.25;
+  cursor: pointer;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease;
+}
+
+.fieldInput::file-selector-button:hover {
+  background: #e5e7eb;
+}
+
+.fieldInput::-webkit-file-upload-button {
+  margin-right: 0.75rem;
+  border: 1px solid #d1d5db;
+  background: #f3f4f6;
+  color: #111827;
+  border-radius: 0.375rem;
+  padding: 0.375rem 0.75rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  line-height: 1.25;
+  cursor: pointer;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease;
+}
+
+.fieldInput::-webkit-file-upload-button:hover {
+  background: #e5e7eb;
+}
+
+:global(html.dark) .fieldInput {
+  border-color: #404040;
+  background: #0a0a0a;
+  color: #f5f5f5;
+}
+
+:global(html.dark) .fieldInput::placeholder {
+  color: #a3a3a3;
+}
+
+:global(html.dark) .fieldInput:focus {
+  border-color: #e5e7eb;
+  box-shadow: 0 0 0 3px rgba(229, 231, 235, 0.18);
+}
+
+:global(html.dark) .fieldInput:disabled {
+  background: #0f0f0f;
+}
+
+:global(html.dark) .fieldInput::file-selector-button {
+  border-color: #404040;
+  background: #171717;
+  color: #f5f5f5;
+}
+
+:global(html.dark) .fieldInput::file-selector-button:hover {
+  background: #262626;
+}
+
+:global(html.dark) .fieldInput::-webkit-file-upload-button {
+  border-color: #404040;
+  background: #171717;
+  color: #f5f5f5;
+}
+
+:global(html.dark) .fieldInput::-webkit-file-upload-button:hover {
+  background: #262626;
+}
+
+.filtersGrid {
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.checkboxPill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  border: 1px solid #d1d5db;
+  border-radius: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  background: #fff;
+}
+
+:global(html.dark) .checkboxPill {
+  border-color: #404040;
+  background: #0a0a0a;
+}
+
+.entryLink {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  text-align: left;
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  margin: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.entryLink:hover {
+  text-decoration: none;
+}
+
+.entryLink:hover code {
+  text-decoration: underline;
+}
+
+.entryLinkIcon {
+  display: inline-block;
+  flex: 0 0 auto;
+  opacity: 0.65;
+  line-height: 1;
+  transform: translateY(-2px);
+}
+
+.table {
+  table-layout: fixed;
+}
+
+.table th {
+  white-space: nowrap;
+  overflow-wrap: normal;
+  word-break: normal;
+  padding-left: 0.5rem;
+  padding-right: 0.5rem;
+}
+
+.cellTruncate {
+  display: block;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cellTruncateStart {
+  direction: rtl;
+  text-align: left;
+}
+
+.cellTruncateStart > span {
+  direction: ltr;
+  unicode-bidi: bidi-override;
+}
+
+.detailsRow {
+  background: #f9fafb;
+}
+
+:global(html.dark) .detailsRow {
+  background: #0b0b0b;
+}
+
+.detailsCell {
+  padding: 0.75rem;
+}
+
+.detailsPanel {
+  border: 1px solid #e5e7eb;
+  border-radius: 0.75rem;
+  background: #fff;
+  padding: 0.75rem;
+}
+
+:global(html.dark) .detailsPanel {
+  border-color: #262626;
+  background: #0a0a0a;
+}
+
+.detailsHeader {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.detailsButtons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.cardHeaderRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.plainList {
+  margin-top: 0.75rem;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.orderedList {
+  margin-top: 0.5rem;
+  padding-left: 1.25rem;
+  list-style: decimal;
+}
+
+.orderedList > li + li {
+  margin-top: 0.25rem;
+}
+
+.twoColGrid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1.5rem;
+}
+
+.metricsGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 1rem;
+}
+
+@media (min-width: 1024px) {
+  .twoColGrid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+.entrypointsLayout {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1rem;
+}
+
+@media (min-width: 1024px) {
+  .entrypointsLayout {
+    grid-template-columns: 1fr 420px;
+  }
+}
