@@ -2,15 +2,12 @@ import * as React from 'react';
 
 export const DirectoryInput = ({
   className,
-  disabled,
-  id,
+  onChange,
   onFiles,
+  ...rest
 }: {
-  className?: string;
-  disabled: boolean;
-  id?: string;
   onFiles: (files: File[]) => void;
-}) => {
+} & Omit<React.ComponentPropsWithoutRef<'input'>, 'multiple' | 'type'>) => {
   const inputRef = React.useRef<HTMLInputElement | null>(null);
 
   React.useEffect(() => {
@@ -22,13 +19,15 @@ export const DirectoryInput = ({
 
   return (
     <input
-      id={id}
       ref={inputRef}
       className={className}
-      type="file"
       multiple
-      disabled={disabled}
-      onChange={(e) => onFiles(Array.from(e.currentTarget.files ?? []))}
+      type="file"
+      onChange={(e) => {
+        onChange?.(e);
+        onFiles(Array.from(e.currentTarget.files ?? []));
+      }}
+      {...rest}
     />
   );
 };

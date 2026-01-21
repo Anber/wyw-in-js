@@ -71,27 +71,27 @@ export function EntrypointsTab({
   );
 
   return (
-      <div className={styles.stackMd}>
-        <div className={styles.filtersGrid}>
-          <Field label="Filter filename">
-            {({ describedBy, id }) => (
-              <div className={styles.inlineFieldRow}>
-                <input
-                  id={id}
-                  value={filterFilename}
-                  onChange={(e) => setFilterFilename(e.currentTarget.value)}
-                  aria-describedby={describedBy}
-                  className={cx(styles.fieldFlex, styles.fieldInput)}
-                />
-                <Button
-                  disabled={!filterFilename}
-                  onClick={() => setFilterFilename('')}
-                >
-                  Reset
-                </Button>
-              </div>
-            )}
-          </Field>
+    <div className={styles.stackMd}>
+      <div className={styles.filtersGrid}>
+        <Field label="Filter filename">
+          {({ describedBy, id }) => (
+            <div className={styles.inlineFieldRow}>
+              <input
+                id={id}
+                value={filterFilename}
+                onChange={(e) => setFilterFilename(e.currentTarget.value)}
+                aria-describedby={describedBy}
+                className={cx(styles.fieldFlex, styles.fieldInput)}
+              />
+              <Button
+                disabled={!filterFilename}
+                onClick={() => setFilterFilename('')}
+              >
+                Reset
+              </Button>
+            </div>
+          )}
+        </Field>
 
         <Field label="Row limit">
           <input
