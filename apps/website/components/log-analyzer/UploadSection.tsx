@@ -10,12 +10,7 @@ import { Field } from './ui/Field';
 import { cx, formatBytes } from './utils';
 
 export function UploadSection({ state }: { state: LogAnalyzerState }) {
-  const {
-    parseLogs,
-    resetAll,
-    upload,
-    parse,
-  } = state;
+  const { parseLogs, resetAll, upload, parse } = state;
 
   const { canParse, inputsKey, onDrop, onPickFiles, problems, selected } =
     upload;

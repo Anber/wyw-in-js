@@ -59,16 +59,12 @@ export function EntrypointsTab({
     }
   );
 
-  useScrollIntoViewOnChange(
-    selectedEntrypointInstanceRef,
-    [selectedSeqId],
-    {
-      enabled: selectedSeqId !== null,
-      schedule: 'raf-timeout',
-      behavior: 'smooth',
-      block: 'start',
-    }
-  );
+  useScrollIntoViewOnChange(selectedEntrypointInstanceRef, [selectedSeqId], {
+    enabled: selectedSeqId !== null,
+    schedule: 'raf-timeout',
+    behavior: 'smooth',
+    block: 'start',
+  });
 
   return (
     <div className={styles.stackMd}>
@@ -188,17 +184,23 @@ export function EntrypointsTab({
           ) : (
             <div className={styles.stackMd}>
               <div className="nx-text-sm nx-font-semibold">
-                Entrypoints for <code>{pathDisplay.displayPath(selectedFile)}</code>
+                Entrypoints for{' '}
+                <code>{pathDisplay.displayPath(selectedFile)}</code>
               </div>
 
               <div className="nx-flex nx-flex-wrap nx-gap-2">
-                <Button onClick={() => nav.openActionsTabForTarget(selectedFile)}>
+                <Button
+                  onClick={() => nav.openActionsTabForTarget(selectedFile)}
+                >
                   Show actions (file)
                 </Button>
 
                 <Button
                   onClick={() =>
-                    clipboard.copyText(selectedFile, 'Copied entrypoint filename')
+                    clipboard.copyText(
+                      selectedFile,
+                      'Copied entrypoint filename'
+                    )
                   }
                 >
                   Copy path

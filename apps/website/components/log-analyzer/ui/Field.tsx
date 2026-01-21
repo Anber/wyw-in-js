@@ -29,23 +29,26 @@ export function Field({
       : autoId;
 
   const hintId = hint ? `${childId}-hint` : undefined;
-  const canAssociateLabel = typeof children === 'function' || React.isValidElement(children);
+  const canAssociateLabel =
+    typeof children === 'function' || React.isValidElement(children);
 
-  const control =
-    typeof children === 'function'
-      ? children({ id: childId, describedBy: hintId })
-      : React.isValidElement(children)
-        ? React.cloneElement(children, {
-            ...(children.props.id ? {} : { id: childId }),
-            ...(hintId
-              ? {
-                  'aria-describedby': children.props['aria-describedby']
-                    ? `${children.props['aria-describedby']} ${hintId}`
-                    : hintId,
-                }
-              : {}),
-          })
-        : children;
+  let control: React.ReactNode;
+  if (typeof children === 'function') {
+    control = children({ id: childId, describedBy: hintId });
+  } else if (React.isValidElement(children)) {
+    control = React.cloneElement(children, {
+      ...(children.props.id ? {} : { id: childId }),
+      ...(hintId
+        ? {
+            'aria-describedby': children.props['aria-describedby']
+              ? `${children.props['aria-describedby']} ${hintId}`
+              : hintId,
+          }
+        : {}),
+    });
+  } else {
+    control = children;
+  }
 
   return (
     <div className={cx('nx-grid nx-gap-1', className)}>

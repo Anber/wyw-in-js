@@ -18,7 +18,6 @@ export function Button({
 }: ButtonProps) {
   return (
     <button
-      // eslint-disable-next-line react/button-has-type
       type={type}
       className={cx(
         styles.button,
@@ -42,11 +41,13 @@ export function TabButton({
 }: TabButtonProps) {
   return (
     <button
-      // eslint-disable-next-line react/button-has-type
       type={type}
-      className={cx(styles.tabButton, active && styles.tabButtonActive, className)}
+      className={cx(
+        styles.tabButton,
+        active && styles.tabButtonActive,
+        className
+      )}
       {...rest}
     />
   );
 }
-

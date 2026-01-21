@@ -160,7 +160,8 @@ export function DependenciesTab({
         >
           <div className={styles.cardHeaderRow}>
             <div className="nx-text-sm nx-font-semibold">
-              Importers of <code>{pathDisplay.displayPath(selectedImport)}</code>
+              Importers of{' '}
+              <code>{pathDisplay.displayPath(selectedImport)}</code>
             </div>
             <div className="nx-flex nx-flex-wrap nx-gap-2">
               <Button

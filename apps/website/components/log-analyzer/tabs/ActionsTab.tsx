@@ -171,7 +171,9 @@ export function ActionsTab({
                           )}`}
                           onClick={(e) => {
                             e.stopPropagation();
-                            nav.openEntrypointsTabForFile(a.entrypointFilename!);
+                            nav.openEntrypointsTabForFile(
+                              a.entrypointFilename!
+                            );
                           }}
                         >
                           <span className={styles.entryLinkIcon} aria-hidden>
