@@ -3,12 +3,10 @@ import * as React from 'react';
 import styles from '../LogAnalyzer.module.css';
 
 import { FILE_NAME_BY_KEY, REQUIRED_FILENAMES } from '../constants';
-import type { LogAnalyzerState } from '../useLogAnalyzerState';
+import type { ParseErrors } from '../state';
 import { cx } from '../utils';
 
-export function HelpTab({ state }: { state: LogAnalyzerState }) {
-  const { parseErrors } = state;
-
+export function HelpTab({ parseErrors }: { parseErrors: ParseErrors | null }) {
   return (
     <div className={styles.stackLg}>
       <div className="nx-rounded-lg nx-border nx-border-neutral-200 nx-bg-neutral-50 nx-p-4 dark:nx-border-neutral-800 dark:nx-bg-neutral-950">

@@ -2,28 +2,42 @@ import * as React from 'react';
 
 import styles from '../LogAnalyzer.module.css';
 
-import { trimPathPrefix } from '../analyze';
-import type { LogAnalyzerState } from '../useLogAnalyzerState';
+import type { ClipboardToastState } from '../useClipboardToast';
+import type { PathDisplayState } from '../usePathDisplay';
+import { useScrollIntoViewOnChange } from '../useScrollIntoViewOnChange';
+import type { EntrypointsViewState } from '../useEntrypointsView';
+import { Button } from '../ui/Button';
+import { Field } from '../ui/Field';
+import { TruncateCell } from '../ui/TruncateCell';
 import { cx, onKeyboardActivate } from '../utils';
 
-export function EntrypointsTab({ state }: { state: LogAnalyzerState }) {
+type EntrypointsTabProps = {
+  clipboard: ClipboardToastState;
+  nav: { openActionsTabForEntrypoint: (entrypoint: string) => void };
+  pathDisplay: PathDisplayState;
+  view: EntrypointsViewState;
+};
+
+export function EntrypointsTab({
+  clipboard,
+  nav,
+  pathDisplay,
+  view,
+}: EntrypointsTabProps) {
   const {
-    copyText,
-    entrypointsFilter,
-    entrypointsLimit,
-    openActionsTabForEntrypoint,
-    pathPrefix,
-    filteredEntrypointFiles,
-    selectedEntrypointFile,
-    selectedEntrypointInstance,
-    selectedEntrypointSeqId,
+    filterFilename,
+    filteredFiles,
+    limit,
+    selectedFile,
     selectedFileInstances,
+    selectedInstance,
+    selectedSeqId,
     selectedSupersedeChain,
-    setEntrypointsFilter,
-    setEntrypointsLimit,
-    setSelectedEntrypointFile,
-    setSelectedEntrypointSeqId,
-  } = state;
+    setFilterFilename,
+    setLimit,
+    selectFile,
+    selectInstance,
+  } = view;
 
   const selectedEntrypointDetailsRef = React.useRef<HTMLDivElement | null>(
     null
@@ -32,81 +46,66 @@ export function EntrypointsTab({ state }: { state: LogAnalyzerState }) {
     null
   );
 
-  const scrollToDetails = React.useCallback(() => {
-    selectedEntrypointDetailsRef.current?.scrollIntoView({
-      behavior: 'smooth',
-      block: 'start',
+  const scrollToEntrypointDetails = React.useCallback(() => {
+    const el = selectedEntrypointDetailsRef.current;
+    if (!el) return;
+    requestAnimationFrame(() => {
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
     });
   }, []);
 
-  const scheduleScrollToDetails = React.useCallback(() => {
-    requestAnimationFrame(() => {
-      scrollToDetails();
-      setTimeout(scrollToDetails, 0);
-    });
-  }, [scrollToDetails]);
-
-  const scrollToInstance = React.useCallback(() => {
-    selectedEntrypointInstanceRef.current?.scrollIntoView({
+  useScrollIntoViewOnChange(
+    selectedEntrypointDetailsRef,
+    [selectedFile],
+    {
+      enabled: !!selectedFile,
+      schedule: 'raf-timeout',
       behavior: 'smooth',
       block: 'start',
-    });
-  }, []);
+    }
+  );
 
-  const scheduleScrollToInstance = React.useCallback(() => {
-    requestAnimationFrame(() => {
-      scrollToInstance();
-      setTimeout(scrollToInstance, 0);
-    });
-  }, [scrollToInstance]);
-
-  React.useEffect(() => {
-    if (!selectedEntrypointFile) return;
-    scheduleScrollToDetails();
-  }, [scheduleScrollToDetails, selectedEntrypointFile]);
-
-  React.useEffect(() => {
-    if (selectedEntrypointSeqId === null) return;
-    scheduleScrollToInstance();
-  }, [scheduleScrollToInstance, selectedEntrypointSeqId]);
+  useScrollIntoViewOnChange(
+    selectedEntrypointInstanceRef,
+    [selectedSeqId],
+    {
+      enabled: selectedSeqId !== null,
+      schedule: 'raf-timeout',
+      behavior: 'smooth',
+      block: 'start',
+    }
+  );
 
   return (
     <div className={styles.stackMd}>
       <div className={styles.filtersGrid}>
-        <div className="nx-grid nx-gap-1">
-          <span className="nx-text-xs nx-font-semibold nx-text-neutral-600 dark:nx-text-neutral-400">
-            Filter filename
-          </span>
+        <Field label="Filter filename">
           <div className={styles.inlineFieldRow}>
             <input
-              value={entrypointsFilter}
-              onChange={(e) => setEntrypointsFilter(e.currentTarget.value)}
+              value={filterFilename}
+              onChange={(e) => setFilterFilename(e.currentTarget.value)}
               aria-label="Filter filename"
               className={cx(styles.fieldFlex, styles.fieldInput)}
             />
-            <button
-              type="button"
-              disabled={!entrypointsFilter}
-              onClick={() => setEntrypointsFilter('')}
-              className={cx(styles.button, styles.buttonSecondary)}
+            <Button
+              disabled={!filterFilename}
+              onClick={() => setFilterFilename('')}
             >
               Reset
-            </button>
+            </Button>
           </div>
-        </div>
-        <label className="nx-grid nx-gap-1">
-          <span className="nx-text-xs nx-font-semibold nx-text-neutral-600 dark:nx-text-neutral-400">
-            Row limit
-          </span>
+        </Field>
+
+        <Field label="Row limit">
           <input
             type="number"
             min={20}
             max={500}
-            value={entrypointsLimit}
-            onChange={(e) => setEntrypointsLimit(Number(e.currentTarget.value))}
+            value={limit}
+            onChange={(e) => setLimit(Number(e.currentTarget.value))}
             className={styles.fieldInput}
           />
-        </label>
+        </Field>
       </div>
 
       <div className={styles.entrypointsLayout}>
@@ -115,7 +114,7 @@ export function EntrypointsTab({ state }: { state: LogAnalyzerState }) {
             <colgroup>
               <col />
               <col style={{ width: 90 }} />
-              <col style={{ width: 110 }} />
+              <col style={{ width: 120 }} />
               <col style={{ width: 90 }} />
               <col style={{ width: 90 }} />
               <col style={{ width: 110 }} />
@@ -131,15 +130,15 @@ export function EntrypointsTab({ state }: { state: LogAnalyzerState }) {
               </tr>
             </thead>
             <tbody>
-              {filteredEntrypointFiles.map((f) => {
+              {filteredFiles.map((f) => {
                 const growth =
                   f.onlyMin !== null && f.onlyMax !== null
                     ? f.onlyMax - f.onlyMin
                     : 0;
-                const isSelected = selectedEntrypointFile === f.filename;
+                const isSelected = selectedFile === f.filename;
                 const select = () => {
-                  setSelectedEntrypointFile(f.filename);
-                  setSelectedEntrypointSeqId(null);
+                  selectFile(f.filename);
+                  scrollToEntrypointDetails();
                 };
                 return (
                   <tr
@@ -154,15 +153,11 @@ export function EntrypointsTab({ state }: { state: LogAnalyzerState }) {
                     onKeyDown={(e) => onKeyboardActivate(e, select)}
                   >
                     <td className="nx-px-3 nx-py-2">
-                      <code
-                        className={cx(
-                          styles.cellTruncate,
-                          styles.cellTruncateStart
-                        )}
-                        title={trimPathPrefix(f.filename, pathPrefix)}
-                      >
-                        <span>{trimPathPrefix(f.filename, pathPrefix)}</span>
-                      </code>
+                      <TruncateCell
+                        value={pathDisplay.displayPath(f.filename)}
+                        title={pathDisplay.displayPath(f.filename)}
+                        startEllipsis
+                      />
                     </td>
                     <td className="nx-px-3 nx-py-2 nx-text-right">
                       {f.createdCount}
@@ -188,7 +183,7 @@ export function EntrypointsTab({ state }: { state: LogAnalyzerState }) {
           ref={selectedEntrypointDetailsRef}
           className="nx-rounded-lg nx-border nx-border-neutral-200 nx-bg-neutral-50 nx-p-4 dark:nx-border-neutral-800 dark:nx-bg-neutral-950"
         >
-          {!selectedEntrypointFile ? (
+          {!selectedFile ? (
             <div className="nx-text-sm nx-text-neutral-600 dark:nx-text-neutral-400">
               Select a file to inspect entrypoint instances and supersede
               chains.
@@ -196,35 +191,21 @@ export function EntrypointsTab({ state }: { state: LogAnalyzerState }) {
           ) : (
             <div className={styles.stackMd}>
               <div className="nx-text-sm nx-font-semibold">
-                Entrypoints for{' '}
-                <code>
-                  {trimPathPrefix(selectedEntrypointFile, pathPrefix)}
-                </code>
+                Entrypoints for <code>{pathDisplay.displayPath(selectedFile)}</code>
               </div>
 
               <div className="nx-flex nx-flex-wrap nx-gap-2">
-                <button
-                  type="button"
-                  className={cx(styles.button, styles.buttonSecondary)}
-                  onClick={() =>
-                    openActionsTabForEntrypoint(selectedEntrypointFile)
-                  }
-                >
+                <Button onClick={() => nav.openActionsTabForEntrypoint(selectedFile)}>
                   Show actions (file)
-                </button>
+                </Button>
 
-                <button
-                  type="button"
-                  className={cx(styles.button, styles.buttonSecondary)}
+                <Button
                   onClick={() =>
-                    copyText(
-                      selectedEntrypointFile,
-                      'Copied entrypoint filename'
-                    )
+                    clipboard.copyText(selectedFile, 'Copied entrypoint filename')
                   }
                 >
                   Copy path
-                </button>
+                </Button>
               </div>
 
               <div className="nx-overflow-x-auto nx-rounded-lg nx-border nx-border-neutral-200 dark:nx-border-neutral-800">
@@ -249,8 +230,8 @@ export function EntrypointsTab({ state }: { state: LogAnalyzerState }) {
                   </thead>
                   <tbody>
                     {selectedFileInstances.map((i) => {
-                      const isSelected = selectedEntrypointSeqId === i.seqId;
-                      const select = () => setSelectedEntrypointSeqId(i.seqId);
+                      const isSelected = selectedSeqId === i.seqId;
+                      const select = () => selectInstance(i.seqId);
                       return (
                         <tr
                           key={i.seqId}
@@ -266,12 +247,11 @@ export function EntrypointsTab({ state }: { state: LogAnalyzerState }) {
                         >
                           <td className="nx-px-3 nx-py-2">{i.seqId}</td>
                           <td className="nx-px-3 nx-py-2">
-                            <code
-                              className={styles.cellTruncate}
-                              title={i.ref ?? '–'}
-                            >
-                              {i.ref ?? '–'}
-                            </code>
+                            {i.ref ? (
+                              <TruncateCell value={i.ref} title={i.ref} />
+                            ) : (
+                              '–'
+                            )}
                           </td>
                           <td className="nx-px-3 nx-py-2 nx-text-right">
                             {i.generation ?? '–'}
@@ -291,7 +271,7 @@ export function EntrypointsTab({ state }: { state: LogAnalyzerState }) {
                 </table>
               </div>
 
-              {selectedEntrypointInstance && (
+              {selectedInstance && (
                 <div
                   ref={selectedEntrypointInstanceRef}
                   className={styles.stackSm}
@@ -300,34 +280,28 @@ export function EntrypointsTab({ state }: { state: LogAnalyzerState }) {
                     Selected entrypoint instance
                   </div>
                   <div className="nx-flex nx-flex-wrap nx-gap-2">
-                    {selectedEntrypointInstance.ref && (
-                      <button
-                        type="button"
-                        className={cx(styles.button, styles.buttonSecondary)}
+                    {selectedInstance.ref && (
+                      <Button
                         onClick={() =>
-                          openActionsTabForEntrypoint(
-                            selectedEntrypointInstance.ref!
-                          )
+                          nav.openActionsTabForEntrypoint(selectedInstance.ref!)
                         }
                       >
                         Show actions (ref)
-                      </button>
+                      </Button>
                     )}
-                    <button
-                      type="button"
-                      className={cx(styles.button, styles.buttonSecondary)}
+                    <Button
                       onClick={() =>
-                        copyText(
-                          JSON.stringify(selectedEntrypointInstance, null, 2),
+                        clipboard.copyText(
+                          JSON.stringify(selectedInstance, null, 2),
                           'Copied entrypoint JSON'
                         )
                       }
                     >
                       Copy JSON
-                    </button>
+                    </Button>
                   </div>
                   <pre className="nx-max-h-[40vh] nx-overflow-auto nx-rounded-md nx-border nx-border-neutral-200 nx-bg-white nx-p-3 nx-text-xs dark:nx-border-neutral-800 dark:nx-bg-neutral-900">
-                    {JSON.stringify(selectedEntrypointInstance, null, 2)}
+                    {JSON.stringify(selectedInstance, null, 2)}
                   </pre>
                 </div>
               )}

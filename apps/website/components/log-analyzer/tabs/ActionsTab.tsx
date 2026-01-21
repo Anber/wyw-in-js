@@ -2,107 +2,111 @@ import * as React from 'react';
 
 import styles from '../LogAnalyzer.module.css';
 
-import { trimPathPrefix } from '../analyze';
-import type { LogAnalyzerState } from '../useLogAnalyzerState';
+import type { ActionsViewState } from '../useActionsView';
+import type { ClipboardToastState } from '../useClipboardToast';
+import type { PathDisplayState } from '../usePathDisplay';
+import { useScrollIntoViewOnChange } from '../useScrollIntoViewOnChange';
+import { Button } from '../ui/Button';
+import { Field } from '../ui/Field';
+import { TruncateCell } from '../ui/TruncateCell';
 import { cx, formatMs, onKeyboardActivate } from '../utils';
 
-export function ActionsTab({ state }: { state: LogAnalyzerState }) {
+type ActionsTabProps = {
+  clipboard: ClipboardToastState;
+  nav: { openEntrypointsTabForFile: (filename: string) => void };
+  pathDisplay: PathDisplayState;
+  view: ActionsViewState;
+};
+
+export function ActionsTab({
+  clipboard,
+  nav,
+  pathDisplay,
+  view,
+}: ActionsTabProps) {
   const {
-    actionsFailedOnly,
-    actionsFilterEntrypoint,
-    actionsFilterImportFrom,
-    actionsFilterType,
-    actionsLimit,
-    copyText,
-    filteredActions,
-    openEntrypointsTabForFile,
-    pathPrefix,
+    failedOnly,
+    filterEntrypoint,
+    filterImportFrom,
+    filterType,
+    limit,
+    rows,
     selectedAction,
-    setActionsFailedOnly,
-    setActionsFilterEntrypoint,
-    setActionsFilterImportFrom,
-    setActionsFilterType,
-    setActionsLimit,
+    setFailedOnly,
+    setFilterEntrypoint,
+    setFilterImportFrom,
+    setFilterType,
+    setLimit,
     setSelectedAction,
-  } = state;
+  } = view;
 
   const selectedActionDetailsRef = React.useRef<HTMLDivElement | null>(null);
 
-  React.useEffect(() => {
-    if (!selectedAction) return;
-    selectedActionDetailsRef.current?.scrollIntoView({
+  useScrollIntoViewOnChange(
+    selectedActionDetailsRef,
+    [selectedAction?.actionId],
+    {
+      enabled: !!selectedAction,
       behavior: 'smooth',
       block: 'nearest',
-    });
-  }, [selectedAction]);
+    }
+  );
 
   return (
-    <div className={styles.stackMd}>
-      <div className={styles.filtersGrid}>
-        <label className="nx-grid nx-gap-1">
-          <span className="nx-text-xs nx-font-semibold nx-text-neutral-600 dark:nx-text-neutral-400">
-            Filter type
-          </span>
-          <input
-            value={actionsFilterType}
-            onChange={(e) => setActionsFilterType(e.currentTarget.value)}
-            className={styles.fieldInput}
-          />
-        </label>
+      <div className={styles.stackMd}>
+        <div className={styles.filtersGrid}>
+          <Field label="Filter type">
+            <input
+              value={filterType}
+              onChange={(e) => setFilterType(e.currentTarget.value)}
+              className={styles.fieldInput}
+            />
+          </Field>
 
-        <label className="nx-grid nx-gap-1">
-          <span className="nx-text-xs nx-font-semibold nx-text-neutral-600 dark:nx-text-neutral-400">
-            Filter entrypoint
-          </span>
-          <input
-            value={actionsFilterEntrypoint}
-            onChange={(e) => setActionsFilterEntrypoint(e.currentTarget.value)}
-            placeholder="filename or entrypointRef"
-            className={styles.fieldInput}
-          />
-        </label>
+          <Field label="Filter entrypoint">
+            <input
+              value={filterEntrypoint}
+              onChange={(e) => setFilterEntrypoint(e.currentTarget.value)}
+              placeholder="filename or entrypointRef"
+              className={styles.fieldInput}
+            />
+          </Field>
 
-        <label className="nx-grid nx-gap-1">
-          <span className="nx-text-xs nx-font-semibold nx-text-neutral-600 dark:nx-text-neutral-400">
-            Filter import (exact)
-          </span>
-          <input
-            value={actionsFilterImportFrom}
-            onChange={(e) => setActionsFilterImportFrom(e.currentTarget.value)}
-            placeholder="paste from Dependencies → Top imports"
-            className={styles.fieldInput}
-          />
-        </label>
+          <Field label="Filter import (exact)">
+            <input
+              value={filterImportFrom}
+              onChange={(e) => setFilterImportFrom(e.currentTarget.value)}
+              placeholder="paste from Dependencies → Top imports"
+              className={styles.fieldInput}
+            />
+          </Field>
 
-        <label className="nx-grid nx-gap-1">
-          <span className="nx-text-xs nx-font-semibold nx-text-neutral-600 dark:nx-text-neutral-400">
-            Row limit
-          </span>
-          <input
-            type="number"
-            min={50}
-            max={2000}
-            value={actionsLimit}
-            onChange={(e) => setActionsLimit(Number(e.currentTarget.value))}
-            className={styles.fieldInput}
-          />
-        </label>
-      </div>
+          <Field label="Row limit">
+            <input
+              type="number"
+              min={50}
+              max={2000}
+              value={limit}
+              onChange={(e) => setLimit(Number(e.currentTarget.value))}
+              className={styles.fieldInput}
+            />
+          </Field>
+        </div>
 
       <div className={styles.inlineFieldRow}>
         <label className={styles.checkboxPill}>
           <input
             type="checkbox"
-            checked={actionsFailedOnly}
-            onChange={(e) => setActionsFailedOnly(e.currentTarget.checked)}
+            checked={failedOnly}
+            onChange={(e) => setFailedOnly(e.currentTarget.checked)}
             className="nx-h-4 nx-w-4 nx-rounded nx-border-neutral-300 dark:nx-border-neutral-700"
           />
           <span>Failed only</span>
         </label>
 
         <div className="nx-text-sm nx-text-neutral-600 dark:nx-text-neutral-400">
-          Showing <strong>{filteredActions.length}</strong> actions (sorted by
-          duration). Click a row to expand details.
+          Showing <strong>{rows.length}</strong> actions (sorted by duration).
+          Click a row to expand details.
         </div>
       </div>
 
@@ -129,7 +133,7 @@ export function ActionsTab({ state }: { state: LogAnalyzerState }) {
             </tr>
           </thead>
           <tbody>
-            {filteredActions.map((a) => {
+            {rows.map((a) => {
               const entry = a.entrypointFilename ?? a.entrypointRef;
               const isSelected = selectedAction?.actionId === a.actionId;
               const toggle = () => setSelectedAction(isSelected ? null : a);
@@ -149,9 +153,7 @@ export function ActionsTab({ state }: { state: LogAnalyzerState }) {
                       {formatMs(a.durationMs)}
                     </td>
                     <td className="nx-px-3 nx-py-2">
-                      <code className={styles.cellTruncate} title={a.type}>
-                        {a.type}
-                      </code>
+                      <TruncateCell value={a.type} title={a.type} />
                     </td>
                     <td className="nx-whitespace-nowrap nx-px-3 nx-py-2">
                       {a.result}
@@ -164,13 +166,12 @@ export function ActionsTab({ state }: { state: LogAnalyzerState }) {
                         <button
                           type="button"
                           className={styles.entryLink}
-                          title={`Open in Entrypoints: ${trimPathPrefix(
-                            entry,
-                            pathPrefix
+                          title={`Open in Entrypoints: ${pathDisplay.displayPath(
+                            entry
                           )}`}
                           onClick={(e) => {
                             e.stopPropagation();
-                            openEntrypointsTabForFile(a.entrypointFilename!);
+                            nav.openEntrypointsTabForFile(a.entrypointFilename!);
                           }}
                         >
                           <span className={styles.entryLinkIcon} aria-hidden>
@@ -182,19 +183,15 @@ export function ActionsTab({ state }: { state: LogAnalyzerState }) {
                               styles.cellTruncateStart
                             )}
                           >
-                            <span>{trimPathPrefix(entry, pathPrefix)}</span>
+                            <span>{pathDisplay.displayPath(entry)}</span>
                           </code>
                         </button>
                       ) : (
-                        <code
-                          className={cx(
-                            styles.cellTruncate,
-                            styles.cellTruncateStart
-                          )}
-                          title={trimPathPrefix(entry, pathPrefix)}
-                        >
-                          <span>{trimPathPrefix(entry, pathPrefix)}</span>
-                        </code>
+                        <TruncateCell
+                          value={pathDisplay.displayPath(entry)}
+                          title={pathDisplay.displayPath(entry)}
+                          startEllipsis
+                        />
                       )}
                     </td>
                     <td className="nx-whitespace-nowrap nx-px-3 nx-py-2">
@@ -219,50 +216,35 @@ export function ActionsTab({ state }: { state: LogAnalyzerState }) {
                               <code>{a.type}</code> — {formatMs(a.durationMs)}
                             </div>
                             <div className={styles.detailsButtons}>
-                              <button
-                                type="button"
-                                className={cx(
-                                  styles.button,
-                                  styles.buttonSecondary
-                                )}
+                              <Button
                                 onClick={() =>
-                                  copyText(
+                                  clipboard.copyText(
                                     JSON.stringify(a, null, 2),
                                     'Copied action JSON'
                                   )
                                 }
                               >
                                 Copy JSON
-                              </button>
+                              </Button>
 
-                              <button
-                                type="button"
-                                className={cx(
-                                  styles.button,
-                                  styles.buttonSecondary
-                                )}
+                              <Button
                                 onClick={() =>
-                                  copyText(entry, 'Copied entrypoint')
+                                  clipboard.copyText(entry, 'Copied entrypoint')
                                 }
                               >
                                 Copy path
-                              </button>
+                              </Button>
 
                               {a.entrypointFilename && (
-                                <button
-                                  type="button"
-                                  className={cx(
-                                    styles.button,
-                                    styles.buttonSecondary
-                                  )}
+                                <Button
                                   onClick={() =>
-                                    openEntrypointsTabForFile(
+                                    nav.openEntrypointsTabForFile(
                                       a.entrypointFilename!
                                     )
                                   }
                                 >
                                   Open entrypoint
-                                </button>
+                                </Button>
                               )}
                             </div>
                           </div>

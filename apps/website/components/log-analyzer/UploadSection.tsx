@@ -5,22 +5,21 @@ import styles from './LogAnalyzer.module.css';
 import { FILE_NAME_BY_KEY, REQUIRED_FILENAMES } from './constants';
 import { DirectoryInput } from './DirectoryInput';
 import type { LogAnalyzerState } from './useLogAnalyzerState';
+import { Button } from './ui/Button';
+import { Field } from './ui/Field';
 import { cx, formatBytes } from './utils';
 
 export function UploadSection({ state }: { state: LogAnalyzerState }) {
   const {
-    canParse,
-    fatalError,
-    inputsKey,
-    isParsing,
-    onDrop,
-    onParseClick,
-    onPickFiles,
-    parseProgress,
-    problems,
-    reset,
-    selected,
+    parseLogs,
+    resetAll,
+    upload,
+    parse,
   } = state;
+
+  const { canParse, inputsKey, onDrop, onPickFiles, problems, selected } =
+    upload;
+  const { fatalError, isParsing, parseProgress } = parse;
 
   return (
     <section className="nx-rounded-xl nx-border nx-border-neutral-200 nx-bg-white nx-p-4 dark:nx-border-neutral-800 dark:nx-bg-neutral-900 sm:nx-p-6">
@@ -33,22 +32,15 @@ export function UploadSection({ state }: { state: LogAnalyzerState }) {
         </div>
 
         <div className="nx-flex nx-flex-wrap nx-items-center nx-gap-2">
-          <button
-            type="button"
+          <Button
+            variant="primary"
             disabled={!canParse || isParsing}
-            onClick={onParseClick}
-            className={cx(styles.button, styles.buttonPrimary)}
+            onClick={() => parseLogs().catch(() => {})}
           >
             {isParsing ? 'Parsing…' : 'Parse logs'}
-          </button>
+          </Button>
 
-          <button
-            type="button"
-            onClick={reset}
-            className={cx(styles.button, styles.buttonSecondary)}
-          >
-            Reset
-          </button>
+          <Button onClick={resetAll}>Reset</Button>
         </div>
       </div>
 
@@ -87,8 +79,7 @@ export function UploadSection({ state }: { state: LogAnalyzerState }) {
         </div>
 
         <div className="nx-grid nx-content-start nx-gap-4">
-          <label className="nx-grid nx-gap-1">
-            <span className="nx-text-sm nx-font-medium">Pick files</span>
+          <Field label="Pick files" labelClassName="nx-text-sm nx-font-medium">
             <input
               key={`files-${inputsKey}`}
               type="file"
@@ -99,21 +90,25 @@ export function UploadSection({ state }: { state: LogAnalyzerState }) {
               }
               className={styles.fieldInput}
             />
-          </label>
+          </Field>
 
-          <label className="nx-grid nx-gap-1">
-            <span className="nx-text-sm nx-font-medium">Pick folder</span>
+          <Field
+            label="Pick folder"
+            labelClassName="nx-text-sm nx-font-medium"
+            hint={
+              <>
+                Folder picker works in Chromium-based browsers. In Firefox, use
+                “Pick files” or drag&amp;drop.
+              </>
+            }
+          >
             <DirectoryInput
               key={`dir-${inputsKey}`}
               disabled={isParsing}
               onFiles={onPickFiles}
               className={styles.fieldInput}
             />
-            <span className="nx-text-xs nx-text-neutral-600 dark:nx-text-neutral-400">
-              Folder picker works in Chromium-based browsers. In Firefox, use
-              “Pick files” or drag&amp;drop.
-            </span>
-          </label>
+          </Field>
 
           <div className="nx-text-xs nx-text-neutral-600 dark:nx-text-neutral-400">
             Expected file names: <code>{FILE_NAME_BY_KEY.actions}</code>,{' '}

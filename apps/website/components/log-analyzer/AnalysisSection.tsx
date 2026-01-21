@@ -3,26 +3,31 @@ import * as React from 'react';
 import styles from './LogAnalyzer.module.css';
 
 import type { LogAnalyzerState } from './useLogAnalyzerState';
-import { cx } from './utils';
 import { ActionsTab } from './tabs/ActionsTab';
 import { DependenciesTab } from './tabs/DependenciesTab';
 import { EntrypointsTab } from './tabs/EntrypointsTab';
 import { HelpTab } from './tabs/HelpTab';
 import { OverviewTab } from './tabs/OverviewTab';
+import { Button, TabButton } from './ui/Button';
 
 export function AnalysisSection({ state }: { state: LogAnalyzerState }) {
   const {
-    activeTab,
-    clearPathPrefix,
-    copyMessage,
-    data,
-    pathPrefix,
-    resetPathPrefixToAuto,
-    setActiveTab,
-    setPathPrefix,
+    actions,
+    clipboard,
+    dependencies,
+    entrypoints,
+    nav,
+    parse,
+    pathDisplay,
+    ui,
   } = state;
 
+  const { data } = parse;
   if (!data) return null;
+
+  const { activeTab, setActiveTab } = ui;
+  const { message: copyMessage } = clipboard;
+  const { clear, pathPrefix, resetToAuto, setPathPrefix } = pathDisplay;
 
   return (
     <section className="nx-rounded-xl nx-border nx-border-neutral-200 nx-bg-white nx-p-4 dark:nx-border-neutral-800 dark:nx-bg-neutral-900 sm:nx-p-6">
@@ -39,17 +44,13 @@ export function AnalysisSection({ state }: { state: LogAnalyzerState }) {
                 ['help', 'Help'],
               ] as const
             ).map(([id, label]) => (
-              <button
+              <TabButton
                 key={id}
-                type="button"
                 onClick={() => setActiveTab(id)}
-                className={cx(
-                  styles.tabButton,
-                  activeTab === id && styles.tabButtonActive
-                )}
+                active={activeTab === id}
               >
                 {label}
-              </button>
+              </TabButton>
             ))}
           </nav>
         </div>
@@ -73,21 +74,9 @@ export function AnalysisSection({ state }: { state: LogAnalyzerState }) {
                 />
               </div>
 
-              <button
-                type="button"
-                onClick={resetPathPrefixToAuto}
-                className={cx(styles.button, styles.buttonSecondary)}
-              >
-                Auto
-              </button>
+              <Button onClick={resetToAuto}>Auto</Button>
 
-              <button
-                type="button"
-                onClick={clearPathPrefix}
-                className={cx(styles.button, styles.buttonSecondary)}
-              >
-                Clear
-              </button>
+              <Button onClick={clear}>Clear</Button>
             </div>
           </div>
           <div className="nx-text-xs nx-text-neutral-600 dark:nx-text-neutral-400">
@@ -105,11 +94,33 @@ export function AnalysisSection({ state }: { state: LogAnalyzerState }) {
           )}
         </div>
 
-        {activeTab === 'overview' && <OverviewTab state={state} />}
-        {activeTab === 'actions' && <ActionsTab state={state} />}
-        {activeTab === 'entrypoints' && <EntrypointsTab state={state} />}
-        {activeTab === 'dependencies' && <DependenciesTab state={state} />}
-        {activeTab === 'help' && <HelpTab state={state} />}
+        {activeTab === 'overview' && <OverviewTab data={data} />}
+        {activeTab === 'actions' && (
+          <ActionsTab
+            clipboard={clipboard}
+            nav={nav}
+            pathDisplay={pathDisplay}
+            view={actions}
+          />
+        )}
+        {activeTab === 'entrypoints' && (
+          <EntrypointsTab
+            clipboard={clipboard}
+            nav={nav}
+            pathDisplay={pathDisplay}
+            view={entrypoints}
+          />
+        )}
+        {activeTab === 'dependencies' && (
+          <DependenciesTab
+            clipboard={clipboard}
+            data={data}
+            nav={nav}
+            pathDisplay={pathDisplay}
+            view={dependencies}
+          />
+        )}
+        {activeTab === 'help' && <HelpTab parseErrors={parse.parseErrors} />}
       </div>
     </section>
   );

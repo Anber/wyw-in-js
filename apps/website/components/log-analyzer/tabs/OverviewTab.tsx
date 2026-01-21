@@ -2,13 +2,10 @@ import * as React from 'react';
 
 import styles from '../LogAnalyzer.module.css';
 
-import type { LogAnalyzerState } from '../useLogAnalyzerState';
+import type { ParsedData } from '../state';
 import { cx, formatMs } from '../utils';
 
-export function OverviewTab({ state }: { state: LogAnalyzerState }) {
-  const { data } = state;
-  if (!data) return null;
-
+export function OverviewTab({ data }: { data: ParsedData }) {
   return (
     <div className={styles.stackLg}>
       <div className={styles.metricsGrid}>

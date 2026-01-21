@@ -2,36 +2,50 @@ import * as React from 'react';
 
 import styles from '../LogAnalyzer.module.css';
 
-import { trimPathPrefix } from '../analyze';
-import type { LogAnalyzerState } from '../useLogAnalyzerState';
+import type { ParsedData } from '../state';
+import type { DependenciesViewState } from '../useDependenciesView';
+import type { ClipboardToastState } from '../useClipboardToast';
+import type { PathDisplayState } from '../usePathDisplay';
+import { useScrollIntoViewOnChange } from '../useScrollIntoViewOnChange';
+import { Button } from '../ui/Button';
+import { Field } from '../ui/Field';
+import { TruncateCell } from '../ui/TruncateCell';
 import { cx, onKeyboardActivate } from '../utils';
 
-export function DependenciesTab({ state }: { state: LogAnalyzerState }) {
+type DependenciesTabProps = {
+  clipboard: ClipboardToastState;
+  data: ParsedData;
+  nav: {
+    openActionsTabForEntrypoint: (entrypoint: string) => void;
+    openActionsTabForImport: (from: string) => void;
+  };
+  pathDisplay: PathDisplayState;
+  view: DependenciesViewState;
+};
+
+export function DependenciesTab({
+  clipboard,
+  data,
+  nav,
+  pathDisplay,
+  view,
+}: DependenciesTabProps) {
   const {
-    copyText,
-    data,
     importQuery,
     matchedImports,
-    openActionsTabForEntrypoint,
-    openActionsTabForImport,
-    pathPrefix,
     selectedImport,
     selectedImporters,
     setImportQuery,
     setSelectedImport,
-  } = state;
+  } = view;
 
   const selectedImportersRef = React.useRef<HTMLDivElement | null>(null);
 
-  React.useEffect(() => {
-    if (!selectedImport) return;
-    selectedImportersRef.current?.scrollIntoView({
-      behavior: 'smooth',
-      block: 'nearest',
-    });
-  }, [selectedImport]);
-
-  if (!data) return null;
+  useScrollIntoViewOnChange(selectedImportersRef, [selectedImport], {
+    enabled: !!selectedImport,
+    behavior: 'smooth',
+    block: 'nearest',
+  });
 
   return (
     <div className={styles.stackMd}>
@@ -40,17 +54,14 @@ export function DependenciesTab({ state }: { state: LogAnalyzerState }) {
         <strong>{data.dependencies.importsCount}</strong> import edges.
       </div>
 
-      <label className="nx-grid nx-gap-1">
-        <span className="nx-text-xs nx-font-semibold nx-text-neutral-600 dark:nx-text-neutral-400">
-          Find import specifier
-        </span>
+      <Field label="Find import specifier">
         <input
           value={importQuery}
           onChange={(e) => setImportQuery(e.currentTarget.value)}
           placeholder="e.g. @radix-ui/react-dialog"
           className={styles.fieldInput}
         />
-      </label>
+      </Field>
 
       <div className={styles.twoColGrid}>
         <div className="nx-rounded-lg nx-border nx-border-neutral-200 dark:nx-border-neutral-800">
@@ -88,15 +99,11 @@ export function DependenciesTab({ state }: { state: LogAnalyzerState }) {
                       onKeyDown={(e) => onKeyboardActivate(e, select)}
                     >
                       <td className="nx-px-3 nx-py-2">
-                        <code
-                          className={cx(
-                            styles.cellTruncate,
-                            styles.cellTruncateStart
-                          )}
-                          title={row.from}
-                        >
-                          <span>{row.from}</span>
-                        </code>
+                        <TruncateCell
+                          value={pathDisplay.displayPath(row.from)}
+                          title={pathDisplay.displayPath(row.from)}
+                          startEllipsis
+                        />
                       </td>
                       <td className="nx-px-3 nx-py-2 nx-text-right">
                         {row.count}
@@ -135,9 +142,7 @@ export function DependenciesTab({ state }: { state: LogAnalyzerState }) {
                     className="nx-border-t nx-border-neutral-200 dark:nx-border-neutral-800"
                   >
                     <td className="nx-px-3 nx-py-2">
-                      <code className={styles.cellTruncate} title={p.name}>
-                        {p.name}
-                      </code>
+                      <TruncateCell value={p.name} title={p.name} />
                     </td>
                     <td className="nx-px-3 nx-py-2 nx-text-right">{p.count}</td>
                   </tr>
@@ -155,25 +160,21 @@ export function DependenciesTab({ state }: { state: LogAnalyzerState }) {
         >
           <div className={styles.cardHeaderRow}>
             <div className="nx-text-sm nx-font-semibold">
-              Importers of <code>{selectedImport}</code>
+              Importers of <code>{pathDisplay.displayPath(selectedImport)}</code>
             </div>
             <div className="nx-flex nx-flex-wrap nx-gap-2">
-              <button
-                type="button"
-                className={cx(styles.button, styles.buttonSecondary)}
+              <Button
                 onClick={() =>
-                  copyText(selectedImport, 'Copied import specifier')
+                  clipboard.copyText(selectedImport, 'Copied import specifier')
                 }
               >
                 Copy
-              </button>
-              <button
-                type="button"
-                className={cx(styles.button, styles.buttonSecondary)}
-                onClick={() => openActionsTabForImport(selectedImport)}
+              </Button>
+              <Button
+                onClick={() => nav.openActionsTabForImport(selectedImport)}
               >
                 Show actions
-              </button>
+              </Button>
             </div>
           </div>
           <div className="nx-mt-3 nx-overflow-x-auto nx-rounded-md nx-border nx-border-neutral-200 dark:nx-border-neutral-800">
@@ -195,25 +196,19 @@ export function DependenciesTab({ state }: { state: LogAnalyzerState }) {
                     className="nx-border-t nx-border-neutral-200 dark:nx-border-neutral-800"
                   >
                     <td className="nx-px-3 nx-py-2">
-                      <code
-                        className={cx(
-                          styles.cellTruncate,
-                          styles.cellTruncateStart
-                        )}
-                        title={trimPathPrefix(f, pathPrefix)}
-                      >
-                        <span>{trimPathPrefix(f, pathPrefix)}</span>
-                      </code>
+                      <TruncateCell
+                        value={pathDisplay.displayPath(f)}
+                        title={pathDisplay.displayPath(f)}
+                        startEllipsis
+                      />
                     </td>
                     <td className="nx-px-3 nx-py-2 nx-text-right">
-                      <button
-                        type="button"
-                        className={cx(styles.button, styles.buttonSecondary)}
+                      <Button
                         title="Filter Actions by this entrypoint"
-                        onClick={() => openActionsTabForEntrypoint(f)}
+                        onClick={() => nav.openActionsTabForEntrypoint(f)}
                       >
                         ↗ Actions
-                      </button>
+                      </Button>
                     </td>
                   </tr>
                 ))}
