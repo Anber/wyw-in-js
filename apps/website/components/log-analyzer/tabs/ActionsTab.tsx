@@ -53,45 +53,45 @@ export function ActionsTab({
   );
 
   return (
-      <div className={styles.stackMd}>
-        <div className={styles.filtersGrid}>
-          <Field label="Filter type">
-            <input
-              value={filterType}
-              onChange={(e) => setFilterType(e.currentTarget.value)}
-              className={styles.fieldInput}
-            />
-          </Field>
+    <div className={styles.stackMd}>
+      <div className={styles.filtersGrid}>
+        <Field label="Filter type">
+          <input
+            value={filterType}
+            onChange={(e) => setFilterType(e.currentTarget.value)}
+            className={styles.fieldInput}
+          />
+        </Field>
 
-          <Field label="Filter entrypoint">
-            <input
-              value={filterEntrypoint}
-              onChange={(e) => setFilterEntrypoint(e.currentTarget.value)}
-              placeholder="filename or entrypointRef"
-              className={styles.fieldInput}
-            />
-          </Field>
+        <Field label="Filter entrypoint">
+          <input
+            value={filterEntrypoint}
+            onChange={(e) => setFilterEntrypoint(e.currentTarget.value)}
+            placeholder="filename or entrypointRef"
+            className={styles.fieldInput}
+          />
+        </Field>
 
-          <Field label="Filter import (exact)">
-            <input
-              value={filterImportFrom}
-              onChange={(e) => setFilterImportFrom(e.currentTarget.value)}
-              placeholder="paste from Dependencies → Top imports"
-              className={styles.fieldInput}
-            />
-          </Field>
+        <Field label="Filter import (exact)">
+          <input
+            value={filterImportFrom}
+            onChange={(e) => setFilterImportFrom(e.currentTarget.value)}
+            placeholder="paste from Dependencies → Top imports"
+            className={styles.fieldInput}
+          />
+        </Field>
 
-          <Field label="Row limit">
-            <input
-              type="number"
-              min={50}
-              max={2000}
-              value={limit}
-              onChange={(e) => setLimit(Number(e.currentTarget.value))}
-              className={styles.fieldInput}
-            />
-          </Field>
-        </div>
+        <Field label="Row limit">
+          <input
+            type="number"
+            min={50}
+            max={2000}
+            value={limit}
+            onChange={(e) => setLimit(Number(e.currentTarget.value))}
+            className={styles.fieldInput}
+          />
+        </Field>
+      </div>
 
       <div className={styles.inlineFieldRow}>
         <label className={styles.checkboxPill}>

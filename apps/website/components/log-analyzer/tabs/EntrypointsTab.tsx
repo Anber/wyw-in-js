@@ -46,17 +46,11 @@ export function EntrypointsTab({
     null
   );
 
-  const scrollToEntrypointDetails = React.useCallback(() => {
-    const el = selectedEntrypointDetailsRef.current;
-    if (!el) return;
-    requestAnimationFrame(() => {
-      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    });
-  }, []);
+  const [detailsScrollNonce, bumpDetailsScrollNonce] = React.useState(0);
 
   useScrollIntoViewOnChange(
     selectedEntrypointDetailsRef,
-    [selectedFile],
+    [selectedFile, detailsScrollNonce],
     {
       enabled: !!selectedFile,
       schedule: 'raf-timeout',
@@ -138,7 +132,7 @@ export function EntrypointsTab({
                 const isSelected = selectedFile === f.filename;
                 const select = () => {
                   selectFile(f.filename);
-                  scrollToEntrypointDetails();
+                  bumpDetailsScrollNonce((n) => n + 1);
                 };
                 return (
                   <tr
