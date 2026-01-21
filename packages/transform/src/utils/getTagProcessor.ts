@@ -82,6 +82,7 @@ function buildCodeFrameError(path: NodePath, message: string): Error {
 
 const definedTagsCache = new Map<string, Record<string, string> | undefined>();
 const resolvedTagResolverSourceCache = new Map<string, string | undefined>();
+let didWarnSkipSymbolMismatch = false;
 
 const getResolvedTagResolverSource = (
   source: string,
@@ -527,6 +528,26 @@ function createProcessorInstance(
       }
     } catch (e) {
       if (typeof e === 'symbol' && e.description === BaseProcessor.SKIP.description) {
+        cache.set(path.node, null);
+        return null;
+      }
+
+      if (
+        typeof e === 'symbol' &&
+        e.description === BaseProcessor.SKIP.description
+      ) {
+        if (!didWarnSkipSymbolMismatch) {
+          didWarnSkipSymbolMismatch = true;
+          // eslint-disable-next-line no-console
+          console.warn(
+            [
+              "[wyw-in-js] Processor threw Symbol('skip') that does not match BaseProcessor.SKIP identity.",
+              'This usually means duplicate copies of @wyw-in-js/processor-utils (or the processor) are bundled/installed.',
+              'Consider deduping dependencies to avoid subtle issues (instanceof checks, sentinels, etc).',
+            ].join('\n')
+          );
+        }
+
         cache.set(path.node, null);
         return null;
       }
