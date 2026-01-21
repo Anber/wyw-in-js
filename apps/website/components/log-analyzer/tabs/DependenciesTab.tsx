@@ -16,7 +16,7 @@ type DependenciesTabProps = {
   clipboard: ClipboardToastState;
   data: ParsedData;
   nav: {
-    openActionsTabForEntrypoint: (entrypoint: string) => void;
+    openActionsTabForTarget: (target: string) => void;
     openActionsTabForImport: (from: string) => void;
   };
   pathDisplay: PathDisplayState;
@@ -205,7 +205,7 @@ export function DependenciesTab({
                     <td className="nx-px-3 nx-py-2 nx-text-right">
                       <Button
                         title="Filter Actions by this entrypoint"
-                        onClick={() => nav.openActionsTabForEntrypoint(f)}
+                        onClick={() => nav.openActionsTabForTarget(f)}
                       >
                         ↗ Actions
                       </Button>

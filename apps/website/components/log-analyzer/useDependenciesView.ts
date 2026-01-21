@@ -21,17 +21,36 @@ export function useDependenciesView(params: { data: ParsedData | null }) {
       }));
     }
 
+    const limit = 50;
     const out: Array<{ count: number; from: string; importersCount: number }> =
       [];
+    let minIndex = -1;
+    let minCount = Infinity;
     for (const from of data.dependencies.importersByFrom.keys()) {
       if (from.toLowerCase().includes(q)) {
-        out.push({
-          count: data.dependencies.importCountByFrom.get(from) ?? 0,
-          from,
-          importersCount:
-            data.dependencies.importersByFrom.get(from)?.size ?? 0,
-        });
-        if (out.length >= 50) break;
+        const count = data.dependencies.importCountByFrom.get(from) ?? 0;
+        const importersCount =
+          data.dependencies.importersByFrom.get(from)?.size ?? 0;
+
+        const row = { count, from, importersCount };
+
+        if (out.length < limit) {
+          out.push(row);
+          if (count < minCount) {
+            minCount = count;
+            minIndex = out.length - 1;
+          }
+        } else if (count > minCount) {
+          out[minIndex] = row;
+          minCount = Infinity;
+          minIndex = 0;
+          for (let i = 0; i < out.length; i += 1) {
+            if (out[i].count < minCount) {
+              minCount = out[i].count;
+              minIndex = i;
+            }
+          }
+        }
       }
     }
 

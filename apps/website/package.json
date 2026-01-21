@@ -18,6 +18,7 @@
   "scripts": {
     "deploy": "node ./scripts/sync-root-docs.cjs && next build && next export --outdir dist && touch ./dist/.nojekyll",
     "lint": "eslint --ext .js,.ts .",
-    "start": "node ./scripts/sync-root-docs.cjs && next dev"
+    "start": "node ./scripts/sync-root-docs.cjs && next dev",
+    "test": "bun test components/log-analyzer/__tests__"
   }
 }

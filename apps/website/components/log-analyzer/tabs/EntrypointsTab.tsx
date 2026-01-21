@@ -13,7 +13,7 @@ import { cx, onKeyboardActivate } from '../utils';
 
 type EntrypointsTabProps = {
   clipboard: ClipboardToastState;
-  nav: { openActionsTabForEntrypoint: (entrypoint: string) => void };
+  nav: { openActionsTabForTarget: (target: string) => void };
   pathDisplay: PathDisplayState;
   view: EntrypointsViewState;
 };
@@ -71,24 +71,27 @@ export function EntrypointsTab({
   );
 
   return (
-    <div className={styles.stackMd}>
-      <div className={styles.filtersGrid}>
-        <Field label="Filter filename">
-          <div className={styles.inlineFieldRow}>
-            <input
-              value={filterFilename}
-              onChange={(e) => setFilterFilename(e.currentTarget.value)}
-              aria-label="Filter filename"
-              className={cx(styles.fieldFlex, styles.fieldInput)}
-            />
-            <Button
-              disabled={!filterFilename}
-              onClick={() => setFilterFilename('')}
-            >
-              Reset
-            </Button>
-          </div>
-        </Field>
+      <div className={styles.stackMd}>
+        <div className={styles.filtersGrid}>
+          <Field label="Filter filename">
+            {({ describedBy, id }) => (
+              <div className={styles.inlineFieldRow}>
+                <input
+                  id={id}
+                  value={filterFilename}
+                  onChange={(e) => setFilterFilename(e.currentTarget.value)}
+                  aria-describedby={describedBy}
+                  className={cx(styles.fieldFlex, styles.fieldInput)}
+                />
+                <Button
+                  disabled={!filterFilename}
+                  onClick={() => setFilterFilename('')}
+                >
+                  Reset
+                </Button>
+              </div>
+            )}
+          </Field>
 
         <Field label="Row limit">
           <input
@@ -189,7 +192,7 @@ export function EntrypointsTab({
               </div>
 
               <div className="nx-flex nx-flex-wrap nx-gap-2">
-                <Button onClick={() => nav.openActionsTabForEntrypoint(selectedFile)}>
+                <Button onClick={() => nav.openActionsTabForTarget(selectedFile)}>
                   Show actions (file)
                 </Button>
 
@@ -277,7 +280,7 @@ export function EntrypointsTab({
                     {selectedInstance.ref && (
                       <Button
                         onClick={() =>
-                          nav.openActionsTabForEntrypoint(selectedInstance.ref!)
+                          nav.openActionsTabForTarget(selectedInstance.ref!)
                         }
                       >
                         Show actions (ref)

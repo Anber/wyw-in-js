@@ -15,14 +15,6 @@ export function useUploadFiles() {
     setProblems(nextProblems);
   }, []);
 
-  const onDrop = React.useCallback(
-    (e: React.DragEvent) => {
-      e.preventDefault();
-      onPickFiles(Array.from(e.dataTransfer.files ?? []));
-    },
-    [onPickFiles]
-  );
-
   const canParse = REQUIRED_FILENAMES.every((k) => selected[k]);
 
   const reset = React.useCallback(() => {
@@ -37,7 +29,6 @@ export function useUploadFiles() {
     inputsKey,
     canParse,
     onPickFiles,
-    onDrop,
     reset,
   };
 }

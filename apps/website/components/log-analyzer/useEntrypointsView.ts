@@ -56,8 +56,10 @@ export function useEntrypointsView(params: {
   }, []);
 
   const selectFile = React.useCallback(
-    (filename: string) => {
-      setFilterFilename(trimPathPrefix(filename, pathPrefix));
+    (filename: string, options?: { setFilter?: boolean }) => {
+      if (options?.setFilter) {
+        setFilterFilename(trimPathPrefix(filename, pathPrefix));
+      }
       setSelectedFile(filename);
       setSelectedSeqId(null);
     },

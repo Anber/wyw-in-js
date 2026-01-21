@@ -41,18 +41,48 @@ export function trimPathPrefix(path: string, prefix: string) {
 }
 
 export function getPackageName(specifier: string) {
-  const normalized = specifier.replace(/\\/g, '/');
+  const normalized = specifier.replace(/\\/g, '/').split(/[?#]/, 1)[0];
 
-  const nodeModulesPrefix = 'node_modules/';
   const nodeModulesMarker = '/node_modules/';
   const markerIndex = normalized.lastIndexOf(nodeModulesMarker);
+
   if (markerIndex !== -1) {
-    const tail = normalized.slice(markerIndex + nodeModulesMarker.length);
-    return getPackageName(tail);
+    let tail = normalized.slice(markerIndex + nodeModulesMarker.length);
+    tail = tail.replace(/^\/+/, '');
+    while (tail.startsWith('node_modules/')) {
+      tail = tail.slice('node_modules/'.length);
+    }
+
+    if (!tail || tail === 'node_modules') return '(unknown)';
+
+    if (tail.startsWith('@')) {
+      const parts = tail.split('/');
+      if (parts.length >= 2) return `${parts[0]}/${parts[1]}`;
+      return tail;
+    }
+
+    const [name] = tail.split('/');
+    return name || '(unknown)';
   }
 
+  const nodeModulesPrefix = 'node_modules/';
   if (normalized.startsWith(nodeModulesPrefix)) {
-    return getPackageName(normalized.slice(nodeModulesPrefix.length));
+    let tail = normalized.slice(nodeModulesPrefix.length);
+    tail = tail.replace(/^\/+/, '');
+    while (tail.startsWith('node_modules/')) {
+      tail = tail.slice('node_modules/'.length);
+    }
+
+    if (!tail || tail === 'node_modules') return '(unknown)';
+
+    if (tail.startsWith('@')) {
+      const parts = tail.split('/');
+      if (parts.length >= 2) return `${parts[0]}/${parts[1]}`;
+      return tail;
+    }
+
+    const [name] = tail.split('/');
+    return name || '(unknown)';
   }
 
   // Most local paths in our logs are already resolved as "src/..." (not import

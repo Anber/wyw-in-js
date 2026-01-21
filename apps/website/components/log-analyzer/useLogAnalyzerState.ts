@@ -92,12 +92,12 @@ export function useLogAnalyzerState() {
     resetViews();
   }, [parse, resetViews, upload]);
 
-  const openActionsTabForEntrypoint = React.useCallback(
-    (entrypoint: string) => {
+  const openActionsTabForTarget = React.useCallback(
+    (target: string) => {
       setActiveTab('actions');
       setSelectedAction(null);
       setFilterImportFrom('');
-      setFilterEntrypoint(displayPath(entrypoint));
+      setFilterEntrypoint(displayPath(target));
     },
     [displayPath, setFilterEntrypoint, setFilterImportFrom, setSelectedAction]
   );
@@ -115,7 +115,7 @@ export function useLogAnalyzerState() {
   const openEntrypointsTabForFile = React.useCallback(
     (filename: string) => {
       setActiveTab('entrypoints');
-      selectFile(filename);
+      selectFile(filename, { setFilter: true });
     },
     [selectFile]
   );
@@ -137,7 +137,7 @@ export function useLogAnalyzerState() {
     entrypoints,
     dependencies,
     nav: {
-      openActionsTabForEntrypoint,
+      openActionsTabForTarget,
       openActionsTabForImport,
       openEntrypointsTabForFile,
     },

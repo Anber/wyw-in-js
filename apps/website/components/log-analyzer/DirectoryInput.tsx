@@ -3,10 +3,12 @@ import * as React from 'react';
 export const DirectoryInput = ({
   className,
   disabled,
+  id,
   onFiles,
 }: {
   className?: string;
   disabled: boolean;
+  id?: string;
   onFiles: (files: File[]) => void;
 }) => {
   const inputRef = React.useRef<HTMLInputElement | null>(null);
@@ -20,6 +22,7 @@ export const DirectoryInput = ({
 
   return (
     <input
+      id={id}
       ref={inputRef}
       className={className}
       type="file"

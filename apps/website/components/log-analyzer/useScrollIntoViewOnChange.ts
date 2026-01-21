@@ -10,10 +10,12 @@ export function useScrollIntoViewOnChange<T extends HTMLElement>(
     block?: ScrollLogicalPosition;
     enabled?: boolean;
     inline?: ScrollLogicalPosition;
+    onlyIfNeeded?: boolean;
     schedule?: ScrollSchedule;
   }
 ) {
   const enabled = options?.enabled ?? true;
+  const onlyIfNeeded = options?.onlyIfNeeded ?? true;
   const schedule: ScrollSchedule = options?.schedule ?? 'immediate';
   const behavior: ScrollBehavior | undefined = options?.behavior ?? 'smooth';
   const block: ScrollLogicalPosition | undefined = options?.block ?? 'nearest';
@@ -33,6 +35,22 @@ export function useScrollIntoViewOnChange<T extends HTMLElement>(
     if (!el) return cleanup;
 
     const scroll = () => {
+      if (onlyIfNeeded) {
+        const rect = el.getBoundingClientRect();
+        const vh =
+          window.innerHeight || document.documentElement.clientHeight || 0;
+        const vw =
+          window.innerWidth || document.documentElement.clientWidth || 0;
+
+        if (
+          rect.top >= 0 &&
+          rect.left >= 0 &&
+          rect.bottom <= vh &&
+          rect.right <= vw
+        ) {
+          return;
+        }
+      }
       el.scrollIntoView({ behavior, block, inline });
     };
 
@@ -51,5 +69,5 @@ export function useScrollIntoViewOnChange<T extends HTMLElement>(
 
     scroll();
     return cleanup;
-  }, [...deps, enabled, schedule, behavior, block, inline]);
+  }, [...deps, enabled, onlyIfNeeded, schedule, behavior, block, inline]);
 }

@@ -2,8 +2,13 @@ import * as React from 'react';
 
 import { cx } from '../utils';
 
+export type FieldControlProps = {
+  describedBy?: string;
+  id: string;
+};
+
 export type FieldProps = {
-  children: React.ReactNode;
+  children: React.ReactNode | ((props: FieldControlProps) => React.ReactNode);
   className?: string;
   hint?: React.ReactNode;
   label: React.ReactNode;
@@ -17,23 +22,51 @@ export function Field({
   label,
   labelClassName,
 }: FieldProps) {
+  const autoId = React.useId();
+  const childId =
+    React.isValidElement(children) && typeof children.props.id === 'string'
+      ? (children.props.id as string)
+      : autoId;
+
+  const hintId = hint ? `${childId}-hint` : undefined;
+  const canAssociateLabel = typeof children === 'function' || React.isValidElement(children);
+
+  const control =
+    typeof children === 'function'
+      ? children({ id: childId, describedBy: hintId })
+      : React.isValidElement(children)
+        ? React.cloneElement(children, {
+            ...(children.props.id ? {} : { id: childId }),
+            ...(hintId
+              ? {
+                  'aria-describedby': children.props['aria-describedby']
+                    ? `${children.props['aria-describedby']} ${hintId}`
+                    : hintId,
+                }
+              : {}),
+          })
+        : children;
+
   return (
-    <label className={cx('nx-grid nx-gap-1', className)}>
-      <span
+    <div className={cx('nx-grid nx-gap-1', className)}>
+      <label
+        {...(canAssociateLabel ? { htmlFor: childId } : {})}
         className={
           labelClassName ??
           'nx-text-xs nx-font-semibold nx-text-neutral-600 dark:nx-text-neutral-400'
         }
       >
         {label}
-      </span>
-      {children}
+      </label>
+      {control}
       {hint ? (
-        <span className="nx-text-xs nx-text-neutral-600 dark:nx-text-neutral-400">
+        <div
+          id={hintId}
+          className="nx-text-xs nx-text-neutral-600 dark:nx-text-neutral-400"
+        >
           {hint}
-        </span>
+        </div>
       ) : null}
-    </label>
+    </div>
   );
 }
-
