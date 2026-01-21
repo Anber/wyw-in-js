@@ -32,14 +32,35 @@ export function useLogAnalyzerState() {
     data: parse.data,
   });
 
+  const {
+    reset: resetActionsView,
+    setFilterEntrypoint,
+    setFilterImportFrom,
+    setSelectedAction,
+  } = actions;
+
+  const { reset: resetEntrypointsView, selectFile } = entrypoints;
+
+  const { reset: resetDependenciesView } = dependencies;
+
+  const { reset: resetClipboard } = clipboard;
+
+  const { displayPath, reset: resetPathDisplay } = pathDisplay;
+
   const resetViews = React.useCallback(() => {
     setActiveTab('overview');
-    actions.reset();
-    entrypoints.reset();
-    dependencies.reset();
-    clipboard.reset();
-    pathDisplay.reset();
-  }, [actions, clipboard, dependencies, entrypoints, pathDisplay]);
+    resetActionsView();
+    resetEntrypointsView();
+    resetDependenciesView();
+    resetClipboard();
+    resetPathDisplay();
+  }, [
+    resetActionsView,
+    resetClipboard,
+    resetDependenciesView,
+    resetEntrypointsView,
+    resetPathDisplay,
+  ]);
 
   const onPickFiles = React.useCallback(
     (files: File[]) => {
@@ -52,8 +73,8 @@ export function useLogAnalyzerState() {
 
   const onDrop = React.useCallback(
     (e: React.DragEvent) => {
-      if (parse.isParsing) return;
       e.preventDefault();
+      if (parse.isParsing) return;
       onPickFiles(Array.from(e.dataTransfer.files ?? []));
     },
     [onPickFiles, parse.isParsing]
@@ -74,29 +95,29 @@ export function useLogAnalyzerState() {
   const openActionsTabForEntrypoint = React.useCallback(
     (entrypoint: string) => {
       setActiveTab('actions');
-      actions.setSelectedAction(null);
-      actions.setFilterImportFrom('');
-      actions.setFilterEntrypoint(pathDisplay.displayPath(entrypoint));
+      setSelectedAction(null);
+      setFilterImportFrom('');
+      setFilterEntrypoint(displayPath(entrypoint));
     },
-    [actions, pathDisplay]
+    [displayPath, setFilterEntrypoint, setFilterImportFrom, setSelectedAction]
   );
 
   const openActionsTabForImport = React.useCallback(
     (from: string) => {
       setActiveTab('actions');
-      actions.setSelectedAction(null);
-      actions.setFilterEntrypoint('');
-      actions.setFilterImportFrom(pathDisplay.displayPath(from));
+      setSelectedAction(null);
+      setFilterEntrypoint('');
+      setFilterImportFrom(displayPath(from));
     },
-    [actions, pathDisplay]
+    [displayPath, setFilterEntrypoint, setFilterImportFrom, setSelectedAction]
   );
 
   const openEntrypointsTabForFile = React.useCallback(
     (filename: string) => {
       setActiveTab('entrypoints');
-      entrypoints.selectFile(filename);
+      selectFile(filename);
     },
-    [entrypoints]
+    [selectFile]
   );
 
   return {

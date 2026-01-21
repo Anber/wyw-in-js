@@ -20,27 +20,36 @@ export function useScrollIntoViewOnChange<T extends HTMLElement>(
   const inline: ScrollLogicalPosition | undefined = options?.inline;
 
   React.useEffect(() => {
-    if (!enabled) return;
+    let rafId: number | null = null;
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+
+    const cleanup = () => {
+      if (rafId !== null) cancelAnimationFrame(rafId);
+      if (timeoutId !== null) clearTimeout(timeoutId);
+    };
+
+    if (!enabled) return cleanup;
     const el = ref.current;
-    if (!el) return;
+    if (!el) return cleanup;
 
     const scroll = () => {
       el.scrollIntoView({ behavior, block, inline });
     };
 
     if (schedule === 'raf-timeout') {
-      requestAnimationFrame(() => {
+      rafId = requestAnimationFrame(() => {
         scroll();
-        setTimeout(scroll, 0);
+        timeoutId = setTimeout(scroll, 0);
       });
-      return;
+      return cleanup;
     }
 
     if (schedule === 'raf') {
-      requestAnimationFrame(scroll);
-      return;
+      rafId = requestAnimationFrame(scroll);
+      return cleanup;
     }
 
     scroll();
+    return cleanup;
   }, [...deps, enabled, schedule, behavior, block, inline]);
 }
