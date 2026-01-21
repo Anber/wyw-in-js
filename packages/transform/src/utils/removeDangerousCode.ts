@@ -39,6 +39,7 @@ const ssrCheckFields = new Set([
 const forbiddenGlobals = new Set([
   ...ssrCheckFields,
   '$RefreshReg$',
+  '$RefreshSig$',
   'XMLHttpRequest',
   'clearImmediate',
   'clearInterval',
@@ -50,8 +51,15 @@ const forbiddenGlobals = new Set([
   'setTimeout',
 ]);
 
+const alwaysForbiddenIdentifiers = new Set(['$RefreshReg$', '$RefreshSig$']);
+
 const isBrowserGlobal = (id: NodePath<Identifier>) => {
-  return forbiddenGlobals.has(id.node.name) && isGlobal(id);
+  const { name } = id.node;
+  if (alwaysForbiddenIdentifiers.has(name)) {
+    return nonType(id);
+  }
+
+  return forbiddenGlobals.has(name) && isGlobal(id);
 };
 
 const isSSRCheckField = (id: NodePath<Identifier>) => {
