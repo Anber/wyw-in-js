@@ -1,5 +1,12 @@
 # @wyw-in-js/transform
 
+## 1.0.6
+
+### Patch Changes
+
+- 038bf35: Strip Vite React Refresh helpers (`$RefreshReg$`/`$RefreshSig$`) when they are injected as local functions by `@vitejs/plugin-react@5.1.x`, preventing unintended code execution during eval.
+- 9142eac: Fix processor skip handling to accept `Symbol('skip')` by description (instead of object identity), and warn once when the symbol identity mismatches `BaseProcessor.SKIP` to help diagnose duplicated dependencies.
+
 ## 1.0.5
 
 ### Patch Changes
