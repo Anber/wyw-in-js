@@ -91,6 +91,37 @@ describe('preeval', () => {
     expect(code).toMatchSnapshot();
   });
 
+  it('should remove local vite react-refresh helpers ($RefreshReg$/$RefreshSig$)', () => {
+    const { code } = run`
+      var _s = $RefreshSig$();
+
+      function Component() {
+        _s();
+        return null;
+      }
+
+      _s(Component, "Y89bt/pi8lrdHE1hdS9fijgV/R0=");
+      _c = Component;
+      var _c;
+      $RefreshReg$(_c, "Component");
+
+      function $RefreshReg$(type, id) {
+        return type;
+      }
+
+      function $RefreshSig$() {
+        return () => () => {};
+      }
+    `;
+
+    expect(code).not.toContain('$RefreshReg$');
+    expect(code).not.toContain('$RefreshSig$');
+    expect(code).not.toContain('_s(');
+    expect(() => {
+      runInNewContext(code);
+    }).not.toThrow();
+  });
+
   it('should not remove "location" in types only because it looks like a global variable', () => {
     const { code } = run`
       interface IProps {
