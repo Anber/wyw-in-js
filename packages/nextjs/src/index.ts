@@ -9,6 +9,12 @@ const DEFAULT_EXTENSION = '.wyw-in-js.module.css';
 
 const DEFAULT_TURBO_RULE_KEYS = ['*.js', '*.jsx', '*.ts', '*.tsx'];
 
+const DEFAULT_REACT_IMPORT_OVERRIDES = {
+  react: { mock: 'react' },
+  'react/jsx-runtime': { mock: 'react/jsx-runtime' },
+  'react/jsx-dev-runtime': { mock: 'react/jsx-dev-runtime' },
+} satisfies WywWebpackLoaderOptions['importOverrides'];
+
 const PLACEHOLDER_EXTENSIONS = new Set(['.js', '.jsx', '.ts', '.tsx']);
 const PLACEHOLDER_IGNORED_DIRS = new Set([
   '.git',
@@ -275,11 +281,17 @@ function injectWywLoader(
     presets: [nextBabelPreset],
   };
 
+  const userImportOverrides = wywNext.loaderOptions?.importOverrides;
+  const importOverrides = userImportOverrides
+    ? { ...DEFAULT_REACT_IMPORT_OVERRIDES, ...userImportOverrides }
+    : DEFAULT_REACT_IMPORT_OVERRIDES;
+
   const loaderOptions = {
     cssImport: 'import',
     ...wywNext.loaderOptions,
     babelOptions,
     extension,
+    importOverrides,
     sourceMap: wywNext.loaderOptions?.sourceMap ?? nextOptions.dev,
   } satisfies WywWebpackLoaderOptions;
 
@@ -397,10 +409,17 @@ function injectWywTurbopackRules(
 
   assertNoFunctions(userOptions, 'turbopackLoaderOptions');
 
+  const userImportOverrides = isPlainObject(userOptions.importOverrides)
+    ? (userOptions.importOverrides as Record<string, unknown>)
+    : undefined;
+
   const loaderOptions = {
     babelOptions: { presets: [nextBabelPreset] },
     sourceMap: process.env.NODE_ENV !== 'production',
     ...userOptions,
+    importOverrides: userImportOverrides
+      ? { ...DEFAULT_REACT_IMPORT_OVERRIDES, ...userImportOverrides }
+      : DEFAULT_REACT_IMPORT_OVERRIDES,
   };
 
   const useTurbopackConfig = shouldUseTurbopackConfig(nextConfig);

@@ -17,8 +17,14 @@ describe('withWyw', () => {
 
     if (Array.isArray(tsRule)) {
       expect(tsRule[0].loader).toContain('turbopack-loader');
+      expect(tsRule[0].options.importOverrides).toMatchObject({
+        react: { mock: 'react' },
+      });
     } else {
       expect(tsRule.loaders[0].loader).toContain('turbopack-loader');
+      expect(tsRule.loaders[0].options.importOverrides).toMatchObject({
+        react: { mock: 'react' },
+      });
     }
   });
 
@@ -76,6 +82,41 @@ describe('withWyw', () => {
 
     expect(use).toHaveLength(2);
     expect(use[1].loader).toContain('webpack-loader');
+    expect(use[1].options.importOverrides).toMatchObject({
+      react: { mock: 'react' },
+    });
+  });
+
+  it('merges default React importOverrides with user overrides', () => {
+    const config: Configuration = {
+      module: {
+        rules: [
+          {
+            use: [{ loader: 'next-swc-loader' }],
+          },
+        ],
+      },
+    };
+
+    const nextConfig = withWyw(
+      {},
+      {
+        loaderOptions: {
+          importOverrides: {
+            react: { mock: 'preact/compat' },
+          },
+        },
+      }
+    );
+
+    const result = nextConfig.webpack!(config, { dev: true } as any);
+    const use = (result.module!.rules![0] as RuleSetRule).use as any[];
+
+    expect(use[1].options.importOverrides).toMatchObject({
+      react: { mock: 'preact/compat' },
+      'react/jsx-runtime': { mock: 'react/jsx-runtime' },
+      'react/jsx-dev-runtime': { mock: 'react/jsx-dev-runtime' },
+    });
   });
 
   it('converts loader+options rules to use[] when injecting', () => {
