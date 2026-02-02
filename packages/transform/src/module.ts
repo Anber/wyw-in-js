@@ -253,7 +253,8 @@ const applyModuleNamespace = (
 const ensureVmModules = (): void => {
   if (!vm.SourceTextModule || !vm.SyntheticModule) {
     throw new EvalError(
-      '[wyw-in-js] vm.SourceTextModule is not available. Run Node with --experimental-vm-modules (for example, set NODE_OPTIONS=--experimental-vm-modules).'
+      '[wyw-in-js] vm.SourceTextModule is not available in this runtime. ' +
+        'WyW v2 uses a separate eval runner process for ESM evaluation.'
     );
   }
 };

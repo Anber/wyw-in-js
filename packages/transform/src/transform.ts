@@ -27,6 +27,7 @@ import type {
   Services,
 } from './transform/types';
 import type { Result } from './types';
+import { getEvalBroker } from './eval/broker';
 
 type PartialServices = Partial<Omit<Services, 'options'>> & {
   options: Omit<Services['options'], 'pluginOptions'> & {
@@ -41,15 +42,18 @@ const memoizedAsyncResolve = new WeakMap<
   Handler<'async' | 'sync', IResolveImportsAction>
 >();
 
-const resolverIds = new WeakMap<Function, number>();
+type ResolverFn = (...args: unknown[]) => unknown;
+
+const resolverIds = new WeakMap<ResolverFn, number>();
 let resolverId = 0;
 
 const getResolverId = (fn: unknown) => {
   if (typeof fn !== 'function') return null;
-  const cached = resolverIds.get(fn);
+  const resolver = fn as ResolverFn;
+  const cached = resolverIds.get(resolver);
   if (cached) return cached;
   resolverId += 1;
-  resolverIds.set(fn, resolverId);
+  resolverIds.set(resolver, resolverId);
   return resolverId;
 };
 
@@ -70,6 +74,10 @@ const getEvalCacheKey = (
     customResolver: getResolverId(evalOptions.customResolver),
     customLoader: getResolverId(evalOptions.customLoader),
     bundlerResolver: getResolverId(asyncResolve),
+    overrideContext: getResolverId(pluginOptions.overrideContext),
+    importOverrides: pluginOptions.importOverrides ?? null,
+    extensions: pluginOptions.extensions,
+    features: pluginOptions.features,
   });
 
   return createHash('sha256').update(payload).digest('hex');
@@ -117,7 +125,10 @@ export async function transform(
     services.cache = new TransformCacheCollection();
   }
 
-  services.cache.setKeySalt(getEvalCacheKey(pluginOptions, asyncResolve));
+  const evalCacheKey = getEvalCacheKey(pluginOptions, asyncResolve);
+  services.cache.setKeySalt(evalCacheKey);
+  services.asyncResolve = asyncResolve;
+  services.evalBroker = getEvalBroker(services, asyncResolve, evalCacheKey);
 
   /*
    * This method can be run simultaneously for multiple files.
