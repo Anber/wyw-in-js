@@ -1,24 +1,22 @@
-// @ts-check
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const fs = require('node:fs/promises');
-const path = require('node:path');
-const colors = require('picocolors');
-const prettier = require('prettier');
-const { build } = require('vite');
+import colors from 'picocolors';
+import prettier from 'prettier';
+import { build } from 'vite';
 
-let wyw;
+import wyw from '@wyw-in-js/vite';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const PKG_DIR = path.resolve(__dirname, '..');
 
-/**
- * @param {string} value
- * @returns {string}
- */
-function normalizeLineEndings(value) {
-  return value.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-}
+const normalizeLineEndings = (value) =>
+  value.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
 
-async function buildArtefact(outDir, pluginOptions) {
+const buildArtefact = async (outDir, pluginOptions) => {
   await build({
     build: {
       manifest: true,
@@ -33,9 +31,9 @@ async function buildArtefact(outDir, pluginOptions) {
     },
     plugins: [pluginOptions ? wyw(pluginOptions) : wyw()],
   });
-}
+};
 
-async function getCSSFromManifest(outDir) {
+const getCSSFromManifest = async (outDir) => {
   const manifestPath = path.resolve(outDir, '.vite', 'manifest.json');
   const manifest = JSON.parse(await fs.readFile(manifestPath, 'utf-8'));
 
@@ -57,13 +55,10 @@ async function getCSSFromManifest(outDir) {
   return prettier.format(cssSnapshot, {
     parser: 'css',
   });
-}
+};
 
-async function main() {
+const main = async () => {
   console.log(colors.blue('Package directory:'), PKG_DIR);
-
-  const wywModule = await import('@wyw-in-js/vite');
-  wyw = wywModule.default;
 
   const outDir = path.resolve(PKG_DIR, 'dist');
   const testCases = [
@@ -84,9 +79,7 @@ async function main() {
 
     await buildArtefact(outDir, testCase.pluginOptions);
 
-    const cssOutput = normalizeLineEndings(
-      await getCSSFromManifest(outDir)
-    );
+    const cssOutput = normalizeLineEndings(await getCSSFromManifest(outDir));
     const cssFixture = normalizeLineEndings(
       await fs.readFile(testCase.fixturePath, 'utf-8')
     );
@@ -100,7 +93,7 @@ async function main() {
       throw new Error(`[${testCase.name}] CSS output does not match fixture`);
     }
   }
-}
+};
 
 main().then(
   () => {

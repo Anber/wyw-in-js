@@ -11,13 +11,13 @@ export interface IEvaluateResult {
   value: Record<string | symbol, unknown>;
 }
 
-export default function evaluate(
+export default async function evaluate(
   services: Services,
   entrypoint: Entrypoint
-): IEvaluateResult {
+): Promise<IEvaluateResult> {
   const m = new Module(services, entrypoint);
 
-  m.evaluate();
+  await m.evaluate();
 
   return {
     value: entrypoint.exports,

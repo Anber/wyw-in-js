@@ -111,6 +111,45 @@ export type ImportLoader =
 
 export type ImportLoaders = Record<string, ImportLoader | false>;
 
+export type EvalResolverMode = 'bundler' | 'node' | 'custom';
+
+export type EvalRequireMode = 'warn-and-run' | 'error' | 'off';
+
+export type EvalResolverKind = 'import' | 'dynamic-import' | 'require';
+
+export type EvalWarningCode =
+  | 'resolve-fallback'
+  | 'resolve-error'
+  | 'require-fallback'
+  | 'require-error'
+  | 'eval-error';
+
+export type EvalWarning = {
+  code: EvalWarningCode;
+  message: string;
+  importer?: string;
+  specifier?: string;
+  resolved?: string | null;
+  callstack?: string[];
+  hint?: string;
+};
+
+export type EvalOptionsV2 = {
+  resolver?: EvalResolverMode; // default: 'bundler'
+  customResolver?: (
+    specifier: string,
+    importer: string,
+    kind: EvalResolverKind
+  ) => Promise<{ id: string; external?: boolean } | null>;
+  customLoader?: (
+    id: string
+  ) => Promise<{ code: string; map?: unknown; loader?: string } | null>;
+  require?: EvalRequireMode; // default: 'warn-and-run'
+  mode?: 'strict' | 'loose'; // default: 'strict'
+  globals?: Record<string, unknown>;
+  onWarn?: (warning: EvalWarning) => void;
+};
+
 export type TagResolverMeta = {
   resolvedSource?: string;
   sourceFile: string | null | undefined;
@@ -140,6 +179,7 @@ export type StrictOptions = {
   codeRemover?: CodeRemoverOptions;
   displayName: boolean;
   evaluate: boolean;
+  eval?: EvalOptionsV2;
   extensions: string[];
   features: FeatureFlags;
   highPriorityPlugins: string[];

@@ -1,5 +1,4 @@
 import * as vm from 'vm';
-import { createRequire } from 'module';
 
 import type { Window } from 'happy-dom';
 
@@ -12,10 +11,8 @@ const NOOP = () => {};
 const IMPORT_META_ENV = '__wyw_import_meta_env';
 const HAPPY_DOM_REQUIRE_HOOK = '__wyw_requireHappyDom';
 
-const nodeRequire = createRequire(import.meta.url);
-
 let importMetaEnvWarned = false;
-let happyDomRequireEsmWarned = false;
+let happyDomLoadWarned = false;
 let happyDomUnavailable = false;
 
 function isErrRequireEsm(error: unknown): boolean {
@@ -83,20 +80,27 @@ type HappyDomExports = {
   Window: new () => Window;
 };
 
-function requireHappyDom(): HappyDomExports {
+let happyDomImportPromise: Promise<HappyDomExports> | null = null;
+
+async function loadHappyDom(): Promise<HappyDomExports> {
   const hook = (globalThis as Record<string, unknown>)[HAPPY_DOM_REQUIRE_HOOK];
   if (typeof hook === 'function') {
-    return (hook as () => HappyDomExports)();
+    const result = (hook as () => HappyDomExports | Promise<HappyDomExports>)();
+    return Promise.resolve(result);
   }
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  return nodeRequire('happy-dom') as HappyDomExports;
+
+  if (!happyDomImportPromise) {
+    happyDomImportPromise = import('happy-dom') as Promise<HappyDomExports>;
+  }
+
+  return happyDomImportPromise;
 }
 
-function createWindow(): Window | undefined {
+async function createWindow(): Promise<Window | undefined> {
   if (happyDomUnavailable) return undefined;
 
   try {
-    const { Window, GlobalWindow } = requireHappyDom();
+    const { Window, GlobalWindow } = await loadHappyDom();
     const HappyWindow = GlobalWindow || Window;
     const win = new HappyWindow();
 
@@ -106,31 +110,23 @@ function createWindow(): Window | undefined {
 
     return win;
   } catch (error) {
-    if (!isErrRequireEsm(error)) {
-      throw error;
-    }
-
-    const hasCustomRequireHook =
-      typeof (globalThis as Record<string, unknown>)[HAPPY_DOM_REQUIRE_HOOK] ===
-      'function';
-    if (!hasCustomRequireHook) {
+    if (isErrRequireEsm(error)) {
+      // This can happen if a custom hook still uses require() for ESM.
+    } else if (!happyDomUnavailable) {
       happyDomUnavailable = true;
     }
 
-    if (happyDomRequireEsmWarned) return undefined;
-    happyDomRequireEsmWarned = true;
+    if (happyDomLoadWarned) return undefined;
+    happyDomLoadWarned = true;
 
     // eslint-disable-next-line no-console
     console.warn(
       [
         `[wyw-in-js] DOM emulation is enabled (features.happyDOM), but "happy-dom" could not be loaded in this build-time runtime.`,
-        `This usually happens because "happy-dom" is ESM-only and cannot be loaded via require() in this runtime.`,
-        ``,
         `WyW will continue without DOM emulation (as if features.happyDOM:false).`,
         ``,
         `To silence this warning: set features: { happyDOM: false }.`,
-        `To get real DOM emulation in Node 22+, WyW needs the async ESM eval architecture (v2.0.0),`,
-        `or a runtime that supports require(ESM) (Node 24+).`,
+        `To restore DOM emulation, ensure "happy-dom" can be imported in the build-time runtime.`,
       ].join('\n')
     );
 
@@ -191,8 +187,8 @@ function createNothing() {
   };
 }
 
-function createHappyDOMWindow() {
-  const win = createWindow();
+async function createHappyDOMWindow() {
+  const win = await createWindow();
   if (!win) return createNothing();
 
   return {
@@ -203,7 +199,7 @@ function createHappyDOMWindow() {
   };
 }
 
-export function createVmContext(
+export async function createVmContext(
   filename: string,
   features: FeatureFlags<'happyDOM'>,
   additionalContext: Partial<vm.Context>,
@@ -212,7 +208,7 @@ export function createVmContext(
   const isHappyDOMEnabled = isFeatureEnabled(features, 'happyDOM', filename);
 
   const { teardown, window } = isHappyDOMEnabled
-    ? createHappyDOMWindow()
+    ? await createHappyDOMWindow()
     : createNothing();
   const envContext: Partial<vm.Context> = {
     [IMPORT_META_ENV]: createImportMetaEnvProxy(),

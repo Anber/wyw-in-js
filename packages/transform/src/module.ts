@@ -14,15 +14,19 @@
 import fs from 'fs';
 import NativeModule, { createRequire } from 'module';
 import path from 'path';
-import vm from 'vm';
+import * as vm from 'vm';
+import { pathToFileURL } from 'url';
 
 import { invariant } from 'ts-invariant';
 
-import {
-  isFeatureEnabled,
-  type Debugger,
-  type ImportLoaderContext,
-  type ImportLoaders,
+import { isFeatureEnabled } from '@wyw-in-js/shared';
+import type {
+  Debugger,
+  EvalOptionsV2,
+  EvalResolverKind,
+  EvalWarning,
+  ImportLoaderContext,
+  ImportLoaders,
 } from '@wyw-in-js/shared';
 
 import './utils/dispose-polyfill';
@@ -33,8 +37,8 @@ import {
   isSuperSet,
   mergeOnly,
 } from './transform/Entrypoint.helpers';
-import type { IEntrypointDependency } from './transform/Entrypoint.types';
 import type { IEvaluatedEntrypoint } from './transform/EvaluatedEntrypoint';
+import type { IEntrypointDependency } from './transform/Entrypoint.types';
 import { isUnprocessedEntrypointError } from './transform/actions/UnprocessedEntrypointError';
 import type { Services } from './transform/types';
 import {
@@ -104,6 +108,34 @@ const reactRefreshRuntime = {
 const nodeRequire = createRequire(import.meta.url);
 
 const NOOP = () => {};
+const TROUBLESHOOTING_URL = 'https://wyw-in-js.dev/troubleshooting';
+
+type ModuleData = {
+  exports: Record<string | symbol, unknown>;
+  module: { exports: Record<string | symbol, unknown> };
+  require: ((id: string) => unknown) & {
+    ensure: () => void;
+    resolve: (id: string) => string;
+  };
+  filename: string;
+  dirname: string;
+  dynamicImport: (id: unknown) => Promise<unknown>;
+};
+
+type ResolvedImport = {
+  source: string;
+  resolved: string;
+  only: string[];
+  external?: boolean;
+};
+
+const defaultEvalOptions: Required<
+  Pick<EvalOptionsV2, 'mode' | 'require' | 'resolver'>
+> = {
+  mode: 'strict',
+  require: 'warn-and-run',
+  resolver: 'bundler',
+};
 
 const browserOnlyEvalHintTriggers = [
   'window is not defined',
@@ -129,10 +161,16 @@ const getBrowserOnlyEvalHint = (error: unknown): string | null => {
     'This usually means browser-only code ran during build-time evaluation.',
     'Move browser-only initialization out of evaluated modules, or mock the import via `importOverrides`.',
     "Example: importOverrides: { 'msw/browser': { mock: './src/__mocks__/msw-browser.js' } }",
+    `Docs: ${TROUBLESHOOTING_URL}`,
   ].join('\n');
 };
 
 const warnedUnknownImportsByServices = new WeakMap<Services, Set<string>>();
+
+const getEvalOptions = (services: Services): EvalOptionsV2 => ({
+  ...defaultEvalOptions,
+  ...(services.options.pluginOptions.eval ?? {}),
+});
 
 function emitWarning(services: Services, message: string) {
   if (services.emitWarning) {
@@ -142,6 +180,12 @@ function emitWarning(services: Services, message: string) {
 
   // eslint-disable-next-line no-console
   console.warn(message);
+}
+
+function emitEvalWarning(services: Services, warning: EvalWarning) {
+  const { onWarn } = getEvalOptions(services);
+  onWarn?.(warning);
+  emitWarning(services, warning.message);
 }
 
 function getWarnedUnknownImports(services: Services): Set<string> {
@@ -167,18 +211,62 @@ function getUncached(cached: string | string[], test: string[]): string[] {
   return test.filter((t) => !cachedSet.has(t));
 }
 
-function resolve(
-  this: { resolveDependency: (id: string) => IEntrypointDependency },
-  id: string
-): string {
-  const { resolved } = this.resolveDependency(id);
-  invariant(resolved, `Unable to resolve "${id}"`);
-  return resolved;
-}
-
 const defaultImportLoaders: ImportLoaders = {
   raw: 'raw',
   url: 'url',
+};
+
+const buildModulePreamble = (id: string): string => {
+  const payload = JSON.stringify(id);
+  return [
+    `const __wyw_module = __wyw_getModule(${payload});`,
+    `let exports = __wyw_module.exports;`,
+    `const module = __wyw_module.module;`,
+    `const require = __wyw_module.require;`,
+    `const __filename = __wyw_module.filename;`,
+    `const __dirname = __wyw_module.dirname;`,
+    `const __wyw_dynamic_import = __wyw_module.dynamicImport;`,
+    ``,
+  ].join('\n');
+};
+
+const applyModuleNamespace = (
+  entrypointExports: Record<string | symbol, unknown>,
+  module: vm.Module,
+  moduleData: ModuleData
+): Record<string | symbol, unknown> => {
+  const { namespace } = module;
+  const keys = Object.keys(namespace);
+
+  if (keys.length === 0 && moduleData.module.exports !== moduleData.exports) {
+    return moduleData.module.exports as Record<string | symbol, unknown>;
+  }
+
+  const nextExports = entrypointExports;
+  keys.forEach((key) => {
+    nextExports[key] = (namespace as Record<string, unknown>)[key];
+  });
+
+  return nextExports;
+};
+
+const ensureVmModules = (): void => {
+  if (!vm.SourceTextModule || !vm.SyntheticModule) {
+    throw new EvalError(
+      '[wyw-in-js] vm.SourceTextModule is not available. Run Node with --experimental-vm-modules (for example, set NODE_OPTIONS=--experimental-vm-modules).'
+    );
+  }
+};
+
+const getImporterDependency = (
+  importer: Entrypoint | IEvaluatedEntrypoint,
+  specifier: string
+): IEntrypointDependency | undefined => {
+  if (importer instanceof Entrypoint) {
+    return importer.getDependency(specifier);
+  }
+
+  return importer.dependencies.get(specifier);
 };
 
 export class Module {
@@ -207,87 +295,33 @@ export class Module {
     ensure: () => void;
     resolve: (id: string) => string;
   } = Object.assign(
-    (id: string) => {
-      if (id === REACT_REFRESH_VIRTUAL_ID) {
-        this.dependencies.push(id);
-        this.debug('require', `vite virtual '${id}'`);
-        return reactRefreshRuntime;
-      }
-
-      if (id.startsWith(VITE_VIRTUAL_PREFIX)) {
-        this.dependencies.push(id);
-        this.debug('require', `vite virtual '${id}'`);
-        return {};
-      }
-
-      if (id in builtins) {
-        // The module is in the allowed list of builtin node modules
-        // Ideally we should prevent importing them, but webpack polyfills some
-        // So we check for the list of polyfills to determine which ones to support
-        if (builtins[id as keyof typeof builtins]) {
-          this.debug('require', `builtin '${id}'`);
-          return nodeRequire(id);
-        }
-
-        return null;
-      }
-
-      // Resolve module id (and filename) relatively to parent module
-      const dependency = this.resolveDependency(id);
-      if (dependency.resolved === id && !path.isAbsolute(id)) {
-        // The module is a builtin node modules, but not in the allowed list
-        throw new Error(
-          `Unable to import "${id}". Importing Node builtins is not supported in the sandbox.`
-        );
-      }
-
-      invariant(
-        dependency.resolved,
-        `Dependency ${dependency.source} cannot be resolved`
-      );
-
-      const loaded = this.loadByImportLoaders(id, dependency.resolved);
-      if (loaded.handled) {
-        this.dependencies.push(id);
-        this.debug('require', `${id} -> ${dependency.resolved} (loader)`);
-        return loaded.value;
-      }
-
-      this.dependencies.push(id);
-
-      this.debug('require', `${id} -> ${dependency.resolved}`);
-
-      const entrypoint = this.getEntrypoint(
-        dependency.resolved,
-        dependency.only,
-        this.debug
-      );
-
-      if (entrypoint === null) {
-        return dependency.resolved;
-      }
-
-      if (
-        entrypoint.evaluated ||
-        isSuperSet(entrypoint.evaluatedOnly, dependency.only)
-      ) {
-        return entrypoint.exports;
-      }
-
-      const m = this.createChild(entrypoint);
-      m.evaluate();
-
-      return entrypoint.exports;
-    },
+    (id: string) => this.requireWithFallback(id, this.entrypoint),
     {
       ensure: NOOP,
-      resolve: resolve.bind(this),
+      resolve: (id: string) =>
+        this.resolveRequire(id, this.entrypoint).resolved,
     }
   );
 
-  public resolve = resolve.bind(this);
+  public resolve = (id: string) =>
+    this.resolveRequire(id, this.entrypoint).resolved;
 
   private cache: TransformCacheCollection;
+
+  private context: vm.Context | null = null;
+
+  private teardown: (() => void) | null = null;
+
+  private moduleCache = new Map<string, vm.Module>();
+
+  private moduleEntrypoints = new WeakMap<
+    vm.Module,
+    Entrypoint | IEvaluatedEntrypoint
+  >();
+
+  private moduleLinkPromises = new WeakMap<vm.Module, Promise<void>>();
+
+  private moduleData = new Map<string, ModuleData>();
 
   #entrypointRef: WeakRef<Entrypoint> | Entrypoint;
 
@@ -343,7 +377,7 @@ export class Module {
     return entrypoint;
   }
 
-  evaluate(): void {
+  async evaluate(): Promise<void> {
     const { entrypoint } = this;
     entrypoint.assertTransformed();
 
@@ -359,8 +393,6 @@ export class Module {
     }
 
     const { transformedCode: source } = entrypoint;
-    const { pluginOptions } = this.services.options;
-
     if (!source) {
       this.debug(`evaluate`, 'there is nothing to evaluate');
       return;
@@ -384,28 +416,19 @@ export class Module {
       return;
     }
 
-    const { context, teardown } = createVmContext(
-      filename,
-      pluginOptions.features,
-      {
-        module: this,
-        exports: entrypoint.exports,
-        require: this.require,
-        __wyw_dynamic_import: async (id: unknown) => this.require(String(id)),
-        __dirname: path.dirname(filename),
-      },
-      pluginOptions.overrideContext
-    );
-
+    const { teardown } = await this.ensureContext(filename);
     try {
-      const script = new vm.Script(
-        `(function (exports) { ${source}\n})(exports);`,
-        {
-          filename,
-        }
+      const module = await this.getModuleForEntrypoint(entrypoint);
+      await this.linkModule(module);
+      await module.evaluate();
+      const exports = applyModuleNamespace(
+        entrypoint.exports as Record<string | symbol, unknown>,
+        module,
+        this.getModuleData(entrypoint.name)
       );
-
-      script.runInContext(context);
+      if (exports !== entrypoint.exports) {
+        entrypoint.exports = exports;
+      }
     } catch (e) {
       this.isEvaluated = false;
       if (evaluatedCreated) {
@@ -532,14 +555,461 @@ export class Module {
     return newEntrypoint;
   }
 
-  resolveDependency = (id: string): IEntrypointDependency => {
-    const cached = this.entrypoint.getDependency(id);
-    invariant(!(cached instanceof Promise), 'Dependency is not resolved yet');
-
-    if (cached) {
-      return cached;
+  private async ensureContext(filename: string) {
+    if (this.context && this.teardown) {
+      return { context: this.context, teardown: this.teardown };
     }
 
+    const evalOptions = getEvalOptions(this.services);
+    const { context, teardown } = await createVmContext(
+      filename,
+      this.services.options.pluginOptions.features,
+      {
+        ...(evalOptions.globals ?? {}),
+        __wyw_getModule: (id: string) => this.getModuleData(id),
+      },
+      this.services.options.pluginOptions.overrideContext
+    );
+
+    this.context = context;
+    this.teardown = () => {
+      teardown();
+      this.context = null;
+      this.teardown = null;
+    };
+
+    return { context: this.context, teardown: this.teardown };
+  }
+
+  private getModuleData(id: string): ModuleData {
+    const data = this.moduleData.get(id);
+    invariant(data, `Missing module data for ${id}`);
+    return data;
+  }
+
+  private createModuleData(
+    id: string,
+    entrypoint?: Entrypoint | IEvaluatedEntrypoint
+  ): ModuleData {
+    const cached = this.moduleData.get(id);
+    if (cached) return cached;
+
+    const exporter = entrypoint ?? this.entrypoint;
+    const exportsProxy =
+      entrypoint && 'exports' in entrypoint
+        ? entrypoint.exports
+        : ({} as Record<string | symbol, unknown>);
+    const moduleObj = { exports: exportsProxy };
+
+    const requireFn = Object.assign(
+      (request: string) => this.requireWithFallback(request, exporter),
+      {
+        ensure: NOOP,
+        resolve: (request: string) =>
+          this.resolveRequire(request, exporter).resolved,
+      }
+    );
+
+    const filename = stripQueryAndHash(id);
+    const data: ModuleData = {
+      exports: exportsProxy,
+      module: moduleObj,
+      require: requireFn,
+      filename,
+      dirname: path.dirname(filename),
+      dynamicImport: (request: unknown) =>
+        this.dynamicImportFrom(exporter, request),
+    };
+
+    this.moduleData.set(id, data);
+    return data;
+  }
+
+  private async createSourceTextModule(
+    id: string,
+    code: string,
+    entrypoint?: Entrypoint | IEvaluatedEntrypoint
+  ): Promise<vm.SourceTextModule> {
+    ensureVmModules();
+    const { context } = await this.ensureContext(stripQueryAndHash(id));
+    this.createModuleData(id, entrypoint);
+
+    const module = new vm.SourceTextModule(
+      `${buildModulePreamble(id)}${code}`,
+      {
+        context,
+        identifier: id,
+        initializeImportMeta: (meta: ImportMeta, targetModule: vm.Module) => {
+          const identifier =
+            typeof targetModule.identifier === 'string'
+              ? targetModule.identifier
+              : id;
+          const fileId = stripQueryAndHash(identifier);
+          Object.assign(meta, {
+            url: path.isAbsolute(fileId) ? pathToFileURL(fileId).href : fileId,
+          });
+        },
+        importModuleDynamically: (
+          specifier: string,
+          referencingModule: vm.Module
+        ) => this.importModuleDynamically(specifier, referencingModule),
+      }
+    );
+
+    this.moduleCache.set(id, module);
+    if (entrypoint) {
+      this.moduleEntrypoints.set(module, entrypoint);
+    }
+
+    return module;
+  }
+
+  private async createSyntheticModule(
+    id: string,
+    exportsValue: Record<string, unknown>
+  ): Promise<vm.SyntheticModule> {
+    ensureVmModules();
+    const { context } = await this.ensureContext(stripQueryAndHash(id));
+    const exportNames = new Set(Object.keys(exportsValue));
+    const hasDefault = Object.prototype.hasOwnProperty.call(
+      exportsValue,
+      'default'
+    );
+    if (!exportNames.has('default')) {
+      exportNames.add('default');
+    }
+
+    const module = new vm.SyntheticModule(
+      [...exportNames],
+      function init(this: vm.SyntheticModule) {
+        exportNames.forEach((key) => {
+          const value =
+            key === 'default' && !hasDefault ? exportsValue : exportsValue[key];
+          this.setExport(key, value);
+        });
+      },
+      { context, identifier: id }
+    );
+
+    this.moduleCache.set(id, module);
+    return module;
+  }
+
+  private async getVirtualModule(specifier: string): Promise<vm.Module | null> {
+    if (specifier === REACT_REFRESH_VIRTUAL_ID) {
+      return this.createSyntheticModule(specifier, {
+        createSignatureFunctionForTransform:
+          reactRefreshRuntime.createSignatureFunctionForTransform,
+      });
+    }
+
+    if (specifier.startsWith(VITE_VIRTUAL_PREFIX)) {
+      return this.createSyntheticModule(specifier, { default: {} });
+    }
+
+    if (specifier.startsWith('virtual:')) {
+      return this.createSyntheticModule(specifier, { default: {} });
+    }
+
+    return null;
+  }
+
+  private async getModuleForEntrypoint(
+    entrypoint: Entrypoint | IEvaluatedEntrypoint
+  ): Promise<vm.Module> {
+    const cached = this.moduleCache.get(entrypoint.name);
+    if (cached) return cached;
+
+    if (!(entrypoint instanceof Entrypoint)) {
+      return this.createSyntheticModule(entrypoint.name, entrypoint.exports);
+    }
+
+    entrypoint.assertTransformed();
+    const source = entrypoint.transformedCode ?? '';
+
+    return this.createSourceTextModule(entrypoint.name, source, entrypoint);
+  }
+
+  private async linkModule(module: vm.Module): Promise<void> {
+    const cached = this.moduleLinkPromises.get(module);
+    if (cached) {
+      await cached;
+      return;
+    }
+
+    if (module.status !== 'unlinked') {
+      return;
+    }
+
+    const linking = module.link((specifier, referencingModule) =>
+      this.getModuleForSpecifier(specifier, referencingModule, 'import')
+    );
+    this.moduleLinkPromises.set(module, linking);
+    await linking;
+  }
+
+  private async importModuleDynamically(
+    specifier: string,
+    referencingModule: vm.Module
+  ): Promise<vm.Module> {
+    const module = await this.getModuleForSpecifier(
+      specifier,
+      referencingModule,
+      'dynamic-import'
+    );
+    await this.linkModule(module);
+    if (module.status === 'linked') {
+      await module.evaluate();
+    }
+    return module;
+  }
+
+  private async dynamicImportFrom(
+    importer: Entrypoint | IEvaluatedEntrypoint,
+    id: unknown
+  ): Promise<unknown> {
+    const specifier = String(id);
+    const module = await this.getModuleForSpecifierFromEntrypoint(
+      specifier,
+      importer,
+      'dynamic-import'
+    );
+    await this.linkModule(module);
+    if (module.status === 'linked') {
+      await module.evaluate();
+    }
+    return module.namespace;
+  }
+
+  private async getModuleForSpecifier(
+    specifier: string,
+    referencingModule: vm.Module,
+    kind: EvalResolverKind
+  ): Promise<vm.Module> {
+    const importer =
+      this.moduleEntrypoints.get(referencingModule) ?? this.entrypoint;
+    return this.getModuleForSpecifierFromEntrypoint(specifier, importer, kind);
+  }
+
+  private async getModuleForSpecifierFromEntrypoint(
+    specifier: string,
+    importer: Entrypoint | IEvaluatedEntrypoint,
+    kind: EvalResolverKind
+  ): Promise<vm.Module> {
+    const virtualModule = await this.getVirtualModule(specifier);
+    if (virtualModule) {
+      return virtualModule;
+    }
+
+    this.dependencies.push(specifier);
+
+    const resolved = await this.resolveImport(specifier, importer, kind);
+    const evalOptions = getEvalOptions(this.services);
+
+    if (!resolved) {
+      if (evalOptions.mode === 'loose') {
+        return this.createSyntheticModule(specifier, { default: undefined });
+      }
+
+      throw new Error(
+        [
+          `[wyw-in-js] Unable to resolve "${specifier}" during evaluation.`,
+          ``,
+          `importer: ${importer.name}`,
+          `hint: check eval.resolver/customResolver or add importOverrides for this specifier.`,
+          `docs: ${TROUBLESHOOTING_URL}`,
+        ].join('\n')
+      );
+    }
+
+    if (resolved.external) {
+      return this.createSyntheticModule(resolved.resolved, {
+        default: undefined,
+      });
+    }
+
+    return this.getModuleForResolved(resolved, importer);
+  }
+
+  private async resolveImport(
+    specifier: string,
+    importer: Entrypoint | IEvaluatedEntrypoint,
+    kind: EvalResolverKind
+  ): Promise<ResolvedImport | null> {
+    const evalOptions = getEvalOptions(this.services);
+
+    if (evalOptions.customResolver) {
+      const customResolved = await evalOptions.customResolver(
+        specifier,
+        importer.name,
+        kind
+      );
+      if (customResolved) {
+        return this.applyImportOverrides(
+          {
+            source: specifier,
+            resolved: customResolved.id,
+            only: ['*'],
+            external: customResolved.external,
+          },
+          importer
+        );
+      }
+
+      if (evalOptions.resolver === 'custom') {
+        return null;
+      }
+    }
+
+    if (evalOptions.resolver !== 'node') {
+      const dependency = getImporterDependency(importer, specifier);
+      if (dependency?.resolved) {
+        return {
+          source: specifier,
+          resolved: dependency.resolved,
+          only: dependency.only,
+        };
+      }
+    }
+
+    if (evalOptions.resolver === 'node' || evalOptions.require !== 'off') {
+      return this.resolveWithNodeFallback(specifier, importer, kind);
+    }
+
+    return null;
+  }
+
+  private resolveRequire(
+    specifier: string,
+    importer: Entrypoint | IEvaluatedEntrypoint
+  ): ResolvedImport {
+    const dependency = getImporterDependency(importer, specifier);
+    if (dependency?.resolved) {
+      return this.applyImportOverrides(
+        {
+          source: specifier,
+          resolved: dependency.resolved,
+          only: dependency.only,
+        },
+        importer
+      );
+    }
+
+    return this.resolveWithNodeFallback(specifier, importer, 'require');
+  }
+
+  private applyImportOverrides(
+    resolved: ResolvedImport,
+    importer: Entrypoint | IEvaluatedEntrypoint
+  ): ResolvedImport {
+    const { root } = this.services.options;
+    const keyInfo = toImportKey({
+      source: resolved.source,
+      resolved: resolved.resolved,
+      root,
+    });
+    const override = getImportOverride(
+      this.services.options.pluginOptions.importOverrides,
+      keyInfo.key
+    );
+
+    if (!override) {
+      return resolved;
+    }
+
+    let nextResolved = resolved.resolved;
+    if (override.mock) {
+      nextResolved = resolveMockSpecifier({
+        mock: override.mock,
+        importer: importer.name,
+        root,
+        stack: getStack(importer),
+      });
+    }
+
+    return {
+      ...resolved,
+      resolved: nextResolved,
+      only: applyImportOverrideToOnly(resolved.only, override),
+    };
+  }
+
+  private async getModuleForResolved(
+    resolved: ResolvedImport,
+    importer: Entrypoint | IEvaluatedEntrypoint
+  ): Promise<vm.Module> {
+    const cached = this.moduleCache.get(resolved.resolved);
+    if (cached) return cached;
+
+    const evalOptions = getEvalOptions(this.services);
+
+    if (evalOptions.customLoader) {
+      const loaded = await evalOptions.customLoader(resolved.resolved);
+      if (loaded) {
+        if (loaded.loader === 'json') {
+          const jsonValue = JSON.parse(loaded.code);
+          return this.createSyntheticModule(resolved.resolved, {
+            default: jsonValue,
+          });
+        }
+
+        if (loaded.loader === 'raw' || loaded.loader === 'text') {
+          return this.createSyntheticModule(resolved.resolved, {
+            default: loaded.code,
+          });
+        }
+
+        return this.createSourceTextModule(
+          resolved.resolved,
+          loaded.code,
+          importer
+        );
+      }
+    }
+
+    const loaded = this.loadByImportLoaders(
+      resolved.source,
+      resolved.resolved,
+      importer.name
+    );
+    if (loaded.handled) {
+      return this.createSyntheticModule(resolved.resolved, {
+        default: loaded.value,
+      });
+    }
+
+    const stripped = stripQueryAndHash(resolved.resolved);
+    if (stripped.endsWith('.json')) {
+      const jsonSource = fs.readFileSync(stripped, 'utf-8');
+      return this.createSyntheticModule(resolved.resolved, {
+        default: JSON.parse(jsonSource),
+      });
+    }
+
+    const entrypoint = this.getEntrypoint(
+      resolved.resolved,
+      resolved.only,
+      importer.log
+    );
+
+    if (!entrypoint) {
+      return this.createSyntheticModule(resolved.resolved, {
+        default: resolved.resolved,
+      });
+    }
+
+    if ('evaluated' in entrypoint && entrypoint.evaluated) {
+      return this.createSyntheticModule(entrypoint.name, entrypoint.exports);
+    }
+
+    return this.getModuleForEntrypoint(entrypoint);
+  }
+
+  resolveWithNodeFallback = (
+    id: string,
+    importer: Entrypoint | IEvaluatedEntrypoint,
+    kind: EvalResolverKind
+  ): ResolvedImport => {
     if (!this.ignored) {
       this.debug(
         '❌ import has not been resolved during prepare stage. Fallback to Node.js resolver'
@@ -563,7 +1033,7 @@ export class Module {
         added.push(ext);
       });
 
-      const { filename } = this;
+      const filename = importer.name;
       const strippedId = stripQueryAndHash(id);
 
       let resolved = this.moduleImpl._resolveFilename(strippedId, {
@@ -599,7 +1069,13 @@ export class Module {
         keyInfo.key
       );
 
-      const policy = override?.unknown ?? (override?.mock ? 'allow' : 'warn');
+      const evalOptions = getEvalOptions(this.services);
+      const basePolicy: 'warn' | 'error' =
+        evalOptions.require === 'warn-and-run' ? 'warn' : 'error';
+      let policy = override?.unknown ?? (override?.mock ? 'allow' : basePolicy);
+      if (evalOptions.require === 'off' && policy !== 'error') {
+        policy = 'error';
+      }
       const shouldWarn = !this.ignored && policy === 'warn';
 
       let finalResolved = resolved;
@@ -609,7 +1085,7 @@ export class Module {
             mock: override.mock,
             importer: filename,
             root,
-            stack: this.callstack,
+            stack: getStack(importer),
           });
         } catch (e) {
           const errorMessage = String((e as Error)?.message ?? e);
@@ -632,9 +1108,10 @@ export class Module {
               : ``,
             ``,
             `callstack:`,
-            ...this.callstack.map((item) => `  ${item}`),
+            ...getStack(importer).map((item) => `  ${item}`),
             ``,
             `config key: ${keyInfo.key}`,
+            `docs: ${TROUBLESHOOTING_URL}`,
           ]
             .filter(Boolean)
             .join('\n')
@@ -645,29 +1122,37 @@ export class Module {
 
       if (shouldWarn && !warnedUnknownImports.has(keyInfo.key)) {
         warnedUnknownImports.add(keyInfo.key);
-        emitWarning(
-          this.services,
-          [
-            `[wyw-in-js] Unknown import reached during eval (Node resolver fallback)`,
-            ``,
-            `importer: ${filename}`,
-            `source:   ${id}`,
-            `resolved: ${resolved}`,
-            override?.mock
-              ? `mock:     ${override.mock} -> ${finalResolved}`
-              : ``,
-            ``,
-            `callstack:`,
-            ...this.callstack.map((item) => `  ${item}`),
-            ``,
-            `config key: ${keyInfo.key}`,
-            `hint: add { importOverrides: { ${JSON.stringify(
-              keyInfo.key
-            )}: { unknown: 'allow' } } } to silence warnings, or use { mock } / { noShake: true } overrides.`,
-          ]
-            .filter(Boolean)
-            .join('\n')
-        );
+        const warningMessage = [
+          `[wyw-in-js] Unknown import reached during eval (Node resolver fallback)`,
+          ``,
+          `importer: ${filename}`,
+          `source:   ${id}`,
+          `resolved: ${resolved}`,
+          override?.mock
+            ? `mock:     ${override.mock} -> ${finalResolved}`
+            : ``,
+          ``,
+          `callstack:`,
+          ...getStack(importer).map((item) => `  ${item}`),
+          ``,
+          `config key: ${keyInfo.key}`,
+          `hint: add { importOverrides: { ${JSON.stringify(
+            keyInfo.key
+          )}: { unknown: 'allow' } } } to silence warnings, or use { mock } / { noShake: true } overrides.`,
+          `docs: ${TROUBLESHOOTING_URL}`,
+        ]
+          .filter(Boolean)
+          .join('\n');
+
+        emitEvalWarning(this.services, {
+          code: kind === 'require' ? 'require-fallback' : 'resolve-fallback',
+          message: warningMessage,
+          importer: filename,
+          specifier: id,
+          resolved: resolved ?? null,
+          callstack: getStack(importer),
+          hint: `Use importOverrides or eval.require settings to avoid fallback.`,
+        });
       }
 
       return {
@@ -681,13 +1166,84 @@ export class Module {
     }
   };
 
+  private requireWithFallback(
+    id: string,
+    importer: Entrypoint | IEvaluatedEntrypoint
+  ): unknown {
+    if (id === REACT_REFRESH_VIRTUAL_ID) {
+      this.dependencies.push(id);
+      this.debug('require', `vite virtual '${id}'`);
+      return reactRefreshRuntime;
+    }
+
+    if (id.startsWith(VITE_VIRTUAL_PREFIX)) {
+      this.dependencies.push(id);
+      this.debug('require', `vite virtual '${id}'`);
+      return {};
+    }
+
+    const normalizedId = id.startsWith('node:') ? id.slice(5) : id;
+    if (
+      NativeModule.builtinModules?.includes(normalizedId) ||
+      NativeModule.builtinModules?.includes(`node:${normalizedId}`)
+    ) {
+      if (normalizedId in builtins) {
+        if (builtins[normalizedId as keyof typeof builtins]) {
+          this.debug('require', `builtin '${normalizedId}'`);
+          return nodeRequire(normalizedId);
+        }
+
+        return null;
+      }
+
+      throw new Error(
+        `Unable to import "${normalizedId}". Importing Node builtins is not supported in the sandbox.`
+      );
+    }
+
+    const dependency = this.resolveRequire(id, importer);
+
+    const loaded = this.loadByImportLoaders(
+      id,
+      dependency.resolved,
+      importer.name
+    );
+    if (loaded.handled) {
+      this.dependencies.push(id);
+      this.debug('require', `${id} -> ${dependency.resolved} (loader)`);
+      return loaded.value;
+    }
+
+    const stripped = stripQueryAndHash(dependency.resolved);
+    const extension = path.extname(stripped);
+    if (
+      extension &&
+      extension !== '.json' &&
+      !this.extensions.includes(extension)
+    ) {
+      this.dependencies.push(id);
+      this.debug('require', `${id} -> ${dependency.resolved} (asset)`);
+      return stripped;
+    }
+
+    if (this.services.cache.consumeInvalidation(dependency.resolved)) {
+      delete nodeRequire.cache[dependency.resolved];
+    }
+
+    this.dependencies.push(id);
+    this.debug('require', `${id} -> ${dependency.resolved}`);
+
+    return nodeRequire(dependency.resolved);
+  }
+
   protected createChild(entrypoint: Entrypoint): Module {
     return new Module(this.services, entrypoint, this, this.moduleImpl);
   }
 
   private loadByImportLoaders(
     request: string,
-    resolved: string
+    resolved: string,
+    importer: string
   ): { handled: boolean; value: unknown } {
     const { pluginOptions } = this.services.options;
     const importLoaders =
@@ -708,8 +1264,8 @@ export class Module {
     const loader = importLoaders[matchedKey];
 
     const filename = stripQueryAndHash(resolved);
-    const importer = stripQueryAndHash(this.filename);
-    const importerDir = path.dirname(importer);
+    const importerFilename = stripQueryAndHash(importer);
+    const importerDir = path.dirname(importerFilename);
 
     const toUrl = () => {
       const relative = path
@@ -726,7 +1282,7 @@ export class Module {
     const readFile = () => fs.readFileSync(filename, 'utf-8');
 
     const context: ImportLoaderContext = {
-      importer,
+      importer: importerFilename,
       request,
       resolved,
       filename,
