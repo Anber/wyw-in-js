@@ -122,6 +122,7 @@ export type EvalWarningCode =
   | 'resolve-error'
   | 'require-fallback'
   | 'require-error'
+  | 'dynamic-import'
   | 'eval-error';
 
 export type EvalWarning = {

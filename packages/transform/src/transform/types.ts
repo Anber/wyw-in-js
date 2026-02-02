@@ -17,6 +17,7 @@ import type {
   IWorkflowActionLinariaResult,
   IWorkflowActionNonLinariaResult,
 } from './actions/types';
+import type { EvalBroker } from '../eval/broker';
 
 export type Services = {
   babel: Core;
@@ -28,6 +29,12 @@ export type Services = {
   options: Options & {
     pluginOptions: StrictOptions;
   };
+  asyncResolve?: (
+    what: string,
+    importer: string,
+    stack: string[]
+  ) => Promise<string | null>;
+  evalBroker?: EvalBroker;
 };
 
 export interface IBaseNode {

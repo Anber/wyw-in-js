@@ -192,6 +192,7 @@ export const prepareCode = (
   return [transformedCode, imports, prepared.metadata];
 };
 
+// eslint-disable-next-line require-yield
 export function* internalTransform(
   this: ITransformAction,
   prepareFn: PrepareCodeFn
@@ -207,7 +208,7 @@ export function* internalTransform(
 
   log('>> (%o)', only);
 
-  const [preparedCode, imports, metadata] = prepareFn(
+  const [preparedCode, , metadata] = prepareFn(
     this.services,
     this.entrypoint,
     loadedAndParsed.ast
@@ -228,26 +229,6 @@ export function* internalTransform(
     };
   }
 
-  if (imports !== null && imports.size > 0) {
-    const resolvedImports = yield* this.getNext(
-      'resolveImports',
-      this.entrypoint,
-      {
-        imports,
-      }
-    );
-
-    if (resolvedImports.length !== 0) {
-      yield [
-        'processImports',
-        this.entrypoint,
-        {
-          resolved: resolvedImports,
-        },
-      ];
-    }
-  }
-
   return {
     code: preparedCode,
     metadata,
@@ -256,7 +237,6 @@ export function* internalTransform(
 
 /**
  * Prepares the code for evaluation. This includes removing dead and potentially unsafe code.
- * Emits resolveImports and processImports events.
  */
 export function* transform(
   this: ITransformAction
