@@ -4,7 +4,7 @@ import type { IEvaluateResult } from '../../evaluators';
 import evaluate from '../../evaluators';
 import hasWywPreval from '../../utils/hasWywPreval';
 import { isUnprocessedEntrypointError } from '../actions/UnprocessedEntrypointError';
-import type { IEvalAction, SyncScenarioForAction } from '../types';
+import type { AsyncScenarioForAction, IEvalAction } from '../types';
 
 const wrap = <T>(fn: () => T): T | Error => {
   try {
@@ -19,9 +19,9 @@ const wrap = <T>(fn: () => T): T | Error => {
  * Returns all exports that were requested in `only`.
  */
 // eslint-disable-next-line require-yield
-export function* evalFile(
+export async function* evalFile(
   this: IEvalAction
-): SyncScenarioForAction<IEvalAction> {
+): AsyncScenarioForAction<IEvalAction> {
   const { entrypoint } = this;
   const { log } = entrypoint;
 
@@ -31,7 +31,8 @@ export function* evalFile(
 
   while (evaluated === undefined) {
     try {
-      evaluated = evaluate(this.services, entrypoint);
+      // eslint-disable-next-line no-await-in-loop
+      evaluated = await evaluate(this.services, entrypoint);
     } catch (e) {
       if (isUnprocessedEntrypointError(e)) {
         entrypoint.log(

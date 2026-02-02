@@ -9,7 +9,7 @@
     "react-dom": "^18.2.0"
   },
   "devDependencies": {
-    "@types/node": "^16.18.55",
+    "@types/node": "^22.0.0",
     "@types/react": "^18.2.0",
     "@wyw-in-js/eslint-config": "workspace:*",
     "@wyw-in-js/ts-config": "workspace:*"

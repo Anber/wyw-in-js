@@ -46,7 +46,7 @@ type VitePluginOptions = {
 
 type OverrideContext = NonNullable<PluginOptions['overrideContext']>;
 
-export { Plugin };
+export type { Plugin };
 
 type AssetInfoLike = { name?: unknown };
 type AssetFileNames = string | ((assetInfo: AssetInfoLike) => string);

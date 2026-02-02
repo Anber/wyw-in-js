@@ -8,21 +8,17 @@
  * - returns transformed code (without WYW template literals), generated CSS, source maps and babel metadata from transform step.
  */
 
+import { createHash } from 'crypto';
+
 import { isFeatureEnabled } from '@wyw-in-js/shared';
 
 import type { PartialOptions } from './transform/helpers/loadWywOptions';
 import { loadWywOptions } from './transform/helpers/loadWywOptions';
 import { TransformCacheCollection } from './cache';
 import { Entrypoint } from './transform/Entrypoint';
-import {
-  asyncActionRunner,
-  syncActionRunner,
-} from './transform/actions/actionRunner';
+import { asyncActionRunner } from './transform/actions/actionRunner';
 import { baseHandlers } from './transform/generators';
-import {
-  asyncResolveImports,
-  syncResolveImports,
-} from './transform/generators/resolveImports';
+import { asyncResolveImports } from './transform/generators/resolveImports';
 import { withDefaultServices } from './transform/helpers/withDefaultServices';
 import type {
   Handler,
@@ -40,128 +36,58 @@ type PartialServices = Partial<Omit<Services, 'options'>> & {
 
 type AllHandlers<TMode extends 'async' | 'sync'> = Handlers<TMode>;
 
-const memoizedSyncResolve = new WeakMap<
-  (what: string, importer: string, stack: string[]) => string | null,
-  Handler<'sync', IResolveImportsAction>
->();
-
 const memoizedAsyncResolve = new WeakMap<
   (what: string, importer: string, stack: string[]) => Promise<string | null>,
   Handler<'async' | 'sync', IResolveImportsAction>
 >();
 
-const EMPTY_CUSTOM_HANDLERS = {};
-const memoizedActionContexts = new WeakMap<object, WeakMap<object, object>>();
+const resolverIds = new WeakMap<Function, number>();
+let resolverId = 0;
 
-const getActionContext = (
-  resolveImportsHandler: object,
-  customHandlers: object
-): object => {
-  const customHandlersKey =
-    Object.keys(customHandlers).length === 0
-      ? EMPTY_CUSTOM_HANDLERS
-      : customHandlers;
-  let actionContextsByHandlers = memoizedActionContexts.get(
-    resolveImportsHandler
-  );
-  if (!actionContextsByHandlers) {
-    actionContextsByHandlers = new WeakMap();
-    memoizedActionContexts.set(resolveImportsHandler, actionContextsByHandlers);
-  }
+const getResolverId = (fn: unknown) => {
+  if (typeof fn !== 'function') return null;
+  const cached = resolverIds.get(fn);
+  if (cached) return cached;
+  resolverId += 1;
+  resolverIds.set(fn, resolverId);
+  return resolverId;
+};
 
-  let actionContext = actionContextsByHandlers.get(customHandlersKey);
-  if (!actionContext) {
-    actionContext = {};
-    actionContextsByHandlers.set(customHandlersKey, actionContext);
-  }
+const getEvalCacheKey = (
+  pluginOptions: ReturnType<typeof loadWywOptions>,
+  asyncResolve: (
+    what: string,
+    importer: string,
+    stack: string[]
+  ) => Promise<string | null>
+) => {
+  const evalOptions = pluginOptions.eval ?? {};
+  const payload = JSON.stringify({
+    mode: evalOptions.mode,
+    resolver: evalOptions.resolver,
+    require: evalOptions.require,
+    globals: evalOptions.globals ? Object.keys(evalOptions.globals).sort() : [],
+    customResolver: getResolverId(evalOptions.customResolver),
+    customLoader: getResolverId(evalOptions.customLoader),
+    bundlerResolver: getResolverId(asyncResolve),
+  });
 
-  return actionContext;
+  return createHash('sha256').update(payload).digest('hex');
 };
 
 export function transformSync(
-  partialServices: PartialServices,
-  originalCode: string,
-  syncResolve: (what: string, importer: string, stack: string[]) => string,
-  customHandlers: Partial<AllHandlers<'sync'>> = {}
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  _partialServices: PartialServices,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  _originalCode: string,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  _syncResolve: (what: string, importer: string, stack: string[]) => string,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  _customHandlers: Partial<AllHandlers<'sync'>> = {}
 ): Result {
-  const { options } = partialServices;
-  const pluginOptions = loadWywOptions(options.pluginOptions);
-  const services = withDefaultServices({
-    ...partialServices,
-    options: {
-      ...options,
-      pluginOptions,
-    },
-  });
-
-  if (
-    !isFeatureEnabled(pluginOptions.features, 'globalCache', options.filename)
-  ) {
-    // If global cache is disabled, we need to create a new cache for each file
-    services.cache = new TransformCacheCollection();
-  }
-
-  if (!memoizedSyncResolve.has(syncResolve)) {
-    memoizedSyncResolve.set(
-      syncResolve,
-      function resolveImports(this: IResolveImportsAction) {
-        return syncResolveImports.call(this, syncResolve);
-      }
-    );
-  }
-
-  const resolveImportsHandler = memoizedSyncResolve.get(syncResolve)!;
-  const actionHandlers = {
-    ...baseHandlers,
-    ...customHandlers,
-    resolveImports: resolveImportsHandler,
-  };
-  const actionContext = getActionContext(resolveImportsHandler, customHandlers);
-
-  const entrypoint = Entrypoint.createRoot(
-    services,
-    options.filename,
-    ['__wywPreval'],
-    originalCode
+  throw new Error(
+    '[wyw-in-js] transformSync is not supported in v2. Use transform() (async) instead.'
   );
-
-  if (entrypoint.ignored) {
-    return {
-      code: originalCode,
-      sourceMap: options.inputSourceMap,
-    };
-  }
-
-  const workflowAction = entrypoint.createAction(
-    'workflow',
-    undefined,
-    null,
-    actionContext
-  );
-
-  try {
-    const result = syncActionRunner(workflowAction, actionHandlers);
-
-    entrypoint.log('%s is ready', entrypoint.name);
-
-    return result;
-  } catch (err) {
-    entrypoint.log('Unhandled error %O', err);
-
-    if (
-      isFeatureEnabled(pluginOptions.features, 'softErrors', options.filename)
-    ) {
-      // eslint-disable-next-line no-console
-      console.error(`Error during transform of ${entrypoint.name}:`, err);
-
-      return {
-        code: originalCode,
-        sourceMap: options.inputSourceMap,
-      };
-    }
-
-    throw err;
-  }
 }
 
 export async function transform(
@@ -191,6 +117,8 @@ export async function transform(
     services.cache = new TransformCacheCollection();
   }
 
+  services.cache.setKeySalt(getEvalCacheKey(pluginOptions, asyncResolve));
+
   /*
    * This method can be run simultaneously for multiple files.
    * A shared cache is accessible for all runs, but each run has its own queue
@@ -199,24 +127,6 @@ export async function transform(
    * but the "only" option has changed, the file will be re-processed using
    * the combined "only" option.
    */
-  if (!memoizedAsyncResolve.has(asyncResolve)) {
-    const resolveImports = function resolveImports(
-      this: IResolveImportsAction
-    ) {
-      return asyncResolveImports.call(this, asyncResolve);
-    };
-
-    memoizedAsyncResolve.set(asyncResolve, resolveImports);
-  }
-
-  const resolveImportsHandler = memoizedAsyncResolve.get(asyncResolve)!;
-  const actionHandlers = {
-    ...baseHandlers,
-    ...customHandlers,
-    resolveImports: resolveImportsHandler,
-  };
-  const actionContext = getActionContext(resolveImportsHandler, customHandlers);
-
   const entrypoint = Entrypoint.createRoot(
     services,
     options.filename,
@@ -231,15 +141,24 @@ export async function transform(
     };
   }
 
-  const workflowAction = entrypoint.createAction(
-    'workflow',
-    undefined,
-    null,
-    actionContext
-  );
+  const workflowAction = entrypoint.createAction('workflow', undefined);
+
+  if (!memoizedAsyncResolve.has(asyncResolve)) {
+    const resolveImports = function resolveImports(
+      this: IResolveImportsAction
+    ) {
+      return asyncResolveImports.call(this, asyncResolve);
+    };
+
+    memoizedAsyncResolve.set(asyncResolve, resolveImports);
+  }
 
   try {
-    const result = await asyncActionRunner(workflowAction, actionHandlers);
+    const result = await asyncActionRunner(workflowAction, {
+      ...baseHandlers,
+      ...customHandlers,
+      resolveImports: memoizedAsyncResolve.get(asyncResolve)!,
+    });
 
     entrypoint.log('%s is ready', entrypoint.name);
 
