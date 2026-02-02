@@ -41,7 +41,7 @@
     "yaml": "^2.3.2"
   },
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=22.0.0"
   },
   "exports": {
     "./*.md": "./*.md"
@@ -53,9 +53,8 @@
   "repository": "git@github.com:Anber/wyw-in-js.git",
   "packageManager": "bun@1.3.5",
   "scripts": {
-    "build": "turbo run build:esm build:lib build:types --filter \"./packages/*\"",
+    "build": "turbo run build:esm build:types --filter \"./packages/*\"",
     "build:esm": "turbo run build:esm --filter \"./packages/*\"",
-    "build:lib": "turbo run build:lib --filter \"./packages/*\"",
     "build:types": "turbo run build:types --filter \"./packages/*\"",
     "check": "bun run lint && bun run test",
     "clean": "del '{e2e,examples,packages}/*/{coverage,dist,esm,lib,types,tsconfig.tsbuildinfo}'",

@@ -7,10 +7,6 @@
       "dependsOn": ["^build:esm", "@wyw-in-js/babel-config#check"],
       "outputs": ["esm/**"]
     },
-    "build:lib": {
-      "dependsOn": ["^build:lib", "@wyw-in-js/babel-config#check"],
-      "outputs": ["lib/**"]
-    },
     "build:types": {
       "dependsOn": ["^build:types", "@wyw-in-js/ts-config#check"],
       "outputs": ["types/**"]

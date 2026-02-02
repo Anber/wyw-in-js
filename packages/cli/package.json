@@ -1,6 +1,7 @@
 {
   "name": "@wyw-in-js/cli",
   "version": "1.0.6",
+  "type": "module",
   "bin": {
     "wyw-in-js": "bin/wyw-in-js.js"
   },
@@ -22,22 +23,27 @@
     "@wyw-in-js/ts-config": "workspace:*"
   },
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=22.0.0"
+  },
+  "exports": {
+    ".": {
+      "types": "./types/wyw-in-js.d.ts",
+      "default": "./esm/wyw-in-js.js"
+    }
   },
   "files": [
+    "bin/",
     "esm/",
-    "lib/",
     "types/"
   ],
   "license": "MIT",
-  "main": "lib/wyw-in-js.js",
+  "main": "esm/wyw-in-js.js",
   "module": "esm/wyw-in-js.js",
   "publishConfig": {
     "access": "public"
   },
   "scripts": {
     "build:esm": "babel src --out-dir esm --extensions '.js,.jsx,.ts,.tsx' --source-maps --delete-dir-on-start",
-    "build:lib": "cross-env NODE_ENV=legacy babel src --out-dir lib --extensions '.js,.jsx,.ts,.tsx' --source-maps --delete-dir-on-start",
     "build:types": "tsc --project ./tsconfig.lib.json --baseUrl . --rootDir ./src",
     "lint": "eslint --ext .js,.ts ."
   },
