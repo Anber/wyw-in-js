@@ -31,7 +31,8 @@ This library evolved from the CSS-in-JS library [Linaria][1], with the aim of de
 
 ## Requirements
 
-- Node.js `>=20.0.0` (Node 18 is EOL and not supported).
+- Node.js `>=22.0.0`.
+- WyW-in-JS packages are ESM-only. If your tooling is still CJS, use dynamic `import()` or migrate configs to ESM.
 - Bun `>=1.0.0` (supported via `@wyw-in-js/bun` and for running the workspace with Bun).
 
 ## CLI Quickstart

@@ -6,6 +6,7 @@
 
 import path from 'path';
 import crypto from 'crypto';
+import { fileURLToPath } from 'url';
 
 import type { RawSourceMap } from 'source-map';
 import type { RawLoaderDefinitionFunction } from 'webpack';
@@ -20,7 +21,9 @@ import { getCacheInstance, registerCacheProvider } from './cache';
 
 export { WYWinJSDebugPlugin } from './WYWinJSDebugPlugin';
 
-const outputCssLoader = require.resolve('./outputCssLoader');
+const outputCssLoader = fileURLToPath(
+  new URL('./outputCssLoader.js', import.meta.url)
+);
 
 const stripQueryAndHash = (request: string) => {
   const queryIdx = request.indexOf('?');

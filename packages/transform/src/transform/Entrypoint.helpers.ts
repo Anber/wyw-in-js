@@ -1,5 +1,6 @@
 import { readFileSync } from 'fs';
 import { dirname, extname, isAbsolute } from 'path';
+import { createRequire } from 'module';
 
 import type { TransformOptions, PluginItem } from '@babel/core';
 import type { File } from '@babel/types';
@@ -22,6 +23,8 @@ import { getPluginKey } from '../utils/getPluginKey';
 import type { IEntrypointCode, IIgnoredEntrypoint } from './Entrypoint.types';
 import type { Services } from './types';
 import { stripQueryAndHash } from '../utils/parseRequest';
+
+const nodeRequire = createRequire(import.meta.url);
 
 export function getMatchedRule(
   rules: EvalRule[],
@@ -369,8 +372,8 @@ export function loadAndParse(
   const evaluator: Evaluator =
     typeof action === 'function'
       ? action
-      : require(
-          require.resolve(action, {
+      : nodeRequire(
+          nodeRequire.resolve(action, {
             paths: [dirname(filename)],
           })
         ).default;
