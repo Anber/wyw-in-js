@@ -1,4 +1,5 @@
 import * as vm from 'vm';
+import { createRequire } from 'module';
 
 import type { Window } from 'happy-dom';
 
@@ -10,6 +11,8 @@ import * as process from './process';
 const NOOP = () => {};
 const IMPORT_META_ENV = '__wyw_import_meta_env';
 const HAPPY_DOM_REQUIRE_HOOK = '__wyw_requireHappyDom';
+
+const nodeRequire = createRequire(import.meta.url);
 
 let importMetaEnvWarned = false;
 let happyDomRequireEsmWarned = false;
@@ -86,7 +89,7 @@ function requireHappyDom(): HappyDomExports {
     return (hook as () => HappyDomExports)();
   }
   // eslint-disable-next-line @typescript-eslint/no-var-requires
-  return require('happy-dom') as HappyDomExports;
+  return nodeRequire('happy-dom') as HappyDomExports;
 }
 
 function createWindow(): Window | undefined {
@@ -121,12 +124,12 @@ function createWindow(): Window | undefined {
     console.warn(
       [
         `[wyw-in-js] DOM emulation is enabled (features.happyDOM), but "happy-dom" could not be loaded in this build-time runtime.`,
-        `This usually happens because "happy-dom" is ESM-only and cannot be loaded via require() in a CJS build.`,
+        `This usually happens because "happy-dom" is ESM-only and cannot be loaded via require() in this runtime.`,
         ``,
         `WyW will continue without DOM emulation (as if features.happyDOM:false).`,
         ``,
         `To silence this warning: set features: { happyDOM: false }.`,
-        `To get real DOM emulation in Node 20+, WyW needs an ESM-only eval architecture (planned for v2.0.0),`,
+        `To get real DOM emulation in Node 22+, WyW needs the async ESM eval architecture (v2.0.0),`,
         `or a runtime that supports require(ESM) (Node 24+).`,
       ].join('\n')
     );

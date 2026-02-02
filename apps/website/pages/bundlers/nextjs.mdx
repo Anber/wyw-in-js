@@ -18,10 +18,10 @@ bun add -d @wyw-in-js/nextjs
 ### Configuration
 
 ```js
-// next.config.js
-const { withWyw } = require('@wyw-in-js/nextjs');
+// next.config.mjs
+import { withWyw } from '@wyw-in-js/nextjs';
 
-module.exports = withWyw({
+export default withWyw({
   // your Next config
 });
 ```
@@ -31,10 +31,10 @@ module.exports = withWyw({
 Pass `loaderOptions` through to `@wyw-in-js/webpack-loader`:
 
 ```js
-// next.config.js
-const { withWyw } = require('@wyw-in-js/nextjs');
+// next.config.mjs
+import { withWyw } from '@wyw-in-js/nextjs';
 
-module.exports = withWyw(
+export default withWyw(
   {
     reactStrictMode: true,
   },
@@ -51,10 +51,10 @@ module.exports = withWyw(
 Stylis adds vendor-prefixed CSS by default. To disable it (and reduce CSS size), pass `prefixer: false`:
 
 ```js
-// next.config.js
-const { withWyw } = require('@wyw-in-js/nextjs');
+// next.config.mjs
+import { withWyw } from '@wyw-in-js/nextjs';
 
-module.exports = withWyw(
+export default withWyw(
   {},
   {
     loaderOptions: {
@@ -91,10 +91,10 @@ To keep WyW class names stable, selectors are wrapped in `:global(...)` (so Next
 Use `turbopackLoaderOptions` to customize `@wyw-in-js/turbopack-loader`:
 
 ```js
-// next.config.js
-const { withWyw } = require('@wyw-in-js/nextjs');
+// next.config.mjs
+import { withWyw } from '@wyw-in-js/nextjs';
 
-module.exports = withWyw(
+export default withWyw(
   {
     reactStrictMode: true,
   },

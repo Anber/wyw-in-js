@@ -23,10 +23,10 @@ bun add -d @wyw-in-js/nextjs
 ## Usage
 
 ```js
-// next.config.js
-const { withWyw } = require('@wyw-in-js/nextjs');
+// next.config.mjs
+import { withWyw } from '@wyw-in-js/nextjs';
 
-module.exports = withWyw({
+export default withWyw({
   // your Next config
 });
 ```

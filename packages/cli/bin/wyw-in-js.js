@@ -2,4 +2,4 @@
 
 /* eslint-disable import/no-unresolved */
 
-module.exports = require('../lib/wyw-in-js');
+import '../esm/wyw-in-js.js';

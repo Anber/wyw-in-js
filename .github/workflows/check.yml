@@ -53,10 +53,10 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest]
-        node-version: [20.x, 22.x, 24.x]
+        node-version: [22.x, 24.x]
         include:
           - os: windows-latest
-            node-version: 20.x
+            node-version: 22.x
 
     steps:
       - uses: actions/checkout@v3

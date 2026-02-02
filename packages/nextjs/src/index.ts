@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { createRequire } from 'module';
 
 import type { LoaderOptions as WywWebpackLoaderOptions } from '@wyw-in-js/webpack-loader';
 import type { NextConfig } from 'next';
@@ -14,6 +15,8 @@ const DEFAULT_REACT_IMPORT_OVERRIDES = {
   'react/jsx-runtime': { mock: 'react/jsx-runtime' },
   'react/jsx-dev-runtime': { mock: 'react/jsx-dev-runtime' },
 } satisfies WywWebpackLoaderOptions['importOverrides'];
+
+const nodeRequire = createRequire(import.meta.url);
 
 const PLACEHOLDER_EXTENSIONS = new Set(['.js', '.jsx', '.ts', '.tsx']);
 const PLACEHOLDER_IGNORED_DIRS = new Set([
@@ -271,8 +274,8 @@ function injectWywLoader(
   nextOptions: NextWebpackOptions,
   wywNext: WywNextPluginOptions
 ) {
-  const loader = require.resolve('@wyw-in-js/webpack-loader');
-  const nextBabelPreset = require.resolve('next/babel', {
+  const loader = nodeRequire.resolve('@wyw-in-js/webpack-loader');
+  const nextBabelPreset = nodeRequire.resolve('next/babel', {
     paths: [process.cwd()],
   });
 
@@ -384,10 +387,10 @@ function shouldUseTurbopackConfig(nextConfig: NextConfig) {
   }
 
   try {
-    const pkgPath = require.resolve('next/package.json', {
+    const pkgPath = nodeRequire.resolve('next/package.json', {
       paths: [process.cwd()],
     });
-    const pkg = require(pkgPath) as { version?: unknown };
+    const pkg = nodeRequire(pkgPath) as { version?: unknown };
     const version = typeof pkg.version === 'string' ? pkg.version : '';
     const major = Number.parseInt(version.split('.')[0] ?? '', 10);
     return Number.isFinite(major) && major >= 16;
@@ -400,8 +403,8 @@ function injectWywTurbopackRules(
   nextConfig: NextConfig,
   wywNext: WywNextPluginOptions
 ): NextConfig {
-  const loader = require.resolve('@wyw-in-js/turbopack-loader');
-  const nextBabelPreset = require.resolve('next/babel', {
+  const loader = nodeRequire.resolve('@wyw-in-js/turbopack-loader');
+  const nextBabelPreset = nodeRequire.resolve('next/babel', {
     paths: [process.cwd()],
   });
 
