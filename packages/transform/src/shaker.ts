@@ -1,11 +1,14 @@
 import type { TransformOptions, PluginItem } from '@babel/core';
 import type { File } from '@babel/types';
+import { createRequire } from 'module';
 
 import type { Evaluator, EvaluatorConfig } from '@wyw-in-js/shared';
 
 import shakerPlugin from './plugins/shaker';
 import { hasShakerMetadata } from './utils/ShakerMetadata';
 import { getPluginKey } from './utils/getPluginKey';
+
+const nodeRequire = createRequire(import.meta.url);
 
 const hasKeyInList = (plugin: PluginItem, list: string[]): boolean => {
   const pluginKey = getPluginKey(plugin);
@@ -17,7 +20,7 @@ const isCommonJSPlugin = (plugin: PluginItem): boolean =>
 
 const safeResolve = (id: string, paths: (string | null)[]): string | null => {
   try {
-    return require.resolve(id, {
+    return nodeRequire.resolve(id, {
       paths: paths.filter((i) => i !== null) as string[],
     });
   } catch {
@@ -78,7 +81,7 @@ const createShakerPlugins = (
   ensureTypescriptPlugin(plugins, evalConfig);
 
   if (includeCommonJS) {
-    plugins.push(require.resolve('@babel/plugin-transform-modules-commonjs'));
+    plugins.push(nodeRequire.resolve('@babel/plugin-transform-modules-commonjs'));
   }
 
   return plugins;
@@ -129,7 +132,7 @@ export const emitCommonJS = (
     caller: {
       name: 'wyw-in-js',
     },
-    plugins: [require.resolve('@babel/plugin-transform-modules-commonjs')],
+    plugins: [nodeRequire.resolve('@babel/plugin-transform-modules-commonjs')],
   });
 
   if (!transformed?.ast) {

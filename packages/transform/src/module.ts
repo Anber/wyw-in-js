@@ -12,7 +12,7 @@
  */
 
 import fs from 'fs';
-import NativeModule from 'module';
+import NativeModule, { createRequire } from 'module';
 import path from 'path';
 import vm from 'vm';
 
@@ -129,6 +129,7 @@ const REACT_REFRESH_VIRTUAL_ID = '/@react-refresh';
 const reactRefreshRuntime = {
   createSignatureFunctionForTransform: () => () => {},
 };
+const nodeRequire = createRequire(import.meta.url);
 
 const NOOP = () => {};
 
@@ -253,7 +254,7 @@ export class Module {
         // So we check for the list of polyfills to determine which ones to support
         if (builtins[id as keyof typeof builtins]) {
           this.debug('require', `builtin '${id}'`);
-          return require(id);
+          return nodeRequire(id);
         }
 
         return null;

@@ -7,7 +7,8 @@ const { promisify } = require('node:util');
 const colors = require('picocolors');
 const prettier = require('prettier');
 const { build } = require('vite');
-const wyw = require('@wyw-in-js/vite');
+
+let wyw;
 
 const PKG_DIR = path.resolve(__dirname, '..');
 const execFileAsync = promisify(execFile);
@@ -42,7 +43,7 @@ async function buildArtefact(outDir, pluginOptions) {
         '@': path.resolve(PKG_DIR, 'src'),
       },
     },
-    plugins: [pluginOptions ? wyw.default(pluginOptions) : wyw.default()],
+    plugins: [pluginOptions ? wyw(pluginOptions) : wyw()],
   });
 }
 
@@ -236,6 +237,9 @@ async function assertCjsModuleLoads(filePath) {
 
 async function main() {
   console.log(colors.blue('Package directory:'), PKG_DIR);
+
+  const wywModule = await import('@wyw-in-js/vite');
+  wyw = wywModule.default;
 
   const outDir = path.resolve(PKG_DIR, 'dist');
   const testCases = [

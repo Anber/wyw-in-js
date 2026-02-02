@@ -1,5 +1,6 @@
 import { readFileSync } from 'fs';
 import { basename, dirname, join } from 'path';
+import { createRequire } from 'module';
 
 import { types as t } from '@babel/core';
 import { addDefault, addNamed } from '@babel/helper-module-imports';
@@ -39,6 +40,8 @@ import { getSource } from './getSource';
 import { isNotNull } from './isNotNull';
 import { mutate } from './scopeHelpers';
 import { getTraversalCache } from './traversalCache';
+
+const nodeRequire = createRequire(import.meta.url);
 
 type BuilderArgs = ConstructorParameters<typeof BaseProcessor> extends [
   Params,
@@ -131,7 +134,7 @@ const getDefinedTagsFromPackage = (
           ...acc,
           [key]: value.startsWith('.')
             ? join(packageDir, value)
-            : require.resolve(value, { paths: [packageDir] }),
+            : nodeRequire.resolve(value, { paths: [packageDir] }),
         }),
         {} as Record<string, string>
       )
@@ -157,7 +160,7 @@ function getProcessorFromPackage(
     return null;
   }
 
-  const Processor = require(processorPath).default;
+  const Processor = nodeRequire(processorPath).default;
   if (!isValidProcessorClass(Processor)) {
     return null;
   }
@@ -166,7 +169,7 @@ function getProcessorFromPackage(
 }
 
 function getProcessorFromFile(processorPath: string): ProcessorClass | null {
-  const Processor = require(processorPath).default;
+  const Processor = nodeRequire(processorPath).default;
   if (!isValidProcessorClass(Processor)) {
     return null;
   }
