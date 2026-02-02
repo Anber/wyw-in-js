@@ -59,12 +59,13 @@ The `happyDOM` is enabled by default. This feature enables usage of https://gith
 
 ## Node.js note
 
-As of `happy-dom@20`, the package is **ESM-only**. WyW-in-JS is currently published as **CJS**, so on Node versions where
-`require()` cannot load ESM (for example Node 20/22) WyW-in-JS will skip DOM emulation and print a one-time warning.
+As of `happy-dom@20`, the package is **ESM-only**. WyW-in-JS still uses a `require()` fallback in the legacy evaluator, so
+on Node versions where `require()` cannot load ESM (for example Node 22) WyW-in-JS will skip DOM emulation and print a
+one-time warning.
 
 - To silence the warning (and make the behavior explicit): `features: { happyDOM: false }`.
-- For “real” DOM emulation in Node 20+, WyW-in-JS needs an ESM-only eval architecture (planned for v2.0.0), or a runtime
-  that supports `require(ESM)` (Node 24+).
+- For “real” DOM emulation in Node 22+, WyW-in-JS needs the async ESM eval architecture (v2.0.0), or a runtime that
+  supports `require(ESM)` (Node 24+).
 
 
 # `softErrors` Feature

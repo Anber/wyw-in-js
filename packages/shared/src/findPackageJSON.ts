@@ -1,8 +1,10 @@
 import { readFileSync } from 'fs';
 import { dirname, isAbsolute } from 'path';
+import { createRequire } from 'module';
 import findUp from 'find-up';
 
 const cache = new Map<string, string | undefined>();
+const nodeRequire = createRequire(import.meta.url);
 
 function findSelfPackageJSON(pkgName: string, filename: string) {
   const packageJSONPath = findUp.sync('package.json', {
@@ -30,7 +32,7 @@ export function findPackageJSON(
     const pkgPath =
       pkgName === '.' && filename && isAbsolute(filename)
         ? filename
-        : require.resolve(
+        : nodeRequire.resolve(
             pkgName,
             filename ? { paths: [dirname(filename)] } : {}
           );

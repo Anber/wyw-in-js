@@ -1,8 +1,11 @@
 import path from 'path';
+import { createRequire } from 'module';
+
+const nodeRequire = createRequire(import.meta.url);
 
 const safeResolve = (name: string, where: string[]): string | Error => {
   try {
-    return require.resolve(name, {
+    return nodeRequire.resolve(name, {
       paths: where,
     });
   } catch (e: unknown) {
