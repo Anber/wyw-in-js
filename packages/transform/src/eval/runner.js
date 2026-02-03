@@ -154,6 +154,12 @@ let importMetaEnvWarned = false;
 let happyDomLoadWarned = false;
 let happyDomUnavailable = false;
 let happyDomImportPromise = null;
+const debugEnabled = Boolean(process.env.WYW_EVAL_RUNNER_DEBUG);
+const debug = (...args) => {
+  if (!debugEnabled) return;
+  // eslint-disable-next-line no-console
+  console.warn('[wyw-eval-runner:debug]', ...args);
+};
 
 const processShim = {
   nextTick: (fn) => setTimeout(fn, 0),
@@ -401,6 +407,7 @@ const resolveMockSpecifier = ({ mock, importer, root }) => {
 const state = {
   context: null,
   teardown: null,
+  happyDomEnabled: null,
   evalOptions: {
     mode: 'strict',
     require: 'warn-and-run',
@@ -424,18 +431,23 @@ const resolveInFlight = new Map();
 const pending = new Map();
 let nextId = 0;
 
-const resetEvaluationState = () => {
-  if (state.teardown) {
-    state.teardown();
-  }
-  state.context = null;
-  state.teardown = null;
+const resetModuleState = () => {
   moduleCache.clear();
   moduleHashes.clear();
   moduleData.clear();
   linkPromises.clear();
   loadInFlight.clear();
   resolveInFlight.clear();
+};
+
+const resetEvaluationState = () => {
+  if (state.teardown) {
+    state.teardown();
+  }
+  state.context = null;
+  state.teardown = null;
+  state.happyDomEnabled = null;
+  resetModuleState();
 };
 
 const sendMessage = (message) => {
@@ -920,27 +932,71 @@ async function evaluateEntrypoint(id) {
 const handleMessage = async (message) => {
   switch (message.type) {
     case 'INIT': {
-      resetEvaluationState();
-      state.evalOptions = {
-        ...state.evalOptions,
-        ...message.payload.evalOptions,
-        globals: decodeGlobals(message.payload.evalOptions.globals ?? {}),
-      };
-      state.features = message.payload.features ?? {};
-      state.entrypoint = message.payload.entrypoint ?? 'eval-runner';
+      try {
+        const initStart = Date.now();
+        debug('init:start', message.payload.entrypoint ?? 'eval-runner');
+        const nextEvalOptions = {
+          ...state.evalOptions,
+          ...message.payload.evalOptions,
+          globals: decodeGlobals(message.payload.evalOptions.globals ?? {}),
+        };
+        const nextFeatures = message.payload.features ?? {};
+        const nextEntrypoint = message.payload.entrypoint ?? 'eval-runner';
+        const nextHappyDomEnabled = isFeatureEnabled(
+          nextFeatures,
+          'happyDOM',
+          nextEntrypoint
+        );
 
-      const { context, teardown } = await createVmContext(
-        state.entrypoint,
-        state.features,
-        {
-          ...state.evalOptions.globals,
-          __wyw_getModule: (moduleId) => getModuleData(moduleId),
+        const canReuseContext =
+          state.context && state.happyDomEnabled === nextHappyDomEnabled;
+
+        if (canReuseContext) {
+          resetModuleState();
+          state.evalOptions = nextEvalOptions;
+          state.features = nextFeatures;
+          state.entrypoint = nextEntrypoint;
+          Object.assign(state.context, {
+            ...nextEvalOptions.globals,
+            __wyw_getModule: (moduleId) => getModuleData(moduleId),
+          });
+          debug('init:reuse', Date.now() - initStart);
+          sendMessage({ type: 'INIT_ACK', id: message.id });
+          break;
         }
-      );
-      state.context = context;
-      state.teardown = teardown;
 
-      sendMessage({ type: 'INIT_ACK', id: message.id });
+        resetEvaluationState();
+        state.evalOptions = nextEvalOptions;
+        state.features = nextFeatures;
+        state.entrypoint = nextEntrypoint;
+        debug('init:globals', Date.now() - initStart);
+
+        const windowStart = Date.now();
+        const { context, teardown } = await createVmContext(
+          state.entrypoint,
+          state.features,
+          {
+            ...state.evalOptions.globals,
+            __wyw_getModule: (moduleId) => getModuleData(moduleId),
+          }
+        );
+        debug('init:context', Date.now() - windowStart);
+        state.context = context;
+        state.teardown = teardown;
+        state.happyDomEnabled = nextHappyDomEnabled;
+
+        sendMessage({ type: 'INIT_ACK', id: message.id });
+        debug('init:done', Date.now() - initStart);
+      } catch (error) {
+        sendMessage({
+          type: 'INIT_ACK',
+          id: message.id,
+          error: {
+            message: error?.message ?? String(error),
+            stack: error?.stack,
+          },
+        });
+      }
       break;
     }
     case 'EVAL': {

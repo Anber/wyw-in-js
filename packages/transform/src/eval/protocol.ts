@@ -63,6 +63,7 @@ export type InitMessage = {
 export type InitAckMessage = {
   type: 'INIT_ACK';
   id: string;
+  error?: SerializedError;
 };
 
 export type EvalMessage = {
