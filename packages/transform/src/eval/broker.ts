@@ -66,6 +66,7 @@ const MAX_MESSAGE_SIZE = 10 * 1024 * 1024;
 const RESOLVE_CACHE_SIZE = 5000;
 const LOAD_CACHE_SIZE = 1000;
 const REQUEST_TIMEOUT_MS = 30_000;
+const INIT_TIMEOUT_MS = 120_000;
 
 type ResolveCacheEntry = {
   resolvedId: string | null;
@@ -396,7 +397,7 @@ export class EvalBroker {
     }
 
     const payload = buildRunnerInitPayload(this.services, entrypoint);
-    await this.request('INIT', payload);
+    await this.request('INIT', payload, INIT_TIMEOUT_MS);
     this.lastInitKey = initKey;
   }
 
@@ -425,6 +426,11 @@ export class EvalBroker {
   private handleMessage(message: RunnerToMainMessage) {
     switch (message.type) {
       case 'INIT_ACK':
+        if (message.error) {
+          this.rejectPending(message.id, message.error);
+          this.runner?.kill();
+          return;
+        }
         this.resolvePending(message.id, {});
         return;
       case 'EVAL_RESULT':
@@ -946,7 +952,8 @@ export class EvalBroker {
 
   private request<TPayload>(
     type: MainToRunnerMessage['type'],
-    payload: unknown
+    payload: unknown,
+    timeoutMs: number = REQUEST_TIMEOUT_MS
   ): Promise<TPayload> {
     this.nextId += 1;
     const id = `${this.nextId}`;
@@ -961,7 +968,7 @@ export class EvalBroker {
         this.pending.delete(id);
         this.runner?.kill();
         reject(new Error(`[wyw-in-js] Eval runner timed out for ${type}`));
-      }, REQUEST_TIMEOUT_MS);
+      }, timeoutMs);
 
       this.pending.set(id, {
         resolve: resolve as PendingRequest['resolve'],
