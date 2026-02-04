@@ -9,7 +9,10 @@ export type SerializedValue =
   | { kind: 'function' }
   | { kind: 'error'; error: SerializedError }
   | { kind: 'undefined' }
-  | { kind: 'bigint'; value: string };
+  | { kind: 'bigint'; value: string }
+  | { kind: 'nan' }
+  | { kind: 'infinity' }
+  | { kind: '-infinity' };
 
 export type EncodedGlobal =
   | { __wyw_function: string }
@@ -37,6 +40,18 @@ export const serializeValue = (value: unknown): SerializedValue => {
 
   if (typeof value === 'bigint') {
     return { kind: 'bigint', value: value.toString() };
+  }
+
+  if (typeof value === 'number') {
+    if (Number.isNaN(value)) {
+      return { kind: 'nan' };
+    }
+    if (value === Infinity) {
+      return { kind: 'infinity' };
+    }
+    if (value === -Infinity) {
+      return { kind: '-infinity' };
+    }
   }
 
   if (typeof value === 'function') {
@@ -70,6 +85,12 @@ export const deserializeValue = (value: SerializedValue): unknown => {
       return undefined;
     case 'bigint':
       return BigInt(value.value);
+    case 'nan':
+      return Number.NaN;
+    case 'infinity':
+      return Infinity;
+    case '-infinity':
+      return -Infinity;
     case 'function':
       return () => {};
     case 'error': {

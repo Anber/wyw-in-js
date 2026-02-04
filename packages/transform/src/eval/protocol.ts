@@ -26,6 +26,7 @@ export type EvalRequest = {
 
 export type EvalResultPayload = {
   values: Record<string, SerializedValue> | null;
+  modules?: Record<string, Record<string, SerializedValue>>;
 };
 
 export type ResolveRequestPayload = {
@@ -51,6 +52,8 @@ export type LoadResultPayload = {
   code?: string;
   map?: unknown;
   hash?: string;
+  only?: string[];
+  exports?: Record<string, SerializedValue>;
   error?: SerializedError;
 };
 

@@ -85,6 +85,50 @@ const builtins = {
 const RESOLVE_CACHE_SIZE = 5000;
 const LOAD_CACHE_SIZE = 1000;
 
+const isBuiltinSpecifier = (specifier) => {
+  const normalized = specifier.startsWith('node:')
+    ? specifier.slice(5)
+    : specifier;
+  return (
+    NativeModule.builtinModules?.includes(normalized) ||
+    NativeModule.builtinModules?.includes(`node:${normalized}`)
+  );
+};
+
+const packageTypeCache = new Map();
+
+const getPackageType = (filename) => {
+  let dir = path.dirname(filename);
+  while (dir && dir !== path.dirname(dir)) {
+    const cached = packageTypeCache.get(dir);
+    if (cached !== undefined) return cached;
+    const pkgPath = path.join(dir, 'package.json');
+    if (fs.existsSync(pkgPath)) {
+      try {
+        const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+        const type = pkg?.type === 'module' ? 'module' : 'commonjs';
+        packageTypeCache.set(dir, type);
+        return type;
+      } catch {
+        packageTypeCache.set(dir, null);
+        return null;
+      }
+    }
+    packageTypeCache.set(dir, null);
+    dir = path.dirname(dir);
+  }
+  return null;
+};
+
+const shouldPreferImport = (resolvedFile) => {
+  if (!resolvedFile) return false;
+  if (!path.isAbsolute(resolvedFile)) return false;
+  if (resolvedFile.endsWith('.mjs')) return true;
+  if (resolvedFile.endsWith('.cjs')) return false;
+  if (!resolvedFile.endsWith('.js')) return false;
+  return getPackageType(resolvedFile) === 'module';
+};
+
 const isPlainObject = (value) =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
@@ -119,10 +163,21 @@ const isJsonSafe = (value) => {
   }
 };
 
+const isErrRequireEsm = (error) =>
+  typeof error === 'object' &&
+  error !== null &&
+  'code' in error &&
+  error.code === 'ERR_REQUIRE_ESM';
+
 const serializeValue = (value) => {
   if (value === undefined) return { kind: 'undefined' };
   if (typeof value === 'bigint') {
     return { kind: 'bigint', value: value.toString() };
+  }
+  if (typeof value === 'number') {
+    if (Number.isNaN(value)) return { kind: 'nan' };
+    if (value === Infinity) return { kind: 'infinity' };
+    if (value === -Infinity) return { kind: '-infinity' };
   }
   if (typeof value === 'function') return { kind: 'function' };
   if (
@@ -146,6 +201,36 @@ const serializeValue = (value) => {
     );
   }
   return { kind: 'value', value };
+};
+
+const deserializeValue = (value) => {
+  switch (value?.kind) {
+    case 'undefined':
+      return undefined;
+    case 'bigint':
+      return BigInt(value.value);
+    case 'nan':
+      return Number.NaN;
+    case 'infinity':
+      return Infinity;
+    case '-infinity':
+      return -Infinity;
+    case 'function':
+      return () => {};
+    case 'error': {
+      const error = new Error(value.error?.message ?? '');
+      if (value.error?.name) {
+        error.name = value.error.name;
+      }
+      if (value.error?.stack) {
+        error.stack = value.error.stack;
+      }
+      return error;
+    }
+    case 'value':
+    default:
+      return value?.value;
+  }
 };
 
 const IMPORT_META_ENV = '__wyw_import_meta_env';
@@ -227,6 +312,27 @@ const createImportMetaEnvProxy = () => {
   });
 };
 
+const HAPPY_DOM_TIMEOUT_MS = Number(
+  process.env.WYW_HAPPYDOM_TIMEOUT_MS || 5000
+);
+
+const withTimeout = (promise, timeoutMs, label) => {
+  if (!timeoutMs || timeoutMs <= 0) return promise;
+  let timeoutId;
+  const timeout = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => {
+      const error = new Error(
+        `[wyw-in-js] Timed out while waiting for ${label}.`
+      );
+      error.code = 'WYW_HAPPYDOM_TIMEOUT';
+      reject(error);
+    }, timeoutMs);
+  });
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timeoutId) clearTimeout(timeoutId);
+  });
+};
+
 const loadHappyDom = async () => {
   if (!happyDomImportPromise) {
     happyDomImportPromise = import('happy-dom');
@@ -237,14 +343,24 @@ const loadHappyDom = async () => {
 const createWindow = async () => {
   if (happyDomUnavailable) return undefined;
   try {
-    const { Window, GlobalWindow } = await loadHappyDom();
+    debug('happyDom:import:start');
+    const importStart = Date.now();
+    const { Window, GlobalWindow } = await withTimeout(
+      loadHappyDom(),
+      HAPPY_DOM_TIMEOUT_MS,
+      'happy-dom import'
+    );
+    debug('happyDom:import:done', Date.now() - importStart);
     const HappyWindow = GlobalWindow || Window;
+    const windowStart = Date.now();
     const win = new HappyWindow();
+    debug('happyDom:window:done', Date.now() - windowStart);
     win.Buffer = Buffer;
     win.Uint8Array = Uint8Array;
     return win;
   } catch (error) {
     happyDomUnavailable = true;
+    happyDomImportPromise = null;
     if (!happyDomLoadWarned) {
       happyDomLoadWarned = true;
       // eslint-disable-next-line no-console
@@ -339,6 +455,71 @@ const createVmContext = async (filename, features, globals) => {
 const stripQueryAndHash = (value) =>
   value.split('?')[0]?.split('#')[0] ?? value;
 
+const normalizeResolvedId = (resolvedId, specifier, importer) => {
+  const stripped = stripQueryAndHash(resolvedId);
+  if (!stripped) return resolvedId;
+  if (path.extname(stripped)) return resolvedId;
+
+  const isFileSpecifier =
+    specifier.startsWith('.') || path.isAbsolute(specifier);
+  if (!isFileSpecifier && !path.isAbsolute(stripped)) {
+    return resolvedId;
+  }
+
+  let candidate = stripped;
+  if (!path.isAbsolute(candidate)) {
+    if (!importer) {
+      return resolvedId;
+    }
+    const importerFile = stripQueryAndHash(importer);
+    candidate = path.resolve(path.dirname(importerFile), candidate);
+  }
+
+  const suffix = resolvedId.slice(stripped.length);
+  const extensions = state.evalOptions.extensions ?? [];
+  for (const ext of extensions) {
+    const fileCandidate = `${candidate}${ext}`;
+    if (fs.existsSync(fileCandidate)) {
+      return `${fileCandidate}${suffix}`;
+    }
+
+    const indexCandidate = path.join(candidate, `index${ext}`);
+    if (fs.existsSync(indexCandidate)) {
+      return `${indexCandidate}${suffix}`;
+    }
+  }
+
+  if (importer) {
+    try {
+      const importerFile = stripQueryAndHash(importer);
+      const nodeRequire = createRequire(pathToFileURL(importerFile).href);
+      const resolved = nodeRequire.resolve(stripQueryAndHash(specifier));
+      if (resolved && resolved !== stripped) {
+        return `${resolved}${suffix}`;
+      }
+    } catch {
+      // ignore fallback failures
+    }
+  }
+
+  return resolvedId;
+};
+
+const isNodeModulesId = (id) => {
+  if (!id) return false;
+  const normalized = stripQueryAndHash(id).replace(/\\/g, '/');
+  return normalized.includes('/node_modules/');
+};
+
+const mergeOnly = (current, next) => {
+  if (!current || current.length === 0) return next ?? [];
+  if (!next || next.length === 0) return current;
+  if (current.includes('*') || next.includes('*')) {
+    return ['*'];
+  }
+  return Array.from(new Set([...current, ...next]));
+};
+
 const toCanonicalFileKey = (resolved, root) => {
   const rootDir = root ? path.resolve(root) : process.cwd();
   const normalizedResolved = path.resolve(resolved);
@@ -423,8 +604,10 @@ const state = {
 const moduleCache = new LruCache(LOAD_CACHE_SIZE);
 const moduleHashes = new Map();
 const moduleData = new Map();
+const moduleOnly = new Map();
 const linkPromises = new Map();
 const loadInFlight = new Map();
+const externalInFlight = new Map();
 const resolveCache = new LruCache(RESOLVE_CACHE_SIZE);
 const resolveInFlight = new Map();
 
@@ -435,9 +618,12 @@ const resetModuleState = () => {
   moduleCache.clear();
   moduleHashes.clear();
   moduleData.clear();
+  moduleOnly.clear();
   linkPromises.clear();
   loadInFlight.clear();
+  externalInFlight.clear();
   resolveInFlight.clear();
+  resolveCache.clear();
 };
 
 const resetEvaluationState = () => {
@@ -505,7 +691,7 @@ const createRequireFn = (importer) => {
   const importerFile = stripQueryAndHash(importer);
   const nodeRequire = createRequire(pathToFileURL(importerFile).href);
 
-  return (specifier) => {
+  return (specifier, resolvedOverride) => {
     if (state.evalOptions.require === 'off') {
       throw new Error(
         `[wyw-in-js] require() fallback is disabled by eval.require: 'off'.`
@@ -566,7 +752,9 @@ const createRequireFn = (importer) => {
         added.push(ext);
       });
 
-      let resolved = nodeRequire.resolve(stripQueryAndHash(specifier));
+      let resolved = resolvedOverride
+        ? stripQueryAndHash(resolvedOverride)
+        : nodeRequire.resolve(stripQueryAndHash(specifier));
 
       const isFileSpecifier =
         specifier.startsWith('.') || path.isAbsolute(specifier);
@@ -676,6 +864,94 @@ function createSyntheticModule(id, exportsValue) {
   return module;
 }
 
+const toSyntheticExports = (value) => {
+  if (value && (typeof value === 'object' || typeof value === 'function')) {
+    const exportsValue = {};
+    Object.keys(value).forEach((key) => {
+      exportsValue[key] = value[key];
+    });
+    exportsValue.default =
+      Object.prototype.hasOwnProperty.call(value, 'default') ||
+      Object.prototype.hasOwnProperty.call(exportsValue, 'default')
+        ? value.default
+        : value;
+    return exportsValue;
+  }
+  return { default: value };
+};
+
+const loadExternalModule = async (resolvedId, importer, specifier) => {
+  const cacheId = resolvedId ?? specifier;
+  const cached = moduleCache.get(cacheId);
+  if (cached) return cached;
+
+  const inFlight = externalInFlight.get(cacheId);
+  if (inFlight) return inFlight;
+
+  const task = (async () => {
+    const start = Date.now();
+    debug('external:start', { specifier, resolvedId, importer });
+    const requireFn = createRequireFn(importer);
+    let value;
+    let hasValue = false;
+    const resolvedFile = resolvedId ? stripQueryAndHash(resolvedId) : null;
+    const importTarget =
+      resolvedFile && path.isAbsolute(resolvedFile)
+        ? pathToFileURL(resolvedFile).href
+        : specifier;
+
+    if (shouldPreferImport(resolvedFile)) {
+      value = await import(importTarget);
+      hasValue = true;
+    }
+    if (!hasValue) {
+      try {
+        value = requireFn(specifier, resolvedId ?? null);
+        hasValue = true;
+      } catch (error) {
+        if (!isErrRequireEsm(error)) {
+          throw error;
+        }
+
+        const isFileSpecifier =
+          specifier.startsWith('.') || path.isAbsolute(specifier);
+        const isPackageSpecifier =
+          !isFileSpecifier && !isBuiltinSpecifier(specifier);
+        if (resolvedId && isPackageSpecifier) {
+          try {
+            value = requireFn(specifier, null);
+            hasValue = true;
+          } catch (retryError) {
+            if (!isErrRequireEsm(retryError)) {
+              throw retryError;
+            }
+          }
+        }
+
+        if (!hasValue) {
+          value = await import(importTarget);
+          hasValue = true;
+        }
+      }
+    }
+
+    const module = createSyntheticModule(cacheId, toSyntheticExports(value));
+    debug('external:done', {
+      specifier,
+      resolvedId,
+      durationMs: Date.now() - start,
+    });
+    return module;
+  })();
+
+  externalInFlight.set(cacheId, task);
+  try {
+    return await task;
+  } finally {
+    externalInFlight.delete(cacheId);
+  }
+};
+
 let resolveModule;
 let loadModule;
 
@@ -692,6 +968,15 @@ const linkModule = async (module) => {
 };
 
 resolveModule = async (specifier, importer, kind) => {
+  if (process.env.WYW_DEBUG_EVAL_RESOLVE) {
+    process.stderr.write(
+      `[wyw-eval-runner:resolve] ${JSON.stringify({
+        specifier,
+        importer,
+        kind,
+      })}\n`
+    );
+  }
   if (specifier === REACT_REFRESH_VIRTUAL_ID) {
     return createSyntheticModule(specifier, reactRefreshRuntime);
   }
@@ -720,11 +1005,26 @@ resolveModule = async (specifier, importer, kind) => {
       );
     }
 
-    if (cached.external) {
-      return createSyntheticModule(cached.resolvedId, { default: undefined });
+    const treatExternal =
+      cached.external ||
+      isBuiltinSpecifier(specifier) ||
+      isNodeModulesId(cached.resolvedId);
+
+    if (treatExternal) {
+      const normalized = normalizeResolvedId(
+        cached.resolvedId,
+        specifier,
+        importer
+      );
+      return loadExternalModule(normalized, importer, specifier);
     }
 
-    return loadModule(cached.resolvedId, importer, specifier);
+    const normalized = normalizeResolvedId(
+      cached.resolvedId,
+      specifier,
+      importer
+    );
+    return loadModule(normalized, importer, specifier);
   }
 
   const inFlight = resolveInFlight.get(key);
@@ -741,12 +1041,27 @@ resolveModule = async (specifier, importer, kind) => {
       throw new Error(resolved.error.message);
     }
 
+    const normalized = resolved.resolvedId
+      ? normalizeResolvedId(resolved.resolvedId, specifier, importer)
+      : resolved.resolvedId;
+    if (process.env.WYW_DEBUG_EVAL_RESOLVE) {
+      process.stderr.write(
+        `[wyw-eval-runner:resolved] ${JSON.stringify({
+          specifier,
+          importer,
+          resolved: resolved.resolvedId ?? null,
+          normalized: normalized ?? null,
+          external: Boolean(resolved.external),
+        })}\n`
+      );
+    }
+
     resolveCache.set(key, {
-      resolvedId: resolved.resolvedId,
+      resolvedId: normalized,
       external: Boolean(resolved.external),
     });
 
-    if (!resolved.resolvedId) {
+    if (!normalized) {
       if (state.evalOptions.mode === 'loose') {
         return createSyntheticModule(specifier, { default: undefined });
       }
@@ -760,11 +1075,16 @@ resolveModule = async (specifier, importer, kind) => {
       );
     }
 
-    if (resolved.external) {
-      return createSyntheticModule(resolved.resolvedId, { default: undefined });
+    const treatExternal =
+      resolved.external ||
+      isBuiltinSpecifier(specifier) ||
+      isNodeModulesId(normalized);
+
+    if (treatExternal) {
+      return loadExternalModule(normalized, importer, specifier);
     }
 
-    return loadModule(resolved.resolvedId, importer, specifier);
+    return loadModule(normalized, importer, specifier);
   })();
 
   resolveInFlight.set(key, task);
@@ -781,14 +1101,40 @@ loadModule = async (id, importer, requestSpec) => {
   if (inFlight) return inFlight;
 
   const task = (async () => {
+    const loadStart = Date.now();
     const loaded = await request('LOAD', {
       id,
       importerId: importer,
       request: requestSpec ?? null,
     });
+    debug('load:done', {
+      id,
+      importer,
+      durationMs: Date.now() - loadStart,
+    });
 
     if (loaded.error) {
       throw new Error(loaded.error.message);
+    }
+
+    if (loaded.only) {
+      const current = moduleOnly.get(id) ?? [];
+      moduleOnly.set(id, mergeOnly(current, loaded.only));
+    }
+
+    if (loaded.exports) {
+      if (cached && loaded.hash && moduleHashes.get(id) === loaded.hash) {
+        return cached;
+      }
+      const exportsValue = {};
+      Object.entries(loaded.exports).forEach(([key, serialized]) => {
+        exportsValue[key] = deserializeValue(serialized);
+      });
+      const module = createSyntheticModule(id, exportsValue);
+      if (loaded.hash) {
+        moduleHashes.set(id, loaded.hash);
+      }
+      return module;
     }
 
     if (cached && loaded.hash && moduleHashes.get(id) === loaded.hash) {
@@ -891,10 +1237,80 @@ const getModuleData = (id) => {
   return data;
 };
 
+const resolveExportValue = (source, key) => {
+  if (key === 'default') {
+    if (source && typeof source === 'object' && 'default' in source) {
+      return source.default;
+    }
+    return source;
+  }
+
+  if (source && (typeof source === 'object' || typeof source === 'function')) {
+    if (key in source) {
+      return source[key];
+    }
+    if (
+      source.default &&
+      typeof source.default === 'object' &&
+      key in source.default
+    ) {
+      return source.default[key];
+    }
+  }
+
+  return undefined;
+};
+
+const collectModuleExports = () => {
+  const exportsByModule = {};
+
+  moduleOnly.forEach((only, id) => {
+    if (!only || only.length === 0) return;
+
+    const module = moduleCache.get(id);
+    const data = moduleData.get(id);
+    if (!module || !data) return;
+
+    const namespace = module.namespace;
+    const hasNamespace =
+      namespace && typeof namespace === 'object' && Object.keys(namespace).length;
+    const source = hasNamespace ? namespace : data.module.exports;
+
+    const keys = only.includes('*')
+      ? Object.keys(source ?? {}).filter(
+          (key) => key !== '__wywPreval' && key !== 'side-effect'
+        )
+      : only.filter((key) => key !== '__wywPreval' && key !== 'side-effect');
+
+    if (keys.length === 0) return;
+
+    const serialized = {};
+    keys.forEach((key) => {
+      const value = resolveExportValue(source, key);
+      try {
+        serialized[key] = serializeValue(value);
+      } catch {
+        // Skip non-serializable exports when caching eval values.
+      }
+    });
+
+    if (Object.keys(serialized).length) {
+      exportsByModule[id] = serialized;
+    }
+  });
+
+  return exportsByModule;
+};
+
 async function evaluateEntrypoint(id) {
+  const evalStart = Date.now();
+  debug('eval:start', id);
   const module = await loadModule(id, id, id);
+  debug('eval:loaded', { id, durationMs: Date.now() - evalStart });
   await linkModule(module);
+  debug('eval:linked', { id, durationMs: Date.now() - evalStart });
   await module.evaluate();
+  debug('eval:evaluated', { id, durationMs: Date.now() - evalStart });
 
   const data = getModuleData(id);
   const exportsValue = data.module.exports;
@@ -902,20 +1318,24 @@ async function evaluateEntrypoint(id) {
     exportsValue &&
     typeof exportsValue === 'object' &&
     '__wywPreval' in exportsValue;
-  const namespace = module.namespace;
+  const { namespace } = module;
   const hasPrevalNamespace =
     namespace && typeof namespace === 'object' && '__wywPreval' in namespace;
 
+  const modules = collectModuleExports();
+
   if (!hasPrevalExport && !hasPrevalNamespace) {
-    return null;
+    return { values: null, modules };
   }
 
   const preval = hasPrevalExport
     ? exportsValue.__wywPreval
     : namespace.__wywPreval;
-  if (!preval || typeof preval !== 'object') return null;
+  if (!preval || typeof preval !== 'object') {
+    return { values: null, modules };
+  }
 
-  const result = {};
+  const values = {};
   Object.entries(preval).forEach(([key, lazy]) => {
     let value;
     try {
@@ -923,10 +1343,10 @@ async function evaluateEntrypoint(id) {
     } catch (error) {
       value = error;
     }
-    result[key] = serializeValue(value);
+    values[key] = serializeValue(value);
   });
 
-  return result;
+  return { values, modules };
 }
 
 const handleMessage = async (message) => {
@@ -1001,12 +1421,15 @@ const handleMessage = async (message) => {
     }
     case 'EVAL': {
       try {
-        const values = await evaluateEntrypoint(message.payload.id);
+        const { values, modules } = await evaluateEntrypoint(
+          message.payload.id
+        );
         sendMessage({
           type: 'EVAL_RESULT',
           id: message.id,
           payload: {
             values,
+            modules,
           },
         });
       } catch (error) {

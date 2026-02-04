@@ -15,6 +15,7 @@ import {
 } from '@wyw-in-js/shared';
 import type { PluginOptions, Preprocessor, Result } from '@wyw-in-js/transform';
 import {
+  disposeEvalBroker,
   getFileIdx,
   transform,
   TransformCacheCollection,
@@ -112,6 +113,9 @@ export default function wywInJS({
 
   const plugin: Plugin = {
     name: 'wyw-in-js',
+    closeBundle() {
+      disposeEvalBroker(cache);
+    },
     load(id: string) {
       return cssLookup[id];
     },

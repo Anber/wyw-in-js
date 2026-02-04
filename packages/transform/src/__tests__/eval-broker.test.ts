@@ -1,5 +1,11 @@
 import * as babel from '@babel/core';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'fs';
 import { dirname, join, resolve } from 'path';
 import { tmpdir } from 'os';
 
@@ -218,6 +224,60 @@ describe('EvalBroker', () => {
 
     expect(result.values?.get('value')).toBe(42);
     expect(result.dependencies).toContain('./dep.js');
+
+    broker.dispose();
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('applies importOverrides when resolving external packages', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
+    const entry = join(root, 'entry.js');
+    const mock = join(root, 'mock.js');
+    const nodeModulesDir = join(root, 'node_modules', 'fake');
+    const dep = join(nodeModulesDir, 'index.js');
+
+    mkdirSync(nodeModulesDir, { recursive: true });
+    writeFileSync(dep, 'module.exports = { value: 41 };');
+    writeFileSync(mock, 'export default { value: 1 };');
+    writeFileSync(
+      entry,
+      [
+        "import fake from 'fake';",
+        'export const __wywPreval = {',
+        '  value: () => fake.value,',
+        '};',
+      ].join('\n')
+    );
+
+    const asyncResolve = jest.fn(async (what: string, importer: string) => {
+      if (what === 'fake') {
+        return dep;
+      }
+      if (what.startsWith('.')) {
+        return resolve(dirname(importer), what);
+      }
+      return null;
+    });
+
+    const services = createServices(root, entry, {
+      importOverrides: {
+        fake: {
+          mock: './mock.js',
+        },
+      },
+    });
+
+    const broker = new EvalBroker(services, asyncResolve);
+    const entrypoint = Entrypoint.createRoot(
+      services,
+      entry,
+      ['__wywPreval'],
+      readFileSync(entry, 'utf-8')
+    );
+
+    const result = await broker.evaluate(entrypoint);
+
+    expect(result.values?.get('value')).toBe(1);
 
     broker.dispose();
     rmSync(root, { recursive: true, force: true });
