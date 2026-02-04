@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 
 import { TransformCacheCollection } from '../cache';
-import { transformSync } from '../transform';
+import { transform } from '../transform';
 
 const resolveWithExtensions = (candidate: string) => {
   if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
@@ -20,7 +20,7 @@ const resolveWithExtensions = (candidate: string) => {
   return null;
 };
 
-it('keeps shared module initializers stable across multiple export requests', () => {
+it('keeps shared module initializers stable across multiple export requests', async () => {
   const fixturesRoot = path.resolve(__dirname, '__fixtures__', 'issue-99');
   const preloadFile = path.join(fixturesRoot, 'preload.ts');
   const entryFile = path.join(fixturesRoot, 'main.ts');
@@ -35,7 +35,7 @@ it('keeps shared module initializers stable across multiple export requests', ()
 
   const cache = new TransformCacheCollection();
 
-  transformSync(
+  await transform(
     {
       cache,
       options: {
@@ -63,7 +63,7 @@ it('keeps shared module initializers stable across multiple export requests', ()
       },
     },
     preloadCode,
-    (what, importer) => {
+    async (what, importer) => {
       if (what === 'test-css-processor') {
         return processorFile;
       }
@@ -81,7 +81,7 @@ it('keeps shared module initializers stable across multiple export requests', ()
     }
   );
 
-  const result = transformSync(
+  const result = await transform(
     {
       cache,
       options: {
@@ -109,7 +109,7 @@ it('keeps shared module initializers stable across multiple export requests', ()
       },
     },
     code,
-    (what, importer) => {
+    async (what, importer) => {
       if (what === 'test-css-processor') {
         return processorFile;
       }

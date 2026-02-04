@@ -96,6 +96,29 @@ const isBabelTransformTypescriptPlugin = (key: string) => {
   return normalized.includes('plugin-transform-typescript');
 };
 
+const isBabelModuleTransform = (plugin: PluginItem) => {
+  const key = getPluginKey(plugin);
+  if (!key) return false;
+  const normalized = normalizeBabelKey(key);
+  return normalized.includes('transform-modules-');
+};
+
+const removeModuleTransforms = (
+  evalConfig: TransformOptions
+): TransformOptions => {
+  if (!evalConfig.plugins?.length) return evalConfig;
+  const nextPlugins = evalConfig.plugins.filter(
+    (plugin) => !isBabelModuleTransform(plugin)
+  );
+  if (nextPlugins.length === evalConfig.plugins.length) {
+    return evalConfig;
+  }
+  return {
+    ...evalConfig,
+    plugins: nextPlugins,
+  };
+};
+
 const withAllowDeclareFields = (item: PluginItem): PluginItem => {
   if (!Array.isArray(item)) {
     return [item, { allowDeclareFields: true }];
@@ -284,7 +307,7 @@ function buildConfigs(
   });
 
   return {
-    evalConfig,
+    evalConfig: removeModuleTransforms(evalConfig),
     parseConfig,
   };
 }
