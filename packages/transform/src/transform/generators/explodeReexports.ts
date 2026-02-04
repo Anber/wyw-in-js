@@ -1,10 +1,13 @@
-import generate from '@babel/generator';
+import generator from '@babel/generator';
 import type { ExportAllDeclaration, File, Node } from '@babel/types';
 
 import type { Core } from '../../babel';
 import type { IExplodeReexportsAction, SyncScenarioForAction } from '../types';
 
 import { findExportsInImports } from './getExports';
+
+const generate =
+  (generator as unknown as { default?: typeof generator }).default ?? generator;
 
 const getWildcardReexport = (babel: Core, ast: File) => {
   const reexportsFrom: { node: ExportAllDeclaration; source: string }[] = [];

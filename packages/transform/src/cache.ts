@@ -56,7 +56,22 @@ export class TransformCacheCollection<
 
   public setKeySalt(keySalt: string | null) {
     if (this.keySalt === keySalt) return;
+    const prevKeySalt = this.keySalt;
     this.keySalt = keySalt;
+
+    if (prevKeySalt === null && keySalt) {
+      const migrate = <TValue>(cache: Map<string, TValue>) => {
+        const entries = Array.from(cache.entries());
+        cache.clear();
+        entries.forEach(([key, value]) => {
+          cache.set(this.getKey(key), value);
+        });
+      };
+      migrate(this.entrypoints);
+      migrate(this.exports);
+      return;
+    }
+
     this.entrypoints.clear();
     this.exports.clear();
   }

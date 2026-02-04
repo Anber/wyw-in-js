@@ -16,6 +16,7 @@ import type {
   IFileReporterOptions,
 } from '@wyw-in-js/transform';
 import {
+  disposeEvalBroker,
   slugify,
   transform,
   TransformCacheCollection,
@@ -141,6 +142,7 @@ export default function wywInJS({
 
       build.onEnd(() => {
         onDone(process.cwd());
+        disposeEvalBroker(cache);
       });
 
       build.onResolve({ filter: /\.wyw\.css$/ }, (args) => {

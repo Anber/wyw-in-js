@@ -21,7 +21,7 @@ export function prepareModuleOnDemand(
     return {
       code: entrypoint.loadedAndParsed.code ?? '',
       imports: null,
-      only,
+      only: entrypoint.only,
     };
   }
 
@@ -31,6 +31,6 @@ export function prepareModuleOnDemand(
   return {
     code,
     imports,
-    only,
+    only: entrypoint.only,
   };
 }

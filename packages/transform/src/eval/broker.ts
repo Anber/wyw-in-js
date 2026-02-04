@@ -10,9 +10,11 @@ import { invariant } from 'ts-invariant';
 import type {
   EvalOptionsV2,
   EvalWarning,
+  FeatureFlags,
   ImportLoaderContext,
   ImportLoaders,
 } from '@wyw-in-js/shared';
+import { isFeatureEnabled } from '@wyw-in-js/shared';
 
 import type { Entrypoint } from '../transform/Entrypoint';
 import type { Services } from '../transform/types';
@@ -38,7 +40,12 @@ import {
   prepareModuleOnDemand,
   type PreparedModule,
 } from './prepareModuleOnDemand';
-import { deserializeValue, encodeGlobals } from './serialize';
+import {
+  deserializeValue,
+  encodeGlobals,
+  serializeValue,
+  type SerializedValue,
+} from './serialize';
 
 type HiddenModuleMembers = {
   _extensions: Record<string, () => void>;
@@ -54,6 +61,106 @@ const DefaultModuleImplementation = NativeModule as typeof NativeModule &
 
 const NOOP = () => {};
 
+const isBuiltinSpecifier = (specifier: string) => {
+  const normalized = specifier.startsWith('node:')
+    ? specifier.slice(5)
+    : specifier;
+  return (
+    DefaultModuleImplementation.builtinModules?.includes(normalized) ||
+    DefaultModuleImplementation.builtinModules?.includes(`node:${normalized}`)
+  );
+};
+
+const isVirtualSpecifier = (specifier: string) =>
+  specifier.startsWith('/@') ||
+  specifier.startsWith('virtual:') ||
+  specifier.startsWith('\0');
+
+const isEvalOnlyKey = (key: string) =>
+  key === '__wywPreval' || key === 'side-effect';
+
+const isExportContainer = (
+  value: unknown
+): value is Record<string | symbol, unknown> =>
+  value !== null && (typeof value === 'object' || typeof value === 'function');
+
+const hasCachedExport = (
+  source: Record<string | symbol, unknown>,
+  key: string
+) => {
+  if (Object.prototype.hasOwnProperty.call(source, key)) {
+    return true;
+  }
+  if (key === 'default') {
+    return false;
+  }
+  const fallback = source.default;
+  return (
+    isExportContainer(fallback) &&
+    Object.prototype.hasOwnProperty.call(fallback, key)
+  );
+};
+
+const resolveCachedExport = (
+  source: Record<string | symbol, unknown>,
+  key: string
+) => {
+  if (key === 'default') {
+    return Object.prototype.hasOwnProperty.call(source, 'default')
+      ? (source as Record<string, unknown>).default
+      : undefined;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(source, key)) {
+    return (source as Record<string, unknown>)[key];
+  }
+
+  const fallback = (source as Record<string, unknown>).default;
+  if (
+    isExportContainer(fallback) &&
+    Object.prototype.hasOwnProperty.call(fallback, key)
+  ) {
+    return (fallback as Record<string, unknown>)[key];
+  }
+
+  return undefined;
+};
+
+const serializeCachedExports = (
+  exportsValue: Record<string | symbol, unknown>,
+  requiredOnly: string[]
+): Record<string, SerializedValue> | null => {
+  if (requiredOnly.some(isEvalOnlyKey)) {
+    return null;
+  }
+
+  const keys = requiredOnly.includes('*')
+    ? Object.keys(exportsValue).filter((key) => !isEvalOnlyKey(key))
+    : requiredOnly.filter((key) => !isEvalOnlyKey(key));
+
+  if (keys.length === 0) {
+    return null;
+  }
+
+  const serialized: Record<string, SerializedValue> = {};
+  for (const key of keys) {
+    if (!hasCachedExport(exportsValue, key)) {
+      return null;
+    }
+    try {
+      const encoded = serializeValue(resolveCachedExport(exportsValue, key));
+      if (encoded.kind === 'function') {
+        return null;
+      }
+      serialized[key] = encoded;
+    } catch {
+      return null;
+    }
+  }
+
+  return serialized;
+};
+
 const DEFAULT_EVAL_OPTIONS: Required<
   Pick<EvalOptionsV2, 'mode' | 'require' | 'resolver'>
 > = {
@@ -66,7 +173,11 @@ const MAX_MESSAGE_SIZE = 10 * 1024 * 1024;
 const RESOLVE_CACHE_SIZE = 5000;
 const LOAD_CACHE_SIZE = 1000;
 const REQUEST_TIMEOUT_MS = 30_000;
+const EVAL_TIMEOUT_MS = Number(process.env.WYW_EVAL_TIMEOUT_MS ?? 300_000);
 const INIT_TIMEOUT_MS = 120_000;
+const HAPPYDOM_INIT_TIMEOUT_MS = Number(
+  process.env.WYW_EVAL_HAPPYDOM_INIT_TIMEOUT_MS ?? 15_000
+);
 
 type ResolveCacheEntry = {
   resolvedId: string | null;
@@ -80,12 +191,21 @@ type ResolveResult = ResolveCacheEntry & {
 
 type PreparedCacheEntry = PreparedModule & {
   hash: string;
+  exports?: Record<string, SerializedValue>;
 };
 
 type PendingRequest = {
   resolve: (payload: unknown) => void;
   reject: (error: Error) => void;
   timeout: ReturnType<typeof setTimeout>;
+};
+
+const isEvalTimeoutError = (error: unknown): boolean => {
+  if (!error || typeof error !== 'object') return false;
+  if ('code' in error && (error as { code?: string }).code) {
+    return (error as { code?: string }).code === 'WYW_EVAL_TIMEOUT';
+  }
+  return false;
 };
 
 const warnedUnknownImportsByServices = new WeakMap<Services, Set<string>>();
@@ -110,12 +230,13 @@ const buildRunnerPath = (): string => {
 
 const buildRunnerInitPayload = (
   services: Services,
-  entrypoint: Entrypoint
+  entrypoint: Entrypoint,
+  featuresOverride?: FeatureFlags<'happyDOM'>
 ): EvalRunnerInitPayload => {
   const evalOptions = getEvalOptions(services);
   const { pluginOptions, root } = services.options;
-  const { overrideContext, importOverrides, extensions, features } =
-    pluginOptions;
+  const { overrideContext, importOverrides, extensions } = pluginOptions;
+  const features = featuresOverride ?? pluginOptions.features;
   const baseGlobals: Record<string, unknown> = {
     ...(evalOptions.globals ?? {}),
   };
@@ -291,6 +412,10 @@ export class EvalBroker {
 
   private readonly dependencies = new Set<string>();
 
+  private happyDomDisabled = false;
+
+  private happyDomDisableWarned = false;
+
   constructor(
     private readonly services: Services,
     private readonly asyncResolve: (
@@ -300,6 +425,13 @@ export class EvalBroker {
     ) => Promise<string | null>
   ) {}
 
+  private ensureImportsMapping(
+    id: string,
+    imports: Map<string, string[]> | null | undefined
+  ) {
+    this.importsByModule.set(id, imports ?? new Map());
+  }
+
   public async evaluate(entrypoint: Entrypoint): Promise<{
     values: Map<string, unknown> | null;
     dependencies: string[];
@@ -308,14 +440,24 @@ export class EvalBroker {
       this.dependencies.clear();
       this.importsByModule.clear();
       this.onlyByModule.clear();
+      this.resolveCache.clear();
+      this.resolveInFlight.clear();
       this.onlyByModule.set(entrypoint.name, ['__wywPreval']);
 
       await this.ensureRunner();
       await this.initRunner(entrypoint);
 
-      const payload = await this.request<EvalResultPayload>('EVAL', {
-        id: entrypoint.name,
-      });
+      const payload = await this.request<EvalResultPayload>(
+        'EVAL',
+        {
+          id: entrypoint.name,
+        },
+        EVAL_TIMEOUT_MS
+      );
+
+      if (payload.modules) {
+        this.applyModuleExports(payload.modules);
+      }
 
       if (!payload.values) {
         return { values: null, dependencies: [] };
@@ -328,7 +470,7 @@ export class EvalBroker {
 
       return {
         values,
-        dependencies: Array.from(this.dependencies),
+        dependencies: this.collectEntrypointDependencies(entrypoint.name),
       };
     });
 
@@ -340,6 +482,41 @@ export class EvalBroker {
     return task;
   }
 
+  private applyModuleExports(
+    modules: Record<string, Record<string, SerializedValue>>
+  ) {
+    Object.entries(modules).forEach(([id, serializedExports]) => {
+      if (!serializedExports || Object.keys(serializedExports).length === 0) {
+        return;
+      }
+
+      const cached = this.services.cache.get('entrypoints', id);
+      if (!cached || cached.ignored) {
+        return;
+      }
+
+      const target =
+        cached.evaluated || !('createEvaluated' in cached)
+          ? cached
+          : cached.createEvaluated();
+
+      const exportsProxy = target.exports;
+      Object.entries(serializedExports).forEach(([key, serialized]) => {
+        exportsProxy[key] = deserializeValue(serialized);
+      });
+
+      const merged = mergeOnly(
+        target.evaluatedOnly ?? [],
+        Object.keys(serializedExports)
+      );
+      if (target.evaluatedOnly) {
+        target.evaluatedOnly.splice(0, target.evaluatedOnly.length, ...merged);
+      }
+
+      this.services.cache.add('entrypoints', id, target);
+    });
+  }
+
   public dispose() {
     if (this.runner) {
       this.runner.removeAllListeners();
@@ -347,6 +524,7 @@ export class EvalBroker {
       this.runner = null;
       this.runnerReady = null;
     }
+    this.lastInitKey = null;
   }
 
   private async ensureRunner() {
@@ -366,6 +544,7 @@ export class EvalBroker {
       env: {
         ...process.env,
         WYW_EVAL_RUNNER: '1',
+        NODE_NO_WARNINGS: '1',
       },
     });
 
@@ -396,9 +575,76 @@ export class EvalBroker {
       return;
     }
 
-    const payload = buildRunnerInitPayload(this.services, entrypoint);
-    await this.request('INIT', payload, INIT_TIMEOUT_MS);
-    this.lastInitKey = initKey;
+    const features = this.getRunnerFeatures();
+    const payload = buildRunnerInitPayload(this.services, entrypoint, features);
+    const timeoutMs = this.getInitTimeoutMs(entrypoint, features);
+
+    try {
+      await this.request('INIT', payload, timeoutMs);
+      this.lastInitKey = initKey;
+    } catch (error) {
+      if (
+        isEvalTimeoutError(error) &&
+        !this.happyDomDisabled &&
+        isFeatureEnabled(features, 'happyDOM', entrypoint.name)
+      ) {
+        this.happyDomDisabled = true;
+        this.warnHappyDomDisabledOnce(timeoutMs);
+        this.dispose();
+        await this.ensureRunner();
+        const fallbackFeatures = this.getRunnerFeatures();
+        const fallbackPayload = buildRunnerInitPayload(
+          this.services,
+          entrypoint,
+          fallbackFeatures
+        );
+        await this.request('INIT', fallbackPayload, INIT_TIMEOUT_MS);
+        this.lastInitKey = initKey;
+        return;
+      }
+      throw error;
+    }
+  }
+
+  private getRunnerFeatures(): FeatureFlags<'happyDOM'> {
+    const base = this.services.options.pluginOptions.features;
+    if (!this.happyDomDisabled) return base;
+    return { ...base, happyDOM: false };
+  }
+
+  private getInitTimeoutMs(
+    entrypoint: Entrypoint,
+    features: FeatureFlags<'happyDOM'>
+  ) {
+    if (
+      this.happyDomDisabled ||
+      !HAPPYDOM_INIT_TIMEOUT_MS ||
+      HAPPYDOM_INIT_TIMEOUT_MS <= 0
+    ) {
+      return INIT_TIMEOUT_MS;
+    }
+
+    if (isFeatureEnabled(features, 'happyDOM', entrypoint.name)) {
+      return Math.min(INIT_TIMEOUT_MS, HAPPYDOM_INIT_TIMEOUT_MS);
+    }
+
+    return INIT_TIMEOUT_MS;
+  }
+
+  private warnHappyDomDisabledOnce(timeoutMs: number) {
+    if (this.happyDomDisableWarned) return;
+    this.happyDomDisableWarned = true;
+    emitWarning(
+      this.services,
+      [
+        `[wyw-in-js] DOM emulation initialization exceeded ${timeoutMs}ms and will be disabled for this run.`,
+        `WyW will continue without DOM emulation (as if features.happyDOM:false).`,
+        ``,
+        `To silence this warning: set features: { happyDOM: false }.`,
+        `To restore DOM emulation, ensure "happy-dom" can be imported in the build-time runtime.`,
+        `You can tune the timeout with WYW_EVAL_HAPPYDOM_INIT_TIMEOUT_MS.`,
+      ].join('\n')
+    );
   }
 
   private onData(chunk: string) {
@@ -491,16 +737,106 @@ export class EvalBroker {
     });
   }
 
+  private normalizeResolvedId(
+    resolvedId: string,
+    specifier: string,
+    importerId?: string
+  ): string {
+    const stripped = stripQueryAndHash(resolvedId);
+    if (!stripped) return resolvedId;
+    if (path.extname(stripped)) return resolvedId;
+
+    const isFileSpecifier =
+      specifier.startsWith('.') || path.isAbsolute(specifier);
+    if (!isFileSpecifier && !path.isAbsolute(stripped)) {
+      return resolvedId;
+    }
+
+    let candidate = stripped;
+    if (!path.isAbsolute(candidate)) {
+      if (!importerId) {
+        return resolvedId;
+      }
+      const importerFile = stripQueryAndHash(importerId);
+      candidate = path.resolve(path.dirname(importerFile), candidate);
+    }
+
+    const suffix = resolvedId.slice(stripped.length);
+    for (const ext of this.services.options.pluginOptions.extensions) {
+      const fileCandidate = `${candidate}${ext}`;
+      if (fs.existsSync(fileCandidate)) {
+        return `${fileCandidate}${suffix}`;
+      }
+
+      const indexCandidate = path.join(candidate, `index${ext}`);
+      if (fs.existsSync(indexCandidate)) {
+        return `${indexCandidate}${suffix}`;
+      }
+    }
+
+    if (importerId) {
+      try {
+        const importerFile = stripQueryAndHash(importerId);
+        const resolved = DefaultModuleImplementation._resolveFilename(stripped, {
+          id: importerFile,
+          filename: importerFile,
+          paths: DefaultModuleImplementation._nodeModulePaths(
+            path.dirname(importerFile)
+          ),
+        });
+        if (resolved && resolved !== stripped) {
+          return `${resolved}${suffix}`;
+        }
+      } catch {
+        // ignore fallback failures
+      }
+    }
+
+    return resolvedId;
+  }
+
   private async resolveImport({
     specifier,
     importerId,
     kind,
   }: ResolveRequestPayload): Promise<ResolveResult> {
-    this.dependencies.add(specifier);
+    if (process.env.WYW_DEBUG_EVAL_RESOLVE) {
+      // eslint-disable-next-line no-console
+      console.warn('[wyw-eval:resolve]', { specifier, importerId, kind });
+    }
     const key = `${kind}:${importerId}:${specifier}`;
     const evalOptions = getEvalOptions(this.services);
     const stack = [importerId];
-    const only = this.importsByModule.get(importerId)?.get(specifier) ?? ['*'];
+    const importsOnly = this.importsByModule.get(importerId)?.get(specifier);
+    const only = importsOnly ?? ['*'];
+    if (process.env.WYW_DEBUG_EVAL_RESOLVE && !importsOnly) {
+      // eslint-disable-next-line no-console
+      console.warn('[wyw-eval:resolve:only-miss]', {
+        specifier,
+        importerId,
+        kind,
+      });
+    }
+    const strippedSpecifier = stripQueryAndHash(specifier);
+    if (path.isAbsolute(strippedSpecifier)) {
+      const normalized = this.normalizeResolvedId(
+        specifier,
+        specifier,
+        importerId
+      );
+      const overridden = this.applyImportOverrides(
+        {
+          source: specifier,
+          resolved: normalized,
+          only,
+          external: false,
+        },
+        importerId,
+        stack
+      );
+      this.resolveCache.set(key, { resolvedId: normalized, external: false });
+      return overridden;
+    }
 
     const cached = this.resolveCache.get(key);
     if (cached) {
@@ -508,10 +844,15 @@ export class EvalBroker {
         return { resolvedId: null, only: ['*'] };
       }
 
+      const normalized = this.normalizeResolvedId(
+        cached.resolvedId,
+        specifier,
+        importerId
+      );
       const overridden = this.applyImportOverrides(
         {
           source: specifier,
-          resolved: cached.resolvedId,
+          resolved: normalized,
           only,
           external: cached.external,
         },
@@ -522,9 +863,8 @@ export class EvalBroker {
         this.maybeWarnNodeFallback({
           importerId,
           specifier,
-          resolvedId: cached.resolvedId,
+          resolvedId: normalized,
           kind,
-          overridden,
         });
       }
       return overridden;
@@ -536,10 +876,15 @@ export class EvalBroker {
       if (!cachedResult.resolvedId) {
         return { resolvedId: null, only: ['*'] };
       }
+      const normalized = this.normalizeResolvedId(
+        cachedResult.resolvedId,
+        specifier,
+        importerId
+      );
       const overridden = this.applyImportOverrides(
         {
           source: specifier,
-          resolved: cachedResult.resolvedId,
+          resolved: normalized,
           only,
           external: cachedResult.external,
         },
@@ -550,9 +895,8 @@ export class EvalBroker {
         this.maybeWarnNodeFallback({
           importerId,
           specifier,
-          resolvedId: cachedResult.resolvedId,
+          resolvedId: normalized,
           kind,
-          overridden,
         });
       }
       return overridden;
@@ -566,8 +910,23 @@ export class EvalBroker {
           kind
         );
         if (customResolved) {
+          const normalized = this.normalizeResolvedId(
+            customResolved.id,
+            specifier,
+            importerId
+          );
+          if (process.env.WYW_DEBUG_EVAL_RESOLVE) {
+            // eslint-disable-next-line no-console
+            console.warn('[wyw-eval:resolve:custom]', {
+              specifier,
+              importerId,
+              resolved: customResolved.id,
+              normalized,
+              external: customResolved.external,
+            });
+          }
           return {
-            resolvedId: customResolved.id,
+            resolvedId: normalized,
             external: customResolved.external,
           };
         }
@@ -578,19 +937,59 @@ export class EvalBroker {
       }
 
       if (evalOptions.resolver !== 'node') {
-        const resolved = await this.asyncResolve(specifier, importerId, stack);
+        let resolved: string | null = null;
+        try {
+          resolved = await this.asyncResolve(specifier, importerId, stack);
+        } catch {
+          resolved = null;
+        }
         if (resolved) {
-          return { resolvedId: resolved };
+          const normalized = this.normalizeResolvedId(
+            resolved,
+            specifier,
+            importerId
+          );
+          if (process.env.WYW_DEBUG_EVAL_RESOLVE) {
+            // eslint-disable-next-line no-console
+            console.warn('[wyw-eval:resolve:async]', {
+              specifier,
+              importerId,
+              resolved,
+              normalized,
+            });
+          }
+          return {
+            resolvedId: normalized,
+          };
         }
       }
 
       if (evalOptions.resolver === 'node' || evalOptions.require !== 'off') {
+        const nodeResolved = this.resolveWithNodeFallback(
+          specifier,
+          importerId
+        );
+        if (process.env.WYW_DEBUG_EVAL_RESOLVE) {
+          // eslint-disable-next-line no-console
+          console.warn('[wyw-eval:resolve:node]', {
+            specifier,
+            importerId,
+            resolved: nodeResolved.resolvedId,
+          });
+        }
         return {
-          ...this.resolveWithNodeFallback(specifier, importerId),
+          ...nodeResolved,
           usedNodeFallback: evalOptions.resolver !== 'node',
         };
       }
 
+      if (process.env.WYW_DEBUG_EVAL_RESOLVE) {
+        // eslint-disable-next-line no-console
+        console.warn('[wyw-eval:resolve:none]', {
+          specifier,
+          importerId,
+        });
+      }
       return { resolvedId: null };
     })();
 
@@ -621,7 +1020,6 @@ export class EvalBroker {
           specifier,
           resolvedId: result.resolvedId,
           kind,
-          overridden,
         });
       }
 
@@ -629,6 +1027,20 @@ export class EvalBroker {
     } finally {
       this.resolveInFlight.delete(key);
     }
+  }
+
+  private collectEntrypointDependencies(entrypointId: string): string[] {
+    const collected = new Set(this.dependencies);
+    const imports = this.importsByModule.get(entrypointId);
+    if (imports) {
+      for (const specifier of imports.keys()) {
+        if (isBuiltinSpecifier(specifier) || isVirtualSpecifier(specifier)) {
+          continue;
+        }
+        collected.add(specifier);
+      }
+    }
+    return Array.from(collected);
   }
 
   private applyImportOverrides(
@@ -729,7 +1141,7 @@ export class EvalBroker {
       }
 
       return {
-        resolvedId: resolved,
+        resolvedId: this.normalizeResolvedId(resolved, specifier, importerId),
       };
     } finally {
       added.forEach((ext) => delete extensions[ext]);
@@ -741,13 +1153,11 @@ export class EvalBroker {
     specifier,
     resolvedId,
     kind,
-    overridden,
   }: {
     importerId: string;
     specifier: string;
     resolvedId: string;
     kind: ResolveRequestPayload['kind'];
-    overridden: ResolveResult;
   }) {
     const evalOptions = getEvalOptions(this.services);
     const { root } = this.services.options;
@@ -831,6 +1241,8 @@ export class EvalBroker {
         code: prepared.code,
         map: null,
         hash: prepared.hash,
+        only: prepared.only,
+        exports: prepared.exports,
       },
     });
   }
@@ -842,7 +1254,39 @@ export class EvalBroker {
   }: LoadRequestPayload): Promise<PreparedCacheEntry> {
     const cached = this.loadCache.get(id);
     const requiredOnly = this.onlyByModule.get(id) ?? ['*'];
+    const cachedEntrypoint = this.services.cache.get('entrypoints', id) as
+      | {
+          evaluated?: boolean;
+          evaluatedOnly?: string[];
+          exports?: Record<string | symbol, unknown>;
+          ignored?: boolean;
+        }
+      | undefined;
+    if (
+      cachedEntrypoint &&
+      cachedEntrypoint.evaluated &&
+      !cachedEntrypoint.ignored &&
+      cachedEntrypoint.exports &&
+      isSuperSet(cachedEntrypoint.evaluatedOnly ?? [], requiredOnly)
+    ) {
+      const cacheOnly = cachedEntrypoint.evaluatedOnly ?? requiredOnly;
+      const serialized = serializeCachedExports(
+        cachedEntrypoint.exports,
+        cacheOnly
+      );
+      if (serialized) {
+        const hash = hashContent(`exports:${JSON.stringify(serialized)}`);
+        return {
+          code: '',
+          imports: null,
+          only: cacheOnly,
+          hash,
+          exports: serialized,
+        };
+      }
+    }
     if (cached && isSuperSet(cached.only, requiredOnly)) {
+      this.ensureImportsMapping(id, cached.imports);
       return cached;
     }
 
@@ -850,6 +1294,7 @@ export class EvalBroker {
     if (inflight) {
       const result = await inflight;
       if (isSuperSet(result.only, requiredOnly)) {
+        this.ensureImportsMapping(id, result.imports);
         return result;
       }
     }
@@ -922,11 +1367,7 @@ export class EvalBroker {
         cached ? mergeOnly(cached.only, requiredOnly) : requiredOnly
       );
 
-      if (prepared.imports) {
-        this.importsByModule.set(id, prepared.imports);
-      } else {
-        this.importsByModule.set(id, new Map());
-      }
+      this.ensureImportsMapping(id, prepared.imports);
 
       const hash = hashContent(prepared.code);
       return { ...prepared, hash };
@@ -967,7 +1408,11 @@ export class EvalBroker {
       const timeout = setTimeout(() => {
         this.pending.delete(id);
         this.runner?.kill();
-        reject(new Error(`[wyw-in-js] Eval runner timed out for ${type}`));
+        const error = new Error(
+          `[wyw-in-js] Eval runner timed out for ${type}`
+        );
+        (error as { code?: string }).code = 'WYW_EVAL_TIMEOUT';
+        reject(error);
       }, timeoutMs);
 
       this.pending.set(id, {
@@ -988,12 +1433,19 @@ export class EvalBroker {
     pending.resolve(payload);
   }
 
-  private rejectPending(id: string, error: { message: string }) {
+  private rejectPending(
+    id: string,
+    error: { message: string; stack?: string }
+  ) {
     const pending = this.pending.get(id);
     if (!pending) return;
     clearTimeout(pending.timeout);
     this.pending.delete(id);
-    pending.reject(new Error(error.message));
+    const err = new Error(error.message);
+    if (error.stack) {
+      err.stack = error.stack;
+    }
+    pending.reject(err);
   }
 
   private rejectAllPending(error: Error) {
@@ -1010,6 +1462,13 @@ const evalBrokers = new WeakMap<
   { key: string; broker: EvalBroker }
 >();
 
+export const disposeEvalBroker = (cache: Services['cache']) => {
+  const cached = evalBrokers.get(cache);
+  if (!cached) return;
+  cached.broker.dispose();
+  evalBrokers.delete(cache);
+};
+
 export const getEvalBroker = (
   services: Services,
   asyncResolve: (
@@ -1022,7 +1481,9 @@ export const getEvalBroker = (
   const cached = evalBrokers.get(services.cache);
   if (cached && cached.key === cacheKey) return cached.broker;
 
-  cached?.broker.dispose();
+  if (cached) {
+    disposeEvalBroker(services.cache);
+  }
   const broker = new EvalBroker(services, asyncResolve);
   evalBrokers.set(services.cache, { key: cacheKey, broker });
   return broker;

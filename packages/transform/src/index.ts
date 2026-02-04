@@ -12,6 +12,7 @@ export type { WYWTransformMetadata } from './utils/TransformMetadata';
 export { Module, DefaultModuleImplementation } from './module';
 export { default as shaker } from './shaker';
 export { transform } from './transform';
+export { disposeEvalBroker } from './eval/broker';
 export {
   isUnprocessedEntrypointError,
   UnprocessedEntrypointError,
