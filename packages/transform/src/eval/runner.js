@@ -1370,9 +1370,12 @@ const handleMessage = async (message) => {
 
         const canReuseContext =
           state.context && state.happyDomEnabled === nextHappyDomEnabled;
+        const reuseModules = Boolean(message.payload.reuseModules);
 
         if (canReuseContext) {
-          resetModuleState();
+          if (!reuseModules) {
+            resetModuleState();
+          }
           state.evalOptions = nextEvalOptions;
           state.features = nextFeatures;
           state.entrypoint = nextEntrypoint;

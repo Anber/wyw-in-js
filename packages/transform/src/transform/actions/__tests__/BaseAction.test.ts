@@ -118,7 +118,7 @@ describe('BaseAction', () => {
           onError(e);
         }
 
-        yield ['processImports', entrypoint, { resolved: [] }, null];
+        yield ['getExports', entrypoint, undefined, null];
 
         return emptyResult;
       };
@@ -133,7 +133,7 @@ describe('BaseAction', () => {
       const error = new Error('foo');
       expect(generator.throw(error)).toEqual({
         done: false,
-        value: ['processImports', entrypoint, { resolved: [] }, null],
+        value: ['getExports', entrypoint, undefined, null],
       });
       expect(onError).toHaveBeenCalledWith(error);
 

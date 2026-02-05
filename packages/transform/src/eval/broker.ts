@@ -218,6 +218,27 @@ const getWarnedUnknownImports = (services: Services): Set<string> => {
   return created;
 };
 
+const warnedSlowImportsByServices = new WeakMap<Services, Set<string>>();
+
+const getWarnedSlowImports = (services: Services): Set<string> => {
+  const cached = warnedSlowImportsByServices.get(services);
+  if (cached) return cached;
+  const created = new Set<string>();
+  warnedSlowImportsByServices.set(services, created);
+  return created;
+};
+
+const isWarningEnabled = (value: string | undefined): boolean =>
+  Boolean(value) && value !== '0' && value !== 'false';
+
+const getSlowImportThresholdMs = () => {
+  const raw = process.env.WYW_WARN_SLOW_IMPORTS_MS;
+  if (!raw) return 50;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) return 50;
+  return parsed;
+};
+
 const getEvalOptions = (services: Services): EvalOptionsV2 => ({
   ...DEFAULT_EVAL_OPTIONS,
   ...(services.options.pluginOptions.eval ?? {}),
@@ -577,6 +598,7 @@ export class EvalBroker {
 
     const features = this.getRunnerFeatures();
     const payload = buildRunnerInitPayload(this.services, entrypoint, features);
+    payload.reuseModules = !this.services.options.pluginOptions.overrideContext;
     const timeoutMs = this.getInitTimeoutMs(entrypoint, features);
 
     try {
@@ -1299,6 +1321,25 @@ export class EvalBroker {
       }
     }
 
+    const slowImportWarningsEnabled = isWarningEnabled(
+      process.env.WYW_WARN_SLOW_IMPORTS
+    );
+    const slowImportThresholdMs = slowImportWarningsEnabled
+      ? getSlowImportThresholdMs()
+      : 0;
+    const warnedSlowImports = slowImportWarningsEnabled
+      ? getWarnedSlowImports(this.services)
+      : null;
+    const shouldWarnSlowImport = Boolean(
+      slowImportWarningsEnabled &&
+        warnedSlowImports &&
+        slowImportThresholdMs > 0 &&
+        request &&
+        importerId &&
+        importerId !== id
+    );
+    const slowImportStartedAt = shouldWarnSlowImport ? performance.now() : 0;
+
     const task = (async () => {
       const evalOptions = getEvalOptions(this.services);
 
@@ -1368,6 +1409,41 @@ export class EvalBroker {
       );
 
       this.ensureImportsMapping(id, prepared.imports);
+
+      if (shouldWarnSlowImport && request && importerId) {
+        const durationMs = performance.now() - slowImportStartedAt;
+        if (durationMs >= slowImportThresholdMs) {
+          const { root } = this.services.options;
+          const resolvedKey = stripQueryAndHash(id);
+          const { key: importKey } = toImportKey({
+            source: request,
+            resolved: resolvedKey,
+            root,
+          });
+          const dedupeKey = `${importerId}::${importKey}`;
+          if (warnedSlowImports && !warnedSlowImports.has(dedupeKey)) {
+            warnedSlowImports.add(dedupeKey);
+            const warning = [
+              `[wyw-in-js] Slow import during prepare stage`,
+              ``,
+              `file: ${importerId}`,
+              `import: ${request}`,
+              `resolved: ${resolvedKey}`,
+              `duration: ${durationMs.toFixed(1)}ms`,
+              ``,
+              `tip: if this import is runtime-only or heavy, mock it during evaluation via importOverrides:`,
+              `  importOverrides: {`,
+              `    '${importKey}': { mock: './path/to/mock' },`,
+              `  }`,
+              ``,
+              `note: importOverrides affects only build-time evaluation (it does not change your bundler runtime behavior)`,
+              ``,
+              `note: configure threshold with WYW_WARN_SLOW_IMPORTS_MS (current: ${slowImportThresholdMs}ms)`,
+            ].join('\n');
+            emitWarning(this.services, warning);
+          }
+        }
+      }
 
       const hash = hashContent(prepared.code);
       return { ...prepared, hash };
