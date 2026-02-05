@@ -19,19 +19,28 @@ const fixturesFolder = join(
   'collectExportsAndImports'
 );
 
-const inputMask = join(fixturesFolder, '*', '*.js').replaceAll(sep, '/');
+const inputMask = join(fixturesFolder, '*.input.ts').replaceAll(sep, '/');
+const excludedTests = new Set([
+  'export_module_exports_eq',
+  'export_with_defineProperty_with_getter',
+  'export_with_defineProperty_with_value',
+  're-export___exportStar',
+]);
 
 const inputs = globSync(inputMask)
   .map((filename) => {
-    const [testName, compiler] = filename
+    const testName = filename
       .substring(fixturesFolder.length + 1)
-      .split(sep);
+      .replace(/\.input\.ts$/, '');
     return {
-      compiler: compiler.replace(/\.input\.js$/, ''),
+      compiler: 'source',
       filename,
       testName,
     };
   })
+  .filter(
+    ({ testName }) => !excludedTests.has(testName) && !testName.startsWith('require_')
+  )
   .reduce(
     (acc, { compiler, filename, testName }) => {
       if (!acc[testName]) {
