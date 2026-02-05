@@ -1,20 +1,11 @@
-import type {
-  BabelFileResult,
-  PluginItem,
-  TransformOptions,
-} from '@babel/core';
 import type { File } from '@babel/types';
 
 import type { EvaluatorConfig, StrictOptions } from '@wyw-in-js/shared';
 
 import type { Core } from '../../babel';
-import { buildOptions } from '../../options/buildOptions';
-import dynamicImportPlugin from '../../plugins/dynamic-import';
-import preevalPlugin from '../../plugins/preeval';
-import type { EventEmitter } from '../../utils/EventEmitter';
 import type { WYWTransformMetadata } from '../../utils/TransformMetadata';
 import { getTransformMetadata } from '../../utils/TransformMetadata';
-import { getPluginKey } from '../../utils/getPluginKey';
+import { runPreevalStage } from '../preevalStage';
 import type { Entrypoint } from '../Entrypoint';
 import type {
   ITransformAction,
@@ -23,54 +14,6 @@ import type {
 } from '../types';
 
 const EMPTY_FILE = '=== empty file ===';
-
-const hasKeyInList = (plugin: PluginItem, list: string[]): boolean => {
-  const pluginKey = getPluginKey(plugin);
-  return pluginKey ? list.some((i) => pluginKey.includes(i)) : false;
-};
-
-function runPreevalStage(
-  babel: Core,
-  evalConfig: TransformOptions,
-  pluginOptions: StrictOptions,
-  code: string,
-  originalAst: File,
-  eventEmitter: EventEmitter
-): BabelFileResult {
-  const preShakePlugins =
-    evalConfig.plugins?.filter((i) =>
-      hasKeyInList(i, pluginOptions.highPriorityPlugins)
-    ) ?? [];
-
-  const plugins = [
-    ...preShakePlugins,
-    [
-      preevalPlugin,
-      {
-        ...pluginOptions,
-        eventEmitter,
-      },
-    ],
-    dynamicImportPlugin,
-    ...(evalConfig.plugins ?? []).filter(
-      (i) => !hasKeyInList(i, pluginOptions.highPriorityPlugins)
-    ),
-  ];
-
-  const transformConfig = buildOptions({
-    ...evalConfig,
-    envName: 'wyw-in-js',
-    plugins,
-  });
-
-  const result = babel.transformFromAstSync(originalAst, code, transformConfig);
-
-  if (!result || !result.ast?.program) {
-    throw new Error('Babel transform failed');
-  }
-
-  return result;
-}
 
 type PrepareCodeFn = (
   services: Services,
