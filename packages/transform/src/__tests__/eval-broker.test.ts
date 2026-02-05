@@ -229,6 +229,51 @@ describe('EvalBroker', () => {
     rmSync(root, { recursive: true, force: true });
   });
 
+  it('evaluates a cyclic module graph via runner', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
+    const entry = join(root, 'a.js');
+    const dep = join(root, 'b.js');
+
+    writeFileSync(
+      entry,
+      [
+        "import { valueB } from './b.js';",
+        'export const valueA = 40;',
+        'export const __wywPreval = {',
+        '  value: () => valueA + valueB,',
+        '};',
+      ].join('\n')
+    );
+    writeFileSync(
+      dep,
+      ["import { valueA } from './a.js';", 'export const valueB = 2;'].join(
+        '\n'
+      )
+    );
+
+    const asyncResolve = jest.fn(async (what: string, importer: string) => {
+      if (what.startsWith('.')) {
+        return resolve(dirname(importer), what);
+      }
+      return null;
+    });
+    const services = createServices(root, entry);
+    const broker = new EvalBroker(services, asyncResolve);
+    const entrypoint = Entrypoint.createRoot(
+      services,
+      entry,
+      ['__wywPreval'],
+      readFileSync(entry, 'utf-8')
+    );
+
+    const result = await broker.evaluate(entrypoint);
+
+    expect(result.values?.get('value')).toBe(42);
+
+    broker.dispose();
+    rmSync(root, { recursive: true, force: true });
+  });
+
   it('applies importOverrides when resolving external packages', async () => {
     const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
     const entry = join(root, 'entry.js');
