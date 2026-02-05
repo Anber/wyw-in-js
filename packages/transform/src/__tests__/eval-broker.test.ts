@@ -282,4 +282,140 @@ describe('EvalBroker', () => {
     broker.dispose();
     rmSync(root, { recursive: true, force: true });
   });
+
+  it('warns once when require fallback is used during eval', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
+    const entry = join(root, 'entry.js');
+    const nodeModulesDir = join(root, 'node_modules', 'fake');
+    const dep = join(nodeModulesDir, 'index.js');
+
+    mkdirSync(nodeModulesDir, { recursive: true });
+    writeFileSync(dep, 'module.exports = { value: 41 };');
+    writeFileSync(
+      entry,
+      [
+        "const fake = require('fake');",
+        'export const __wywPreval = {',
+        '  value: () => fake.value,',
+        '};',
+      ].join('\n')
+    );
+
+    const warnings: Array<{ code: string; specifier?: string }> = [];
+    const services = createServices(root, entry, {
+      eval: {
+        require: 'warn-and-run',
+        onWarn: (warning) => warnings.push(warning),
+      },
+    });
+
+    const broker = new EvalBroker(services, jest.fn(async () => null));
+    const entrypoint = Entrypoint.createRoot(
+      services,
+      entry,
+      ['__wywPreval'],
+      readFileSync(entry, 'utf-8')
+    );
+
+    const first = await broker.evaluate(entrypoint);
+    const second = await broker.evaluate(entrypoint);
+
+    expect(first.values?.get('value')).toBe(41);
+    expect(second.values?.get('value')).toBe(41);
+    expect(warnings.filter((w) => w.code === 'require-fallback')).toHaveLength(
+      1
+    );
+    expect(warnings[0].specifier).toBe('fake');
+
+    broker.dispose();
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('suppresses require fallback warnings when importOverrides match', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
+    const entry = join(root, 'entry.js');
+    const mock = join(root, 'mock.cjs');
+    const nodeModulesDir = join(root, 'node_modules', 'fake');
+    const dep = join(nodeModulesDir, 'index.js');
+
+    mkdirSync(nodeModulesDir, { recursive: true });
+    writeFileSync(dep, 'module.exports = { value: 41 };');
+    writeFileSync(mock, 'module.exports = { value: 1 };');
+    writeFileSync(
+      entry,
+      [
+        "const fake = require('fake');",
+        'export const __wywPreval = {',
+        '  value: () => fake.value,',
+        '};',
+      ].join('\n')
+    );
+
+    const warnings: Array<{ code: string }> = [];
+    const services = createServices(root, entry, {
+      eval: {
+        require: 'warn-and-run',
+        onWarn: (warning) => warnings.push(warning),
+      },
+      importOverrides: {
+        fake: {
+          mock: './mock.cjs',
+        },
+      },
+    });
+
+    const broker = new EvalBroker(services, jest.fn(async () => null));
+    const entrypoint = Entrypoint.createRoot(
+      services,
+      entry,
+      ['__wywPreval'],
+      readFileSync(entry, 'utf-8')
+    );
+
+    const result = await broker.evaluate(entrypoint);
+
+    expect(result.values?.get('value')).toBe(1);
+    expect(warnings.filter((w) => w.code === 'require-fallback')).toHaveLength(
+      0
+    );
+
+    broker.dispose();
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('throws on non-literal require in strict mode', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
+    const entry = join(root, 'entry.js');
+
+    writeFileSync(
+      entry,
+      [
+        "const name = 'fake';",
+        'const fake = require(name);',
+        'export const __wywPreval = {',
+        '  value: () => fake?.value ?? 0,',
+        '};',
+      ].join('\n')
+    );
+
+    const services = createServices(root, entry, {
+      eval: {
+        mode: 'strict',
+      },
+    });
+    const broker = new EvalBroker(services, jest.fn(async () => null));
+    const entrypoint = Entrypoint.createRoot(
+      services,
+      entry,
+      ['__wywPreval'],
+      readFileSync(entry, 'utf-8')
+    );
+
+    await expect(broker.evaluate(entrypoint)).rejects.toThrow(
+      'Non-literal require() is not supported during eval'
+    );
+
+    broker.dispose();
+    rmSync(root, { recursive: true, force: true });
+  });
 });
