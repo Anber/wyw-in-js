@@ -5,53 +5,12 @@ import type { EvaluatorConfig } from '@wyw-in-js/shared';
 import type { Services } from '../transform/types';
 import { Entrypoint } from '../transform/Entrypoint';
 import { runPreevalStage } from '../transform/preevalStage';
-import { collectExportsAndImports } from '../utils/collectExportsAndImports';
 import { getTransformMetadata } from '../utils/TransformMetadata';
 
 export type PreparedModule = {
   code: string;
   imports: Map<string, string[]> | null;
   only: string[];
-};
-
-const collectImportsMap = (
-  services: Services,
-  ast: File
-): Map<string, string[]> => {
-  const imports = new Map<string, string[]>();
-  const processedImports = new Set<string>();
-
-  const addImport = ({
-    imported,
-    source,
-  }: {
-    imported: string;
-    source: string;
-  }) => {
-    if (processedImports.has(`${source}:${imported}`)) {
-      return;
-    }
-
-    if (!imports.has(source)) {
-      imports.set(source, []);
-    }
-
-    if (imported) {
-      imports.get(source)!.push(imported);
-    }
-
-    processedImports.add(`${source}:${imported}`);
-  };
-
-  services.babel.traverse(ast, {
-    Program(path) {
-      const collected = collectExportsAndImports(path);
-      collected.imports.forEach(addImport);
-      collected.reexports.forEach(addImport);
-    },
-  });
-
-  return imports;
 };
 
 export function prepareModuleOnDemand(
@@ -87,12 +46,11 @@ export function prepareModuleOnDemand(
   );
 
   const transformMetadata = getTransformMetadata(preevalStageResult.metadata);
-  const imports = collectImportsMap(services, preevalStageResult.ast!);
 
   if (only.length === 1 && only[0] === '__wywPreval' && !transformMetadata) {
     return {
       code: preevalStageResult.code!,
-      imports,
+      imports: null,
       only: entrypoint.only,
     };
   }
@@ -119,7 +77,7 @@ export function prepareModuleOnDemand(
 
   return {
     code: transformedCode,
-    imports: evaluatorImports ?? imports,
+    imports: evaluatorImports,
     only: entrypoint.only,
   };
 }
