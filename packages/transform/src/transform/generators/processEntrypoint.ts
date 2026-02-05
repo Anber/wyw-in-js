@@ -1,28 +1,9 @@
-import { shaker } from '../../shaker';
 import { isAborted } from '../actions/AbortError';
-import { analyzeBarrelFile } from '../barrelManifest';
 import type { IProcessEntrypointAction, SyncScenarioForAction } from '../types';
-
-const shouldSkipExplodeReexports = (
-  action: IProcessEntrypointAction
-): boolean => {
-  const { loadedAndParsed, only } = action.entrypoint;
-  if (only.length === 1 && only[0] === '__wywPreval') {
-    return true;
-  }
-
-  if (loadedAndParsed.evaluator !== shaker || !loadedAndParsed.ast) {
-    return false;
-  }
-
-  const barrelAnalysis = analyzeBarrelFile(loadedAndParsed.ast);
-  return barrelAnalysis.kind === 'barrel' && barrelAnalysis.complete;
-};
 
 /**
  * The first stage of processing an entrypoint.
  * This stage is responsible for:
- * - scheduling the explodeReexports action
  * - scheduling the transform action
  * - rescheduling itself if the entrypoint is superseded
  */
@@ -37,11 +18,6 @@ export function* processEntrypoint(
   try {
     using abortSignal = this.createAbortSignal();
 
-    if (shouldSkipExplodeReexports(this)) {
-      log('skip explodeReexports for pure barrel');
-    } else {
-      yield ['explodeReexports', this.entrypoint, undefined, abortSignal];
-    }
     const result = yield* this.getNext(
       'transform',
       this.entrypoint,

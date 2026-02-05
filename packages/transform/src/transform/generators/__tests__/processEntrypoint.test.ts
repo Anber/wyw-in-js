@@ -1,6 +1,3 @@
-import * as babel from '@babel/core';
-
-import { shaker } from '../../../shaker';
 import {
   createEntrypoint,
   createServices,
@@ -20,7 +17,7 @@ describe('processEntrypoint', () => {
     services = createServices();
   });
 
-  it('should emit explodeReexports, transform and finalizeEntrypoint actions', () => {
+  it('should emit transform action', () => {
     const fooBarDefault = createEntrypoint(services, '/foo/bar.js', [
       'default',
     ]);
@@ -33,36 +30,13 @@ describe('processEntrypoint', () => {
     );
     const gen = processEntrypoint.call(action);
 
-    let result = gen.next();
+    const result = gen.next();
     expectIteratorYieldResult(result);
 
-    expect(result.value[0]).toBe('explodeReexports');
-    expect(result.value[1]).toBe(fooBarDefault);
-
-    result = gen.next();
-    expectIteratorYieldResult(result);
     expect(result.value[0]).toBe('transform');
     expect(result.value[1]).toBe(fooBarDefault);
 
     expectIteratorReturnResult(gen.next(), undefined);
-  });
-
-  it('should skip explodeReexports for __wywPreval-only entrypoints', () => {
-    const fooBarPreval = createEntrypoint(services, '/foo/bar.js', [
-      '__wywPreval',
-    ]);
-
-    const action = fooBarPreval.createAction(
-      'processEntrypoint',
-      undefined,
-      null
-    );
-    const gen = processEntrypoint.call(action);
-
-    const result = gen.next();
-    expectIteratorYieldResult(result);
-    expect(result.value[0]).toBe('transform');
-    expect(result.value[1]).toBe(fooBarPreval);
   });
 
   it('should abort previously emitted actions if entrypoint code changed and emit a new processEntrypoint', () => {
@@ -80,17 +54,13 @@ describe('processEntrypoint', () => {
     );
     const gen = processEntrypoint.call(action);
 
-    const emitted = [gen.next(), gen.next()]
+    const emitted = [gen.next()]
       .filter(isIteratorYieldResult)
       .map((result) => result.value);
-    expect(emitted[0][0]).toBe('explodeReexports');
-    expect(emitted[1][0]).toBe('transform');
+    expect(emitted[0][0]).toBe('transform');
 
     const emittedSignals = emitted.map((a) => a[3]);
-    expect(emittedSignals.map((signal) => signal?.aborted)).toEqual([
-      false,
-      false,
-    ]);
+    expect(emittedSignals.map((signal) => signal?.aborted)).toEqual([false]);
 
     const supersededWith = createEntrypoint(
       services,
@@ -98,10 +68,7 @@ describe('processEntrypoint', () => {
       ['named'],
       'bar'
     );
-    expect(emittedSignals.map((signal) => signal?.aborted)).toEqual([
-      true,
-      true,
-    ]);
+    expect(emittedSignals.map((signal) => signal?.aborted)).toEqual([true]);
 
     const nextResult = gen.next();
     expectIteratorYieldResult(nextResult);
@@ -122,79 +89,19 @@ describe('processEntrypoint', () => {
     );
     const gen = processEntrypoint.call(action);
 
-    const emitted = [gen.next(), gen.next()]
+    const emitted = [gen.next()]
       .filter(isIteratorYieldResult)
       .map((result) => result.value);
-    expect(emitted[0][0]).toBe('explodeReexports');
-    expect(emitted[1][0]).toBe('transform');
+    expect(emitted[0][0]).toBe('transform');
 
     const emittedSignals = emitted.map((a) => a[3]);
-    expect(emittedSignals.map((signal) => signal?.aborted)).toEqual([
-      false,
-      false,
-    ]);
+    expect(emittedSignals.map((signal) => signal?.aborted)).toEqual([false]);
 
     abortController.abort();
 
-    expect(emittedSignals.map((signal) => signal?.aborted)).toEqual([
-      true,
-      true,
-    ]);
+    expect(emittedSignals.map((signal) => signal?.aborted)).toEqual([true]);
 
     expectIteratorReturnResult(gen.next(), undefined);
-  });
-
-  it('should skip explodeReexports for pure shaker barrels', () => {
-    services.loadAndParseFn = jest.fn(() => ({
-      ast: babel.parseSync(`export { foo } from './foo';`, {
-        filename: '/foo/bar.ts',
-        sourceType: 'module',
-      })!,
-      code: `export { foo } from './foo';`,
-      evaluator: shaker,
-      evalConfig: {},
-    }));
-
-    const barrelEntrypoint = createEntrypoint(services, '/foo/bar.ts', ['foo']);
-    const action = barrelEntrypoint.createAction(
-      'processEntrypoint',
-      undefined,
-      null
-    );
-    const gen = processEntrypoint.call(action);
-
-    const result = gen.next();
-    expectIteratorYieldResult(result);
-    expect(result.value[0]).toBe('transform');
-    expect(result.value[1]).toBe(barrelEntrypoint);
-  });
-
-  it('should keep explodeReexports for incomplete shaker barrels', () => {
-    services.loadAndParseFn = jest.fn(() => ({
-      ast: babel.parseSync(
-        `import { foo } from './foo';\nexport { foo };\nexport const local = 1;\n`,
-        {
-          filename: '/foo/bar.ts',
-          sourceType: 'module',
-        }
-      )!,
-      code: `import { foo } from './foo';\nexport { foo };\nexport const local = 1;\n`,
-      evaluator: shaker,
-      evalConfig: {},
-    }));
-
-    const barrelEntrypoint = createEntrypoint(services, '/foo/bar.ts', ['foo']);
-    const action = barrelEntrypoint.createAction(
-      'processEntrypoint',
-      undefined,
-      null
-    );
-    const gen = processEntrypoint.call(action);
-
-    const result = gen.next();
-    expectIteratorYieldResult(result);
-    expect(result.value[0]).toBe('explodeReexports');
-    expect(result.value[1]).toBe(barrelEntrypoint);
   });
 
   it('should defer supersede while transform is in progress and reschedule once', () => {
@@ -211,13 +118,8 @@ describe('processEntrypoint', () => {
 
     const started = gen.next();
     expectIteratorYieldResult(started);
-    expect(started.value[0]).toBe('explodeReexports');
+    expect(started.value[0]).toBe('transform');
     expect(started.value[3]?.aborted).toBe(false);
-
-    const transformYield = gen.next();
-    expectIteratorYieldResult(transformYield);
-    expect(transformYield.value[0]).toBe('transform');
-    expect(transformYield.value[3]?.aborted).toBe(false);
 
     const sameEntrypoint = createEntrypoint(services, '/foo/bar.js', ['named']);
     expect(sameEntrypoint).toBe(fooBarDefault);
