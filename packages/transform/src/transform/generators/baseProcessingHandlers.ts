@@ -7,8 +7,6 @@ import type {
   ActionQueueItem,
 } from '../types';
 
-import { explodeReexports } from './explodeReexports';
-import { getExports } from './getExports';
 import { processEntrypoint } from './processEntrypoint';
 import { transform } from './transform';
 
@@ -24,8 +22,6 @@ export const baseProcessingHandlers = {
   evalFile: emptyHandler<IEvalAction>,
   extract: emptyHandler<IExtractAction>,
   workflow: emptyHandler<IWorkflowAction>,
-  explodeReexports,
-  getExports,
   processEntrypoint,
   transform,
 };

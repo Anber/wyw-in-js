@@ -162,11 +162,6 @@ export interface IEvalAction
   type: 'evalFile';
 }
 
-export interface IExplodeReexportsAction
-  extends IBaseAction<IExplodeReexportsAction, void, undefined> {
-  type: 'explodeReexports';
-}
-
 export interface IExtractAction
   extends IBaseAction<
     IExtractAction,
@@ -174,11 +169,6 @@ export interface IExtractAction
     { processors: { artifacts: Artifact[] }[] }
   > {
   type: 'extract';
-}
-
-export interface IGetExportsAction
-  extends IBaseAction<IGetExportsAction, string[], undefined> {
-  type: 'getExports';
 }
 
 export interface IProcessEntrypointAction
@@ -213,9 +203,7 @@ export interface IWorkflowAction
 
 export type ActionQueueItem =
   | IEvalAction
-  | IExplodeReexportsAction
   | IExtractAction
-  | IGetExportsAction
   | ICollectAction
   | IProcessEntrypointAction
   | IResolveImportsAction

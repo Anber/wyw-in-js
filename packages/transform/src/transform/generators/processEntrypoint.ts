@@ -4,7 +4,6 @@ import type { IProcessEntrypointAction, SyncScenarioForAction } from '../types';
 /**
  * The first stage of processing an entrypoint.
  * This stage is responsible for:
- * - scheduling the explodeReexports action
  * - scheduling the transform action
  * - rescheduling itself if the entrypoint is superseded
  */
@@ -17,7 +16,6 @@ export function* processEntrypoint(
   try {
     using abortSignal = this.createAbortSignal();
 
-    yield ['explodeReexports', this.entrypoint, undefined, abortSignal];
     const result = yield* this.getNext(
       'transform',
       this.entrypoint,

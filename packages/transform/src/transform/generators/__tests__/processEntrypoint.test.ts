@@ -17,7 +17,7 @@ describe('processEntrypoint', () => {
     services = createServices();
   });
 
-  it('should emit explodeReexports, transform and finalizeEntrypoint actions', () => {
+  it('should emit transform action', () => {
     const fooBarDefault = createEntrypoint(services, '/foo/bar.js', [
       'default',
     ]);
@@ -33,11 +33,6 @@ describe('processEntrypoint', () => {
     let result = gen.next();
     expectIteratorYieldResult(result);
 
-    expect(result.value[0]).toBe('explodeReexports');
-    expect(result.value[1]).toBe(fooBarDefault);
-
-    result = gen.next();
-    expectIteratorYieldResult(result);
     expect(result.value[0]).toBe('transform');
     expect(result.value[1]).toBe(fooBarDefault);
 
@@ -56,23 +51,16 @@ describe('processEntrypoint', () => {
     );
     const gen = processEntrypoint.call(action);
 
-    const emitted = [gen.next(), gen.next()]
+    const emitted = [gen.next()]
       .filter(isIteratorYieldResult)
       .map((result) => result.value);
-    expect(emitted[0][0]).toBe('explodeReexports');
-    expect(emitted[1][0]).toBe('transform');
+    expect(emitted[0][0]).toBe('transform');
 
     const emittedSignals = emitted.map((a) => a[3]);
-    expect(emittedSignals.map((signal) => signal?.aborted)).toEqual([
-      false,
-      false,
-    ]);
+    expect(emittedSignals.map((signal) => signal?.aborted)).toEqual([false]);
 
     const supersededWith = createEntrypoint(services, '/foo/bar.js', ['named']);
-    expect(emittedSignals.map((signal) => signal?.aborted)).toEqual([
-      true,
-      true,
-    ]);
+    expect(emittedSignals.map((signal) => signal?.aborted)).toEqual([true]);
 
     const nextResult = gen.next();
     expectIteratorYieldResult(nextResult);
@@ -93,24 +81,17 @@ describe('processEntrypoint', () => {
     );
     const gen = processEntrypoint.call(action);
 
-    const emitted = [gen.next(), gen.next()]
+    const emitted = [gen.next()]
       .filter(isIteratorYieldResult)
       .map((result) => result.value);
-    expect(emitted[0][0]).toBe('explodeReexports');
-    expect(emitted[1][0]).toBe('transform');
+    expect(emitted[0][0]).toBe('transform');
 
     const emittedSignals = emitted.map((a) => a[3]);
-    expect(emittedSignals.map((signal) => signal?.aborted)).toEqual([
-      false,
-      false,
-    ]);
+    expect(emittedSignals.map((signal) => signal?.aborted)).toEqual([false]);
 
     abortController.abort();
 
-    expect(emittedSignals.map((signal) => signal?.aborted)).toEqual([
-      true,
-      true,
-    ]);
+    expect(emittedSignals.map((signal) => signal?.aborted)).toEqual([true]);
 
     expectIteratorReturnResult(gen.next(), undefined);
   });
