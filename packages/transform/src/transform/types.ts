@@ -187,17 +187,6 @@ export interface IProcessEntrypointAction
   type: 'processEntrypoint';
 }
 
-export interface IProcessImportsAction
-  extends IBaseAction<
-    IProcessImportsAction,
-    void,
-    {
-      resolved: IEntrypointDependency[];
-    }
-  > {
-  type: 'processImports';
-}
-
 export interface IResolveImportsAction
   extends IBaseAction<
     IResolveImportsAction,
@@ -232,7 +221,6 @@ export type ActionQueueItem =
   | IGetExportsAction
   | ICollectAction
   | IProcessEntrypointAction
-  | IProcessImportsAction
   | IResolveImportsAction
   | ITransformAction
   | IWorkflowAction;

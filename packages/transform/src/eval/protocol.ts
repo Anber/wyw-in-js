@@ -18,6 +18,7 @@ export type EvalRunnerInitPayload = {
   };
   features: FeatureFlags<'happyDOM'>;
   entrypoint: string;
+  reuseModules?: boolean;
 };
 
 export type EvalRequest = {

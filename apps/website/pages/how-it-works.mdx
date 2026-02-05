@@ -16,8 +16,6 @@ workflow
 │   │   └── getExports
 │   │       └── resolveImports
 │   └── transform
-│       ├── resolveImports
-│       └── processImports
 ├── evalFile
 ├── collect
 └── extract
@@ -161,7 +159,7 @@ export const c = 'c';
 
 ## Transform Action
 
-Prepares the code for evaluation. This includes removing dead and potentially unsafe code. Emits `resolveImports` and `processImports` events.
+Prepares the code for evaluation. This includes removing dead and potentially unsafe code.
 
 ### Transform Preeval
 
