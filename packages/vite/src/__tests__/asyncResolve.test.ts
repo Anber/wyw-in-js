@@ -219,7 +219,32 @@ describe('vite asyncResolve', () => {
     }
   });
 
-  it('reuses the same cache and resolver across different plugin contexts', async () => {
+  it('does not fall back to node resolve for query ids', async () => {
+    const { default: wywInJS } = await import('../index');
+    const plugin = wywInJS();
+    const resolveFn = jest.fn().mockResolvedValue('/assets/icon.svg?raw');
+
+    plugin.configResolved({
+      root: process.cwd(),
+      mode: 'development',
+      command: 'serve',
+      base: '/',
+      createResolver: () => resolveFn,
+    } as any);
+
+    requestedId = '/assets/icon.svg?raw';
+
+    await plugin.transform?.call(
+      { warn: jest.fn() } as any,
+      'console.log("test")',
+      '/entry.tsx'
+    );
+
+    expect(syncResolveMock).not.toHaveBeenCalled();
+    expect(asyncResolveResults).toContain('/assets/icon.svg');
+  });
+
+  it('reuses client cache within context and isolates SSR cache', async () => {
     const { default: wywInJS } = await import('../index');
     const plugin = wywInJS();
     const resolveFn = jest.fn().mockResolvedValue('/resolved.ts');
@@ -239,21 +264,27 @@ describe('vite asyncResolve', () => {
     const ctxA = { warn: jest.fn() } as any;
     const ctxB = { warn: jest.fn() } as any;
 
-    await plugin.transform?.call(ctxA, 'console.log("a")', '/entry.tsx');
-    await plugin.transform?.call(ctxA, 'console.log("b")', '/entry.tsx');
-    await plugin.transform?.call(ctxB, 'console.log("c")', '/entry.tsx');
+    await plugin.transform?.call(ctxA, 'console.log("a")', '/entry.tsx', {
+      ssr: false,
+    });
+    await plugin.transform?.call(ctxA, 'console.log("b")', '/entry.tsx', {
+      ssr: false,
+    });
+    await plugin.transform?.call(ctxB, 'console.log("c")', '/entry.tsx', {
+      ssr: true,
+    });
 
     const cacheA1 = transformMock.mock.calls[0][0].cache;
     const cacheA2 = transformMock.mock.calls[1][0].cache;
-    const cacheB = transformMock.mock.calls[2][0].cache;
+    const cacheSsr = transformMock.mock.calls[2][0].cache;
     const resolverA1 = transformMock.mock.calls[0][2];
     const resolverA2 = transformMock.mock.calls[1][2];
-    const resolverB = transformMock.mock.calls[2][2];
+    const resolverSsr = transformMock.mock.calls[2][2];
 
     expect(cacheA1).toBe(cacheA2);
-    expect(cacheA1).toBe(cacheB);
+    expect(cacheA1).not.toBe(cacheSsr);
     expect(resolverA1).toBe(resolverA2);
-    expect(resolverA1).toBe(resolverB);
+    expect(resolverA1).not.toBe(resolverSsr);
   });
 
   it('keeps resolver stable across repeated configResolved calls', async () => {
