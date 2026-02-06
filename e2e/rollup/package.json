@@ -1,0 +1,18 @@
+{
+  "name": "@wyw-in-js/e2e-rollup",
+  "version": "1.0.4",
+  "dependencies": {
+    "@wyw-in-js/template-tag-syntax": "workspace:*"
+  },
+  "devDependencies": {
+    "@wyw-in-js/rollup": "workspace:*",
+    "picocolors": "^1.0.0",
+    "prettier": "^3.2.5",
+    "rollup": "^4.12.0",
+    "rollup-plugin-css-only": "^4.5.1"
+  },
+  "private": true,
+  "scripts": {
+    "test": "node ./scripts/test.mjs"
+  }
+}
