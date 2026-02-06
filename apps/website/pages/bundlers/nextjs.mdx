@@ -15,6 +15,8 @@ pnpm add -D @wyw-in-js/nextjs
 bun add -d @wyw-in-js/nextjs
 ```
 
+> Note: WyW packages are ESM-only and require Node.js `>=22`.
+
 ### Configuration
 
 ```js
@@ -25,6 +27,9 @@ export default withWyw({
   // your Next config
 });
 ```
+
+`eval.require` defaults to `warn-and-run` in v2. If eval-time `require()` happens, WyW will warn and execute it at
+runtime; use `importOverrides` or `eval.require: 'error'` to make it explicit.
 
 ### Customizing the loader
 
@@ -71,6 +76,8 @@ export default withWyw(
 
 - The plugin emits styles as `*.wyw-in-js.module.css` so imports are allowed from any module.
 - Add `**/*.wyw-in-js.module.css` to your `.gitignore` since these files are generated.
+- By default, WyW injects `importOverrides` for `react`/`react/jsx-runtime` to avoid resolving Next’s vendored React runtime
+  during eval. Override if you need a different runtime.
 
 ### Turbopack
 
