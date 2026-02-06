@@ -51,6 +51,9 @@ export type LoadRequestPayload = {
 export type LoadResultPayload = {
   id: string;
   code?: string;
+  codeChunk?: string;
+  chunkIndex?: number;
+  chunkCount?: number;
   map?: unknown;
   hash?: string;
   only?: string[];

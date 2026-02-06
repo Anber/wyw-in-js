@@ -31,6 +31,7 @@ import {
   type EvalRunnerInitPayload,
   type EvalResultPayload,
   type LoadRequestPayload,
+  type LoadResultPayload,
   type MainToRunnerMessage,
   type ResolveRequestPayload,
   type RunnerToMainMessage,
@@ -170,6 +171,7 @@ const DEFAULT_EVAL_OPTIONS: Required<
 };
 
 const MAX_MESSAGE_SIZE = 10 * 1024 * 1024;
+const MAX_CHUNK_SIZE = 512 * 1024;
 const RESOLVE_CACHE_SIZE = 5000;
 const LOAD_CACHE_SIZE = 1000;
 const REQUEST_TIMEOUT_MS = 30_000;
@@ -1255,17 +1257,13 @@ export class EvalBroker {
 
   private async handleLoad(id: string, payload: LoadRequestPayload) {
     const prepared = await this.loadModule(payload);
-    this.sendMessage({
-      type: 'LOAD_RESULT',
-      id,
-      payload: {
-        id: payload.id,
-        code: prepared.code,
-        map: null,
-        hash: prepared.hash,
-        only: prepared.only,
-        exports: prepared.exports,
-      },
+    this.sendLoadResult(id, {
+      id: payload.id,
+      code: prepared.code,
+      map: null,
+      hash: prepared.hash,
+      only: prepared.only,
+      exports: prepared.exports,
     });
   }
 
@@ -1457,6 +1455,59 @@ export class EvalBroker {
       return result;
     } finally {
       this.loadInFlight.delete(id);
+    }
+  }
+
+  private sendLoadResult(
+    id: string,
+    payload: Omit<LoadResultPayload, 'chunkIndex' | 'chunkCount' | 'codeChunk'>
+  ) {
+    if (!payload.code) {
+      this.sendMessage({
+        type: 'LOAD_RESULT',
+        id,
+        payload,
+      });
+      return;
+    }
+
+    const message: MainToRunnerMessage = {
+      type: 'LOAD_RESULT',
+      id,
+      payload,
+    };
+    const serialized = JSON.stringify(message);
+    if (serialized.length < MAX_MESSAGE_SIZE) {
+      this.runner?.stdin.write(`${serialized}\n`);
+      return;
+    }
+
+    const code = payload.code;
+    const chunkCount = Math.ceil(code.length / MAX_CHUNK_SIZE);
+    for (let index = 0; index < chunkCount; index += 1) {
+      const start = index * MAX_CHUNK_SIZE;
+      const end = start + MAX_CHUNK_SIZE;
+      const codeChunk = code.slice(start, end);
+      const chunkPayload: LoadResultPayload = {
+        id: payload.id,
+        codeChunk,
+        chunkIndex: index,
+        chunkCount,
+      };
+
+      if (index === 0) {
+        chunkPayload.map = payload.map;
+        chunkPayload.hash = payload.hash;
+        chunkPayload.only = payload.only;
+        chunkPayload.exports = payload.exports;
+        chunkPayload.error = payload.error;
+      }
+
+      this.sendMessage({
+        type: 'LOAD_RESULT',
+        id,
+        payload: chunkPayload,
+      });
     }
   }
 
