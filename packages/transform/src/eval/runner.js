@@ -612,6 +612,7 @@ const resolveCache = new LruCache(RESOLVE_CACHE_SIZE);
 const resolveInFlight = new Map();
 
 const pending = new Map();
+const loadResultChunks = new Map();
 let nextId = 0;
 
 const resetModuleState = () => {
@@ -658,6 +659,48 @@ const resolvePending = (id, payload) => {
   if (!pendingItem) return;
   pending.delete(id);
   pendingItem.resolve(payload);
+};
+
+const handleLoadResult = (id, payload) => {
+  if (
+    !payload ||
+    typeof payload.codeChunk !== 'string' ||
+    typeof payload.chunkIndex !== 'number' ||
+    typeof payload.chunkCount !== 'number'
+  ) {
+    resolvePending(id, payload);
+    return;
+  }
+
+  let entry = loadResultChunks.get(id);
+  if (!entry) {
+    entry = {
+      chunks: new Array(payload.chunkCount),
+      received: 0,
+      meta: null,
+    };
+    loadResultChunks.set(id, entry);
+  }
+
+  if (!entry.chunks[payload.chunkIndex]) {
+    entry.received += 1;
+  }
+  entry.chunks[payload.chunkIndex] = payload.codeChunk;
+
+  if (payload.chunkIndex === 0) {
+    const { codeChunk, chunkIndex, chunkCount, ...meta } = payload;
+    entry.meta = meta;
+  }
+
+  if (entry.received >= payload.chunkCount) {
+    const code = entry.chunks.join('');
+    const finalPayload = {
+      ...(entry.meta ?? {}),
+      code,
+    };
+    loadResultChunks.delete(id);
+    resolvePending(id, finalPayload);
+  }
 };
 
 const buildPreamble = (id) =>
@@ -1448,9 +1491,12 @@ const handleMessage = async (message) => {
       }
       break;
     }
-    case 'RESOLVE_RESULT':
-    case 'LOAD_RESULT': {
+    case 'RESOLVE_RESULT': {
       resolvePending(message.id, message.payload);
+      break;
+    }
+    case 'LOAD_RESULT': {
+      handleLoadResult(message.id, message.payload);
       break;
     }
     default:
