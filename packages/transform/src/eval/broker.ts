@@ -24,6 +24,7 @@ import {
   resolveMockSpecifier,
   toImportKey,
 } from '../utils/importOverrides';
+import { getFileIdx } from '../utils/getFileIdx';
 import { parseRequest, stripQueryAndHash } from '../utils/parseRequest';
 import { isSuperSet, mergeOnly } from '../transform/Entrypoint.helpers';
 
@@ -435,6 +436,8 @@ export class EvalBroker {
 
   private readonly dependencies = new Set<string>();
 
+  private readonly emittedDependencies = new Set<string>();
+
   private happyDomDisabled = false;
 
   private happyDomDisableWarned = false;
@@ -461,6 +464,7 @@ export class EvalBroker {
   }> {
     const task = this.evalQueue.then(async () => {
       this.dependencies.clear();
+      this.emittedDependencies.clear();
       this.importsByModule.clear();
       this.onlyByModule.clear();
       this.resolveCache.clear();
@@ -801,13 +805,16 @@ export class EvalBroker {
     if (importerId) {
       try {
         const importerFile = stripQueryAndHash(importerId);
-        const resolved = DefaultModuleImplementation._resolveFilename(stripped, {
-          id: importerFile,
-          filename: importerFile,
-          paths: DefaultModuleImplementation._nodeModulePaths(
-            path.dirname(importerFile)
-          ),
-        });
+        const resolved = DefaultModuleImplementation._resolveFilename(
+          stripped,
+          {
+            id: importerFile,
+            filename: importerFile,
+            paths: DefaultModuleImplementation._nodeModulePaths(
+              path.dirname(importerFile)
+            ),
+          }
+        );
         if (resolved && resolved !== stripped) {
           return `${resolved}${suffix}`;
         }
@@ -820,6 +827,19 @@ export class EvalBroker {
   }
 
   private async resolveImport({
+    specifier,
+    importerId,
+    kind,
+  }: ResolveRequestPayload): Promise<ResolveResult> {
+    return this.services.eventEmitter.action(
+      'eval:resolveImport',
+      `${importerId}\0${kind}\0${specifier}`,
+      importerId,
+      () => this.resolveImportImpl({ specifier, importerId, kind })
+    );
+  }
+
+  private async resolveImportImpl({
     specifier,
     importerId,
     kind,
@@ -859,13 +879,16 @@ export class EvalBroker {
         stack
       );
       this.resolveCache.set(key, { resolvedId: normalized, external: false });
-      return overridden;
+      return this.finalizeResolvedImport(importerId, specifier, overridden);
     }
 
     const cached = this.resolveCache.get(key);
     if (cached) {
       if (!cached.resolvedId) {
-        return { resolvedId: null, only: ['*'] };
+        return this.finalizeResolvedImport(importerId, specifier, {
+          resolvedId: null,
+          only: ['*'],
+        });
       }
 
       const normalized = this.normalizeResolvedId(
@@ -891,14 +914,17 @@ export class EvalBroker {
           kind,
         });
       }
-      return overridden;
+      return this.finalizeResolvedImport(importerId, specifier, overridden);
     }
 
     const inFlight = this.resolveInFlight.get(key);
     if (inFlight) {
       const cachedResult = await inFlight;
       if (!cachedResult.resolvedId) {
-        return { resolvedId: null, only: ['*'] };
+        return this.finalizeResolvedImport(importerId, specifier, {
+          resolvedId: null,
+          only: ['*'],
+        });
       }
       const normalized = this.normalizeResolvedId(
         cachedResult.resolvedId,
@@ -923,7 +949,7 @@ export class EvalBroker {
           kind,
         });
       }
-      return overridden;
+      return this.finalizeResolvedImport(importerId, specifier, overridden);
     }
 
     const task: Promise<ResolveCacheEntry> = (async () => {
@@ -1024,7 +1050,10 @@ export class EvalBroker {
       this.resolveCache.set(key, result);
 
       if (!result.resolvedId) {
-        return { resolvedId: null, only: ['*'] };
+        return this.finalizeResolvedImport(importerId, specifier, {
+          resolvedId: null,
+          only: ['*'],
+        });
       }
 
       const overridden = this.applyImportOverrides(
@@ -1047,10 +1076,88 @@ export class EvalBroker {
         });
       }
 
-      return overridden;
+      return this.finalizeResolvedImport(importerId, specifier, overridden);
     } finally {
       this.resolveInFlight.delete(key);
     }
+  }
+
+  private finalizeResolvedImport(
+    importerId: string,
+    specifier: string,
+    result: ResolveResult
+  ): ResolveResult {
+    this.trackImporterDependency(
+      importerId,
+      specifier,
+      result.resolvedId,
+      result.only
+    );
+    this.emitDependency(importerId, specifier, result.resolvedId, result.only);
+    return result;
+  }
+
+  private emitDependency(
+    importerId: string,
+    specifier: string,
+    resolvedId: string | null,
+    only: string[]
+  ) {
+    if (resolvedId === null) {
+      return;
+    }
+
+    const key = `${importerId}\0${specifier}\0${resolvedId}\0${only.join(',')}`;
+    if (this.emittedDependencies.has(key)) {
+      return;
+    }
+    this.emittedDependencies.add(key);
+
+    this.services.eventEmitter.single({
+      type: 'dependency',
+      file: importerId,
+      only,
+      imports: [{ from: resolvedId, what: only }],
+      fileIdx: getFileIdx(importerId),
+    });
+  }
+
+  private trackImporterDependency(
+    importerId: string,
+    source: string,
+    resolved: string | null,
+    only: string[]
+  ) {
+    const importerEntrypoint = this.services.cache.get(
+      'entrypoints',
+      importerId
+    ) as
+      | {
+          dependencies?: Map<
+            string,
+            {
+              source: string;
+              resolved: string | null;
+              only: string[];
+            }
+          >;
+        }
+      | undefined;
+
+    const dependencies = importerEntrypoint?.dependencies;
+    if (!dependencies) return;
+
+    if (resolved === null) {
+      dependencies.delete(source);
+      return;
+    }
+
+    const cached = dependencies.get(source);
+    dependencies.set(source, {
+      source,
+      resolved,
+      only: cached ? mergeOnly(cached.only, only) : [...only],
+    });
   }
 
   private collectEntrypointDependencies(entrypointId: string): string[] {
@@ -1058,10 +1165,9 @@ export class EvalBroker {
     const imports = this.importsByModule.get(entrypointId);
     if (imports) {
       for (const specifier of imports.keys()) {
-        if (isBuiltinSpecifier(specifier) || isVirtualSpecifier(specifier)) {
-          continue;
+        if (!isBuiltinSpecifier(specifier) && !isVirtualSpecifier(specifier)) {
+          collected.add(specifier);
         }
-        collected.add(specifier);
       }
     }
     return Array.from(collected);
@@ -1272,7 +1378,26 @@ export class EvalBroker {
     importerId,
     request,
   }: LoadRequestPayload): Promise<PreparedCacheEntry> {
-    const cached = this.loadCache.get(id);
+    const actionEntrypoint = importerId ?? id;
+    return this.services.eventEmitter.action(
+      'eval:loadModule',
+      `${actionEntrypoint}\0${id}`,
+      actionEntrypoint,
+      () => this.loadModuleImpl({ id, importerId, request })
+    );
+  }
+
+  private async loadModuleImpl({
+    id,
+    importerId,
+    request,
+  }: LoadRequestPayload): Promise<PreparedCacheEntry> {
+    let cached = this.loadCache.get(id);
+    if (this.services.cache.consumeInvalidation(id)) {
+      this.loadCache.delete(id);
+      cached = undefined;
+    }
+
     const requiredOnly = this.onlyByModule.get(id) ?? ['*'];
     const cachedEntrypoint = this.services.cache.get('entrypoints', id) as
       | {
@@ -1280,6 +1405,8 @@ export class EvalBroker {
           evaluatedOnly?: string[];
           exports?: Record<string | symbol, unknown>;
           ignored?: boolean;
+          initialCode?: string;
+          originalCode?: string;
         }
       | undefined;
     if (
@@ -1372,10 +1499,10 @@ export class EvalBroker {
         }
       }
 
-      const stripped = stripQueryAndHash(id);
-      const extension = path.extname(stripped);
+      const strippedId = stripQueryAndHash(id);
+      const extension = path.extname(strippedId);
       if (extension === '.json') {
-        const jsonSource = fs.readFileSync(stripped, 'utf-8');
+        const jsonSource = fs.readFileSync(strippedId, 'utf-8');
         const code = `export default ${JSON.stringify(
           JSON.parse(jsonSource)
         )};`;
@@ -1482,7 +1609,7 @@ export class EvalBroker {
       return;
     }
 
-    const code = payload.code;
+    const { code } = payload;
     const chunkCount = Math.ceil(code.length / MAX_CHUNK_SIZE);
     for (let index = 0; index < chunkCount; index += 1) {
       const start = index * MAX_CHUNK_SIZE;

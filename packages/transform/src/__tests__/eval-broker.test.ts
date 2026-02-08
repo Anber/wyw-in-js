@@ -57,18 +57,22 @@ const createServices = (
 
 const getPrivateBroker = (broker: EvalBroker) =>
   broker as unknown as {
-    resolveImport: (payload: {
-      specifier: string;
-      importerId: string;
-      kind: 'import' | 'dynamic-import' | 'require';
-    }) => Promise<{ resolvedId: string | null }>;
+    importsByModule: Map<string, Map<string, string[]>>;
     loadModule: (payload: {
       id: string;
       importerId?: string | null;
       request?: string | null;
-    }) => Promise<{ code: string }>;
-    importsByModule: Map<string, Map<string, string[]>>;
+    }) => Promise<{
+      code: string;
+      imports: Map<string, string[]> | null;
+      only: string[];
+    }>;
     onlyByModule: Map<string, string[]>;
+    resolveImport: (payload: {
+      importerId: string;
+      kind: 'import' | 'dynamic-import' | 'require';
+      specifier: string;
+    }) => Promise<{ resolvedId: string | null }>;
   };
 
 describe('EvalBroker', () => {
@@ -184,6 +188,127 @@ describe('EvalBroker', () => {
     const [firstResult, secondResult] = await Promise.all([first, second]);
     expect(firstResult.code).toContain('export const value = 1;');
     expect(secondResult.code).toContain('export const value = 1;');
+
+    broker.dispose();
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('reuses load cache for sequential loads', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
+    const importer = join(root, 'entry.js');
+    const dep = join(root, 'dep.js');
+
+    const customLoader = jest.fn(async () => ({
+      code: 'export const value = 1;',
+    }));
+    const services = createServices(root, importer, {
+      eval: { customLoader },
+    });
+
+    const broker = new EvalBroker(
+      services,
+      jest.fn(async () => dep)
+    );
+    const privateBroker = getPrivateBroker(broker);
+    privateBroker.onlyByModule.set(dep, ['*']);
+
+    await privateBroker.loadModule({
+      id: dep,
+      importerId: importer,
+      request: null,
+    });
+    await privateBroker.loadModule({
+      id: dep,
+      importerId: importer,
+      request: null,
+    });
+
+    expect(customLoader).toHaveBeenCalledTimes(1);
+
+    broker.dispose();
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('strips browser globals from prepared output for __wywPreval-only loads', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
+    const dep = join(root, 'dep.js');
+    writeFileSync(
+      dep,
+      [
+        'const runtimeOnly = () => document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT);',
+        'const runtimeHref = window.location.href;',
+        'export const __wywPreval = {',
+        "  value: () => 'ok',",
+        '};',
+      ].join('\n')
+    );
+
+    const services = createServices(root, dep);
+    const broker = new EvalBroker(
+      services,
+      jest.fn(async () => null)
+    );
+    const privateBroker = getPrivateBroker(broker);
+    privateBroker.onlyByModule.set(dep, ['__wywPreval']);
+
+    const loaded = await privateBroker.loadModule({
+      id: dep,
+      importerId: dep,
+      request: dep,
+    });
+
+    expect(loaded.code).not.toContain('document');
+    expect(loaded.code).not.toContain('window');
+
+    broker.dispose();
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('does not prepare transitive graph before runner requests modules', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
+    const entry = join(root, 'entry.js');
+    const leaves = Array.from({ length: 12 }, (_, index) =>
+      join(root, `leaf-${index}.js`)
+    );
+
+    leaves.forEach((file, index) => {
+      writeFileSync(file, `export const value${index} = ${index};`);
+    });
+
+    writeFileSync(
+      entry,
+      [
+        ...leaves.map(
+          (_, index) => `import { value${index} } from './leaf-${index}.js';`
+        ),
+        'export const __wywPreval = {',
+        "  value: () => 'ready',",
+        '};',
+      ].join('\n')
+    );
+
+    const services = createServices(root, entry);
+    const broker = new EvalBroker(
+      services,
+      jest.fn(async (what: string, importer: string) => {
+        if (what.startsWith('.')) {
+          return resolve(dirname(importer), what);
+        }
+        return null;
+      })
+    );
+    const privateBroker = getPrivateBroker(broker);
+    privateBroker.onlyByModule.set(entry, ['__wywPreval']);
+
+    await privateBroker.loadModule({
+      id: entry,
+      importerId: entry,
+      request: entry,
+    });
+
+    for (const leaf of leaves) {
+      expect(services.cache.get('entrypoints', leaf)).toBeUndefined();
+    }
 
     broker.dispose();
     rmSync(root, { recursive: true, force: true });
@@ -354,7 +479,10 @@ describe('EvalBroker', () => {
       },
     });
 
-    const broker = new EvalBroker(services, jest.fn(async () => null));
+    const broker = new EvalBroker(
+      services,
+      jest.fn(async () => null)
+    );
     const entrypoint = Entrypoint.createRoot(
       services,
       entry,
@@ -409,7 +537,10 @@ describe('EvalBroker', () => {
       },
     });
 
-    const broker = new EvalBroker(services, jest.fn(async () => null));
+    const broker = new EvalBroker(
+      services,
+      jest.fn(async () => null)
+    );
     const entrypoint = Entrypoint.createRoot(
       services,
       entry,
@@ -448,7 +579,10 @@ describe('EvalBroker', () => {
         mode: 'strict',
       },
     });
-    const broker = new EvalBroker(services, jest.fn(async () => null));
+    const broker = new EvalBroker(
+      services,
+      jest.fn(async () => null)
+    );
     const entrypoint = Entrypoint.createRoot(
       services,
       entry,
