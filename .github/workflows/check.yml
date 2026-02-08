@@ -26,9 +26,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.bun/install/cache
-          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
+          key: ${{ runner.os }}-wyw-v2-bun-${{ hashFiles('bun.lock') }}
           restore-keys: |
-            ${{ runner.os }}-bun-
+            ${{ runner.os }}-wyw-v2-bun-
 
       - name: Install
         run: bun install --frozen-lockfile
@@ -76,16 +76,17 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.bun/install/cache
-          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
+          key: ${{ runner.os }}-node-${{ matrix.node-version }}-wyw-v2-bun-${{ hashFiles('bun.lock') }}
           restore-keys: |
-            ${{ runner.os }}-bun-
+            ${{ runner.os }}-node-${{ matrix.node-version }}-wyw-v2-bun-
+            ${{ runner.os }}-wyw-v2-bun-
 
       - name: Setup Bun cache (Windows exact match only)
         if: runner.os == 'Windows'
         uses: actions/cache@v4
         with:
           path: ~/.bun/install/cache
-          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
+          key: ${{ runner.os }}-node-${{ matrix.node-version }}-wyw-v2-bun-${{ hashFiles('bun.lock') }}
 
       - name: Install
         run: bun install --frozen-lockfile
@@ -98,3 +99,27 @@ jobs:
 
       - name: Parcel smoke
         run: bun run --filter @wyw-in-js/e2e-parcel test
+
+      - name: Vite dev smoke
+        if: runner.os == 'Linux' && matrix.node-version == '22.x'
+        run: bun run --filter @wyw-in-js/e2e-vite test:dev
+
+      - name: Webpack e2e
+        if: runner.os == 'Linux' && matrix.node-version == '22.x'
+        run: bun run --filter @wyw-in-js/e2e-webpack test
+
+      - name: Rollup e2e
+        if: runner.os == 'Linux' && matrix.node-version == '22.x'
+        run: bun run --filter @wyw-in-js/e2e-rollup test
+
+      - name: esbuild e2e
+        if: runner.os == 'Linux' && matrix.node-version == '22.x'
+        run: bun run --filter @wyw-in-js/e2e-esbuild test
+
+      - name: Next (webpack) e2e
+        if: runner.os == 'Linux' && matrix.node-version == '22.x'
+        run: bun run --filter @wyw-in-js/e2e-next-webpack test
+
+      - name: Next (turbopack) e2e
+        if: runner.os == 'Linux' && matrix.node-version == '22.x'
+        run: bun run --filter @wyw-in-js/e2e-next-turbopack test
