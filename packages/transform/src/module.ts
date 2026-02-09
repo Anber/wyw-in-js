@@ -292,11 +292,12 @@ export class Module {
   public readonly parentIsIgnored: boolean;
 
   public require: {
-    (id: string): unknown;
+    (id: string, nonLiteral?: boolean): unknown;
     ensure: () => void;
     resolve: (id: string) => string;
   } = Object.assign(
-    (id: string) => this.requireWithFallback(id, this.entrypoint),
+    (id: string, nonLiteral?: boolean) =>
+      this.requireWithFallback(id, this.entrypoint, nonLiteral),
     {
       ensure: NOOP,
       resolve: (id: string) =>
@@ -1023,6 +1024,9 @@ export class Module {
     try {
       // Check for supported extensions
       this.extensions.forEach((ext) => {
+        if (ext === '.cjs' || ext === '.mjs') {
+          return;
+        }
         if (ext in extensions) {
           return;
         }
@@ -1168,9 +1172,30 @@ export class Module {
   };
 
   private requireWithFallback(
-    id: string,
-    importer: Entrypoint | IEvaluatedEntrypoint
+    id: unknown,
+    importer: Entrypoint | IEvaluatedEntrypoint,
+    nonLiteral = false
   ): unknown {
+    const evalOptions = getEvalOptions(this.services);
+    if (nonLiteral || typeof id !== 'string') {
+      if (evalOptions.mode === 'strict') {
+        throw new Error(
+          `[wyw-in-js] Non-literal require() is not supported during eval.\n` +
+            `importer: ${importer.name}\n` +
+            `hint: make it a string literal or mock the import via importOverrides.`
+        );
+      }
+
+      emitEvalWarning(this.services, {
+        code: 'require-error',
+        message:
+          '[wyw-in-js] Non-literal require() reached during eval (loose mode).',
+        importer: importer.name,
+      });
+      return {};
+    }
+
+    const specifier = id;
     if (id === REACT_REFRESH_VIRTUAL_ID) {
       this.dependencies.push(id);
       this.debug('require', `vite virtual '${id}'`);
@@ -1183,7 +1208,9 @@ export class Module {
       return {};
     }
 
-    const normalizedId = id.startsWith('node:') ? id.slice(5) : id;
+    const normalizedId = specifier.startsWith('node:')
+      ? specifier.slice(5)
+      : specifier;
     if (
       NativeModule.builtinModules?.includes(normalizedId) ||
       NativeModule.builtinModules?.includes(`node:${normalizedId}`)
@@ -1202,10 +1229,10 @@ export class Module {
       );
     }
 
-    const dependency = this.resolveRequire(id, importer);
+    const dependency = this.resolveRequire(specifier, importer);
 
     const loaded = this.loadByImportLoaders(
-      id,
+      specifier,
       dependency.resolved,
       importer.name
     );

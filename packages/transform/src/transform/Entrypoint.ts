@@ -1,4 +1,3 @@
-import fs from 'node:fs';
 import { invariant } from 'ts-invariant';
 
 import type { ParentEntrypoint, ITransformFileResult } from '../types';
@@ -16,10 +15,8 @@ import type { ActionByType } from './actions/BaseAction';
 import { BaseAction } from './actions/BaseAction';
 import { UnprocessedEntrypointError } from './actions/UnprocessedEntrypointError';
 import type { Services, ActionTypes, ActionQueueItem } from './types';
-import { stripQueryAndHash } from '../utils/parseRequest';
 
 const EMPTY_FILE = '=== empty file ===';
-const DEFAULT_ACTION_CONTEXT = Symbol('defaultActionContext');
 
 function hasLoop(
   name: string,
@@ -50,7 +47,7 @@ export class Entrypoint extends BaseEntrypoint {
 
   private actionsCache: Map<
     ActionTypes,
-    Map<unknown, Map<unknown, BaseAction<ActionQueueItem>>>
+    Map<unknown, BaseAction<ActionQueueItem>>
   > = new Map();
 
   #hasWywMetadata: boolean = false;
@@ -77,11 +74,6 @@ export class Entrypoint extends BaseEntrypoint {
       Promise<IEntrypointDependency>
     >(),
     readonly dependencies = new Map<string, IEntrypointDependency>(),
-    readonly invalidationDependencies = new Map<
-      string,
-      IEntrypointDependency
-    >(),
-    readonly invalidateOnDependencyChange = new Set<string>(),
     generation = 1
   ) {
     super(
@@ -92,9 +84,7 @@ export class Entrypoint extends BaseEntrypoint {
       name,
       only,
       parents,
-      dependencies,
-      invalidationDependencies,
-      invalidateOnDependencyChange
+      dependencies
     );
 
     this.loadedAndParsed =
@@ -209,6 +199,7 @@ export class Entrypoint extends BaseEntrypoint {
 
     const cached = cache.get('entrypoints', name);
     let changed = false;
+
     if (loadedCode !== undefined) {
       changed = cache.invalidateIfChanged(
         name,
@@ -216,17 +207,6 @@ export class Entrypoint extends BaseEntrypoint {
         undefined,
         'loaded'
       );
-    } else if (cached && cached.initialCode === undefined) {
-      try {
-        changed = cache.invalidateIfChanged(
-          name,
-          fs.readFileSync(stripQueryAndHash(name), 'utf8'),
-          undefined,
-          'fs'
-        );
-      } catch {
-        changed = false;
-      }
     }
 
     if (!cached?.evaluated && cached?.ignored) {
@@ -276,10 +256,14 @@ export class Entrypoint extends BaseEntrypoint {
       return [isLoop ? 'loop' : 'created', cached.supersede(mergedOnly)];
     }
 
+    const nextCode =
+      loadedCode ??
+      (cached && 'initialCode' in cached ? cached.initialCode : undefined);
+
     const newEntrypoint = new Entrypoint(
       services,
       parent ? [parent] : [],
-      loadedCode,
+      nextCode,
       name,
       mergedOnly,
       exports,
@@ -287,12 +271,6 @@ export class Entrypoint extends BaseEntrypoint {
       undefined,
       cached && 'resolveTasks' in cached ? cached.resolveTasks : undefined,
       cached && 'dependencies' in cached ? cached.dependencies : undefined,
-      cached && 'invalidationDependencies' in cached
-        ? cached.invalidationDependencies
-        : undefined,
-      cached && 'invalidateOnDependencyChange' in cached
-        ? cached.invalidateOnDependencyChange
-        : undefined,
       cached ? cached.generation + 1 : 1
     );
 
@@ -307,11 +285,6 @@ export class Entrypoint extends BaseEntrypoint {
   public addDependency(dependency: IEntrypointDependency): void {
     this.resolveTasks.delete(dependency.source);
     this.dependencies.set(dependency.source, dependency);
-  }
-
-  public addInvalidationDependency(dependency: IEntrypointDependency): void {
-    this.resolveTasks.delete(dependency.source);
-    this.invalidationDependencies.set(dependency.source, dependency);
   }
 
   public addResolveTask(
@@ -365,19 +338,13 @@ export class Entrypoint extends BaseEntrypoint {
   >(
     actionType: TType,
     data: TAction['data'],
-    abortSignal: AbortSignal | null = null,
-    actionContext: unknown = DEFAULT_ACTION_CONTEXT
+    abortSignal: AbortSignal | null = null
   ): BaseAction<TAction> {
     if (!this.actionsCache.has(actionType)) {
       this.actionsCache.set(actionType, new Map());
     }
 
-    const contexts = this.actionsCache.get(actionType)!;
-    if (!contexts.has(actionContext)) {
-      contexts.set(actionContext, new Map());
-    }
-
-    const cache = contexts.get(actionContext)!;
+    const cache = this.actionsCache.get(actionType)!;
     const cached = cache.get(data);
     if (cached && !cached.abortSignal?.aborted) {
       return cached as BaseAction<TAction>;
@@ -388,8 +355,7 @@ export class Entrypoint extends BaseEntrypoint {
       this.services,
       this,
       data,
-      abortSignal,
-      actionContext
+      abortSignal
     );
 
     cache.set(data, newAction);
@@ -423,9 +389,7 @@ export class Entrypoint extends BaseEntrypoint {
       this.name,
       this.only,
       this.parents,
-      this.dependencies,
-      this.invalidationDependencies,
-      this.invalidateOnDependencyChange
+      this.dependencies
     );
 
     evaluated.initialCode = this.initialCode;
@@ -439,16 +403,6 @@ export class Entrypoint extends BaseEntrypoint {
 
   public getDependency(name: string): IEntrypointDependency | undefined {
     return this.dependencies.get(name);
-  }
-
-  public getInvalidationDependency(
-    name: string
-  ): IEntrypointDependency | undefined {
-    return this.invalidationDependencies.get(name);
-  }
-
-  public markInvalidateOnDependencyChange(filename: string): void {
-    this.invalidateOnDependencyChange.add(filename);
   }
 
   public getResolveTask(
@@ -509,8 +463,6 @@ export class Entrypoint extends BaseEntrypoint {
             this.loadedAndParsed,
             this.resolveTasks,
             this.dependencies,
-            this.invalidationDependencies,
-            this.invalidateOnDependencyChange,
             this.generation + 1
           );
 

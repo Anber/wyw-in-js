@@ -1,6 +1,9 @@
 import { readFileSync } from 'fs';
 
+import type { RawSourceMap } from 'source-map';
+
 import { asyncResolveFallback } from '@wyw-in-js/shared';
+import type { ValueCache } from '@wyw-in-js/processor-utils';
 
 import type { PluginOptions } from '../types';
 import { TransformCacheCollection } from '../cache';
@@ -35,7 +38,7 @@ if (!rawInput.trim()) {
   fail('[wyw-in-js] babel sync runner: empty input');
 }
 
-let payload: SyncEvalPayload;
+let payload!: SyncEvalPayload;
 try {
   payload = JSON.parse(rawInput) as SyncEvalPayload;
 } catch (error) {
@@ -45,13 +48,12 @@ try {
 }
 
 const { filename, root, code, inputSourceMap, pluginOptions } = payload;
+const normalizedInputSourceMap = inputSourceMap as RawSourceMap | undefined;
 
-let capturedValues: Map<string, unknown> | null = null;
+let capturedValues: ValueCache | null = null;
 
 // eslint-disable-next-line require-yield
-function* collect(
-  this: ICollectAction
-): SyncScenarioForAction<ICollectAction> {
+function* collect(this: ICollectAction): SyncScenarioForAction<ICollectAction> {
   capturedValues = this.data.valueCache;
   const { loadedAndParsed } = this.entrypoint;
 
@@ -70,7 +72,7 @@ try {
       options: {
         filename,
         root,
-        inputSourceMap,
+        inputSourceMap: normalizedInputSourceMap,
         pluginOptions,
       },
     },
@@ -86,14 +88,16 @@ try {
   );
 }
 
-const serializedValues =
-  capturedValues === null
-    ? null
-    : Object.fromEntries(
-        Array.from(capturedValues.entries()).map(([key, value]) => [
-          key,
-          serializeValue(value),
-        ])
-      );
+const serializedValues = (() => {
+  if (capturedValues === null) return null;
+
+  const values: ValueCache = capturedValues;
+  const entries: Array<[string, ReturnType<typeof serializeValue>]> = [];
+  values.forEach((value: unknown, key: string | number | boolean | null) => {
+    entries.push([String(key), serializeValue(value)]);
+  });
+
+  return Object.fromEntries(entries);
+})();
 
 process.stdout.write(JSON.stringify({ values: serializedValues }));

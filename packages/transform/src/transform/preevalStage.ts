@@ -10,6 +10,7 @@ import type { StrictOptions } from '@wyw-in-js/shared';
 import type { Core } from '../babel';
 import { buildOptions } from '../options/buildOptions';
 import dynamicImportPlugin from '../plugins/dynamic-import';
+import requireFallbackPlugin from '../plugins/require-fallback';
 import preevalPlugin from '../plugins/preeval';
 import type { EventEmitter } from '../utils/EventEmitter';
 import { getPluginKey } from '../utils/getPluginKey';
@@ -42,6 +43,7 @@ export function runPreevalStage(
       },
     ],
     dynamicImportPlugin,
+    requireFallbackPlugin,
     ...(evalConfig.plugins ?? []).filter(
       (i) => !hasKeyInList(i, pluginOptions.highPriorityPlugins)
     ),

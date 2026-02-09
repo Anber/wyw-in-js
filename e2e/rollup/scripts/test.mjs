@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import colors from 'picocolors';
 import prettier from 'prettier';
 import { rollup } from 'rollup';
+import { nodeResolve } from '@rollup/plugin-node-resolve';
 
 import wyw from '@wyw-in-js/rollup';
 import css from 'rollup-plugin-css-only';
@@ -22,7 +23,7 @@ const runBuild = async () => {
 
   const bundle = await rollup({
     input: path.resolve(PKG_DIR, 'src', 'index.js'),
-    plugins: [wyw(), css({ output: path.resolve(outDir, 'styles.css') })],
+    plugins: [nodeResolve(), wyw(), css({ output: 'styles.css' })],
   });
 
   await bundle.write({

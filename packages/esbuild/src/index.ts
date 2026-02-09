@@ -208,8 +208,10 @@ export default function wywInJS({
             let babelResult;
             try {
               babelResult = babel.transformSync(codeForEsbuild, {
+                babelrc: false,
                 ...babelOptions,
                 ast: false,
+                configFile: false,
                 filename: args.path,
                 sourceFileName: args.path,
                 sourceMaps: sourceMap,
