@@ -1,4 +1,5 @@
 /* eslint-disable no-underscore-dangle */
+/* global BigInt */
 import fs from 'node:fs';
 import vm from 'node:vm';
 import path from 'node:path';
@@ -455,7 +456,7 @@ const createVmContext = async (filename, features, globals) => {
 const stripQueryAndHash = (value) =>
   value.split('?')[0]?.split('#')[0] ?? value;
 
-const normalizeResolvedId = (resolvedId, specifier, importer) => {
+const normalizeResolvedId = (resolvedId, specifier, importer, extensions) => {
   const stripped = stripQueryAndHash(resolvedId);
   if (!stripped) return resolvedId;
   if (path.extname(stripped)) return resolvedId;
@@ -476,8 +477,9 @@ const normalizeResolvedId = (resolvedId, specifier, importer) => {
   }
 
   const suffix = resolvedId.slice(stripped.length);
-  const extensions = state.evalOptions.extensions ?? [];
-  for (const ext of extensions) {
+  const resolvedExtensions = extensions ?? [];
+  for (let index = 0; index < resolvedExtensions.length; index += 1) {
+    const ext = resolvedExtensions[index];
     const fileCandidate = `${candidate}${ext}`;
     if (fs.existsSync(fileCandidate)) {
       return `${fileCandidate}${suffix}`;
@@ -734,14 +736,21 @@ const createRequireFn = (importer) => {
   const importerFile = stripQueryAndHash(importer);
   const nodeRequire = createRequire(pathToFileURL(importerFile).href);
 
-  return (specifier, resolvedOverride) => {
+  return (specifier, nonLiteralOrResolved, maybeResolved) => {
+    const hasNonLiteralFlag = typeof nonLiteralOrResolved === 'boolean';
+    const nonLiteral = hasNonLiteralFlag ? nonLiteralOrResolved : false;
+    const resolvedOverride = hasNonLiteralFlag
+      ? maybeResolved
+      : nonLiteralOrResolved;
+    const hasResolvedOverride =
+      typeof resolvedOverride === 'string' && resolvedOverride.length > 0;
     if (state.evalOptions.require === 'off') {
       throw new Error(
         `[wyw-in-js] require() fallback is disabled by eval.require: 'off'.`
       );
     }
 
-    if (typeof specifier !== 'string') {
+    if (nonLiteral || typeof specifier !== 'string') {
       if (state.evalOptions.mode === 'strict') {
         throw new Error(
           `[wyw-in-js] Non-literal require() is not supported during eval.\n` +
@@ -790,12 +799,13 @@ const createRequireFn = (importer) => {
 
     try {
       state.evalOptions.extensions?.forEach((ext) => {
+        if (ext === '.cjs' || ext === '.mjs') return;
         if (ext in extensions) return;
         extensions[ext] = NOOP;
         added.push(ext);
       });
 
-      let resolved = resolvedOverride
+      let resolved = hasResolvedOverride
         ? stripQueryAndHash(resolvedOverride)
         : nodeRequire.resolve(stripQueryAndHash(specifier));
 
@@ -1057,7 +1067,8 @@ resolveModule = async (specifier, importer, kind) => {
       const normalized = normalizeResolvedId(
         cached.resolvedId,
         specifier,
-        importer
+        importer,
+        state.evalOptions.extensions
       );
       return loadExternalModule(normalized, importer, specifier);
     }
@@ -1065,7 +1076,8 @@ resolveModule = async (specifier, importer, kind) => {
     const normalized = normalizeResolvedId(
       cached.resolvedId,
       specifier,
-      importer
+      importer,
+      state.evalOptions.extensions
     );
     return loadModule(normalized, importer, specifier);
   }
@@ -1085,7 +1097,12 @@ resolveModule = async (specifier, importer, kind) => {
     }
 
     const normalized = resolved.resolvedId
-      ? normalizeResolvedId(resolved.resolvedId, specifier, importer)
+      ? normalizeResolvedId(
+          resolved.resolvedId,
+          specifier,
+          importer,
+          state.evalOptions.extensions
+        )
       : resolved.resolvedId;
     if (process.env.WYW_DEBUG_EVAL_RESOLVE) {
       process.stderr.write(
@@ -1314,9 +1331,11 @@ const collectModuleExports = () => {
     const data = moduleData.get(id);
     if (!module || !data) return;
 
-    const namespace = module.namespace;
+    const { namespace } = module;
     const hasNamespace =
-      namespace && typeof namespace === 'object' && Object.keys(namespace).length;
+      namespace &&
+      typeof namespace === 'object' &&
+      Object.keys(namespace).length;
     const source = hasNamespace ? namespace : data.module.exports;
 
     const keys = only.includes('*')

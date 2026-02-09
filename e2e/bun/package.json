@@ -5,7 +5,8 @@
     "@wyw-in-js/template-tag-syntax": "workspace:*"
   },
   "devDependencies": {
-    "@wyw-in-js/bun": "workspace:*"
+    "@wyw-in-js/bun": "workspace:*",
+    "react": "^19.0.0"
   },
   "private": true,
   "scripts": {

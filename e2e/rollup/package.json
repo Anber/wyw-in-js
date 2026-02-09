@@ -5,6 +5,7 @@
     "@wyw-in-js/template-tag-syntax": "workspace:*"
   },
   "devDependencies": {
+    "@rollup/plugin-node-resolve": "^15.3.1",
     "@wyw-in-js/rollup": "workspace:*",
     "picocolors": "^1.0.0",
     "prettier": "^3.2.5",

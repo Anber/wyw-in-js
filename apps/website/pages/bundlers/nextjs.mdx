@@ -107,8 +107,8 @@ export default withWyw(
   },
   {
     turbopackLoaderOptions: {
-      // Turbopack requires JSON-serializable options.
-      // Pass all function-based config via a configFile path.
+      // Turbopack requires JSON-serializable options (plain objects/arrays/primitives).
+      // Pass any function/RegExp-based config via a configFile path.
       configFile: './wyw-in-js.config.js',
     },
   }

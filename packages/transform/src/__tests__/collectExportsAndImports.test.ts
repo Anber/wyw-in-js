@@ -39,7 +39,8 @@ const inputs = globSync(inputMask)
     };
   })
   .filter(
-    ({ testName }) => !excludedTests.has(testName) && !testName.startsWith('require_')
+    ({ testName }) =>
+      !excludedTests.has(testName) && !testName.startsWith('require_')
   )
   .reduce(
     (acc, { compiler, filename, testName }) => {

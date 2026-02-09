@@ -242,7 +242,11 @@ export class TransformCacheCollection<
       const otherHash = existing?.[otherSource];
 
       if (otherHash !== undefined && otherHash !== newHash) {
-        cacheLogger('content has changed, invalidate all for %s', filename);
+        cacheLogger(
+          'content has changed (%s), invalidate all for %s',
+          source,
+          filename
+        );
         this.setContentHash(filename, source, newHash);
         this.invalidateForFile(filename);
 
@@ -254,7 +258,11 @@ export class TransformCacheCollection<
     }
 
     if (previousHash !== newHash) {
-      cacheLogger('content has changed, invalidate all for %s', filename);
+      cacheLogger(
+        'content has changed (%s), invalidate all for %s',
+        source,
+        filename
+      );
       this.setContentHash(filename, source, newHash);
       this.invalidateForFile(filename);
 

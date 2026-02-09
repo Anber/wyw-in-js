@@ -13,6 +13,7 @@ jest.mock('@wyw-in-js/transform', () => ({
   slugify: () => 'slug',
   TransformCacheCollection: class TransformCacheCollection {},
   transform: (...args: unknown[]) => transformMock(...args),
+  disposeEvalBroker: jest.fn(),
 }));
 
 const createBuilder = () => {

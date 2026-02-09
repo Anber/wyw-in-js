@@ -30,7 +30,7 @@ describe('processEntrypoint', () => {
     );
     const gen = processEntrypoint.call(action);
 
-    let result = gen.next();
+    const result = gen.next();
     expectIteratorYieldResult(result);
 
     expect(result.value[0]).toBe('transform');

@@ -13,6 +13,7 @@ jest.mock('@wyw-in-js/transform', () => ({
   }),
   TransformCacheCollection: function TransformCacheCollection() {},
   transform: (...args: unknown[]) => transformMock(...args),
+  disposeEvalBroker: jest.fn(),
 }));
 
 class TestCache {

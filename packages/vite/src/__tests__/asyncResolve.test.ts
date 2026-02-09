@@ -54,6 +54,7 @@ jest.mock('@wyw-in-js/transform', () => ({
   }),
   getFileIdx: () => '1',
   TransformCacheCollection: class TransformCacheCollection {},
+  disposeEvalBroker: jest.fn(),
   transform: jest.fn(async (_services, _code, asyncResolve) => {
     const resolved = await asyncResolve(requestedId, requestedImporter, []);
     asyncResolveResults.push(resolved);

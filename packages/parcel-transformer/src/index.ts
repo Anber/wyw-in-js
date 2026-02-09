@@ -1,10 +1,22 @@
 import { Transformer } from '@parcel/plugin';
-import SourceMap from '@parcel/source-map';
+import * as SourceMapModule from '@parcel/source-map';
+import type SourceMapInstance from '@parcel/source-map';
 
 import { asyncResolveFallback } from '@wyw-in-js/shared';
 import { transform, TransformCacheCollection } from '@wyw-in-js/transform';
 
 const cache = new TransformCacheCollection();
+type SourceMapCtor = new (projectRoot: string) => SourceMapInstance;
+
+const sourceMapDefault = SourceMapModule as unknown as {
+  default?: { default?: typeof SourceMapModule } | typeof SourceMapModule;
+};
+
+const SourceMapValue =
+  sourceMapDefault.default?.default ??
+  sourceMapDefault.default ??
+  SourceMapModule;
+const SourceMap = SourceMapValue as unknown as SourceMapCtor;
 
 export default new Transformer({
   async transform({ asset, logger, options, resolve }) {

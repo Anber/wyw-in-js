@@ -47,15 +47,9 @@ const run = (only: string[]) => (code: TemplateStringsArray) =>
 describe('shaker', () => {
   it('should carefully shake used exports', () => {
     const code = run(['__wywPreval'])`
-      "use strict";
-
-      Object.defineProperty(exports, "__esModule", {
-        value: true
-      });
-      exports.activeClass = void 0;
-      exports.activeClass = "s1gxjcbn";
-      const _exp = /*#__PURE__*/() => exports.activeClass;
-      exports.__wywPreval = {
+      export const activeClass = "s1gxjcbn";
+      const _exp = /*#__PURE__*/() => activeClass;
+      export const __wywPreval = {
         _exp: _exp,
       };
     `;
@@ -65,13 +59,10 @@ describe('shaker', () => {
 
   it('should remove enum', () => {
     const code = run(['__wywPreval'])`
-      "use strict";
-
-      var PanelKinds;
-      (function (PanelKinds) {
-        PanelKinds["DEFAULT"] = "default";
-        PanelKinds["TRANSPARENT"] = "transparent";
-      })(PanelKinds = exports.PanelKinds || (exports.PanelKinds = {}));
+      export enum PanelKinds {
+        DEFAULT = "default",
+        TRANSPARENT = "transparent",
+      }
       const _exp2 = /*#__PURE__*/() => "t2nn9pk";
       export const __wywPreval = {
         _exp2: _exp2,
@@ -251,7 +242,7 @@ describe('shaker', () => {
         },
       };
 
-      exports.__wywPreval = {
+      export const __wywPreval = {
         value: () => 's1gxjcbn',
       };
     `;

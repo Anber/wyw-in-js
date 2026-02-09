@@ -36,7 +36,11 @@ const main = async () => {
 
   const outDir = path.resolve(PKG_DIR, 'dist');
   const entries = await fs.readdir(outDir);
-  const cssFiles = entries.filter((file) => file.endsWith('.wyw.css'));
+  const cssFiles = entries.filter(
+    (file) =>
+      file.endsWith('.wyw.css') ||
+      (file.endsWith('.css') && !file.endsWith('.css.map'))
+  );
 
   if (cssFiles.length === 0) {
     throw new Error('No .wyw.css assets were emitted');

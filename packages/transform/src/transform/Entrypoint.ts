@@ -195,10 +195,16 @@ export class Entrypoint extends BaseEntrypoint {
     const { cache } = services;
 
     const cached = cache.get('entrypoints', name);
-    const changed =
-      loadedCode !== undefined
-        ? cache.invalidateIfChanged(name, loadedCode, undefined, 'loaded')
-        : false;
+    let changed = false;
+
+    if (loadedCode !== undefined) {
+      changed = cache.invalidateIfChanged(
+        name,
+        loadedCode,
+        undefined,
+        'loaded'
+      );
+    }
 
     if (!cached?.evaluated && cached?.ignored) {
       return ['cached', cached];
@@ -237,10 +243,14 @@ export class Entrypoint extends BaseEntrypoint {
       return [isLoop ? 'loop' : 'created', cached.supersede(mergedOnly)];
     }
 
+    const nextCode =
+      loadedCode ??
+      (cached && 'initialCode' in cached ? cached.initialCode : undefined);
+
     const newEntrypoint = new Entrypoint(
       services,
       parent ? [parent] : [],
-      loadedCode,
+      nextCode,
       name,
       mergedOnly,
       exports,
