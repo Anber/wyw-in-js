@@ -106,7 +106,7 @@ describe('createEntrypoint', () => {
     expect(callback).not.toBeCalled();
   });
 
-  it('should promote safe modules to wildcard to avoid supersede storms', () => {
+  it('should keep requested only for safe modules', () => {
     services.loadAndParseFn = jest.fn((s, name, loadedCode) => ({
       ast: s.babel.parseSync(loadedCode ?? '', {
         babelrc: false,
@@ -130,7 +130,7 @@ describe('createEntrypoint', () => {
       ['a'],
       code
     );
-    expect(entrypoint1.only).toEqual(['*']);
+    expect(entrypoint1.only).toEqual(['a']);
 
     const entrypoint2 = createEntrypoint(
       services,
@@ -138,7 +138,7 @@ describe('createEntrypoint', () => {
       ['b'],
       code
     );
-    expect(entrypoint2).toBe(entrypoint1);
-    expect(entrypoint1.supersededWith).toBe(null);
+    expect(entrypoint2).not.toBe(entrypoint1);
+    expect(entrypoint2.only).toEqual(['a', 'b']);
   });
 });

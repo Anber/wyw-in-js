@@ -13,6 +13,8 @@ export function* processEntrypoint(
   const { only, log } = this.entrypoint;
   log('start processing (only: %o)', only);
 
+  this.entrypoint.beginProcessing();
+
   try {
     using abortSignal = this.createAbortSignal();
 
@@ -26,6 +28,13 @@ export function* processEntrypoint(
     this.entrypoint.assertNotSuperseded();
 
     this.entrypoint.setTransformResult(result);
+
+    const supersededWith = this.entrypoint.applyDeferredSupersede();
+    if (supersededWith) {
+      log('processing finished, deferred only detected; schedule next attempt');
+      yield* this.getNext('processEntrypoint', supersededWith, undefined, null);
+      return;
+    }
 
     log('entrypoint processing finished');
   } catch (e) {
@@ -43,5 +52,7 @@ export function* processEntrypoint(
 
     log(`Unhandled error: %O`, e);
     throw e;
+  } finally {
+    this.entrypoint.endProcessing();
   }
 }

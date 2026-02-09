@@ -4,7 +4,6 @@ import type { ParentEntrypoint, ITransformFileResult } from '../types';
 
 import { BaseEntrypoint } from './BaseEntrypoint';
 import { isSuperSet, mergeOnly } from './Entrypoint.helpers';
-import { isStaticallyEvaluatableModule } from './isStaticallyEvaluatableModule';
 import type {
   IEntrypointCode,
   IEntrypointDependency,
@@ -52,6 +51,10 @@ export class Entrypoint extends BaseEntrypoint {
   > = new Map();
 
   #hasWywMetadata: boolean = false;
+
+  #isProcessing = false;
+
+  #pendingOnly: string[] | null = null;
 
   #supersededWith: Entrypoint | null = null;
 
@@ -240,6 +243,16 @@ export class Entrypoint extends BaseEntrypoint {
         cached?.only
       );
 
+      if (cached.#isProcessing) {
+        cached.deferOnlySupersede(mergedOnly);
+        cached.log(
+          'is being processed, defer supersede (%o -> %o)',
+          cached.only,
+          mergedOnly
+        );
+        return [isLoop ? 'loop' : 'cached', cached];
+      }
+
       return [isLoop ? 'loop' : 'created', cached.supersede(mergedOnly)];
     }
 
@@ -261,23 +274,6 @@ export class Entrypoint extends BaseEntrypoint {
       cached ? cached.generation + 1 : 1
     );
 
-    if (
-      !newEntrypoint.ignored &&
-      !newEntrypoint.only.includes('*') &&
-      !newEntrypoint.only.includes('__wywPreval') &&
-      !newEntrypoint.only.includes('side-effect')
-    ) {
-      const { ast } = newEntrypoint.loadedAndParsed;
-
-      if (ast && isStaticallyEvaluatableModule(ast)) {
-        newEntrypoint.log(
-          '[entrypoint] promote `only` to "*" for statically evaluatable module'
-        );
-        newEntrypoint.only.length = 0;
-        newEntrypoint.only.push('*');
-      }
-    }
-
     if (cached && !cached.evaluated) {
       cached.log('is cached, but with different code');
       cached.supersede(newEntrypoint);
@@ -298,6 +294,26 @@ export class Entrypoint extends BaseEntrypoint {
     this.resolveTasks.set(name, dependency);
   }
 
+  public applyDeferredSupersede() {
+    if (this.#supersededWith || this.#pendingOnly === null) {
+      return null;
+    }
+
+    const mergedOnly = mergeOnly(this.only, this.#pendingOnly);
+    this.#pendingOnly = null;
+
+    if (isSuperSet(this.only, mergedOnly)) {
+      return null;
+    }
+
+    this.log('apply deferred supersede (%o -> %o)', this.only, mergedOnly);
+
+    const nextEntrypoint = this.supersede(mergedOnly);
+    this.services.cache.add('entrypoints', this.name, nextEntrypoint);
+
+    return nextEntrypoint;
+  }
+
   public assertNotSuperseded() {
     if (this.supersededWith) {
       this.log('superseded');
@@ -310,6 +326,10 @@ export class Entrypoint extends BaseEntrypoint {
       this.log('not transformed');
       throw new UnprocessedEntrypointError(this.supersededWith ?? this);
     }
+  }
+
+  public beginProcessing() {
+    this.#isProcessing = true;
   }
 
   public createAction<
@@ -377,6 +397,10 @@ export class Entrypoint extends BaseEntrypoint {
     return evaluated;
   }
 
+  public endProcessing() {
+    this.#isProcessing = false;
+  }
+
   public getDependency(name: string): IEntrypointDependency | undefined {
     return this.dependencies.get(name);
   }
@@ -417,7 +441,14 @@ export class Entrypoint extends BaseEntrypoint {
     });
   }
 
+  private deferOnlySupersede(only: string[]) {
+    this.#pendingOnly = this.#pendingOnly
+      ? mergeOnly(this.#pendingOnly, only)
+      : [...only];
+  }
+
   private supersede(newOnlyOrEntrypoint: string[] | Entrypoint): Entrypoint {
+    this.#pendingOnly = null;
     const newEntrypoint =
       newOnlyOrEntrypoint instanceof Entrypoint
         ? newOnlyOrEntrypoint

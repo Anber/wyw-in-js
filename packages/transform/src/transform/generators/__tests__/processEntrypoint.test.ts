@@ -39,10 +39,13 @@ describe('processEntrypoint', () => {
     expectIteratorReturnResult(gen.next(), undefined);
   });
 
-  it('should abort previously emitted actions if entrypoint was superseded and emit a new processEntrypoint', () => {
-    const fooBarDefault = createEntrypoint(services, '/foo/bar.js', [
-      'default',
-    ]);
+  it('should abort previously emitted actions if entrypoint code changed and emit a new processEntrypoint', () => {
+    const fooBarDefault = createEntrypoint(
+      services,
+      '/foo/bar.js',
+      ['default'],
+      'foo'
+    );
 
     const action = fooBarDefault.createAction(
       'processEntrypoint',
@@ -59,7 +62,12 @@ describe('processEntrypoint', () => {
     const emittedSignals = emitted.map((a) => a[3]);
     expect(emittedSignals.map((signal) => signal?.aborted)).toEqual([false]);
 
-    const supersededWith = createEntrypoint(services, '/foo/bar.js', ['named']);
+    const supersededWith = createEntrypoint(
+      services,
+      '/foo/bar.js',
+      ['named'],
+      'bar'
+    );
     expect(emittedSignals.map((signal) => signal?.aborted)).toEqual([true]);
 
     const nextResult = gen.next();
@@ -92,6 +100,37 @@ describe('processEntrypoint', () => {
     abortController.abort();
 
     expect(emittedSignals.map((signal) => signal?.aborted)).toEqual([true]);
+
+    expectIteratorReturnResult(gen.next(), undefined);
+  });
+
+  it('should defer supersede while transform is in progress and reschedule once', () => {
+    const fooBarDefault = createEntrypoint(services, '/foo/bar.js', [
+      'default',
+    ]);
+
+    const action = fooBarDefault.createAction(
+      'processEntrypoint',
+      undefined,
+      null
+    );
+    const gen = processEntrypoint.call(action);
+
+    const started = gen.next();
+    expectIteratorYieldResult(started);
+    expect(started.value[0]).toBe('transform');
+    expect(started.value[3]?.aborted).toBe(false);
+
+    const sameEntrypoint = createEntrypoint(services, '/foo/bar.js', ['named']);
+    expect(sameEntrypoint).toBe(fooBarDefault);
+    expect(fooBarDefault.supersededWith).toBe(null);
+
+    const rescheduled = gen.next(null);
+    expectIteratorYieldResult(rescheduled);
+    expect(rescheduled.value[0]).toBe('processEntrypoint');
+    expect(rescheduled.value[1]).not.toBe(fooBarDefault);
+    expect(rescheduled.value[1].only).toEqual(['default', 'named']);
+    expect(fooBarDefault.supersededWith).toBe(rescheduled.value[1]);
 
     expectIteratorReturnResult(gen.next(), undefined);
   });
