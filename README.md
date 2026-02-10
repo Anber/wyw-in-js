@@ -1,3 +1,5 @@
+<iframe src="https://github.com/sponsors/Anber/card" title="Sponsor Anber" height="225" width="600" style="border: 0;"></iframe>
+
 <div align="center">
   <h1>WyW-in-JS</h1>
   <p>A Toolkit for Zero-Runtime CSS-in-JS Libraries</p>
