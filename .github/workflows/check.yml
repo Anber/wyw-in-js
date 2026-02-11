@@ -123,3 +123,13 @@ jobs:
       - name: Next (turbopack) e2e
         if: runner.os == 'Linux' && matrix.node-version == '22.x'
         run: bun run --filter @wyw-in-js/e2e-next-turbopack test
+
+      # Keep the full adapter suite on Linux + Node 22 for cost control,
+      # but add targeted extra lanes to catch runtime/platform regressions.
+      - name: Webpack e2e (Node 24 lane)
+        if: runner.os == 'Linux' && matrix.node-version == '24.x'
+        run: bun run --filter @wyw-in-js/e2e-webpack test
+
+      - name: esbuild e2e (Windows lane)
+        if: runner.os == 'Windows' && matrix.node-version == '22.x'
+        run: bun run --filter @wyw-in-js/e2e-esbuild test
