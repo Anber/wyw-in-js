@@ -6,6 +6,7 @@
 - **Node.js >= 22** is required for evaluation.
 - Evaluation runs in an async **Node ESM runner** (vm.SourceTextModule).
 - `eval.require` defaults to **warn-and-run**; use `importOverrides` to avoid runtime-only code during eval.
+- `eval.globals` updates are supported between runs (value changes and removals both trigger re-init).
 - Turbopack loader options must be **JSON-serializable**.
 - `@wyw-in-js/babel-preset` is still supported, but runs evaluation in a separate Node process.
 
@@ -36,6 +37,28 @@ Control it via `eval.require`:
 export default {
   eval: {
     require: 'error', // or 'off'
+  },
+};
+```
+
+### `eval.globals` lifecycle (watch/dev)
+
+`eval.globals` is treated as part of evaluator input identity in v2.
+
+- If you change a global value between runs, WyW re-evaluates with the new value.
+- If you remove a global key, WyW re-evaluates without it.
+- Re-init is based on serialized globals payload (keys + values), not just key names.
+- Mutating globals at runtime inside evaluated modules is not a durable source of truth; subsequent runs read from config.
+
+Example:
+
+```js
+// wyw-in-js.config.mjs
+export default {
+  eval: {
+    globals: {
+      THEME_MODE: 'light',
+    },
   },
 };
 ```

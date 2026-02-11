@@ -354,100 +354,102 @@ describe('EvalBroker', () => {
     rmSync(root, { recursive: true, force: true });
   });
 
-  it('re-evaluates when eval.globals value changes between runs', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
-    const entry = join(root, 'entry.js');
+  describe('eval.globals lifecycle', () => {
+    it('re-evaluates when eval.globals value changes between runs', async () => {
+      const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
+      const entry = join(root, 'entry.js');
 
-    writeFileSync(
-      entry,
-      [
-        'const captured = GLOBAL_VAL;',
-        'export const __wywPreval = {',
-        '  value: () => captured,',
-        '};',
-      ].join('\n')
-    );
+      writeFileSync(
+        entry,
+        [
+          'const captured = GLOBAL_VAL;',
+          'export const __wywPreval = {',
+          '  value: () => captured,',
+          '};',
+        ].join('\n')
+      );
 
-    const services = createServices(root, entry, {
-      eval: {
-        globals: {
-          GLOBAL_VAL: 1,
+      const services = createServices(root, entry, {
+        eval: {
+          globals: {
+            GLOBAL_VAL: 1,
+          },
         },
-      },
-    });
-    const broker = new EvalBroker(
-      services,
-      jest.fn(async () => null)
-    );
-    const entrypoint = Entrypoint.createRoot(
-      services,
-      entry,
-      ['__wywPreval'],
-      readFileSync(entry, 'utf-8')
-    );
+      });
+      const broker = new EvalBroker(
+        services,
+        jest.fn(async () => null)
+      );
+      const entrypoint = Entrypoint.createRoot(
+        services,
+        entry,
+        ['__wywPreval'],
+        readFileSync(entry, 'utf-8')
+      );
 
-    const first = await broker.evaluate(entrypoint);
-    expect(first.values?.get('value')).toBe(1);
+      const first = await broker.evaluate(entrypoint);
+      expect(first.values?.get('value')).toBe(1);
 
-    services.options.pluginOptions.eval = {
-      ...(services.options.pluginOptions.eval ?? {}),
-      globals: {
-        GLOBAL_VAL: 2,
-      },
-    };
-
-    const second = await broker.evaluate(entrypoint);
-    expect(second.values?.get('value')).toBe(2);
-
-    broker.dispose();
-    rmSync(root, { recursive: true, force: true });
-  });
-
-  it('drops removed globals across re-init', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
-    const entry = join(root, 'entry.js');
-
-    writeFileSync(
-      entry,
-      [
-        "const captured = typeof REMOVED_GLOBAL === 'undefined' ? 'missing' : REMOVED_GLOBAL;",
-        'export const __wywPreval = {',
-        '  value: () => captured,',
-        '};',
-      ].join('\n')
-    );
-
-    const services = createServices(root, entry, {
-      eval: {
+      services.options.pluginOptions.eval = {
+        ...(services.options.pluginOptions.eval ?? {}),
         globals: {
-          REMOVED_GLOBAL: 'present',
+          GLOBAL_VAL: 2,
         },
-      },
+      };
+
+      const second = await broker.evaluate(entrypoint);
+      expect(second.values?.get('value')).toBe(2);
+
+      broker.dispose();
+      rmSync(root, { recursive: true, force: true });
     });
-    const broker = new EvalBroker(
-      services,
-      jest.fn(async () => null)
-    );
-    const entrypoint = Entrypoint.createRoot(
-      services,
-      entry,
-      ['__wywPreval'],
-      readFileSync(entry, 'utf-8')
-    );
 
-    const first = await broker.evaluate(entrypoint);
-    expect(first.values?.get('value')).toBe('present');
+    it('drops removed globals across re-init', async () => {
+      const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
+      const entry = join(root, 'entry.js');
 
-    services.options.pluginOptions.eval = {
-      ...(services.options.pluginOptions.eval ?? {}),
-      globals: {},
-    };
+      writeFileSync(
+        entry,
+        [
+          "const captured = typeof REMOVED_GLOBAL === 'undefined' ? 'missing' : REMOVED_GLOBAL;",
+          'export const __wywPreval = {',
+          '  value: () => captured,',
+          '};',
+        ].join('\n')
+      );
 
-    const second = await broker.evaluate(entrypoint);
-    expect(second.values?.get('value')).toBe('missing');
+      const services = createServices(root, entry, {
+        eval: {
+          globals: {
+            REMOVED_GLOBAL: 'present',
+          },
+        },
+      });
+      const broker = new EvalBroker(
+        services,
+        jest.fn(async () => null)
+      );
+      const entrypoint = Entrypoint.createRoot(
+        services,
+        entry,
+        ['__wywPreval'],
+        readFileSync(entry, 'utf-8')
+      );
 
-    broker.dispose();
-    rmSync(root, { recursive: true, force: true });
+      const first = await broker.evaluate(entrypoint);
+      expect(first.values?.get('value')).toBe('present');
+
+      services.options.pluginOptions.eval = {
+        ...(services.options.pluginOptions.eval ?? {}),
+        globals: {},
+      };
+
+      const second = await broker.evaluate(entrypoint);
+      expect(second.values?.get('value')).toBe('missing');
+
+      broker.dispose();
+      rmSync(root, { recursive: true, force: true });
+    });
   });
 
   it('evaluates a cyclic module graph via runner', async () => {

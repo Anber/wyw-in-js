@@ -22,6 +22,34 @@ module.exports = {
 
   Controls static evaluation of template expressions during dependency collection. It does **not** disable module evaluation. If there is nothing to evaluate, WyW-in-JS skips evaluation regardless of this flag. The old behavior of `evaluate: false` (throwing on unsupported interpolation) is deprecated and kept only for legacy configs.
 
+- `eval: EvalOptionsV2`:
+
+  Controls v2 evaluator behavior (`resolver`, `require`, `mode`, `globals`, `onWarn`, and custom resolver/loader hooks).
+
+  For `eval.globals`:
+
+  - Values are injected into the eval VM context for each transform run.
+  - Changing a global value between runs is supported.
+  - Removing a global key between runs is supported.
+  - WyW invalidates eval cache/re-init state when the serialized `eval.globals` payload changes (not just keys, but values too).
+  - Runtime mutations inside evaluated modules are not persisted as source of truth; the next run starts from `eval.globals` in config.
+
+  Keep `eval.globals` deterministic when possible (avoid `Date.now()`/`Math.random()` style values if you want stable cache behavior).
+
+  Example:
+
+  ```js
+  module.exports = {
+    eval: {
+      require: 'warn-and-run',
+      globals: {
+        BUILD_TARGET: 'web',
+        FEATURE_FLAGS: { newNav: true },
+      },
+    },
+  };
+  ```
+
 - `displayName: boolean` (default: `false`):
 
   Enabling this will add a display name to generated class names, e.g. `.Title_abcdef` instead of `.abcdef'. It is disabled by default to generate smaller CSS files.
