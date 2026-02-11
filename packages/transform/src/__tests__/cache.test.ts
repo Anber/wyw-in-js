@@ -857,6 +857,36 @@ describe('TransformCacheCollection', () => {
     });
   });
 
+  describe('consumeInvalidation', () => {
+    it('consumes invalidation once per query/hash variant', () => {
+      const cache = new TransformCacheCollection();
+      const filename = '/tmp/data.txt';
+
+      cache.invalidateForFile(filename);
+
+      expect(cache.consumeInvalidation(`${filename}?raw`)).toBe(true);
+      expect(cache.consumeInvalidation(`${filename}?url`)).toBe(true);
+      expect(cache.consumeInvalidation(`${filename}#v1`)).toBe(true);
+
+      expect(cache.consumeInvalidation(`${filename}?raw`)).toBe(false);
+      expect(cache.consumeInvalidation(`${filename}?url`)).toBe(false);
+      expect(cache.consumeInvalidation(`${filename}#v1`)).toBe(false);
+    });
+
+    it('re-invalidates all variants after the same file changes again', () => {
+      const cache = new TransformCacheCollection();
+      const filename = '/tmp/data.txt';
+
+      cache.invalidateForFile(filename);
+      expect(cache.consumeInvalidation(`${filename}?raw`)).toBe(true);
+      expect(cache.consumeInvalidation(`${filename}?url`)).toBe(true);
+
+      cache.invalidateForFile(filename);
+      expect(cache.consumeInvalidation(`${filename}?raw`)).toBe(true);
+      expect(cache.consumeInvalidation(`${filename}?url`)).toBe(true);
+    });
+  });
+
   it('removes entry and content hash when value is undefined', () => {
     const filename = 'empty-style.js';
     const content = '';
