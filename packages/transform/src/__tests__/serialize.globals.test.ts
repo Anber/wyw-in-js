@@ -69,4 +69,26 @@ describe('eval.globals serialization', () => {
       '[wyw-in-js] Failed to restore eval.globals function at eval.globals.nested.fn.'
     );
   });
+
+  it('fails with actionable message for Date values', () => {
+    expect(() =>
+      encodeGlobals({
+        releasedAt: new Date(0),
+      })
+    ).toThrow(
+      '[wyw-in-js] eval.globals contains an unsupported non-plain object at eval.globals.releasedAt (Date).'
+    );
+  });
+
+  it('fails with actionable message for Map values', () => {
+    expect(() =>
+      encodeGlobals({
+        nested: {
+          mapping: new Map([['a', 1]]),
+        },
+      })
+    ).toThrow(
+      '[wyw-in-js] eval.globals contains an unsupported non-plain object at eval.globals.nested.mapping (Map).'
+    );
+  });
 });

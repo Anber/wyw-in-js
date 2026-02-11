@@ -138,8 +138,13 @@ export const serializePreval = (
     Object.entries(values).map(([key, value]) => [key, serializeValue(value)])
   );
 
-const isPlainObject = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
+const isPlainObject = (value: unknown): value is Record<string, unknown> => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return false;
+  }
+
+  return Object.getPrototypeOf(value) === Object.prototype;
+};
 
 const isCallable = (value: unknown): value is (...args: unknown[]) => unknown =>
   typeof value === 'function';
@@ -156,6 +161,32 @@ const formatGlobalsPath = (path: Array<string | number>): string =>
 
     return `${acc}[${JSON.stringify(segment)}]`;
   }, 'eval.globals');
+
+const getObjectTypeName = (value: object): string => {
+  const { constructor } = value as { constructor?: { name?: unknown } };
+  if (
+    constructor &&
+    typeof constructor.name === 'string' &&
+    constructor.name.length > 0
+  ) {
+    return constructor.name;
+  }
+
+  const tag = Object.prototype.toString.call(value);
+  return tag.slice(8, -1) || 'Object';
+};
+
+const throwUnsupportedNonPlainObject = (
+  value: object,
+  path: Array<string | number>
+): never => {
+  throw new Error(
+    `[wyw-in-js] eval.globals contains an unsupported non-plain object at ${formatGlobalsPath(
+      path
+    )} (${getObjectTypeName(value)}). ` +
+      `Use JSON-like primitives, arrays, plain objects, functions, and symbols.`
+  );
+};
 
 const restoreFunction = (source: string, path: Array<string | number>) => {
   try {
@@ -289,6 +320,10 @@ const encodeGlobalsAtPath = (
         encodeGlobalsAtPath(item, [...path, key]),
       ])
     );
+  }
+
+  if (typeof value === 'object' && value !== null) {
+    throwUnsupportedNonPlainObject(value, path);
   }
 
   return value;
