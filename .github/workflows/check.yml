@@ -124,11 +124,41 @@ jobs:
         if: runner.os == 'Linux' && matrix.node-version == '22.x'
         run: bun run --filter @wyw-in-js/e2e-next-turbopack test
 
-      # Keep the full adapter suite on Linux + Node 22 for cost control,
-      # but add targeted extra lanes to catch runtime/platform regressions.
+      # Coverage strategy (cost-aware):
+      # - Linux + Node 22: full adapter suite (authoritative baseline).
+      # - Linux + Node 24: representative adapter checks for Node runtime drift:
+      #   webpack, rollup, esbuild, next-webpack, next-turbopack.
+      # - Windows + Node 22: representative platform checks:
+      #   vite/parcel smoke (already above), webpack, rollup, esbuild.
+      # This keeps CI cost bounded while still covering major adapters on
+      # non-baseline runtime/platform lanes.
       - name: Webpack e2e (Node 24 lane)
         if: runner.os == 'Linux' && matrix.node-version == '24.x'
         run: bun run --filter @wyw-in-js/e2e-webpack test
+
+      - name: Rollup e2e (Node 24 lane)
+        if: runner.os == 'Linux' && matrix.node-version == '24.x'
+        run: bun run --filter @wyw-in-js/e2e-rollup test
+
+      - name: esbuild e2e (Node 24 lane)
+        if: runner.os == 'Linux' && matrix.node-version == '24.x'
+        run: bun run --filter @wyw-in-js/e2e-esbuild test
+
+      - name: Next (webpack) e2e (Node 24 lane)
+        if: runner.os == 'Linux' && matrix.node-version == '24.x'
+        run: bun run --filter @wyw-in-js/e2e-next-webpack test
+
+      - name: Next (turbopack) e2e (Node 24 lane)
+        if: runner.os == 'Linux' && matrix.node-version == '24.x'
+        run: bun run --filter @wyw-in-js/e2e-next-turbopack test
+
+      - name: Webpack e2e (Windows lane)
+        if: runner.os == 'Windows' && matrix.node-version == '22.x'
+        run: bun run --filter @wyw-in-js/e2e-webpack test
+
+      - name: Rollup e2e (Windows lane)
+        if: runner.os == 'Windows' && matrix.node-version == '22.x'
+        run: bun run --filter @wyw-in-js/e2e-rollup test
 
       - name: esbuild e2e (Windows lane)
         if: runner.os == 'Windows' && matrix.node-version == '22.x'
