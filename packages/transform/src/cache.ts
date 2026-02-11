@@ -47,7 +47,9 @@ export class TransformCacheCollection<
 
   private keySalt: string | null = null;
 
-  private invalidatedFiles = new Set<string>();
+  private invalidatedFiles = new Map<string, number>();
+
+  private consumedInvalidationVersions = new Map<string, number>();
 
   constructor(caches: Partial<ICaches<TEntrypoint>> = {}) {
     this.entrypoints = caches.entrypoints || new Map();
@@ -188,16 +190,25 @@ export class TransformCacheCollection<
     cacheNames.forEach((cacheName) => {
       this.invalidate(cacheName, filename);
     });
-    this.invalidatedFiles.add(stripQueryAndHash(filename));
+    const key = stripQueryAndHash(filename);
+    const version = this.invalidatedFiles.get(key) ?? 0;
+    this.invalidatedFiles.set(key, version + 1);
   }
 
   public consumeInvalidation(filename: string) {
     const key = stripQueryAndHash(filename);
-    if (!this.invalidatedFiles.has(key)) {
+    const invalidationVersion = this.invalidatedFiles.get(key);
+    if (invalidationVersion === undefined) {
       return false;
     }
 
-    this.invalidatedFiles.delete(key);
+    const consumedVersion =
+      this.consumedInvalidationVersions.get(filename) ?? 0;
+    if (consumedVersion >= invalidationVersion) {
+      return false;
+    }
+
+    this.consumedInvalidationVersions.set(filename, invalidationVersion);
     return true;
   }
 

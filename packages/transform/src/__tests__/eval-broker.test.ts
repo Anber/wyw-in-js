@@ -229,6 +229,68 @@ describe('EvalBroker', () => {
     rmSync(root, { recursive: true, force: true });
   });
 
+  it('invalidates all query variants in load cache after file change', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
+    const importer = join(root, 'entry.js');
+    const dep = join(root, 'data.txt');
+    const rawId = `${dep}?raw`;
+    const urlId = `${dep}?url`;
+
+    const customLoader = jest.fn(async (id: string) => ({
+      code: `export default ${JSON.stringify(id)};`,
+    }));
+    const services = createServices(root, importer, {
+      eval: { customLoader },
+    });
+
+    const broker = new EvalBroker(
+      services,
+      jest.fn(async () => dep)
+    );
+    const privateBroker = getPrivateBroker(broker);
+
+    await privateBroker.loadModule({
+      id: rawId,
+      importerId: importer,
+      request: rawId,
+    });
+    await privateBroker.loadModule({
+      id: urlId,
+      importerId: importer,
+      request: urlId,
+    });
+    await privateBroker.loadModule({
+      id: rawId,
+      importerId: importer,
+      request: rawId,
+    });
+    await privateBroker.loadModule({
+      id: urlId,
+      importerId: importer,
+      request: urlId,
+    });
+
+    expect(customLoader).toHaveBeenCalledTimes(2);
+
+    services.cache.invalidateForFile(dep);
+
+    await privateBroker.loadModule({
+      id: rawId,
+      importerId: importer,
+      request: rawId,
+    });
+    await privateBroker.loadModule({
+      id: urlId,
+      importerId: importer,
+      request: urlId,
+    });
+
+    expect(customLoader).toHaveBeenCalledTimes(4);
+
+    broker.dispose();
+    rmSync(root, { recursive: true, force: true });
+  });
+
   it('strips browser globals from prepared output for __wywPreval-only loads', async () => {
     const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
     const dep = join(root, 'dep.js');
