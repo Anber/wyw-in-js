@@ -28,6 +28,7 @@ import type {
 } from './transform/types';
 import type { Result } from './types';
 import { getEvalBroker } from './eval/broker';
+import { encodeGlobals } from './eval/serialize';
 
 type PartialServices = Partial<Omit<Services, 'options'>> & {
   options: Omit<Services['options'], 'pluginOptions'> & {
@@ -57,6 +58,25 @@ const getResolverId = (fn: unknown) => {
   return resolverId;
 };
 
+const isPlainObject = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+const canonicalizeForHash = (value: unknown): unknown => {
+  if (Array.isArray(value)) {
+    return value.map((item) => canonicalizeForHash(item));
+  }
+
+  if (isPlainObject(value)) {
+    return Object.fromEntries(
+      Object.keys(value)
+        .sort()
+        .map((key) => [key, canonicalizeForHash(value[key])])
+    );
+  }
+
+  return value;
+};
+
 const getEvalCacheKey = (
   pluginOptions: ReturnType<typeof loadWywOptions>,
   asyncResolve: (
@@ -70,7 +90,7 @@ const getEvalCacheKey = (
     mode: evalOptions.mode,
     resolver: evalOptions.resolver,
     require: evalOptions.require,
-    globals: evalOptions.globals ? Object.keys(evalOptions.globals).sort() : [],
+    globals: canonicalizeForHash(encodeGlobals(evalOptions.globals ?? {})),
     customResolver: getResolverId(evalOptions.customResolver),
     customLoader: getResolverId(evalOptions.customLoader),
     bundlerResolver: getResolverId(asyncResolve),

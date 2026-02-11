@@ -380,6 +380,30 @@ const loadByImportLoaders = (
 const hashContent = (content: string): string =>
   createHash('sha256').update(content).digest('hex');
 
+const isPlainObject = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+const canonicalizeForHash = (value: unknown): unknown => {
+  if (Array.isArray(value)) {
+    return value.map((item) => canonicalizeForHash(item));
+  }
+
+  if (isPlainObject(value)) {
+    return Object.fromEntries(
+      Object.keys(value)
+        .sort()
+        .map((key) => [key, canonicalizeForHash(value[key])])
+    );
+  }
+
+  return value;
+};
+
+const getInitPayloadKey = (payload: EvalRunnerInitPayload): string =>
+  createHash('sha256')
+    .update(JSON.stringify(canonicalizeForHash(payload)))
+    .digest('hex');
+
 const formatLoaderResult = (code: string, loader?: string | null) => {
   if (loader === 'json') {
     return `export default ${JSON.stringify(JSON.parse(code))};`;
@@ -597,14 +621,13 @@ export class EvalBroker {
   }
 
   private async initRunner(entrypoint: Entrypoint) {
-    const initKey = entrypoint.name;
-    if (this.lastInitKey === initKey) {
-      return;
-    }
-
     const features = this.getRunnerFeatures();
     const payload = buildRunnerInitPayload(this.services, entrypoint, features);
     payload.reuseModules = !this.services.options.pluginOptions.overrideContext;
+    const initKey = getInitPayloadKey(payload);
+    if (this.lastInitKey === initKey) {
+      return;
+    }
     const timeoutMs = this.getInitTimeoutMs(entrypoint, features);
 
     try {
@@ -627,7 +650,7 @@ export class EvalBroker {
           fallbackFeatures
         );
         await this.request('INIT', fallbackPayload, INIT_TIMEOUT_MS);
-        this.lastInitKey = initKey;
+        this.lastInitKey = getInitPayloadKey(fallbackPayload);
         return;
       }
       throw error;
