@@ -133,6 +133,22 @@ const shouldPreferImport = (resolvedFile) => {
 const isPlainObject = (value) =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
+const canonicalizeForSignature = (value) => {
+  if (Array.isArray(value)) {
+    return value.map((item) => canonicalizeForSignature(item));
+  }
+
+  if (isPlainObject(value)) {
+    return Object.fromEntries(
+      Object.keys(value)
+        .sort()
+        .map((key) => [key, canonicalizeForSignature(value[key])])
+    );
+  }
+
+  return value;
+};
+
 const decodeGlobals = (value) => {
   if (Array.isArray(value)) {
     return value.map((item) => decodeGlobals(item));
@@ -591,6 +607,7 @@ const state = {
   context: null,
   teardown: null,
   happyDomEnabled: null,
+  globalsSignature: null,
   evalOptions: {
     mode: 'strict',
     require: 'warn-and-run',
@@ -636,6 +653,7 @@ const resetEvaluationState = () => {
   state.context = null;
   state.teardown = null;
   state.happyDomEnabled = null;
+  state.globalsSignature = null;
   resetModuleState();
 };
 
@@ -1417,10 +1435,14 @@ const handleMessage = async (message) => {
       try {
         const initStart = Date.now();
         debug('init:start', message.payload.entrypoint ?? 'eval-runner');
+        const encodedGlobals = message.payload.evalOptions.globals ?? {};
+        const nextGlobalsSignature = JSON.stringify(
+          canonicalizeForSignature(encodedGlobals)
+        );
         const nextEvalOptions = {
           ...state.evalOptions,
           ...message.payload.evalOptions,
-          globals: decodeGlobals(message.payload.evalOptions.globals ?? {}),
+          globals: decodeGlobals(encodedGlobals),
         };
         const nextFeatures = message.payload.features ?? {};
         const nextEntrypoint = message.payload.entrypoint ?? 'eval-runner';
@@ -1429,9 +1451,14 @@ const handleMessage = async (message) => {
           'happyDOM',
           nextEntrypoint
         );
+        const globalsChanged =
+          state.globalsSignature !== null &&
+          state.globalsSignature !== nextGlobalsSignature;
 
         const canReuseContext =
-          state.context && state.happyDomEnabled === nextHappyDomEnabled;
+          state.context &&
+          state.happyDomEnabled === nextHappyDomEnabled &&
+          !globalsChanged;
         const reuseModules = Boolean(message.payload.reuseModules);
 
         if (canReuseContext) {
@@ -1445,6 +1472,7 @@ const handleMessage = async (message) => {
             ...nextEvalOptions.globals,
             __wyw_getModule: (moduleId) => getModuleData(moduleId),
           });
+          state.globalsSignature = nextGlobalsSignature;
           debug('init:reuse', Date.now() - initStart);
           sendMessage({ type: 'INIT_ACK', id: message.id });
           break;
@@ -1469,6 +1497,7 @@ const handleMessage = async (message) => {
         state.context = context;
         state.teardown = teardown;
         state.happyDomEnabled = nextHappyDomEnabled;
+        state.globalsSignature = nextGlobalsSignature;
 
         sendMessage({ type: 'INIT_ACK', id: message.id });
         debug('init:done', Date.now() - initStart);
