@@ -14,9 +14,29 @@ export type SerializedValue =
   | { kind: 'infinity' }
   | { kind: '-infinity' };
 
-export type EncodedGlobal =
-  | { __wyw_function: string }
-  | { __wyw_symbol: string };
+const ENCODED_GLOBAL_ENVELOPE_KEY = '__wyw_eval_global';
+const ENCODED_GLOBAL_SIGNATURE = 'wyw-eval-global';
+const ENCODED_GLOBAL_VERSION = 1;
+
+type EncodedFunctionPayload = {
+  signature: typeof ENCODED_GLOBAL_SIGNATURE;
+  version: typeof ENCODED_GLOBAL_VERSION;
+  kind: 'function';
+  source: string;
+};
+
+type EncodedSymbolPayload = {
+  signature: typeof ENCODED_GLOBAL_SIGNATURE;
+  version: typeof ENCODED_GLOBAL_VERSION;
+  kind: 'symbol';
+  description: string;
+};
+
+type EncodedGlobalPayload = EncodedFunctionPayload | EncodedSymbolPayload;
+
+export type EncodedGlobal = {
+  [ENCODED_GLOBAL_ENVELOPE_KEY]: EncodedGlobalPayload;
+};
 
 const isLikeError = (value: unknown): value is Error =>
   typeof value === 'object' &&
@@ -121,61 +141,192 @@ export const serializePreval = (
 const isPlainObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
-export const encodeGlobals = (value: unknown): unknown => {
-  if (typeof value === 'function') {
-    return { __wyw_function: value.toString() } satisfies EncodedGlobal;
+const isCallable = (value: unknown): value is (...args: unknown[]) => unknown =>
+  typeof value === 'function';
+
+const formatGlobalsPath = (path: Array<string | number>): string =>
+  path.reduce<string>((acc, segment) => {
+    if (typeof segment === 'number') {
+      return `${acc}[${segment}]`;
+    }
+
+    if (/^[A-Za-z_$][\w$]*$/u.test(segment)) {
+      return `${acc}.${segment}`;
+    }
+
+    return `${acc}[${JSON.stringify(segment)}]`;
+  }, 'eval.globals');
+
+const restoreFunction = (source: string, path: Array<string | number>) => {
+  try {
+    // eslint-disable-next-line no-eval
+    const restored = eval(`(${source})`) as unknown;
+    if (typeof restored !== 'function') {
+      throw new TypeError('decoded source is not a function');
+    }
+
+    return restored;
+  } catch (error) {
+    throw new Error(
+      `[wyw-in-js] Failed to restore eval.globals function at ${formatGlobalsPath(
+        path
+      )}. ` +
+        `Ensure the value is a user-defined function expression/arrow function. ` +
+        `Native and bound functions are not supported. ` +
+        `Original error: ${String(error)}`
+    );
+  }
+};
+
+const validateFunctionSource = (
+  source: string,
+  path: Array<string | number>
+) => {
+  try {
+    // eslint-disable-next-line no-eval
+    const restored = eval(`(${source})`) as unknown;
+    if (typeof restored !== 'function') {
+      throw new TypeError('decoded source is not a function');
+    }
+  } catch (error) {
+    throw new Error(
+      `[wyw-in-js] eval.globals contains an unsupported function at ${formatGlobalsPath(
+        path
+      )}. ` +
+        `Ensure the value is a user-defined function expression/arrow function. ` +
+        `Native and bound functions are not supported. ` +
+        `Original error: ${String(error)}`
+    );
+  }
+};
+
+const serializeFunction = (
+  value: (...args: unknown[]) => unknown,
+  path: Array<string | number>
+) => {
+  const source = value.toString();
+
+  // Validate that the source is restorable before storing it.
+  validateFunctionSource(source, path);
+
+  return source;
+};
+
+const isEncodedGlobalPayload = (
+  value: unknown
+): value is EncodedGlobalPayload => {
+  if (!isPlainObject(value)) {
+    return false;
+  }
+
+  if (
+    value.signature !== ENCODED_GLOBAL_SIGNATURE ||
+    value.version !== ENCODED_GLOBAL_VERSION
+  ) {
+    return false;
+  }
+
+  if (value.kind === 'function') {
+    return typeof value.source === 'string';
+  }
+
+  if (value.kind === 'symbol') {
+    return typeof value.description === 'string';
+  }
+
+  return false;
+};
+
+const isEncodedGlobal = (value: unknown): value is EncodedGlobal => {
+  if (!isPlainObject(value)) {
+    return false;
+  }
+
+  const keys = Object.keys(value);
+  if (keys.length !== 1 || keys[0] !== ENCODED_GLOBAL_ENVELOPE_KEY) {
+    return false;
+  }
+
+  return isEncodedGlobalPayload(value[ENCODED_GLOBAL_ENVELOPE_KEY]);
+};
+
+const encodeGlobalsAtPath = (
+  value: unknown,
+  path: Array<string | number>
+): unknown => {
+  if (isCallable(value)) {
+    return {
+      [ENCODED_GLOBAL_ENVELOPE_KEY]: {
+        signature: ENCODED_GLOBAL_SIGNATURE,
+        version: ENCODED_GLOBAL_VERSION,
+        kind: 'function',
+        source: serializeFunction(value, path),
+      },
+    } satisfies EncodedGlobal;
   }
 
   if (typeof value === 'symbol') {
     return {
-      __wyw_symbol: value.description ?? '',
+      [ENCODED_GLOBAL_ENVELOPE_KEY]: {
+        signature: ENCODED_GLOBAL_SIGNATURE,
+        version: ENCODED_GLOBAL_VERSION,
+        kind: 'symbol',
+        description: value.description ?? '',
+      },
     } satisfies EncodedGlobal;
   }
 
   if (Array.isArray(value)) {
-    return value.map((item) => encodeGlobals(item));
+    return value.map((item, index) =>
+      encodeGlobalsAtPath(item, [...path, index])
+    );
   }
 
   if (isPlainObject(value)) {
     return Object.fromEntries(
-      Object.entries(value).map(([key, item]) => [key, encodeGlobals(item)])
+      Object.entries(value).map(([key, item]) => [
+        key,
+        encodeGlobalsAtPath(item, [...path, key]),
+      ])
     );
   }
 
   return value;
 };
 
-export const decodeGlobals = (value: unknown): unknown => {
+export const encodeGlobals = (value: unknown): unknown =>
+  encodeGlobalsAtPath(value, []);
+
+const decodeGlobalsAtPath = (
+  value: unknown,
+  path: Array<string | number>
+): unknown => {
   if (Array.isArray(value)) {
-    return value.map((item) => decodeGlobals(item));
+    return value.map((item, index) =>
+      decodeGlobalsAtPath(item, [...path, index])
+    );
+  }
+
+  if (isEncodedGlobal(value)) {
+    const payload = value[ENCODED_GLOBAL_ENVELOPE_KEY];
+    if (payload.kind === 'function') {
+      return restoreFunction(payload.source, path);
+    }
+
+    return Symbol(payload.description);
   }
 
   if (isPlainObject(value)) {
-    if ('__wyw_function' in value) {
-      const source = value.__wyw_function;
-      try {
-        // eslint-disable-next-line no-eval
-        return eval(`(${source})`);
-      } catch (error) {
-        throw new Error(
-          `[wyw-in-js] Failed to restore eval.globals function: ${String(
-            error
-          )}`
-        );
-      }
-    }
-
-    if ('__wyw_symbol' in value) {
-      const description = value.__wyw_symbol;
-      return Symbol(
-        typeof description === 'string' ? description : String(description)
-      );
-    }
-
     return Object.fromEntries(
-      Object.entries(value).map(([key, item]) => [key, decodeGlobals(item)])
+      Object.entries(value).map(([key, item]) => [
+        key,
+        decodeGlobalsAtPath(item, [...path, key]),
+      ])
     );
   }
 
   return value;
 };
+
+export const decodeGlobals = (value: unknown): unknown =>
+  decodeGlobalsAtPath(value, []);

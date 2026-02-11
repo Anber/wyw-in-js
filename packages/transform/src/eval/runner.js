@@ -133,6 +133,80 @@ const shouldPreferImport = (resolvedFile) => {
 const isPlainObject = (value) =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
+const ENCODED_GLOBAL_ENVELOPE_KEY = '__wyw_eval_global';
+const ENCODED_GLOBAL_SIGNATURE = 'wyw-eval-global';
+const ENCODED_GLOBAL_VERSION = 1;
+
+const formatGlobalsPath = (pathSegments) =>
+  pathSegments.reduce((acc, segment) => {
+    if (typeof segment === 'number') {
+      return `${acc}[${segment}]`;
+    }
+
+    if (/^[A-Za-z_$][\w$]*$/u.test(segment)) {
+      return `${acc}.${segment}`;
+    }
+
+    return `${acc}[${JSON.stringify(segment)}]`;
+  }, 'eval.globals');
+
+const restoreGlobalFunction = (source, pathSegments) => {
+  try {
+    // eslint-disable-next-line no-eval
+    const restored = eval(`(${source})`);
+    if (typeof restored !== 'function') {
+      throw new TypeError('decoded source is not a function');
+    }
+
+    return restored;
+  } catch (error) {
+    throw new Error(
+      `[wyw-in-js] Failed to restore eval.globals function at ${formatGlobalsPath(
+        pathSegments
+      )}. ` +
+        `Ensure the value is a user-defined function expression/arrow function. ` +
+        `Native and bound functions are not supported. ` +
+        `Original error: ${String(error)}`
+    );
+  }
+};
+
+const isEncodedGlobalPayload = (value) => {
+  if (!isPlainObject(value)) {
+    return false;
+  }
+
+  if (
+    value.signature !== ENCODED_GLOBAL_SIGNATURE ||
+    value.version !== ENCODED_GLOBAL_VERSION
+  ) {
+    return false;
+  }
+
+  if (value.kind === 'function') {
+    return typeof value.source === 'string';
+  }
+
+  if (value.kind === 'symbol') {
+    return typeof value.description === 'string';
+  }
+
+  return false;
+};
+
+const isEncodedGlobalEnvelope = (value) => {
+  if (!isPlainObject(value)) {
+    return false;
+  }
+
+  const keys = Object.keys(value);
+  if (keys.length !== 1 || keys[0] !== ENCODED_GLOBAL_ENVELOPE_KEY) {
+    return false;
+  }
+
+  return isEncodedGlobalPayload(value[ENCODED_GLOBAL_ENVELOPE_KEY]);
+};
+
 const canonicalizeForSignature = (value) => {
   if (Array.isArray(value)) {
     return value.map((item) => canonicalizeForSignature(item));
@@ -149,22 +223,28 @@ const canonicalizeForSignature = (value) => {
   return value;
 };
 
-const decodeGlobals = (value) => {
+const decodeGlobals = (value, pathSegments = []) => {
   if (Array.isArray(value)) {
-    return value.map((item) => decodeGlobals(item));
+    return value.map((item, index) =>
+      decodeGlobals(item, [...pathSegments, index])
+    );
+  }
+
+  if (isEncodedGlobalEnvelope(value)) {
+    const payload = value[ENCODED_GLOBAL_ENVELOPE_KEY];
+    if (payload.kind === 'function') {
+      return restoreGlobalFunction(payload.source, pathSegments);
+    }
+
+    return Symbol(payload.description);
   }
 
   if (isPlainObject(value)) {
-    if ('__wyw_function' in value) {
-      const source = value.__wyw_function;
-      // eslint-disable-next-line no-eval
-      return eval(`(${source})`);
-    }
-    if ('__wyw_symbol' in value) {
-      return Symbol(value.__wyw_symbol);
-    }
     return Object.fromEntries(
-      Object.entries(value).map(([key, item]) => [key, decodeGlobals(item)])
+      Object.entries(value).map(([key, item]) => [
+        key,
+        decodeGlobals(item, [...pathSegments, key]),
+      ])
     );
   }
 
