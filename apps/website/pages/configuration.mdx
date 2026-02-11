@@ -33,6 +33,7 @@ module.exports = {
   - Removing a global key between runs is supported.
   - WyW invalidates eval cache/re-init state when the serialized `eval.globals` payload changes (not just keys, but values too).
   - Runtime mutations inside evaluated modules are not persisted as source of truth; the next run starts from `eval.globals` in config.
+  - Supported value shapes are JSON-like primitives/arrays/plain objects plus functions and symbols; non-plain objects (for example `Date`, `Map`, `Set`, class instances) are rejected to avoid silent prototype/state loss.
 
   Keep `eval.globals` deterministic when possible (avoid `Date.now()`/`Math.random()` style values if you want stable cache behavior).
 

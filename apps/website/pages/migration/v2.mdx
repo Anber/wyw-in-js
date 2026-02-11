@@ -49,6 +49,7 @@ export default {
 - If you remove a global key, WyW re-evaluates without it.
 - Re-init is based on serialized globals payload (keys + values), not just key names.
 - Mutating globals at runtime inside evaluated modules is not a durable source of truth; subsequent runs read from config.
+- Non-plain object globals (`Date`, `Map`, `Set`, class instances) are rejected; use plain objects/arrays/primitives, functions, or symbols.
 
 Example:
 

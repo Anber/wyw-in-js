@@ -130,8 +130,13 @@ const shouldPreferImport = (resolvedFile) => {
   return getPackageType(resolvedFile) === 'module';
 };
 
-const isPlainObject = (value) =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
+const isPlainObject = (value) => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return false;
+  }
+
+  return Object.getPrototypeOf(value) === Object.prototype;
+};
 
 const ENCODED_GLOBAL_ENVELOPE_KEY = '__wyw_eval_global';
 const ENCODED_GLOBAL_SIGNATURE = 'wyw-eval-global';
