@@ -2,12 +2,22 @@
 
 WyW-in-JS can be customized using a JavaScript, JSON or YAML file. This can be in form of:
 
-- `wyw-in-js.config.js` JS file exporting the object (recommended).
+- `wyw-in-js.config.mjs` ESM config file using `export default` (recommended).
+- `wyw-in-js.config.cjs` CommonJS compatibility config using `module.exports` (legacy mode).
 - `wyw-in-js` property in a `package.json` file.
 - `.wyw-in-jsrc` file with JSON or YAML syntax.
 - `.wyw-in-jsrc.json`, `.wyw-in-jsrc.yaml`, `.wyw-in-jsrc.yml`, or `.wyw-in-jsrc.js` file.
 
-Example `wyw-in-js.config.js`:
+Example `wyw-in-js.config.mjs`:
+
+```js
+export default {
+  evaluate: true,
+  displayName: false,
+};
+```
+
+Legacy/CommonJS compatibility (`wyw-in-js.config.cjs`):
 
 ```js
 module.exports = {
@@ -40,7 +50,7 @@ module.exports = {
   Example:
 
   ```js
-  module.exports = {
+  export default {
     eval: {
       require: 'warn-and-run',
       globals: {
@@ -170,9 +180,9 @@ module.exports = {
   are useful when you want to generate your own hash:
 
   ```js
-  const sha1 = require('sha1');
+  import sha1 from 'sha1';
 
-  module.exports = {
+  export default {
     classNameSlug: (hash, title, args) => sha1(`${args.name}-${title}`),
   };
   ```
@@ -220,7 +230,7 @@ module.exports = {
   A custom function to override the context used to evaluate modules. This can be used to add custom globals or override the default ones.
 
   ```js
-  module.exports = {
+  export default {
     overrideContext: (context, filename) => ({
       ...context,
       HighLevelAPI: () => "I'm a high level API",
@@ -251,7 +261,7 @@ module.exports = {
   Example:
 
   ```js
-  module.exports = {
+  export default {
     importOverrides: {
       './src/i18n/messages/en.json': { unknown: 'allow' },
       react: { mock: './src/__mocks__/react.ts' },
@@ -287,7 +297,7 @@ module.exports = {
   Example (stub a problematic side-effect import during evaluation):
 
   ```js
-  module.exports = {
+  export default {
     importOverrides: {
       '@radix-ui/react-tooltip': { mock: './src/__mocks__/radix-tooltip.ts' },
     },
@@ -297,7 +307,7 @@ module.exports = {
   Example (speed up evaluation by mocking a heavy runtime-only dependency):
 
   ```js
-  module.exports = {
+  export default {
     importOverrides: {
       '@uiw/react-codemirror': { mock: './src/__mocks__/uiw-react-codemirror.ts' },
     },
@@ -307,7 +317,7 @@ module.exports = {
   Example (mock a whole group of query imports, e.g. SVGR `?react`):
 
   ```js
-  module.exports = {
+  export default {
     importOverrides: {
       '@/icons/svg/*.svg\\?react': { mock: './src/__mocks__/svg-react.ts' },
     },
@@ -332,7 +342,7 @@ module.exports = {
   Example:
 
   ```js
-  module.exports = {
+  export default {
     importLoaders: {
       // Disable defaults if you don't want them
       // raw: false,
@@ -402,10 +412,16 @@ module.exports = {
   For example, we can use this to map `@linaria/core` , `@linaria/react` or `@linaria/atomic` where we re-export the module.
 
   ```js
-  {
+  import { createRequire } from 'node:module';
+  import { dirname, join } from 'node:path';
+  import { fileURLToPath } from 'node:url';
+
+  const require = createRequire(import.meta.url);
+  const __filename = fileURLToPath(import.meta.url);
+  const __dirname = dirname(__filename);
+
+  export default {
     tagResolver: (source, tag, { sourceFile, resolvedSource }) => {
-      const { createRequire } = require('module');
-      const { join } = require('path');
       const pathToLocalFile = join(__dirname, './my-local-folder/linaria.js');
       const resolved =
         resolvedSource ??
@@ -422,8 +438,8 @@ module.exports = {
       }
 
       return null;
-    };
-  }
+    },
+  };
   ```
 
   We can then re-export and use linaria API's from `./my-local-folder`:
