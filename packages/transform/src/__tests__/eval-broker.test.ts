@@ -512,6 +512,48 @@ describe('EvalBroker', () => {
       broker.dispose();
       rmSync(root, { recursive: true, force: true });
     });
+
+    it('wraps decode failures with path-aware globals diagnostics', async () => {
+      const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
+      const entry = join(root, 'entry.js');
+
+      writeFileSync(
+        entry,
+        ['export const __wywPreval = {', '  value: () => 1,', '};'].join('\n')
+      );
+
+      const services = createServices(root, entry, {
+        eval: {
+          globals: {
+            BROKEN_FN: {
+              __wyw_eval_global: {
+                signature: 'wyw-eval-global',
+                version: 1,
+                kind: 'function',
+                source: 'function () {',
+              },
+            },
+          },
+        },
+      });
+      const broker = new EvalBroker(
+        services,
+        jest.fn(async () => null)
+      );
+      const entrypoint = Entrypoint.createRoot(
+        services,
+        entry,
+        ['__wywPreval'],
+        readFileSync(entry, 'utf-8')
+      );
+
+      await expect(broker.evaluate(entrypoint)).rejects.toThrow(
+        '[wyw-in-js] Failed to restore eval.globals function at eval.globals.BROKEN_FN. Ensure the value is a user-defined function expression/arrow function. Native and bound functions are not supported.'
+      );
+
+      broker.dispose();
+      rmSync(root, { recursive: true, force: true });
+    });
   });
 
   it('evaluates a cyclic module graph via runner', async () => {
