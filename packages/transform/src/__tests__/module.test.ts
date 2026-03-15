@@ -196,7 +196,9 @@ it('prefers .js when extensionless import resolves to .cjs and .js exists', () =
   expect(mod.exports).toBe('js');
   expect(resolveFilename).toHaveBeenCalledWith(
     './prefer-js',
-    expect.anything()
+    expect.anything(),
+    false,
+    undefined
   );
 });
 
@@ -229,7 +231,7 @@ it('does not rewrite bare imports when extensionless import resolves to .cjs and
   safeEvaluate(mod);
 
   expect(mod.exports).toBe('cjs');
-  expect(resolveFilename).toHaveBeenCalledWith('prefer-js', expect.anything());
+  expect(resolveFilename).toHaveBeenCalledWith('prefer-js', expect.anything(), false, undefined);
 });
 
 it('requires .json files', () => {
@@ -733,6 +735,202 @@ describe('definable globals', () => {
     safeEvaluate(mod);
 
     expect(mod.exports).toBe(path.dirname(mod.filename));
+  });
+});
+
+describe('conditionNames', () => {
+  it('passes expanded conditions to _resolveFilename', () => {
+    const code = dedent`
+      module.exports = require.resolve('my-pkg');
+    `;
+    const cache = new TransformCacheCollection();
+    const services = createServices({
+      cache,
+      options: {
+        filename,
+        pluginOptions: {
+          ...options,
+          conditionNames: ['custom', '...'],
+        },
+      },
+    });
+    const entrypoint = createEntrypoint(services, filename, ['*'], code);
+
+    const resolveFilename = jest.fn(
+      (_id: string, _parent: unknown, _isMain?: boolean, opts?: { conditions?: Set<string> }) => {
+        if (opts?.conditions) {
+          return JSON.stringify([...opts.conditions].sort());
+        }
+        return _id;
+      }
+    );
+
+    const moduleImpl = {
+      _extensions: DefaultModuleImplementation._extensions,
+      _nodeModulePaths: DefaultModuleImplementation._nodeModulePaths.bind(
+        DefaultModuleImplementation
+      ),
+      _resolveFilename: resolveFilename as never,
+    };
+
+    const mod = new Module(services, entrypoint, undefined, moduleImpl as never);
+    safeEvaluate(mod);
+
+    expect(JSON.parse(mod.exports as string)).toEqual(
+      ['custom', 'default', 'node', 'require']
+    );
+  });
+
+  it('"..." expands to CJS defaults (require, node, default)', () => {
+    const code = dedent`
+      module.exports = require.resolve('my-pkg');
+    `;
+    const cache = new TransformCacheCollection();
+    const services = createServices({
+      cache,
+      options: {
+        filename,
+        pluginOptions: {
+          ...options,
+          conditionNames: ['...'],
+        },
+      },
+    });
+    const entrypoint = createEntrypoint(services, filename, ['*'], code);
+
+    const resolveFilename = jest.fn(
+      (_id: string, _parent: unknown, _isMain?: boolean, opts?: { conditions?: Set<string> }) => {
+        return JSON.stringify(opts?.conditions ? [...opts.conditions].sort() : null);
+      }
+    );
+
+    const moduleImpl = {
+      _extensions: DefaultModuleImplementation._extensions,
+      _nodeModulePaths: DefaultModuleImplementation._nodeModulePaths.bind(
+        DefaultModuleImplementation
+      ),
+      _resolveFilename: resolveFilename as never,
+    };
+
+    const mod = new Module(services, entrypoint, undefined, moduleImpl as never);
+    safeEvaluate(mod);
+
+    expect(JSON.parse(mod.exports as string)).toEqual(
+      ['default', 'node', 'require']
+    );
+  });
+
+  it('without "..." only listed conditions are passed', () => {
+    const code = dedent`
+      module.exports = require.resolve('my-pkg');
+    `;
+    const cache = new TransformCacheCollection();
+    const services = createServices({
+      cache,
+      options: {
+        filename,
+        pluginOptions: {
+          ...options,
+          conditionNames: ['custom-only'],
+        },
+      },
+    });
+    const entrypoint = createEntrypoint(services, filename, ['*'], code);
+
+    const resolveFilename = jest.fn(
+      (_id: string, _parent: unknown, _isMain?: boolean, opts?: { conditions?: Set<string> }) => {
+        return JSON.stringify(opts?.conditions ? [...opts.conditions] : null);
+      }
+    );
+
+    const moduleImpl = {
+      _extensions: DefaultModuleImplementation._extensions,
+      _nodeModulePaths: DefaultModuleImplementation._nodeModulePaths.bind(
+        DefaultModuleImplementation
+      ),
+      _resolveFilename: resolveFilename as never,
+    };
+
+    const mod = new Module(services, entrypoint, undefined, moduleImpl as never);
+    safeEvaluate(mod);
+
+    expect(JSON.parse(mod.exports as string)).toEqual(['custom-only']);
+  });
+
+  it('does not pass conditions when conditionNames is not set', () => {
+    const code = dedent`
+      module.exports = require.resolve('my-pkg');
+    `;
+    const cache = new TransformCacheCollection();
+    const services = createServices({ cache });
+    const entrypoint = createEntrypoint(services, filename, ['*'], code);
+
+    const resolveFilename = jest.fn(
+      (_id: string, _parent: unknown, _isMain?: boolean, opts?: { conditions?: Set<string> }) => {
+        return String(opts);
+      }
+    );
+
+    const moduleImpl = {
+      _extensions: DefaultModuleImplementation._extensions,
+      _nodeModulePaths: DefaultModuleImplementation._nodeModulePaths.bind(
+        DefaultModuleImplementation
+      ),
+      _resolveFilename: resolveFilename as never,
+    };
+
+    const mod = new Module(services, entrypoint, undefined, moduleImpl as never);
+    safeEvaluate(mod);
+
+    expect(mod.exports).toBe('undefined');
+  });
+
+  it('retries with extensions when conditions cause MODULE_NOT_FOUND', () => {
+    const code = dedent`
+      module.exports = require.resolve('my-pkg/src/util');
+    `;
+    const cache = new TransformCacheCollection();
+    const services = createServices({
+      cache,
+      options: {
+        filename,
+        pluginOptions: {
+          ...options,
+          conditionNames: ['custom', '...'],
+        },
+      },
+    });
+    const entrypoint = createEntrypoint(services, filename, ['*'], code);
+
+    const resolveFilename = jest.fn(
+      (id: string, _parent: unknown, _isMain?: boolean) => {
+        // Simulate: bare request fails, but request + .ts succeeds
+        if (id === 'my-pkg/src/util') {
+          const err = new Error('MODULE_NOT_FOUND') as NodeJS.ErrnoException;
+          err.code = 'MODULE_NOT_FOUND';
+          throw err;
+        }
+        if (id === 'my-pkg/src/util.ts') {
+          return '/resolved/my-pkg/src/util.ts';
+        }
+        const err = new Error('MODULE_NOT_FOUND') as NodeJS.ErrnoException;
+        err.code = 'MODULE_NOT_FOUND';
+        throw err;
+      }
+    );
+
+    const moduleImpl = {
+      _extensions: DefaultModuleImplementation._extensions,
+      _nodeModulePaths: DefaultModuleImplementation._nodeModulePaths.bind(
+        DefaultModuleImplementation
+      ),
+      _resolveFilename: resolveFilename as never,
+    };
+
+    const mod = new Module(services, entrypoint, undefined, moduleImpl as never);
+    safeEvaluate(mod);
+
+    expect(mod.exports).toBe('/resolved/my-pkg/src/util.ts');
   });
 });
 
