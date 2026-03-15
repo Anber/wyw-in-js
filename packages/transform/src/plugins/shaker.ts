@@ -571,6 +571,35 @@ export default function shakerPlugin(
               !deleted.has(path) &&
               (!binding || blockingReferences.length === 0)
             ) {
+              // For variable declaration exports, `path` is the init expression
+              // (not the Identifier). Other forDeleting candidates whose init
+              // expressions are ancestors of references to this binding can
+              // incorrectly filter them out of outerReferences. Those candidates
+              // may later survive via stripExportKeepDeclaration, leaving a
+              // dangling reference. Strip the export keyword but keep the
+              // declaration so the unreferenced sweep removes it only when dead.
+              // This only applies to expression paths (variable init), not
+              // Identifiers (function/class declarations) which can't be
+              // ancestors of external references.
+              if (
+                binding &&
+                !path.isIdentifier() &&
+                stripExportKeepDeclaration(path)
+              ) {
+                if (removableAssignmentStatements.size > 0) {
+                  for (const statement of removableAssignmentStatements) {
+                    if (queueForDeleting(statement)) {
+                      changed = true;
+                    }
+                  }
+                }
+
+                deleted.add(path);
+                changed = true;
+                // eslint-disable-next-line no-continue
+                continue;
+              }
+
               if (removableAssignmentStatements.size > 0) {
                 for (const statement of removableAssignmentStatements) {
                   if (queueForDeleting(statement)) {
@@ -599,6 +628,12 @@ export default function shakerPlugin(
 
           dereferenced = [];
 
+          // stripExportKeepDeclaration replaces ExportNamedDeclaration with
+          // its declaration, creating new AST nodes. The old scope bindings
+          // become stale (pointing at disconnected paths). Recrawl so
+          // getAllBindings() returns fresh bindings with correct .referenced.
+          file.scope.crawl();
+
           // Find and mark for deleting all unreferenced variables
           const unreferenced = Object.values(
             file.scope.getAllBindings()
@@ -607,6 +642,10 @@ export default function shakerPlugin(
           for (const binding of unreferenced) {
             if (binding.path.isVariableDeclarator()) {
               const id = binding.path.get('id');
+              // Skip destructured patterns — removing the declarator would kill
+              // sibling bindings that may still be referenced (e.g. export {B}
+              // from `const [A, B] = createContext(...)` when only A is dead).
+              if (id.isArrayPattern() || id.isObjectPattern()) continue;
               if (!isRemoved(id) && !forDeletingSet.has(id)) {
                 // Drop dead variable declarations, e.g. `const foo = make();` when `foo` is no longer referenced.
                 for (const violation of binding.constantViolations) {
