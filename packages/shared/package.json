@@ -19,6 +19,11 @@
   "engines": {
     "node": ">=20.0.0"
   },
+  "exports": {
+    "import": "./esm/index.js",
+    "require": "./lib/index.js",
+    "types": "./types/index.d.ts"
+  },
   "files": [
     "esm/",
     "lib/",
