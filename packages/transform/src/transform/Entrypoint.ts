@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import { invariant } from 'ts-invariant';
 
 import type { ParentEntrypoint, ITransformFileResult } from '../types';
@@ -16,6 +17,7 @@ import type { ActionByType } from './actions/BaseAction';
 import { BaseAction } from './actions/BaseAction';
 import { UnprocessedEntrypointError } from './actions/UnprocessedEntrypointError';
 import type { Services, ActionTypes, ActionQueueItem } from './types';
+import { stripQueryAndHash } from '../utils/parseRequest';
 
 const EMPTY_FILE = '=== empty file ===';
 
@@ -71,6 +73,7 @@ export class Entrypoint extends BaseEntrypoint {
       Promise<IEntrypointDependency>
     >(),
     readonly dependencies = new Map<string, IEntrypointDependency>(),
+    readonly invalidateOnDependencyChange = new Set<string>(),
     generation = 1
   ) {
     super(
@@ -81,7 +84,8 @@ export class Entrypoint extends BaseEntrypoint {
       name,
       only,
       parents,
-      dependencies
+      dependencies,
+      invalidateOnDependencyChange
     );
 
     this.loadedAndParsed =
@@ -195,10 +199,26 @@ export class Entrypoint extends BaseEntrypoint {
     const { cache } = services;
 
     const cached = cache.get('entrypoints', name);
-    const changed =
-      loadedCode !== undefined
-        ? cache.invalidateIfChanged(name, loadedCode, undefined, 'loaded')
-        : false;
+    let changed = false;
+    if (loadedCode !== undefined) {
+      changed = cache.invalidateIfChanged(
+        name,
+        loadedCode,
+        undefined,
+        'loaded'
+      );
+    } else if (cached && cached.initialCode === undefined) {
+      try {
+        changed = cache.invalidateIfChanged(
+          name,
+          fs.readFileSync(stripQueryAndHash(name), 'utf8'),
+          undefined,
+          'fs'
+        );
+      } catch {
+        changed = false;
+      }
+    }
 
     if (!cached?.evaluated && cached?.ignored) {
       return ['cached', cached];
@@ -248,6 +268,9 @@ export class Entrypoint extends BaseEntrypoint {
       undefined,
       cached && 'resolveTasks' in cached ? cached.resolveTasks : undefined,
       cached && 'dependencies' in cached ? cached.dependencies : undefined,
+      cached && 'invalidateOnDependencyChange' in cached
+        ? cached.invalidateOnDependencyChange
+        : undefined,
       cached ? cached.generation + 1 : 1
     );
 
@@ -359,7 +382,8 @@ export class Entrypoint extends BaseEntrypoint {
       this.name,
       this.only,
       this.parents,
-      this.dependencies
+      this.dependencies,
+      this.invalidateOnDependencyChange
     );
 
     evaluated.initialCode = this.initialCode;
@@ -369,6 +393,10 @@ export class Entrypoint extends BaseEntrypoint {
 
   public getDependency(name: string): IEntrypointDependency | undefined {
     return this.dependencies.get(name);
+  }
+
+  public markInvalidateOnDependencyChange(filename: string): void {
+    this.invalidateOnDependencyChange.add(filename);
   }
 
   public getResolveTask(
@@ -422,6 +450,7 @@ export class Entrypoint extends BaseEntrypoint {
             this.loadedAndParsed,
             this.resolveTasks,
             this.dependencies,
+            this.invalidateOnDependencyChange,
             this.generation + 1
           );
 

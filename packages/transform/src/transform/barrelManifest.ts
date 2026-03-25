@@ -82,6 +82,10 @@ const isTypeOnlyImport = (statement: ImportDeclaration): boolean => {
     return true;
   }
 
+  if (statement.specifiers.length === 0) {
+    return false;
+  }
+
   return statement.specifiers.every(
     (specifier) =>
       specifier.type === 'ImportSpecifier' && specifier.importKind === 'type'
@@ -121,6 +125,10 @@ function collectExportNamedDeclaration(
   const source = statement.source.value;
   for (const specifier of statement.specifiers) {
     if (specifier.type === 'ExportSpecifier') {
+      if (specifier.exportKind === 'type') {
+        continue;
+      }
+
       reexports.push(getNamedReexport(specifier, source));
       continue;
     }

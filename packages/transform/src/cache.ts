@@ -14,6 +14,7 @@ function hashContent(content: string) {
 
 interface IBaseCachedEntrypoint {
   dependencies: Map<string, { resolved: string | null }>;
+  invalidateOnDependencyChange?: Set<string>;
   initialCode?: string;
 }
 
@@ -104,6 +105,17 @@ export class TransformCacheCollection<
       } catch {
         this.setContentHash(key, source, hashContent(''));
       }
+
+      return;
+    }
+
+    if (cacheName === 'barrelManifests') {
+      try {
+        const fileContent = fs.readFileSync(stripQueryAndHash(key), 'utf8');
+        this.setContentHash(key, 'fs', hashContent(fileContent));
+      } catch {
+        this.setContentHash(key, 'fs', hashContent(''));
+      }
     }
   }
 
@@ -184,12 +196,25 @@ export class TransformCacheCollection<
             stripQueryAndHash(dependencyFilename),
             'utf8'
           );
-          this.invalidateIfChanged(
+          const dependencyChanged = this.invalidateIfChanged(
             dependencyFilename,
             dependencyContent,
             visitedFiles,
             'fs'
           );
+
+          if (
+            dependencyChanged &&
+            fileEntrypoint.invalidateOnDependencyChange?.has(dependencyFilename)
+          ) {
+            cacheLogger(
+              'dependency affecting output has changed, invalidate all for %s',
+              filename
+            );
+            this.invalidateForFile(filename);
+
+            return true;
+          }
         }
       }
     }

@@ -23,6 +23,7 @@ type RewriteResult = {
   code: string;
   imports: Map<string, string[]> | null;
   optimizedCount: number;
+  optimizedSources: string[];
   skippedCount: number;
 };
 
@@ -1003,6 +1004,7 @@ export function* rewriteOptimizedBarrelImports(
   const analysisServices = createAnalysisServices(this.services);
   const nextBody: t.Statement[] = [];
   let optimizedCount = 0;
+  const optimizedSources = new Set<string>();
   let skippedCount = 0;
 
   for (const statement of ast.program.body) {
@@ -1018,6 +1020,7 @@ export function* rewriteOptimizedBarrelImports(
       );
       if (!(rewritten.length === 1 && rewritten[0] === statement)) {
         optimizedCount += 1;
+        optimizedSources.add(statement.source.value);
       }
       nextBody.push(...rewritten);
       continue;
@@ -1036,6 +1039,7 @@ export function* rewriteOptimizedBarrelImports(
       );
       if (!(rewritten.length === 1 && rewritten[0] === statement)) {
         optimizedCount += 1;
+        optimizedSources.add(statement.source.value);
       }
       nextBody.push(...rewritten);
       continue;
@@ -1056,6 +1060,7 @@ export function* rewriteOptimizedBarrelImports(
         skippedCount += 1;
       } else {
         optimizedCount += 1;
+        optimizedSources.add(statement.source.value);
       }
       nextBody.push(...rewritten);
       continue;
@@ -1072,6 +1077,7 @@ export function* rewriteOptimizedBarrelImports(
     code: rewrittenCode,
     imports: collectOptimizedImports(ast),
     optimizedCount,
+    optimizedSources: [...optimizedSources],
     skippedCount,
   };
 }

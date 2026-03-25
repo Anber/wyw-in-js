@@ -343,12 +343,27 @@ export function* transform(
 
       nextAst = rewritten.ast;
       nextCode = rewritten.code;
-      nextResolvedImports =
-        rewritten.optimizedCount > 0
-          ? yield* this.getNext('resolveImports', this.entrypoint, {
-              imports: rewritten.imports,
-            })
-          : resolvedImports;
+      if (rewritten.optimizedCount > 0) {
+        const optimizedSources = new Set(rewritten.optimizedSources);
+        for (const dependency of resolvedImports) {
+          if (dependency.resolved && optimizedSources.has(dependency.source)) {
+            this.entrypoint.addDependency(dependency);
+            this.entrypoint.markInvalidateOnDependencyChange(
+              dependency.resolved
+            );
+          }
+        }
+
+        nextResolvedImports = yield* this.getNext(
+          'resolveImports',
+          this.entrypoint,
+          {
+            imports: rewritten.imports,
+          }
+        );
+      } else {
+        nextResolvedImports = resolvedImports;
+      }
     }
   }
 

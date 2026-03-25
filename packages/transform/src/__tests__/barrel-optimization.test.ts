@@ -292,6 +292,47 @@ describe('barrel optimization', () => {
     }
   });
 
+  it('falls back to the original barrel path for side-effect-only imports', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wyw-barrel-sidefx-'));
+
+    try {
+      const barrelFile = path.join(root, 'barrel.ts');
+      const redFile = path.join(root, 'red.ts');
+      const setupFile = path.join(root, 'setup.ts');
+      const consumerFile = path.join(root, 'consumer.ts');
+      const recorder = createRecorder();
+
+      fs.writeFileSync(
+        barrelFile,
+        `import './setup';\nexport { red } from './red';\n`
+      );
+      fs.writeFileSync(redFile, `export const red = 'red';\n`);
+      fs.writeFileSync(setupFile, `globalThis.__wywSetupRan = true;\n`);
+      fs.writeFileSync(
+        consumerFile,
+        `import { red } from './barrel';\nexport const value = red;\n`
+      );
+
+      const entrypoint = runEntrypoint(
+        root,
+        consumerFile,
+        new TransformCacheCollection(),
+        recorder.eventEmitter
+      );
+
+      expect(entrypoint.transformedCode).toContain(`require("./barrel")`);
+      expect(entrypoint.transformedCode).not.toContain(`require("${redFile}")`);
+      expect(
+        recorder.entrypointEvents.filter(
+          ({ event }) =>
+            event.type === 'created' && event.filename === barrelFile
+        )
+      ).toHaveLength(1);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('keeps export-star on the original path when exports use string-literal names', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wyw-barrel-star-lit-'));
 
@@ -323,6 +364,48 @@ describe('barrel optimization', () => {
             event.type === 'created' && event.filename === barrelFile
         )
       ).toHaveLength(1);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('invalidates cached output when a rewritten barrel changes', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wyw-barrel-cache-'));
+
+    try {
+      const barrelFile = path.join(root, 'barrel.ts');
+      const fooAFile = path.join(root, 'foo-a.ts');
+      const fooBFile = path.join(root, 'foo-b.ts');
+      const consumerFile = path.join(root, 'consumer.ts');
+      const cache = new TransformCacheCollection();
+
+      fs.writeFileSync(barrelFile, `export { foo } from './foo-a';\n`);
+      fs.writeFileSync(fooAFile, `export const foo = 'a';\n`);
+      fs.writeFileSync(fooBFile, `export const foo = 'b';\n`);
+      fs.writeFileSync(
+        consumerFile,
+        `import { foo } from './barrel';\nexport const value = foo;\n`
+      );
+
+      const first = runEntrypoint(
+        root,
+        consumerFile,
+        cache,
+        createRecorder().eventEmitter
+      );
+      expect(first.transformedCode).toContain(fooAFile);
+      expect(first.transformedCode).not.toContain(fooBFile);
+
+      fs.writeFileSync(barrelFile, `export { foo } from './foo-b';\n`);
+
+      const second = runEntrypoint(
+        root,
+        consumerFile,
+        cache,
+        createRecorder().eventEmitter
+      );
+      expect(second.transformedCode).toContain(fooBFile);
+      expect(second.transformedCode).not.toContain(fooAFile);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
