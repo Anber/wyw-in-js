@@ -2,6 +2,7 @@ import { createHash } from 'crypto';
 import fs from 'node:fs';
 import { logger } from '@wyw-in-js/shared';
 
+import type { BarrelManifestCacheEntry } from './transform/barrelManifest';
 import type { Entrypoint } from './transform/Entrypoint';
 import type { IEvaluatedEntrypoint } from './transform/EvaluatedEntrypoint';
 import { getFileIdx } from './utils/getFileIdx';
@@ -17,6 +18,7 @@ interface IBaseCachedEntrypoint {
 }
 
 interface ICaches<TEntrypoint extends IBaseCachedEntrypoint> {
+  barrelManifests: Map<string, BarrelManifestCacheEntry>;
   entrypoints: Map<string, TEntrypoint>;
   exports: Map<string, string[]>;
 }
@@ -25,7 +27,7 @@ type MapValue<T> = T extends Map<string, infer V> ? V : never;
 
 const cacheLogger = logger.extend('cache');
 
-const cacheNames = ['entrypoints', 'exports'] as const;
+const cacheNames = ['barrelManifests', 'entrypoints', 'exports'] as const;
 type CacheNames = (typeof cacheNames)[number];
 
 const loggers = cacheNames.reduce(
@@ -39,6 +41,8 @@ const loggers = cacheNames.reduce(
 export class TransformCacheCollection<
   TEntrypoint extends IBaseCachedEntrypoint = Entrypoint | IEvaluatedEntrypoint,
 > {
+  public readonly barrelManifests: Map<string, BarrelManifestCacheEntry>;
+
   public readonly entrypoints: Map<string, TEntrypoint>;
 
   public readonly exports: Map<string, string[]>;
@@ -46,6 +50,7 @@ export class TransformCacheCollection<
   private contentHashes = new Map<string, { fs?: string; loaded?: string }>();
 
   constructor(caches: Partial<ICaches<TEntrypoint>> = {}) {
+    this.barrelManifests = caches.barrelManifests || new Map();
     this.entrypoints = caches.entrypoints || new Map();
     this.exports = caches.exports || new Map();
   }

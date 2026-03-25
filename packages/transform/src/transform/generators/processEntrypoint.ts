@@ -1,5 +1,17 @@
+import { shaker } from '../../shaker';
 import { isAborted } from '../actions/AbortError';
+import { analyzeBarrelFile } from '../barrelManifest';
 import type { IProcessEntrypointAction, SyncScenarioForAction } from '../types';
+
+const shouldSkipExplodeReexports = (
+  action: IProcessEntrypointAction
+): boolean => {
+  const { loadedAndParsed } = action.entrypoint;
+  return (
+    loadedAndParsed.evaluator === shaker &&
+    analyzeBarrelFile(loadedAndParsed.ast).kind === 'barrel'
+  );
+};
 
 /**
  * The first stage of processing an entrypoint.
@@ -17,7 +29,11 @@ export function* processEntrypoint(
   try {
     using abortSignal = this.createAbortSignal();
 
-    yield ['explodeReexports', this.entrypoint, undefined, abortSignal];
+    if (shouldSkipExplodeReexports(this)) {
+      log('skip explodeReexports for pure barrel');
+    } else {
+      yield ['explodeReexports', this.entrypoint, undefined, abortSignal];
+    }
     const result = yield* this.getNext(
       'transform',
       this.entrypoint,
