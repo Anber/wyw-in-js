@@ -17,7 +17,7 @@ import type {
   FilterPattern,
 } from 'vite';
 
-import { asyncResolverFactory, logger, syncResolve } from '@wyw-in-js/shared';
+import * as shared from '@wyw-in-js/shared';
 import type {
   IFileReporterOptions,
   PluginOptions,
@@ -375,14 +375,14 @@ export default function wywInJS({
     return viteResolver(what, importer, false, true);
   };
 
-  const createAsyncResolver = asyncResolverFactory(
+  const createAsyncResolver = shared.asyncResolverFactory(
     async (
       resolved: ViteResolverResult,
       what: string,
       importer: string,
       stack: string[]
     ): Promise<string | null> => {
-      const log = logger.extend('vite').extend(getFileIdx(importer));
+      const log = shared.logger.extend('vite').extend(getFileIdx(importer));
 
       if (resolved) {
         log("resolve ✅ '%s'@'%s -> %O\n%s", what, importer, resolved);
@@ -418,7 +418,7 @@ export default function wywInJS({
           // Instead, fall back to resolving the original module path directly.
           if (!existsSync(resolvedId) && isInsideCacheDir(resolvedId)) {
             try {
-              return syncResolve(what, importer, stack);
+              return shared.syncResolve(what, importer, stack);
             } catch {
               // Fall through to preserve previous behavior: return resolvedId and let WyW surface the error.
             }
@@ -428,7 +428,7 @@ export default function wywInJS({
         if (!existsSync(resolvedId) && !path.isAbsolute(resolvedId)) {
           // Vite can resolve an import to a bare specifier when bundling for SSR and marking it as external.
           // In that case we still need a real file path for WyW evaluation.
-          return syncResolve(what, importer, stack);
+          return shared.syncResolve(what, importer, stack);
         }
 
         return resolvedId;
@@ -447,7 +447,7 @@ export default function wywInJS({
         !path.isAbsolute(what)
       ) {
         // Keep compatibility with SSR externalization: fall back to Node resolution for bare specifiers.
-        return syncResolve(what, importer, stack);
+        return shared.syncResolve(what, importer, stack);
       }
 
       throw new Error(`Could not resolve ${what}`);
@@ -617,7 +617,7 @@ export default function wywInJS({
       )
         return;
 
-      const log = logger.extend('vite').extend(getFileIdx(id));
+      const log = shared.logger.extend('vite').extend(getFileIdx(id));
 
       log('transform %s', id);
 
