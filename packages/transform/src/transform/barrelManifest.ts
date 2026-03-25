@@ -95,11 +95,15 @@ const getModuleExportName = (node: Identifier | StringLiteral): string =>
   node.type === 'Identifier' ? node.name : node.value;
 
 const isTypeOnlyStatement = (statement: Program['body'][number]): boolean => {
-  if (statement.type === 'EmptyStatement') {
-    return true;
+  switch (statement.type) {
+    case 'EmptyStatement':
+    case 'TSDeclareFunction':
+    case 'TSInterfaceDeclaration':
+    case 'TSTypeAliasDeclaration':
+      return true;
+    default:
+      return false;
   }
-
-  return statement.type.startsWith('TS');
 };
 
 function collectExportNamedDeclaration(

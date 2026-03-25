@@ -939,6 +939,7 @@ function* rewriteExportAllDeclaration(
   }
 
   const optimized: RewrittenExportSpecifier[] = [];
+  let hasUnrewritableExport = false;
   for (const [exported, binding] of Object.entries(manifest.exports)) {
     if (exported === 'default' || binding.kind === 'blocked') {
       continue;
@@ -947,6 +948,7 @@ function* rewriteExportAllDeclaration(
     if (binding.kind === 'namespace') {
       if (!t.isValidIdentifier(exported)) {
         emitRewriteSkipped(this, statement.source.value, 'namespace-barrel');
+        hasUnrewritableExport = true;
         continue;
       }
 
@@ -960,6 +962,7 @@ function* rewriteExportAllDeclaration(
 
     if (!canEmitNamedReexport(binding.imported)) {
       emitRewriteSkipped(this, statement.source.value, 'unknown-star');
+      hasUnrewritableExport = true;
       continue;
     }
 
@@ -969,6 +972,10 @@ function* rewriteExportAllDeclaration(
       kind: 'named',
       source: binding.source,
     });
+  }
+
+  if (hasUnrewritableExport) {
+    return [statement];
   }
 
   if (optimized.length === 0) {

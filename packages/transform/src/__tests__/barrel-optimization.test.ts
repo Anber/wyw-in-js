@@ -291,4 +291,40 @@ describe('barrel optimization', () => {
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it('keeps export-star on the original path when exports use string-literal names', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wyw-barrel-star-lit-'));
+
+    try {
+      const barrelFile = path.join(root, 'barrel.ts');
+      const leafFile = path.join(root, 'leaf.ts');
+      const consumerFile = path.join(root, 'consumer.ts');
+      const recorder = createRecorder();
+
+      fs.writeFileSync(
+        leafFile,
+        `const foo = 'foo';\nexport { foo as "foo-bar" };\n`
+      );
+      fs.writeFileSync(barrelFile, `export * from './leaf';\n`);
+      fs.writeFileSync(consumerFile, `export * from './barrel';\n`);
+
+      const entrypoint = runEntrypoint(
+        root,
+        consumerFile,
+        new TransformCacheCollection(),
+        recorder.eventEmitter
+      );
+
+      expect(entrypoint.transformedCode).toContain(`require("./barrel")`);
+      expect(entrypoint.transformedCode).not.toContain(leafFile);
+      expect(
+        recorder.entrypointEvents.filter(
+          ({ event }) =>
+            event.type === 'created' && event.filename === barrelFile
+        )
+      ).toHaveLength(1);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
