@@ -28,6 +28,7 @@ jest.mock('@wyw-in-js/transform', () => ({
   getFileIdx: () => '1',
   TransformCacheCollection: class TransformCacheCollection {},
   transform: jest.fn(),
+  disposeEvalBroker: jest.fn(),
 }));
 
 describe('vite preserveCssPaths', () => {

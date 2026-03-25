@@ -13,6 +13,10 @@ pnpm add -D @wyw-in-js/webpack-loader
 bun add -d @wyw-in-js/webpack-loader
 ```
 
+> Note: WyW packages are ESM-only and require Node.js `>=22`. If your webpack
+> config imports WyW packages directly, use an ESM config file (for example
+> `webpack.config.mjs`) or dynamic `import()`.
+
 ### Configuration
 
 ```js
@@ -27,6 +31,9 @@ module.exports = {
   },
 };
 ```
+
+`eval.require` defaults to `warn-and-run` in v2. If eval-time `require()` happens, WyW will warn and execute it at
+runtime; use `importOverrides` or `eval.require: 'error'` to make it explicit.
 
 ### Resource queries (`?raw`, `?url`, etc.)
 

@@ -1,0 +1,18 @@
+{
+  "name": "@wyw-in-js/e2e-next-turbopack",
+  "version": "1.0.0",
+  "dependencies": {
+    "@wyw-in-js/nextjs": "workspace:*",
+    "@wyw-in-js/template-tag-syntax": "workspace:*",
+    "next": "^16.0.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "picocolors": "^1.0.0"
+  },
+  "private": true,
+  "scripts": {
+    "test": "node ./scripts/test.mjs"
+  }
+}

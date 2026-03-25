@@ -13,6 +13,7 @@ jest.mock('@wyw-in-js/transform', () => ({
   __esModule: true,
   TransformCacheCollection: class TransformCacheCollection {},
   transform: (...args: unknown[]) => transformMock(...args),
+  disposeEvalBroker: jest.fn(),
 }));
 
 describe('turbopack-loader', () => {

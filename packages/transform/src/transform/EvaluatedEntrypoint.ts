@@ -2,8 +2,9 @@ import type { Debugger } from '@wyw-in-js/shared';
 
 import { BaseEntrypoint } from './BaseEntrypoint';
 import type { IEntrypointDependency } from './Entrypoint.types';
+import type { ParentEntrypoint } from '../types';
 
-export interface IEvaluatedEntrypoint {
+export interface IEvaluatedEntrypoint extends ParentEntrypoint {
   dependencies: Map<string, IEntrypointDependency>;
   evaluated: true;
   evaluatedOnly: string[];

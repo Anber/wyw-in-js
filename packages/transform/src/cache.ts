@@ -45,9 +45,42 @@ export class TransformCacheCollection<
 
   private contentHashes = new Map<string, { fs?: string; loaded?: string }>();
 
+  private keySalt: string | null = null;
+
+  private invalidatedFiles = new Map<string, number>();
+
+  private consumedInvalidationVersions = new Map<string, number>();
+
   constructor(caches: Partial<ICaches<TEntrypoint>> = {}) {
     this.entrypoints = caches.entrypoints || new Map();
     this.exports = caches.exports || new Map();
+  }
+
+  public setKeySalt(keySalt: string | null) {
+    if (this.keySalt === keySalt) return;
+    const prevKeySalt = this.keySalt;
+    this.keySalt = keySalt;
+
+    if (prevKeySalt === null && keySalt) {
+      const migrate = <TValue>(cache: Map<string, TValue>) => {
+        const entries = Array.from(cache.entries());
+        cache.clear();
+        entries.forEach(([key, value]) => {
+          cache.set(this.getKey(key), value);
+        });
+      };
+      migrate(this.entrypoints);
+      migrate(this.exports);
+      return;
+    }
+
+    this.entrypoints.clear();
+    this.exports.clear();
+  }
+
+  private getKey(key: string) {
+    if (!this.keySalt) return key;
+    return `${key}::${this.keySalt}`;
   }
 
   public add<
@@ -55,25 +88,26 @@ export class TransformCacheCollection<
     TValue extends MapValue<ICaches<TEntrypoint>[TCache]>,
   >(cacheName: TCache, key: string, value: TValue): void {
     const cache = this[cacheName] as Map<string, TValue>;
+    const cacheKey = this.getKey(key);
     loggers[cacheName]('%s:add %s %f', getFileIdx(key), key, () => {
       if (value === undefined) {
-        return cache.has(key) ? 'removed' : 'noop';
+        return cache.has(cacheKey) ? 'removed' : 'noop';
       }
 
-      if (!cache.has(key)) {
+      if (!cache.has(cacheKey)) {
         return 'added';
       }
 
-      return cache.get(key) === value ? 'unchanged' : 'updated';
+      return cache.get(cacheKey) === value ? 'unchanged' : 'updated';
     });
 
     if (value === undefined) {
-      cache.delete(key);
+      cache.delete(cacheKey);
       this.contentHashes.delete(key);
       return;
     }
 
-    cache.set(key, value);
+    cache.set(cacheKey, value);
 
     if ('initialCode' in value) {
       const maybeOriginalCode = (value as unknown as { originalCode?: unknown })
@@ -127,7 +161,7 @@ export class TransformCacheCollection<
   >(cacheName: TCache, key: string): TValue | undefined {
     const cache = this[cacheName] as Map<string, TValue>;
 
-    const res = cache.get(key);
+    const res = cache.get(this.getKey(key));
     loggers[cacheName]('get', key, res === undefined ? 'miss' : 'hit');
     return res;
   }
@@ -135,26 +169,47 @@ export class TransformCacheCollection<
   public has(cacheName: CacheNames, key: string): boolean {
     const cache = this[cacheName] as Map<string, unknown>;
 
-    const res = cache.has(key);
+    const res = cache.has(this.getKey(key));
     loggers[cacheName]('has', key, res);
     return res;
   }
 
   public invalidate(cacheName: CacheNames, key: string): void {
     const cache = this[cacheName] as Map<string, unknown>;
-    if (!cache.has(key)) {
+    const cacheKey = this.getKey(key);
+    if (!cache.has(cacheKey)) {
       return;
     }
 
     loggers[cacheName]('invalidate', key);
 
-    cache.delete(key);
+    cache.delete(cacheKey);
   }
 
   public invalidateForFile(filename: string) {
     cacheNames.forEach((cacheName) => {
       this.invalidate(cacheName, filename);
     });
+    const key = stripQueryAndHash(filename);
+    const version = this.invalidatedFiles.get(key) ?? 0;
+    this.invalidatedFiles.set(key, version + 1);
+  }
+
+  public consumeInvalidation(filename: string) {
+    const key = stripQueryAndHash(filename);
+    const invalidationVersion = this.invalidatedFiles.get(key);
+    if (invalidationVersion === undefined) {
+      return false;
+    }
+
+    const consumedVersion =
+      this.consumedInvalidationVersions.get(filename) ?? 0;
+    if (consumedVersion >= invalidationVersion) {
+      return false;
+    }
+
+    this.consumedInvalidationVersions.set(filename, invalidationVersion);
+    return true;
   }
 
   public invalidateIfChanged(
@@ -198,7 +253,11 @@ export class TransformCacheCollection<
       const otherHash = existing?.[otherSource];
 
       if (otherHash !== undefined && otherHash !== newHash) {
-        cacheLogger('content has changed, invalidate all for %s', filename);
+        cacheLogger(
+          'content has changed (%s), invalidate all for %s',
+          source,
+          filename
+        );
         this.setContentHash(filename, source, newHash);
         this.invalidateForFile(filename);
 
@@ -210,7 +269,11 @@ export class TransformCacheCollection<
     }
 
     if (previousHash !== newHash) {
-      cacheLogger('content has changed, invalidate all for %s', filename);
+      cacheLogger(
+        'content has changed (%s), invalidate all for %s',
+        source,
+        filename
+      );
       this.setContentHash(filename, source, newHash);
       this.invalidateForFile(filename);
 

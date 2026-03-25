@@ -3,6 +3,8 @@
  * all usages of WYW-processors.
  */
 
+import { fileURLToPath } from 'node:url';
+
 import type { BabelFile, PluginObj } from '@babel/core';
 import type { NodePath } from '@babel/traverse';
 
@@ -18,7 +20,7 @@ import type { WYWTransformMetadata } from '../utils/TransformMetadata';
 import { removeWithRelated } from '../utils/scopeHelpers';
 import { invalidateTraversalCache } from '../utils/traversalCache';
 
-export const filename = __filename;
+export const filename = fileURLToPath(import.meta.url);
 
 export function collector(
   file: BabelFile,

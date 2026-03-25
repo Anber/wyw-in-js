@@ -14,5 +14,11 @@
 "@wyw-in-js/webpack-loader": major
 ---
 
-WyW-in-JS packages are now ESM-only and require Node.js >= 22.0.0. CJS `require()` entrypoints were removed; use dynamic
-`import()` or migrate configs to ESM.
+WyW-in-JS packages are now ESM-only and require Node.js >= 22.0.0.
+
+Breaking changes in v2:
+- CJS `require()` package entrypoints were removed; migrate configs/tooling to ESM (`import()` / `.mjs`).
+- Eval moved to the async runner-based pipeline (`vm.SourceTextModule` + broker RPC).
+- `require()` inside eval now follows fallback semantics controlled by `eval.require` (`warn-and-run` / `error` / `off`).
+
+Migration guide: https://wyw-in-js.dev/migration/v2

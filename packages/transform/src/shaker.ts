@@ -43,14 +43,6 @@ export const shaker: Evaluator = (
     ),
   ];
 
-  const hasCommonjsPlugin = evalConfig.plugins?.some(
-    (i) => getPluginKey(i) === 'transform-modules-commonjs'
-  );
-
-  if (!hasCommonjsPlugin) {
-    plugins.push(nodeRequire.resolve('@babel/plugin-transform-modules-commonjs'));
-  }
-
   if (
     evalConfig.filename?.endsWith('.ts') ||
     evalConfig.filename?.endsWith('.tsx') ||

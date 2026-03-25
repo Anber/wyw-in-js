@@ -4,7 +4,6 @@ import type { IProcessEntrypointAction, SyncScenarioForAction } from '../types';
 /**
  * The first stage of processing an entrypoint.
  * This stage is responsible for:
- * - scheduling the explodeReexports action
  * - scheduling the transform action
  * - rescheduling itself if the entrypoint is superseded
  */
@@ -14,10 +13,11 @@ export function* processEntrypoint(
   const { only, log } = this.entrypoint;
   log('start processing (only: %o)', only);
 
+  this.entrypoint.beginProcessing();
+
   try {
     using abortSignal = this.createAbortSignal();
 
-    yield ['explodeReexports', this.entrypoint, undefined, abortSignal];
     const result = yield* this.getNext(
       'transform',
       this.entrypoint,
@@ -28,6 +28,13 @@ export function* processEntrypoint(
     this.entrypoint.assertNotSuperseded();
 
     this.entrypoint.setTransformResult(result);
+
+    const supersededWith = this.entrypoint.applyDeferredSupersede();
+    if (supersededWith) {
+      log('processing finished, deferred only detected; schedule next attempt');
+      yield* this.getNext('processEntrypoint', supersededWith, undefined, null);
+      return;
+    }
 
     log('entrypoint processing finished');
   } catch (e) {
@@ -45,5 +52,7 @@ export function* processEntrypoint(
 
     log(`Unhandled error: %O`, e);
     throw e;
+  } finally {
+    this.entrypoint.endProcessing();
   }
 }

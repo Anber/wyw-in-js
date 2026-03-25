@@ -1,20 +1,12 @@
-import type {
-  BabelFileResult,
-  PluginItem,
-  TransformOptions,
-} from '@babel/core';
-import type { File } from '@babel/types';
+import type { NodePath } from '@babel/core';
+import type { File, Program } from '@babel/types';
 
-import type { EvaluatorConfig, StrictOptions } from '@wyw-in-js/shared';
-
-import type { Core } from '../../babel';
-import { buildOptions } from '../../options/buildOptions';
-import dynamicImportPlugin from '../../plugins/dynamic-import';
-import preevalPlugin from '../../plugins/preeval';
-import type { EventEmitter } from '../../utils/EventEmitter';
+import type { EvaluatorConfig } from '@wyw-in-js/shared';
+import type { MissedBabelCoreTypes } from '../../types';
+import { collectExportsAndImports } from '../../utils/collectExportsAndImports';
 import type { WYWTransformMetadata } from '../../utils/TransformMetadata';
 import { getTransformMetadata } from '../../utils/TransformMetadata';
-import { getPluginKey } from '../../utils/getPluginKey';
+import { runPreevalStage } from '../preevalStage';
 import type { Entrypoint } from '../Entrypoint';
 import type {
   ITransformAction,
@@ -23,54 +15,6 @@ import type {
 } from '../types';
 
 const EMPTY_FILE = '=== empty file ===';
-
-const hasKeyInList = (plugin: PluginItem, list: string[]): boolean => {
-  const pluginKey = getPluginKey(plugin);
-  return pluginKey ? list.some((i) => pluginKey.includes(i)) : false;
-};
-
-function runPreevalStage(
-  babel: Core,
-  evalConfig: TransformOptions,
-  pluginOptions: StrictOptions,
-  code: string,
-  originalAst: File,
-  eventEmitter: EventEmitter
-): BabelFileResult {
-  const preShakePlugins =
-    evalConfig.plugins?.filter((i) =>
-      hasKeyInList(i, pluginOptions.highPriorityPlugins)
-    ) ?? [];
-
-  const plugins = [
-    ...preShakePlugins,
-    [
-      preevalPlugin,
-      {
-        ...pluginOptions,
-        eventEmitter,
-      },
-    ],
-    dynamicImportPlugin,
-    ...(evalConfig.plugins ?? []).filter(
-      (i) => !hasKeyInList(i, pluginOptions.highPriorityPlugins)
-    ),
-  ];
-
-  const transformConfig = buildOptions({
-    ...evalConfig,
-    envName: 'wyw-in-js',
-    plugins,
-  });
-
-  const result = babel.transformFromAstSync(originalAst, code, transformConfig);
-
-  if (!result || !result.ast?.program) {
-    throw new Error('Babel transform failed');
-  }
-
-  return result;
-}
 
 type PrepareCodeFn = (
   services: Services,
@@ -81,6 +25,52 @@ type PrepareCodeFn = (
   imports: Map<string, string[]> | null,
   metadata: WYWTransformMetadata | null,
 ];
+
+const collectImportsMap = (
+  babel: Services['babel'],
+  filename: string,
+  code: string,
+  ast: File
+): Map<string, string[]> => {
+  const { File: BabelFile } = babel as typeof babel & MissedBabelCoreTypes;
+  const file = new BabelFile({ filename }, { code, ast });
+  const program = file.path.find((p) =>
+    p.isProgram()
+  ) as NodePath<Program> | null;
+  if (!program) {
+    return new Map();
+  }
+
+  const { imports, reexports } = collectExportsAndImports(program);
+  const processedImports = new Set<string>();
+  const result = new Map<string, string[]>();
+  const addImport = ({
+    imported,
+    source,
+  }: {
+    imported: string;
+    source: string;
+  }) => {
+    if (processedImports.has(`${source}:${imported}`)) {
+      return;
+    }
+
+    if (!result.has(source)) {
+      result.set(source, []);
+    }
+
+    if (imported) {
+      result.get(source)!.push(imported);
+    }
+
+    processedImports.add(`${source}:${imported}`);
+  };
+
+  imports.forEach(addImport);
+  reexports.forEach(addImport);
+
+  return result;
+};
 
 export const prepareCode = (
   services: Services,
@@ -112,7 +102,13 @@ export const prepareCode = (
 
   if (only.length === 1 && only[0] === '__wywPreval' && !transformMetadata) {
     log('[evaluator:end] no metadata');
-    return [preevalStageResult.code!, null, null];
+    const imports = collectImportsMap(
+      babel,
+      evalConfig.filename ?? item.name,
+      preevalStageResult.code!,
+      preevalStageResult.ast!
+    );
+    return [preevalStageResult.code!, imports, null];
   }
 
   log('[preeval] metadata %O', transformMetadata);
@@ -144,6 +140,7 @@ export const prepareCode = (
   return [transformedCode, imports, transformMetadata ?? null];
 };
 
+// eslint-disable-next-line require-yield
 export function* internalTransform(
   this: ITransformAction,
   prepareFn: PrepareCodeFn
@@ -159,7 +156,7 @@ export function* internalTransform(
 
   log('>> (%o)', only);
 
-  const [preparedCode, imports, metadata] = prepareFn(
+  const [preparedCode, , metadata] = prepareFn(
     this.services,
     this.entrypoint,
     loadedAndParsed.ast
@@ -180,26 +177,6 @@ export function* internalTransform(
     };
   }
 
-  if (imports !== null && imports.size > 0) {
-    const resolvedImports = yield* this.getNext(
-      'resolveImports',
-      this.entrypoint,
-      {
-        imports,
-      }
-    );
-
-    if (resolvedImports.length !== 0) {
-      yield [
-        'processImports',
-        this.entrypoint,
-        {
-          resolved: resolvedImports,
-        },
-      ];
-    }
-  }
-
   return {
     code: preparedCode,
     metadata,
@@ -208,7 +185,6 @@ export function* internalTransform(
 
 /**
  * Prepares the code for evaluation. This includes removing dead and potentially unsafe code.
- * Emits resolveImports and processImports events.
  */
 export function transform(this: ITransformAction) {
   return internalTransform.call(this, prepareCode);

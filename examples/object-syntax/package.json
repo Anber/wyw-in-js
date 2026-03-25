@@ -11,7 +11,7 @@
     "@babel/types": "^7.23.5",
     "@types/babel__core": "^7.20.5",
     "@types/babel__traverse": "^7.20.4",
-    "@types/node": "^16.18.55",
+    "@types/node": "^22.0.0",
     "@wyw-in-js/babel-config": "workspace:*",
     "@wyw-in-js/eslint-config": "workspace:*",
     "@wyw-in-js/shared": "workspace:*",

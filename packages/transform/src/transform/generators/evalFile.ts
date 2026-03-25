@@ -1,27 +1,17 @@
 import type { ValueCache } from '@wyw-in-js/processor-utils';
 
-import type { IEvaluateResult } from '../../evaluators';
-import evaluate from '../../evaluators';
-import hasWywPreval from '../../utils/hasWywPreval';
+import evaluate, { type IEvaluateResult } from '../../evaluators';
 import { isUnprocessedEntrypointError } from '../actions/UnprocessedEntrypointError';
-import type { IEvalAction, SyncScenarioForAction } from '../types';
-
-const wrap = <T>(fn: () => T): T | Error => {
-  try {
-    return fn();
-  } catch (e) {
-    return e as Error;
-  }
-};
+import type { AsyncScenarioForAction, IEvalAction } from '../types';
 
 /**
  * Executes the code prepared in previous steps within the current `Entrypoint`.
  * Returns all exports that were requested in `only`.
  */
 // eslint-disable-next-line require-yield
-export function* evalFile(
+export async function* evalFile(
   this: IEvalAction
-): SyncScenarioForAction<IEvalAction> {
+): AsyncScenarioForAction<IEvalAction> {
   const { entrypoint } = this;
   const { log } = entrypoint;
 
@@ -31,7 +21,8 @@ export function* evalFile(
 
   while (evaluated === undefined) {
     try {
-      evaluated = evaluate(this.services, entrypoint);
+      // eslint-disable-next-line no-await-in-loop
+      evaluated = await evaluate(this.services, entrypoint);
     } catch (e) {
       if (isUnprocessedEntrypointError(e)) {
         entrypoint.log(
@@ -44,19 +35,11 @@ export function* evalFile(
     }
   }
 
-  const wywPreval = hasWywPreval(evaluated.value)
-    ? evaluated.value.__wywPreval
-    : undefined;
-
-  if (!wywPreval) {
+  if (!evaluated.values) {
     return null;
   }
 
-  const valueCache: ValueCache = new Map();
-  Object.entries(wywPreval).forEach(([key, lazyValue]) => {
-    const value = wrap(lazyValue);
-    valueCache.set(key, value);
-  });
+  const valueCache: ValueCache = evaluated.values;
 
   log(`<< evaluated __wywPreval %O`, valueCache);
 

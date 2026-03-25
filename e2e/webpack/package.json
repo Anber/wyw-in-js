@@ -1,0 +1,17 @@
+{
+  "name": "@wyw-in-js/e2e-webpack",
+  "version": "1.0.4",
+  "dependencies": {
+    "@wyw-in-js/template-tag-syntax": "workspace:*"
+  },
+  "devDependencies": {
+    "@wyw-in-js/webpack-loader": "workspace:*",
+    "picocolors": "^1.0.0",
+    "prettier": "^3.2.5",
+    "webpack": "^5.89.0"
+  },
+  "private": true,
+  "scripts": {
+    "test": "node ./scripts/test.mjs"
+  }
+}

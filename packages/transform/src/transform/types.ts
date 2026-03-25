@@ -17,6 +17,7 @@ import type {
   IWorkflowActionLinariaResult,
   IWorkflowActionNonLinariaResult,
 } from './actions/types';
+import type { EvalBroker } from '../eval/broker';
 
 export type Services = {
   babel: Core;
@@ -28,6 +29,12 @@ export type Services = {
   options: Options & {
     pluginOptions: StrictOptions;
   };
+  asyncResolve?: (
+    what: string,
+    importer: string,
+    stack: string[]
+  ) => Promise<string | null>;
+  evalBroker?: EvalBroker;
 };
 
 export interface IBaseNode {
@@ -155,11 +162,6 @@ export interface IEvalAction
   type: 'evalFile';
 }
 
-export interface IExplodeReexportsAction
-  extends IBaseAction<IExplodeReexportsAction, void, undefined> {
-  type: 'explodeReexports';
-}
-
 export interface IExtractAction
   extends IBaseAction<
     IExtractAction,
@@ -169,25 +171,9 @@ export interface IExtractAction
   type: 'extract';
 }
 
-export interface IGetExportsAction
-  extends IBaseAction<IGetExportsAction, string[], undefined> {
-  type: 'getExports';
-}
-
 export interface IProcessEntrypointAction
   extends IBaseAction<IProcessEntrypointAction, void, undefined> {
   type: 'processEntrypoint';
-}
-
-export interface IProcessImportsAction
-  extends IBaseAction<
-    IProcessImportsAction,
-    void,
-    {
-      resolved: IEntrypointDependency[];
-    }
-  > {
-  type: 'processImports';
 }
 
 export interface IResolveImportsAction
@@ -217,12 +203,9 @@ export interface IWorkflowAction
 
 export type ActionQueueItem =
   | IEvalAction
-  | IExplodeReexportsAction
   | IExtractAction
-  | IGetExportsAction
   | ICollectAction
   | IProcessEntrypointAction
-  | IProcessImportsAction
   | IResolveImportsAction
   | ITransformAction
   | IWorkflowAction;
