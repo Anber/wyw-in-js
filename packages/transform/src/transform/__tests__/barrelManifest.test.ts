@@ -43,6 +43,8 @@ describe('analyzeBarrelFile', () => {
 
   it('skips per-specifier type-only reexports in mixed export lists', () => {
     expect(analyze(`export { type Foo, bar } from './leaf';\n`)).toEqual({
+      complete: true,
+      explicitExports: ['bar'],
       exportAll: [],
       kind: 'barrel',
       reexports: [
@@ -51,6 +53,27 @@ describe('analyzeBarrelFile', () => {
           imported: 'bar',
           kind: 'named',
           source: './leaf',
+        },
+      ],
+    });
+  });
+
+  it('collects passthrough imports from mixed modules and marks local exports incomplete', () => {
+    expect(
+      analyze(
+        `import Red from './red';\nexport { Red as red };\nexport const local = 'local';\n`
+      )
+    ).toEqual({
+      complete: false,
+      explicitExports: ['red', 'local'],
+      exportAll: [],
+      kind: 'barrel',
+      reexports: [
+        {
+          exported: 'red',
+          imported: 'default',
+          kind: 'named',
+          source: './red',
         },
       ],
     });

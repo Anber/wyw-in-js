@@ -217,6 +217,38 @@ describe('barrel optimization', () => {
     }
   });
 
+  it('rewrites import-export passthrough modules to the leaf modules', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wyw-barrel-imports-'));
+
+    try {
+      const barrelFile = path.join(root, 'barrel.ts');
+      const redFile = path.join(root, 'red.ts');
+      const consumerFile = path.join(root, 'consumer.ts');
+
+      fs.writeFileSync(
+        barrelFile,
+        `import { red } from './red';\nexport { red };\n`
+      );
+      fs.writeFileSync(redFile, `export const red = 'red';\n`);
+      fs.writeFileSync(
+        consumerFile,
+        `import { red } from './barrel';\nexport const value = red;\n`
+      );
+
+      const entrypoint = runEntrypoint(
+        root,
+        consumerFile,
+        new TransformCacheCollection(),
+        createRecorder().eventEmitter
+      );
+
+      expect(entrypoint.transformedCode).toContain(redFile);
+      expect(entrypoint.transformedCode).not.toContain(barrelFile);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('rewrites export-star barrel chains to the final leaf modules', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wyw-barrel-star-'));
 
@@ -287,6 +319,49 @@ describe('barrel optimization', () => {
             event.type === 'created' && event.filename === barrelFile
         )
       ).toHaveLength(1);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('rewrites passthrough imports from mixed barrels and keeps local exports on the original path', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wyw-barrel-mixed-'));
+
+    try {
+      const barrelFile = path.join(root, 'barrel.ts');
+      const redFile = path.join(root, 'red.ts');
+      const consumerFile = path.join(root, 'consumer.ts');
+      const recorder = createRecorder();
+
+      fs.writeFileSync(
+        barrelFile,
+        `import { red } from './red';\nexport { red };\nexport const local = 'local';\n`
+      );
+      fs.writeFileSync(redFile, `export const red = 'red';\n`);
+      fs.writeFileSync(
+        consumerFile,
+        `import { red, local } from './barrel';\nexport const value = [red, local];\n`
+      );
+
+      const entrypoint = runEntrypoint(
+        root,
+        consumerFile,
+        new TransformCacheCollection(),
+        recorder.eventEmitter
+      );
+
+      expect(entrypoint.transformedCode).toContain(redFile);
+      expect(entrypoint.transformedCode).toContain(`require("./barrel")`);
+      expect(
+        recorder.singles.find(
+          (event) =>
+            event.kind === 'barrelManifest' &&
+            event.file === barrelFile &&
+            event.status === 'built'
+        )
+      ).toMatchObject({
+        complete: false,
+      });
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
@@ -364,6 +439,37 @@ describe('barrel optimization', () => {
             event.type === 'created' && event.filename === barrelFile
         )
       ).toHaveLength(1);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps export-star on the original path for mixed barrels with local exports', () => {
+    const root = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'wyw-barrel-mixed-star-')
+    );
+
+    try {
+      const barrelFile = path.join(root, 'barrel.ts');
+      const redFile = path.join(root, 'red.ts');
+      const consumerFile = path.join(root, 'consumer.ts');
+
+      fs.writeFileSync(
+        barrelFile,
+        `import { red } from './red';\nexport { red };\nexport const local = 'local';\n`
+      );
+      fs.writeFileSync(redFile, `export const red = 'red';\n`);
+      fs.writeFileSync(consumerFile, `export * from './barrel';\n`);
+
+      const entrypoint = runEntrypoint(
+        root,
+        consumerFile,
+        new TransformCacheCollection(),
+        createRecorder().eventEmitter
+      );
+
+      expect(entrypoint.transformedCode).toContain(`require("./barrel")`);
+      expect(entrypoint.transformedCode).not.toContain(redFile);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
