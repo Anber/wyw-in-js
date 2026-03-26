@@ -61,34 +61,12 @@ type RollupOutputLike = {
   preserveModulesRoot?: unknown;
 } & Record<string, unknown>;
 
-const hasSharedRuntime = (value: unknown): value is SharedRuntime => {
-  if (!value || typeof value !== 'object') {
-    return false;
-  }
-
-  const candidate = value as Partial<SharedRuntime>;
-  return (
-    typeof candidate.syncResolve === 'function' &&
-    typeof candidate.logger?.extend === 'function'
-  );
-};
-
-const resolveSharedRuntime = (): SharedRuntime => {
-  if (hasSharedRuntime(sharedModule)) {
-    return sharedModule;
-  }
-
-  const fallback = (sharedModule as { default?: unknown }).default;
-  if (hasSharedRuntime(fallback)) {
-    return fallback;
-  }
-
-  throw new TypeError(
-    '@wyw-in-js/shared did not expose the expected runtime helpers'
-  );
-};
-
-const shared = resolveSharedRuntime();
+// Bun/Jest can surface the workspace package either as a namespace object or as
+// a default-wrapped namespace, depending on the interop path.
+const shared =
+  typeof (sharedModule as Partial<SharedRuntime>).syncResolve === 'function'
+    ? (sharedModule as SharedRuntime)
+    : ((sharedModule as unknown as { default: SharedRuntime }).default);
 
 const createAsyncResolverFactory = <
   TResolved,
