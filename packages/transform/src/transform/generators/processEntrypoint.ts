@@ -7,10 +7,12 @@ const shouldSkipExplodeReexports = (
   action: IProcessEntrypointAction
 ): boolean => {
   const { loadedAndParsed } = action.entrypoint;
-  return (
-    loadedAndParsed.evaluator === shaker &&
-    analyzeBarrelFile(loadedAndParsed.ast).kind === 'barrel'
-  );
+  if (loadedAndParsed.evaluator !== shaker || !loadedAndParsed.ast) {
+    return false;
+  }
+
+  const barrelAnalysis = analyzeBarrelFile(loadedAndParsed.ast);
+  return barrelAnalysis.kind === 'barrel' && barrelAnalysis.complete;
 };
 
 /**

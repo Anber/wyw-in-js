@@ -151,6 +151,34 @@ describe('processEntrypoint', () => {
     expect(result.value[1]).toBe(barrelEntrypoint);
   });
 
+  it('should keep explodeReexports for incomplete shaker barrels', () => {
+    services.loadAndParseFn = jest.fn(() => ({
+      ast: babel.parseSync(
+        `import { foo } from './foo';\nexport { foo };\nexport const local = 1;\n`,
+        {
+          filename: '/foo/bar.ts',
+          sourceType: 'module',
+        }
+      )!,
+      code: `import { foo } from './foo';\nexport { foo };\nexport const local = 1;\n`,
+      evaluator: shaker,
+      evalConfig: {},
+    }));
+
+    const barrelEntrypoint = createEntrypoint(services, '/foo/bar.ts', ['foo']);
+    const action = barrelEntrypoint.createAction(
+      'processEntrypoint',
+      undefined,
+      null
+    );
+    const gen = processEntrypoint.call(action);
+
+    const result = gen.next();
+    expectIteratorYieldResult(result);
+    expect(result.value[0]).toBe('explodeReexports');
+    expect(result.value[1]).toBe(barrelEntrypoint);
+  });
+
   it('should defer supersede while transform is in progress and reschedule once', () => {
     const fooBarDefault = createEntrypoint(services, '/foo/bar.js', [
       'default',

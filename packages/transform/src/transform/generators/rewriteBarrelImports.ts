@@ -602,11 +602,11 @@ function* getOrBuildBarrelManifest(
 
   const resolutionMap = getReexportResolutionMap(resolvedImports);
   const manifest: BarrelManifest = {
-    complete: true,
+    complete: analyzed.complete,
     exports: {},
     kind: 'barrel',
   };
-  const explicitExports = new Set<string>();
+  const explicitExports = new Set<string>(analyzed.explicitExports);
   const nextStack = new Set(stack);
   nextStack.add(filename);
 
