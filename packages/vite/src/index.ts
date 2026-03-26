@@ -17,7 +17,8 @@ import type {
   FilterPattern,
 } from 'vite';
 
-import * as shared from '@wyw-in-js/shared';
+import * as sharedModule from '@wyw-in-js/shared';
+import type { Debugger } from '@wyw-in-js/shared';
 import type {
   IFileReporterOptions,
   PluginOptions,
@@ -45,6 +46,10 @@ type VitePluginOptions = {
 } & Partial<PluginOptions>;
 
 type OverrideContext = NonNullable<PluginOptions['overrideContext']>;
+type SharedRuntime = {
+  logger: Debugger;
+  syncResolve: (what: string, importer: string, stack: string[]) => string;
+};
 
 export { Plugin };
 
@@ -55,6 +60,66 @@ type RollupOutputLike = {
   preserveModules?: boolean;
   preserveModulesRoot?: unknown;
 } & Record<string, unknown>;
+
+const hasSharedRuntime = (value: unknown): value is SharedRuntime => {
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
+
+  const candidate = value as Partial<SharedRuntime>;
+  return (
+    typeof candidate.syncResolve === 'function' &&
+    typeof candidate.logger?.extend === 'function'
+  );
+};
+
+const resolveSharedRuntime = (): SharedRuntime => {
+  if (hasSharedRuntime(sharedModule)) {
+    return sharedModule;
+  }
+
+  const fallback = (sharedModule as { default?: unknown }).default;
+  if (hasSharedRuntime(fallback)) {
+    return fallback;
+  }
+
+  throw new TypeError(
+    '@wyw-in-js/shared did not expose the expected runtime helpers'
+  );
+};
+
+const shared = resolveSharedRuntime();
+
+const createAsyncResolverFactory = <
+  TResolved,
+  const TResolverArgs extends readonly unknown[],
+  TResolve extends (...args: TResolverArgs) => TResolved | Promise<TResolved>,
+>(
+  onResolve: (
+    resolved: TResolved,
+    what: string,
+    importer: string,
+    stack: string[]
+  ) => Promise<string | null>,
+  mapper: (what: string, importer: string, stack: string[]) => TResolverArgs
+) => {
+  const memoizedResolvers = new WeakMap<
+    TResolve,
+    (what: string, importer: string, stack: string[]) => Promise<string | null>
+  >();
+
+  return (resolveFn: TResolve) => {
+    if (!memoizedResolvers.has(resolveFn)) {
+      memoizedResolvers.set(resolveFn, (what, importer, stack) =>
+        Promise.resolve(resolveFn(...mapper(what, importer, stack))).then(
+          (resolved) => onResolve(resolved, what, importer, stack)
+        )
+      );
+    }
+
+    return memoizedResolvers.get(resolveFn)!;
+  };
+};
 
 const isWindowsAbsolutePath = (value: string): boolean =>
   /^[a-zA-Z]:[\\/]/.test(value);
@@ -375,7 +440,7 @@ export default function wywInJS({
     return viteResolver(what, importer, false, true);
   };
 
-  const createAsyncResolver = shared.asyncResolverFactory(
+  const createAsyncResolver = createAsyncResolverFactory(
     async (
       resolved: ViteResolverResult,
       what: string,
