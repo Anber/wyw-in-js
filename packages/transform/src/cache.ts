@@ -182,6 +182,7 @@ export class TransformCacheCollection<
   ) {
     const visitedFiles = new Set(previousVisitedFiles);
     const fileEntrypoint = this.get('entrypoints', filename);
+    let anyDepChanged = false;
 
     // We need to check all dependencies of the file
     // because they might have changed as well.
@@ -215,6 +216,10 @@ export class TransformCacheCollection<
 
             return true;
           }
+
+          if (dependencyChanged) {
+            anyDepChanged = true;
+          }
         }
       }
     }
@@ -227,7 +232,7 @@ export class TransformCacheCollection<
       const otherSource = source === 'fs' ? 'loaded' : 'fs';
       const otherHash = existing?.[otherSource];
 
-      if (otherHash !== undefined && otherHash !== newHash) {
+      if ((otherHash !== undefined && otherHash !== newHash) || anyDepChanged) {
         cacheLogger('content has changed, invalidate all for %s', filename);
         this.setContentHash(filename, source, newHash);
         this.invalidateForFile(filename);
@@ -236,10 +241,14 @@ export class TransformCacheCollection<
       }
 
       this.setContentHash(filename, source, newHash);
+      if (anyDepChanged) {
+        this.invalidateForFile(filename);
+        return true;
+      }
       return false;
     }
 
-    if (previousHash !== newHash) {
+    if (previousHash !== newHash || anyDepChanged) {
       cacheLogger('content has changed, invalidate all for %s', filename);
       this.setContentHash(filename, source, newHash);
       this.invalidateForFile(filename);
