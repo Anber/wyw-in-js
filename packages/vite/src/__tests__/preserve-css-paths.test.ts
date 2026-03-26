@@ -9,6 +9,7 @@ const createLogger = () => {
 
 jest.mock('@wyw-in-js/shared', () => ({
   __esModule: true,
+  asyncResolverFactory: jest.fn(() => jest.fn()),
   logger: createLogger(),
   syncResolve: jest.fn(),
 }));

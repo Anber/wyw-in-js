@@ -17,8 +17,7 @@ import type {
   FilterPattern,
 } from 'vite';
 
-import * as sharedModule from '@wyw-in-js/shared';
-import type { Debugger } from '@wyw-in-js/shared';
+import { asyncResolverFactory, logger, syncResolve } from '@wyw-in-js/shared';
 import type {
   IFileReporterOptions,
   PluginOptions,
@@ -46,10 +45,6 @@ type VitePluginOptions = {
 } & Partial<PluginOptions>;
 
 type OverrideContext = NonNullable<PluginOptions['overrideContext']>;
-type SharedRuntime = {
-  logger: Debugger;
-  syncResolve: (what: string, importer: string, stack: string[]) => string;
-};
 
 export { Plugin };
 
@@ -60,44 +55,6 @@ type RollupOutputLike = {
   preserveModules?: boolean;
   preserveModulesRoot?: unknown;
 } & Record<string, unknown>;
-
-// Bun/Jest can surface the workspace package either as a namespace object or as
-// a default-wrapped namespace, depending on the interop path.
-const shared =
-  typeof (sharedModule as Partial<SharedRuntime>).syncResolve === 'function'
-    ? (sharedModule as SharedRuntime)
-    : ((sharedModule as unknown as { default: SharedRuntime }).default);
-
-const createAsyncResolverFactory = <
-  TResolved,
-  const TResolverArgs extends readonly unknown[],
-  TResolve extends (...args: TResolverArgs) => TResolved | Promise<TResolved>,
->(
-  onResolve: (
-    resolved: TResolved,
-    what: string,
-    importer: string,
-    stack: string[]
-  ) => Promise<string | null>,
-  mapper: (what: string, importer: string, stack: string[]) => TResolverArgs
-) => {
-  const memoizedResolvers = new WeakMap<
-    TResolve,
-    (what: string, importer: string, stack: string[]) => Promise<string | null>
-  >();
-
-  return (resolveFn: TResolve) => {
-    if (!memoizedResolvers.has(resolveFn)) {
-      memoizedResolvers.set(resolveFn, (what, importer, stack) =>
-        Promise.resolve(resolveFn(...mapper(what, importer, stack))).then(
-          (resolved) => onResolve(resolved, what, importer, stack)
-        )
-      );
-    }
-
-    return memoizedResolvers.get(resolveFn)!;
-  };
-};
 
 const isWindowsAbsolutePath = (value: string): boolean =>
   /^[a-zA-Z]:[\\/]/.test(value);
@@ -418,14 +375,14 @@ export default function wywInJS({
     return viteResolver(what, importer, false, true);
   };
 
-  const createAsyncResolver = createAsyncResolverFactory(
+  const createAsyncResolver = asyncResolverFactory(
     async (
       resolved: ViteResolverResult,
       what: string,
       importer: string,
       stack: string[]
     ): Promise<string | null> => {
-      const log = shared.logger.extend('vite').extend(getFileIdx(importer));
+      const log = logger.extend('vite').extend(getFileIdx(importer));
 
       if (resolved) {
         log("resolve ✅ '%s'@'%s -> %O\n%s", what, importer, resolved);
@@ -461,7 +418,7 @@ export default function wywInJS({
           // Instead, fall back to resolving the original module path directly.
           if (!existsSync(resolvedId) && isInsideCacheDir(resolvedId)) {
             try {
-              return shared.syncResolve(what, importer, stack);
+              return syncResolve(what, importer, stack);
             } catch {
               // Fall through to preserve previous behavior: return resolvedId and let WyW surface the error.
             }
@@ -471,7 +428,7 @@ export default function wywInJS({
         if (!existsSync(resolvedId) && !path.isAbsolute(resolvedId)) {
           // Vite can resolve an import to a bare specifier when bundling for SSR and marking it as external.
           // In that case we still need a real file path for WyW evaluation.
-          return shared.syncResolve(what, importer, stack);
+          return syncResolve(what, importer, stack);
         }
 
         return resolvedId;
@@ -490,7 +447,7 @@ export default function wywInJS({
         !path.isAbsolute(what)
       ) {
         // Keep compatibility with SSR externalization: fall back to Node resolution for bare specifiers.
-        return shared.syncResolve(what, importer, stack);
+        return syncResolve(what, importer, stack);
       }
 
       throw new Error(`Could not resolve ${what}`);
@@ -660,7 +617,7 @@ export default function wywInJS({
       )
         return;
 
-      const log = shared.logger.extend('vite').extend(getFileIdx(id));
+      const log = logger.extend('vite').extend(getFileIdx(id));
 
       log('transform %s', id);
 
