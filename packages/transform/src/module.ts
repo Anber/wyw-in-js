@@ -553,16 +553,26 @@ export class Module {
     conditions?: Set<string>
   ): string {
     const resolveOptions = conditions ? { conditions } : undefined;
+    const shouldRetryWithExtensions =
+      conditions &&
+      path.extname(id) === '' &&
+      (id.startsWith('.') || path.isAbsolute(id) || id.includes('/'));
     try {
-      return this.moduleImpl._resolveFilename(id, parent, false, resolveOptions);
+      return this.moduleImpl._resolveFilename(
+        id,
+        parent,
+        false,
+        resolveOptions
+      );
     } catch (e: unknown) {
       if (
-        conditions &&
+        shouldRetryWithExtensions &&
         e instanceof Error &&
         (e as NodeJS.ErrnoException).code === 'MODULE_NOT_FOUND'
       ) {
-        // Wildcard subpath patterns (e.g. "./src/*") resolve to extensionless
-        // paths. Retry with each known extension.
+        // Extensionless subpath requests (e.g. "pkg/src/*" or "./src/*") may
+        // resolve to extensionless targets via conditional exports. Retry with
+        // each known extension, but never rewrite already explicit specifiers.
         for (const ext of this.extensions) {
           try {
             return this.moduleImpl._resolveFilename(
