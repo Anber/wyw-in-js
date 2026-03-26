@@ -380,10 +380,7 @@ describe('TransformCacheCollection', () => {
         throw new Error(`Unexpected readFileSync call: ${path}`);
       });
 
-      const invalidated = cache.invalidateIfChanged(
-        parentName,
-        parentContent
-      );
+      const invalidated = cache.invalidateIfChanged(parentName, parentContent);
 
       expect(invalidated).toBe(true);
       expect(cache.has('entrypoints', parentName)).toBe(false);

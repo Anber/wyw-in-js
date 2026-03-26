@@ -232,10 +232,7 @@ export class TransformCacheCollection<
       const otherSource = source === 'fs' ? 'loaded' : 'fs';
       const otherHash = existing?.[otherSource];
 
-      if (
-        (otherHash !== undefined && otherHash !== newHash) ||
-        anyDepChanged
-      ) {
+      if ((otherHash !== undefined && otherHash !== newHash) || anyDepChanged) {
         cacheLogger('content has changed, invalidate all for %s', filename);
         this.setContentHash(filename, source, newHash);
         this.invalidateForFile(filename);
