@@ -371,6 +371,37 @@ describe('shaker', () => {
     expect(code).not.toContain('exports.someFeature');
   });
 
+  it('should keep enums local when a surviving export still references them', () => {
+    const code = run(['__wywPreval'])`
+      export enum Flags {
+        Dev = 1,
+      }
+
+      export const mode = Flags.Dev;
+
+      const _exp = /*#__PURE__*/() => globalThis.location?.hash === String(mode);
+      export const __wywPreval = {
+        _exp: _exp,
+      };
+    `;
+
+    expect(code).toContain('var Flags');
+    expect(code).toContain('const mode');
+    expect(code).not.toContain('exports.Flags');
+    expect(code).not.toContain('exports.mode');
+  });
+
+  it('should split multi-declarator exports when only one binding survives', () => {
+    const code = run(['b'])`
+      export const a = globalThis.location?.hostname || 'localhost', b = a + '-dev';
+    `;
+
+    expect(code).toContain('const a');
+    expect(code).toContain('const b');
+    expect(code).toContain('exports.b');
+    expect(code).not.toContain('exports.a');
+  });
+
   it('should fully remove dead export when nothing references it', () => {
     // Ensure the fix doesn't prevent removal of truly dead exports
     const code = run(['__wywPreval'])`
