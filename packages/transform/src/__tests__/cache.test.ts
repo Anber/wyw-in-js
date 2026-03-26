@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 
 import { TransformCacheCollection } from '../cache';
+import type { BarrelManifest } from '../transform/barrelManifest';
 import type { IEntrypointDependency } from '../transform/Entrypoint.types';
 
 // Mocking the minimal interface needed by the cache
@@ -129,6 +130,25 @@ describe('TransformCacheCollection', () => {
 
       expect(invalidated).toBe(true);
       expect(cache.has('entrypoints', filename)).toBe(false);
+    });
+
+    it('invalidates barrel manifests together with entrypoints when content changes', () => {
+      const filename = 'barrel.ts';
+      const content = `export { foo } from './foo';`;
+      const newContent = `export { bar } from './bar';`;
+      const { cache } = setupCacheWithEntrypoint(filename, content);
+
+      cache.add('barrelManifests', filename, {
+        complete: true,
+        exports: {},
+        kind: 'barrel',
+      } satisfies BarrelManifest);
+
+      const invalidated = cache.invalidateIfChanged(filename, newContent);
+
+      expect(invalidated).toBe(true);
+      expect(cache.has('entrypoints', filename)).toBe(false);
+      expect(cache.has('barrelManifests', filename)).toBe(false);
     });
 
     it('should invalidate dependency if its content changed', () => {

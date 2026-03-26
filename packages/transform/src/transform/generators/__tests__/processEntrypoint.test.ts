@@ -1,3 +1,6 @@
+import * as babel from '@babel/core';
+
+import { shaker } from '../../../shaker';
 import {
   createEntrypoint,
   createServices,
@@ -113,5 +116,30 @@ describe('processEntrypoint', () => {
     ]);
 
     expectIteratorReturnResult(gen.next(), undefined);
+  });
+
+  it('should skip explodeReexports for pure shaker barrels', () => {
+    services.loadAndParseFn = jest.fn(() => ({
+      ast: babel.parseSync(`export { foo } from './foo';`, {
+        filename: '/foo/bar.ts',
+        sourceType: 'module',
+      })!,
+      code: `export { foo } from './foo';`,
+      evaluator: shaker,
+      evalConfig: {},
+    }));
+
+    const barrelEntrypoint = createEntrypoint(services, '/foo/bar.ts', ['foo']);
+    const action = barrelEntrypoint.createAction(
+      'processEntrypoint',
+      undefined,
+      null
+    );
+    const gen = processEntrypoint.call(action);
+
+    const result = gen.next();
+    expectIteratorYieldResult(result);
+    expect(result.value[0]).toBe('transform');
+    expect(result.value[1]).toBe(barrelEntrypoint);
   });
 });

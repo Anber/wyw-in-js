@@ -2,6 +2,7 @@ import { createHash } from 'crypto';
 import fs from 'node:fs';
 import { logger } from '@wyw-in-js/shared';
 
+import type { BarrelManifestCacheEntry } from './transform/barrelManifest';
 import type { Entrypoint } from './transform/Entrypoint';
 import type { IEvaluatedEntrypoint } from './transform/EvaluatedEntrypoint';
 import { getFileIdx } from './utils/getFileIdx';
@@ -13,10 +14,12 @@ function hashContent(content: string) {
 
 interface IBaseCachedEntrypoint {
   dependencies: Map<string, { resolved: string | null }>;
+  invalidateOnDependencyChange?: Set<string>;
   initialCode?: string;
 }
 
 interface ICaches<TEntrypoint extends IBaseCachedEntrypoint> {
+  barrelManifests: Map<string, BarrelManifestCacheEntry>;
   entrypoints: Map<string, TEntrypoint>;
   exports: Map<string, string[]>;
 }
@@ -25,7 +28,7 @@ type MapValue<T> = T extends Map<string, infer V> ? V : never;
 
 const cacheLogger = logger.extend('cache');
 
-const cacheNames = ['entrypoints', 'exports'] as const;
+const cacheNames = ['barrelManifests', 'entrypoints', 'exports'] as const;
 type CacheNames = (typeof cacheNames)[number];
 
 const loggers = cacheNames.reduce(
@@ -39,6 +42,8 @@ const loggers = cacheNames.reduce(
 export class TransformCacheCollection<
   TEntrypoint extends IBaseCachedEntrypoint = Entrypoint | IEvaluatedEntrypoint,
 > {
+  public readonly barrelManifests: Map<string, BarrelManifestCacheEntry>;
+
   public readonly entrypoints: Map<string, TEntrypoint>;
 
   public readonly exports: Map<string, string[]>;
@@ -46,6 +51,7 @@ export class TransformCacheCollection<
   private contentHashes = new Map<string, { fs?: string; loaded?: string }>();
 
   constructor(caches: Partial<ICaches<TEntrypoint>> = {}) {
+    this.barrelManifests = caches.barrelManifests || new Map();
     this.entrypoints = caches.entrypoints || new Map();
     this.exports = caches.exports || new Map();
   }
@@ -98,6 +104,17 @@ export class TransformCacheCollection<
         this.setContentHash(key, source, hashContent(fileContent));
       } catch {
         this.setContentHash(key, source, hashContent(''));
+      }
+
+      return;
+    }
+
+    if (cacheName === 'barrelManifests') {
+      try {
+        const fileContent = fs.readFileSync(stripQueryAndHash(key), 'utf8');
+        this.setContentHash(key, 'fs', hashContent(fileContent));
+      } catch {
+        this.setContentHash(key, 'fs', hashContent(''));
       }
     }
   }
@@ -179,12 +196,25 @@ export class TransformCacheCollection<
             stripQueryAndHash(dependencyFilename),
             'utf8'
           );
-          this.invalidateIfChanged(
+          const dependencyChanged = this.invalidateIfChanged(
             dependencyFilename,
             dependencyContent,
             visitedFiles,
             'fs'
           );
+
+          if (
+            dependencyChanged &&
+            fileEntrypoint.invalidateOnDependencyChange?.has(dependencyFilename)
+          ) {
+            cacheLogger(
+              'dependency affecting output has changed, invalidate all for %s',
+              filename
+            );
+            this.invalidateForFile(filename);
+
+            return true;
+          }
         }
       }
     }

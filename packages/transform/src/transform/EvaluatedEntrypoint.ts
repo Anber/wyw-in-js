@@ -11,6 +11,7 @@ export interface IEvaluatedEntrypoint {
   generation: number;
   ignored: false;
   initialCode?: string;
+  invalidateOnDependencyChange: Set<string>;
   log: Debugger;
   only: string[];
 }
