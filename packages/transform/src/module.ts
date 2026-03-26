@@ -50,10 +50,26 @@ type HiddenModuleMembers = {
   _extensions: Record<string, () => void>;
   _resolveFilename: (
     id: string,
-    options: { filename: string; id: string; paths: string[] }
+    options: { filename: string; id: string; paths: string[] },
+    isMain?: boolean,
+    resolveOptions?: { conditions?: Set<string> }
   ) => string;
   _nodeModulePaths(filename: string): string[];
 };
+
+const CJS_DEFAULT_CONDITIONS = ['require', 'node', 'default'] as const;
+
+function expandConditions(conditionNames: string[]): Set<string> {
+  const result = new Set<string>();
+  for (const name of conditionNames) {
+    if (name === '...') {
+      for (const d of CJS_DEFAULT_CONDITIONS) result.add(d);
+    } else {
+      result.add(name);
+    }
+  }
+  return result;
+}
 
 export const DefaultModuleImplementation = NativeModule as typeof NativeModule &
   HiddenModuleMembers;
@@ -531,6 +547,49 @@ export class Module {
     return newEntrypoint;
   }
 
+  private resolveWithConditions(
+    id: string,
+    parent: { id: string; filename: string; paths: string[] },
+    conditions?: Set<string>
+  ): string {
+    const resolveOptions = conditions ? { conditions } : undefined;
+    const shouldRetryWithExtensions =
+      conditions &&
+      path.extname(id) === '' &&
+      (id.startsWith('.') || path.isAbsolute(id) || id.includes('/'));
+    try {
+      return this.moduleImpl._resolveFilename(
+        id,
+        parent,
+        false,
+        resolveOptions
+      );
+    } catch (e: unknown) {
+      if (
+        shouldRetryWithExtensions &&
+        e instanceof Error &&
+        (e as NodeJS.ErrnoException).code === 'MODULE_NOT_FOUND'
+      ) {
+        // Extensionless subpath requests (e.g. "pkg/src/*" or "./src/*") may
+        // resolve to extensionless targets via conditional exports. Retry with
+        // each known extension, but never rewrite already explicit specifiers.
+        for (const ext of this.extensions) {
+          try {
+            return this.moduleImpl._resolveFilename(
+              id + ext,
+              parent,
+              false,
+              resolveOptions
+            );
+          } catch {
+            // try next extension
+          }
+        }
+      }
+      throw e;
+    }
+  }
+
   resolveDependency = (id: string): IEntrypointDependency => {
     const cached = this.entrypoint.getDependency(id);
     invariant(!(cached instanceof Promise), 'Dependency is not resolved yet');
@@ -565,11 +624,17 @@ export class Module {
       const { filename } = this;
       const strippedId = stripQueryAndHash(id);
 
-      let resolved = this.moduleImpl._resolveFilename(strippedId, {
+      const parent = {
         id: filename,
         filename,
         paths: this.moduleImpl._nodeModulePaths(path.dirname(filename)),
-      });
+      };
+      const { conditionNames } = this.services.options.pluginOptions;
+      const conditions = conditionNames?.length
+        ? expandConditions(conditionNames)
+        : undefined;
+
+      let resolved = this.resolveWithConditions(strippedId, parent, conditions);
 
       const isFileSpecifier =
         strippedId.startsWith('.') || path.isAbsolute(strippedId);

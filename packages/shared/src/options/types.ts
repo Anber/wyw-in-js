@@ -138,6 +138,7 @@ export type StrictOptions = {
   babelOptions: TransformOptions;
   classNameSlug?: string | ClassNameFn;
   codeRemover?: CodeRemoverOptions;
+  conditionNames?: string[];
   displayName: boolean;
   evaluate: boolean;
   extensions: string[];
