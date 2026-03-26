@@ -319,4 +319,103 @@ describe('shaker', () => {
     expect(code).toContain('function fallback');
     expect(code).not.toContain('exports.fallback');
   });
+
+  it('should keep declaration when a dead export is referenced by a surviving export', () => {
+    // Regression: the shaker's outerReferences filter treats the init expression
+    // of a dead export as a forDeleting candidate. When isDevMode's init
+    // (`isDevHost || null`) is the candidate, `candidate.isAncestor(ref)` is
+    // true for the reference to isDevHost inside it — so isDevHost appears to
+    // have 0 blocking references and gets fully removed. But isDevMode survives
+    // via stripExportKeepDeclaration (kept code references it), leaving a
+    // dangling reference → ReferenceError: isDevHost is not defined.
+    const code = run(['__wywPreval'])`
+      export const isDevHost = window.location.hostname === 'localhost';
+      export const isDevMode = isDevHost || null;
+
+      const _exp = /*#__PURE__*/() => isDevMode ? 'dev-class' : 'prod-class';
+      export const __wywPreval = {
+        _exp: _exp,
+      };
+    `;
+
+    // isDevHost declaration must survive — isDevMode references it
+    expect(code).toContain('const isDevHost');
+    // isDevMode declaration must survive — _exp references it
+    expect(code).toContain('const isDevMode');
+    // neither should be exported
+    expect(code).not.toContain('exports.isDevHost');
+    expect(code).not.toContain('exports.isDevMode');
+  });
+
+  it('should keep transitive chain of dead exports referenced by surviving code', () => {
+    // Mirrors real-world flags.ts: a → b → c chain where only c is alive
+    const code = run(['__wywPreval'])`
+      const isFlagPresent = (flag) => false;
+      export const isDevHost = window.location.hostname === 'localhost';
+      export const isDevMode = (isDevHost || isFlagPresent("dev")) && !isFlagPresent("no-dev");
+      export const someFeature = isDevMode && isFlagPresent("some-feature");
+
+      const _exp = /*#__PURE__*/() => someFeature ? 'feature-class' : 'default-class';
+      export const __wywPreval = {
+        _exp: _exp,
+      };
+    `;
+
+    // Entire chain must survive — someFeature → isDevMode → isDevHost
+    expect(code).toContain('const isDevHost');
+    expect(code).toContain('const isDevMode');
+    expect(code).toContain('const someFeature');
+    // none should be exported
+    expect(code).not.toContain('exports.isDevHost');
+    expect(code).not.toContain('exports.isDevMode');
+    expect(code).not.toContain('exports.someFeature');
+  });
+
+  it('should keep enums local when a surviving export still references them', () => {
+    const code = run(['__wywPreval'])`
+      export enum Flags {
+        Dev = 1,
+      }
+
+      export const mode = Flags.Dev;
+
+      const _exp = /*#__PURE__*/() => globalThis.location?.hash === String(mode);
+      export const __wywPreval = {
+        _exp: _exp,
+      };
+    `;
+
+    expect(code).toContain('var Flags');
+    expect(code).toContain('const mode');
+    expect(code).not.toContain('exports.Flags');
+    expect(code).not.toContain('exports.mode');
+  });
+
+  it('should split multi-declarator exports when only one binding survives', () => {
+    const code = run(['b'])`
+      export const a = globalThis.location?.hostname || 'localhost', b = a + '-dev';
+    `;
+
+    expect(code).toContain('const a');
+    expect(code).toContain('const b');
+    expect(code).toContain('exports.b');
+    expect(code).not.toContain('exports.a');
+  });
+
+  it('should fully remove dead export when nothing references it', () => {
+    // Ensure the fix doesn't prevent removal of truly dead exports
+    const code = run(['__wywPreval'])`
+      export const unused = 'dead';
+      export const alsoUnused = unused + '!';
+
+      const _exp = /*#__PURE__*/() => 'static-class';
+      export const __wywPreval = {
+        _exp: _exp,
+      };
+    `;
+
+    // Both should be fully removed — nothing in __wywPreval references them
+    expect(code).not.toContain('unused');
+    expect(code).not.toContain('alsoUnused');
+  });
 });
