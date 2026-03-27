@@ -10,6 +10,7 @@ const workingDir = cwd();
 
 const rootPkg = getJSON(join(workingDir, 'package.json'));
 const workspacePatterns = getWorkspacePatterns(rootPkg);
+const repository = getCanonicalRepository(rootPkg);
 const packageJsonPaths = workspacePatterns.flatMap((pattern) =>
   globSync(join(workingDir, pattern, 'package.json'))
 );
@@ -45,6 +46,11 @@ for (const pkg of packages) {
   const { name: packageName } = pkgJson;
 
   let changed = false;
+
+  if (!hasExpectedRepository(pkgJson, repository)) {
+    pkgJson.repository = repository;
+    changed = true;
+  }
 
   for (const field of publishDependencyFields) {
     const deps = pkgJson[field];
@@ -161,4 +167,76 @@ function getWorkspacePatterns(pkgJson) {
   }
 
   return [];
+}
+
+function getCanonicalRepository(pkgJson) {
+  const homepage = normalizeRepositoryUrl(pkgJson?.homepage);
+  if (homepage) {
+    return { type: 'git', url: homepage };
+  }
+
+  const repository = pkgJson?.repository;
+  if (typeof repository === 'string') {
+    const normalized = normalizeRepositoryUrl(repository);
+    if (normalized) {
+      return { type: 'git', url: normalized };
+    }
+  } else if (repository && typeof repository === 'object') {
+    const normalized = normalizeRepositoryUrl(repository.url);
+    if (normalized) {
+      return {
+        type: repository.type ?? 'git',
+        url: normalized,
+      };
+    }
+  }
+
+  throw new Error(
+    'Cannot determine canonical repository URL for publishable packages.'
+  );
+}
+
+function hasExpectedRepository(pkgJson, expectedRepository) {
+  const repository = pkgJson?.repository;
+
+  if (!repository) {
+    return false;
+  }
+
+  if (typeof repository === 'string') {
+    return normalizeRepositoryUrl(repository) === expectedRepository.url;
+  }
+
+  return normalizeRepositoryUrl(repository.url) === expectedRepository.url;
+}
+
+function normalizeRepositoryUrl(value) {
+  if (typeof value !== 'string' || value.trim() === '') {
+    return '';
+  }
+
+  const trimmed = value.trim().replace(/#.*$/, '');
+
+  const githubSshMatch = trimmed.match(
+    /^git@github\.com:([^/]+\/[^/]+?)(?:\.git)?$/
+  );
+  if (githubSshMatch) {
+    return `https://github.com/${githubSshMatch[1]}`;
+  }
+
+  const gitProtocolMatch = trimmed.match(
+    /^git\+https:\/\/github\.com\/([^/]+\/[^/]+?)(?:\.git)?$/
+  );
+  if (gitProtocolMatch) {
+    return `https://github.com/${gitProtocolMatch[1]}`;
+  }
+
+  const httpsMatch = trimmed.match(
+    /^https:\/\/github\.com\/([^/]+\/[^/]+?)(?:\.git)?$/
+  );
+  if (httpsMatch) {
+    return `https://github.com/${httpsMatch[1]}`;
+  }
+
+  return trimmed;
 }
