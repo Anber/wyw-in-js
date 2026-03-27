@@ -98,4 +98,78 @@ describe('webpack-loader asyncResolve', () => {
 
     expect(addDependency).toHaveBeenCalledWith(resolved);
   });
+
+  it('falls back to the current loader resolver when the stacked root resolver is gone', async () => {
+    const { default: webpackLoader } = await import('../index');
+    const resolved = path.resolve('assets/deep.css');
+    const addDependencyA = jest.fn();
+    const addDependencyB = jest.fn();
+    const resolveModuleA = jest.fn((_ctx, _token, cb) => cb(null, resolved));
+    const resolveModuleB = jest.fn((_ctx, _token, cb) => cb(null, resolved));
+
+    transformMock.mockImplementation(async (services, _code, asyncResolve) => {
+      if (services.options.filename === '/abs/entry-a.tsx') {
+        return {
+          code: _code,
+          sourceMap: null,
+          cssText: undefined,
+          dependencies: [],
+        };
+      }
+
+      await asyncResolve('./deep.css', '/abs/dependency.ts', [
+        '/abs/dependency.ts',
+        '/abs/entry-a.tsx',
+      ]);
+
+      return {
+        code: _code,
+        sourceMap: null,
+        cssText: undefined,
+        dependencies: [],
+      };
+    });
+
+    await new Promise<void>((resolve, reject) => {
+      webpackLoader.call(
+        {
+          addDependency: addDependencyA,
+          async: jest.fn(),
+          callback: (err: Error | null) => (err ? reject(err) : resolve()),
+          emitWarning: jest.fn(),
+          getOptions: () => ({}),
+          getResolve: () => resolveModuleA,
+          resourcePath: '/abs/entry-a.tsx',
+        } as any,
+        'module.exports = 1;',
+        null
+      );
+    });
+
+    await new Promise<void>((resolve) => {
+      setImmediate(resolve);
+    });
+
+    expect(resolveModuleA).not.toHaveBeenCalled();
+
+    await new Promise<void>((resolve, reject) => {
+      webpackLoader.call(
+        {
+          addDependency: addDependencyB,
+          async: jest.fn(),
+          callback: (err: Error | null) => (err ? reject(err) : resolve()),
+          emitWarning: jest.fn(),
+          getOptions: () => ({}),
+          getResolve: () => resolveModuleB,
+          resourcePath: '/abs/entry-b.tsx',
+        } as any,
+        'module.exports = 1;',
+        null
+      );
+    });
+
+    expect(resolveModuleA).not.toHaveBeenCalled();
+    expect(resolveModuleB).toHaveBeenCalledTimes(1);
+    expect(addDependencyB).toHaveBeenCalledWith(resolved);
+  });
 });
