@@ -345,9 +345,14 @@ export function* transform(
       nextCode = rewritten.code;
       if (rewritten.optimizedCount > 0) {
         const optimizedSources = new Set(rewritten.optimizedSources);
+        const rewrittenSources = new Set(rewritten.imports?.keys() ?? []);
         for (const dependency of resolvedImports) {
           if (dependency.resolved && optimizedSources.has(dependency.source)) {
-            this.entrypoint.addDependency(dependency);
+            if (rewrittenSources.has(dependency.source)) {
+              this.entrypoint.addDependency(dependency);
+            } else {
+              this.entrypoint.addInvalidationDependency(dependency);
+            }
             this.entrypoint.markInvalidateOnDependencyChange(
               dependency.resolved
             );

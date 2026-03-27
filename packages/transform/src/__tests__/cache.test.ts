@@ -9,6 +9,10 @@ type MockEntrypoint = {
   dependencies: Map<string, Pick<IEntrypointDependency, 'resolved'>>;
   generation: number;
   initialCode: string;
+  invalidationDependencies?: Map<
+    string,
+    Pick<IEntrypointDependency, 'resolved'>
+  >;
   name: string;
 };
 
@@ -17,7 +21,8 @@ const mockedReadFileSync = jest.spyOn(fs, 'readFileSync');
 const setupCacheWithEntrypoint = (
   filename: string,
   content: string,
-  dependencies: MockEntrypoint['dependencies'] = new Map()
+  dependencies: MockEntrypoint['dependencies'] = new Map(),
+  invalidationDependencies: MockEntrypoint['invalidationDependencies'] = new Map()
 ): {
   cache: TransformCacheCollection<MockEntrypoint>;
   entrypoint: MockEntrypoint;
@@ -27,6 +32,7 @@ const setupCacheWithEntrypoint = (
     name: filename,
     initialCode: content,
     dependencies,
+    invalidationDependencies,
     generation: 1,
   };
 
@@ -193,6 +199,47 @@ describe('TransformCacheCollection', () => {
       expect(invalidated).toBe(true); // Parent invalidated due to dep change
       expect(cache.has('entrypoints', parentName)).toBe(false); // Parent evicted
       expect(cache.has('entrypoints', depName)).toBe(false); // Dependency invalidated
+      expect(mockedReadFileSync).toHaveBeenCalledWith(depName, 'utf8');
+    });
+
+    it('should invalidate parent when an invalidation-only dependency changed', () => {
+      const depName = 'barrel.js';
+      const depContent = 'export { b } from "./leaf.js";';
+      const newDepContent = 'export { c } from "./leaf.js";';
+      const parentName = 'parent.js';
+      const parentContent = 'const value = 1;';
+
+      const { entrypoint: depEntrypoint } = setupCacheWithEntrypoint(
+        depName,
+        depContent
+      );
+
+      const invalidationDeps = new Map<
+        string,
+        Pick<IEntrypointDependency, 'resolved'>
+      >([['./barrel.js', { resolved: depName }]]);
+      const { cache } = setupCacheWithEntrypoint(
+        parentName,
+        parentContent,
+        new Map(),
+        invalidationDeps
+      );
+
+      cache.add('entrypoints', depName, depEntrypoint as any);
+      cache.invalidateIfChanged(depName, depContent, undefined, 'fs');
+
+      mockedReadFileSync.mockImplementation((path) => {
+        if (path === depName) {
+          return newDepContent;
+        }
+        throw new Error(`Unexpected readFileSync call: ${path}`);
+      });
+
+      const invalidated = cache.invalidateIfChanged(parentName, parentContent);
+
+      expect(invalidated).toBe(true);
+      expect(cache.has('entrypoints', parentName)).toBe(false);
+      expect(cache.has('entrypoints', depName)).toBe(false);
       expect(mockedReadFileSync).toHaveBeenCalledWith(depName, 'utf8');
     });
 

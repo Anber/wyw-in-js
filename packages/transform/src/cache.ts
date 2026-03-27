@@ -14,8 +14,9 @@ function hashContent(content: string) {
 
 interface IBaseCachedEntrypoint {
   dependencies: Map<string, { resolved: string | null }>;
-  invalidateOnDependencyChange?: Set<string>;
   initialCode?: string;
+  invalidateOnDependencyChange?: Set<string>;
+  invalidationDependencies?: Map<string, { resolved: string | null }>;
 }
 
 interface ICaches<TEntrypoint extends IBaseCachedEntrypoint> {
@@ -189,7 +190,23 @@ export class TransformCacheCollection<
     if (fileEntrypoint && !visitedFiles.has(filename)) {
       visitedFiles.add(filename);
 
-      for (const [, dependency] of fileEntrypoint.dependencies) {
+      const dependenciesToCheck = new Map<
+        string,
+        { resolved: string | null }
+      >();
+
+      for (const [key, dependency] of fileEntrypoint.dependencies) {
+        dependenciesToCheck.set(key, dependency);
+      }
+
+      for (const [key, dependency] of fileEntrypoint.invalidationDependencies ??
+        []) {
+        if (!dependenciesToCheck.has(key)) {
+          dependenciesToCheck.set(key, dependency);
+        }
+      }
+
+      for (const [, dependency] of dependenciesToCheck) {
         const dependencyFilename = dependency.resolved;
 
         if (dependencyFilename) {

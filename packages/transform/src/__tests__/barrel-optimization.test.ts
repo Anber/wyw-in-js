@@ -189,6 +189,16 @@ describe('barrel optimization', () => {
       expect(first.transformedCode).not.toContain(barrelFile);
       expect(second.transformedCode).toContain(blueFile);
       expect(second.transformedCode).not.toContain(barrelFile);
+      expect(first.getDependency('./barrel')).toBeUndefined();
+      expect(first.getInvalidationDependency('./barrel')).toMatchObject({
+        resolved: barrelFile,
+      });
+      expect(first.invalidateOnDependencyChange.has(barrelFile)).toBe(true);
+      expect(second.getDependency('./barrel')).toBeUndefined();
+      expect(second.getInvalidationDependency('./barrel')).toMatchObject({
+        resolved: barrelFile,
+      });
+      expect(second.invalidateOnDependencyChange.has(barrelFile)).toBe(true);
 
       expect(
         recorder.singles
@@ -352,6 +362,10 @@ describe('barrel optimization', () => {
 
       expect(entrypoint.transformedCode).toContain(redFile);
       expect(entrypoint.transformedCode).toContain(`require("./barrel")`);
+      expect(entrypoint.getDependency('./barrel')).toMatchObject({
+        resolved: barrelFile,
+      });
+      expect(entrypoint.getInvalidationDependency('./barrel')).toBeUndefined();
       expect(
         recorder.singles.find(
           (event) =>

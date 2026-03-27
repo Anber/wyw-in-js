@@ -162,6 +162,10 @@ export abstract class BaseEntrypoint {
     public readonly only: string[],
     public readonly parents: ParentEntrypoint[],
     public readonly dependencies: Map<string, IEntrypointDependency>,
+    public readonly invalidationDependencies: Map<
+      string,
+      IEntrypointDependency
+    >,
     public readonly invalidateOnDependencyChange: Set<string>
   ) {
     this.idx = getFileIdx(name);
