@@ -63,28 +63,43 @@ const getResolverKey = (importer: string, stack: string[]): string => {
   return stripQueryAndHash(root);
 };
 
-const asyncResolve = (
-  what: string,
-  importer: string,
-  stack: string[] = [importer]
-): Promise<string> => {
-  const resolver = resolvers[getResolverKey(importer, stack)];
-  if (!resolver || resolver.length === 0) {
-    throw new Error('No resolver found');
-  }
+const getActiveResolvers = (key: string): Resolver[] => {
+  const entries = resolvers[key];
+  return entries?.length ? entries : [];
+};
 
-  // Every resolver should return the same result, but we need to call all of them
-  // to ensure that all side effects are executed (e.g. adding dependencies)
-  return Promise.all(resolver.map((r) => r(what, importer, stack))).then(
-    (results) => {
-      const firstResult = results[0];
-      if (results.some((r) => r !== firstResult)) {
-        throw new Error('Resolvers returned different results');
-      }
+const createAsyncResolve = (resourcePath: string) => {
+  const currentResolverKey = stripQueryAndHash(resourcePath);
 
-      return firstResult;
+  return (
+    what: string,
+    importer: string,
+    stack: string[] = [importer]
+  ): Promise<string> => {
+    const rootResolverKey = getResolverKey(importer, stack);
+    const rootResolvers = getActiveResolvers(rootResolverKey);
+    const resolver =
+      rootResolvers.length > 0
+        ? rootResolvers
+        : getActiveResolvers(currentResolverKey);
+
+    if (resolver.length === 0) {
+      throw new Error('No resolver found');
     }
-  );
+
+    // Every resolver should return the same result, but we need to call all of them
+    // to ensure that all side effects are executed (e.g. adding dependencies)
+    return Promise.all(resolver.map((r) => r(what, importer, stack))).then(
+      (results) => {
+        const firstResult = results[0];
+        if (results.some((r) => r !== firstResult)) {
+          throw new Error('Resolvers returned different results');
+        }
+
+        return firstResult;
+      }
+    );
+  };
 };
 
 function addResolver(resourcePath: string, resolver: Resolver) {
@@ -185,6 +200,7 @@ const webpack5Loader: Loader = function webpack5LoaderPlugin(
       return result;
     });
   });
+  const asyncResolve = createAsyncResolve(this.resourcePath);
 
   logger('loader %s', this.resourcePath);
 
