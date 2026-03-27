@@ -1,4 +1,4 @@
-import generator from '@babel/generator';
+import { generate } from '@babel/generator';
 import type { NodePath } from '@babel/traverse';
 
 export const getSource = (path: NodePath, force = false): string => {
@@ -13,7 +13,7 @@ export const getSource = (path: NodePath, force = false): string => {
     // eslint-disable-next-line no-empty
   } catch {}
 
-  source = source || generator(path.node).code;
+  source = source || generate(path.node).code;
 
   return path.node.extra?.parenthesized ? `(${source})` : source;
 };

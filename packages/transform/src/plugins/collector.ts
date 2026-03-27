@@ -18,8 +18,6 @@ import type { WYWTransformMetadata } from '../utils/TransformMetadata';
 import { removeWithRelated } from '../utils/scopeHelpers';
 import { invalidateTraversalCache } from '../utils/traversalCache';
 
-export const filename = __filename;
-
 export function collector(
   file: BabelFile,
   options: Pick<

@@ -1,6 +1,25 @@
+const path = require('path');
+
 const commonJSTargets = {
   browsers: '> 0.25% and supports array-includes',
   node: '12',
+};
+
+const getOutFileExtension = () => {
+  const extensionArg = process.argv.find((arg) =>
+    arg.startsWith('--out-file-extension=')
+  );
+
+  if (extensionArg) {
+    return extensionArg.slice('--out-file-extension='.length);
+  }
+
+  const extensionArgIndex = process.argv.indexOf('--out-file-extension');
+  if (extensionArgIndex !== -1) {
+    return process.argv[extensionArgIndex + 1] || '.js';
+  }
+
+  return '.js';
 };
 
 const config = {
@@ -67,7 +86,13 @@ const config = {
       test: /[\\/](__tests__|__fixtures__|packages[\\/]teskit[\\/]src)[\\/]/,
     },
   ],
-  plugins: ['@babel/plugin-proposal-explicit-resource-management'],
+  plugins: [
+    '@babel/plugin-proposal-explicit-resource-management',
+    [
+      path.join(__dirname, 'addRelativeImportExtension.js'),
+      { extension: getOutFileExtension() },
+    ],
+  ],
   presets: ['@babel/preset-typescript'],
 };
 

@@ -15,7 +15,8 @@ import {
 import { globSync } from 'glob';
 import mkdirp from 'mkdirp';
 import normalize from 'normalize-path';
-import yargs from 'yargs';
+import { hideBin } from 'yargs/helpers';
+import yargs from 'yargs/yargs';
 
 const modulesOptions = [
   'commonjs',
@@ -25,7 +26,7 @@ const modulesOptions = [
   'native',
 ] as const;
 
-const argv = yargs
+const argv = yargs(hideBin(process.argv))
   .usage('Usage: $0 [options] <files ...>')
   .option('config', {
     alias: 'c',
@@ -86,7 +87,7 @@ const argv = yargs
     choices: modulesOptions,
     description: 'Specifies a type of used imports',
     default: 'commonjs' as const,
-    coerce: (s) => s.toLowerCase(),
+    coerce: (s: string) => s.toLowerCase() as (typeof modulesOptions)[number],
   })
   .implies('insert-css-requires', 'source-root')
   .implies('transform', 'insert-css-requires')

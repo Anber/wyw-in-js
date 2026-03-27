@@ -1,5 +1,5 @@
 /* eslint-disable no-continue, @typescript-eslint/no-use-before-define, @typescript-eslint/no-explicit-any, no-param-reassign, prefer-destructuring */
-import generate from '@babel/generator';
+import { generate } from '@babel/generator';
 import * as t from '@babel/types';
 
 import { EventEmitter } from '../../utils/EventEmitter';

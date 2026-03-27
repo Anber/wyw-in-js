@@ -1,10 +1,19 @@
-import { Transformer } from '@parcel/plugin';
-import SourceMap from '@parcel/source-map';
+import { dirname } from 'path';
 
-import { asyncResolveFallback } from '@wyw-in-js/shared';
+import { Transformer } from '@parcel/plugin';
+import SourceMapModule from '@parcel/source-map';
+
+import { asyncResolveFallback, findPackageJSON } from '@wyw-in-js/shared';
 import { transform, TransformCacheCollection } from '@wyw-in-js/transform';
 
 const cache = new TransformCacheCollection();
+const SourceMap =
+  (SourceMapModule as unknown as { default?: typeof SourceMapModule })
+    .default ?? SourceMapModule;
+const getTransformRoot = (filename: string, projectRoot: string) => {
+  const packageJSON = findPackageJSON('.', filename);
+  return packageJSON ? dirname(packageJSON) : projectRoot;
+};
 
 export default new Transformer({
   async transform({ asset, logger, options, resolve }) {
@@ -12,6 +21,7 @@ export default new Transformer({
       return [asset];
     }
 
+    const transformRoot = getTransformRoot(asset.filePath, options.projectRoot);
     const originalCode = await asset.getCode();
     const originalMap = await asset.getMap();
     const originalVlqMap = originalMap?.toVLQ();
@@ -35,7 +45,7 @@ export default new Transformer({
         options: {
           filename: asset.filePath,
           inputSourceMap,
-          root: options.projectRoot,
+          root: transformRoot,
         },
       },
       originalCode,

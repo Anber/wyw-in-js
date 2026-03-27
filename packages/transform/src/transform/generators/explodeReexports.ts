@@ -1,4 +1,4 @@
-import generate from '@babel/generator';
+import { generate } from '@babel/generator';
 import type { ExportAllDeclaration, File, Node } from '@babel/types';
 
 import type { Core } from '../../babel';

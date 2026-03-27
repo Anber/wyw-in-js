@@ -81,7 +81,9 @@ const createShakerPlugins = (
   ensureTypescriptPlugin(plugins, evalConfig);
 
   if (includeCommonJS) {
-    plugins.push(nodeRequire.resolve('@babel/plugin-transform-modules-commonjs'));
+    plugins.push(
+      nodeRequire.resolve('@babel/plugin-transform-modules-commonjs')
+    );
   }
 
   return plugins;

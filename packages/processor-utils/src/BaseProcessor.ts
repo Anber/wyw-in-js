@@ -1,6 +1,6 @@
 /* eslint-disable class-methods-use-this */
 import type { NodePath, types as t } from '@babel/core';
-import generator from '@babel/generator';
+import { generate } from '@babel/generator';
 import type {
   Expression,
   Identifier,
@@ -116,7 +116,7 @@ export abstract class BaseProcessor {
       return this.callee.name;
     }
 
-    return generator(this.callee).code;
+    return generate(this.callee).code;
   }
 
   public abstract build(values: ValueCache): void;
