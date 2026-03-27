@@ -372,6 +372,7 @@ export function* transform(
           {
             imports: rewritten.imports,
             phase: 'rewritten',
+            preResolved: rewritten.preResolvedImports,
           }
         );
       } else {

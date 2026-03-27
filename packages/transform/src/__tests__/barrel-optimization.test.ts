@@ -115,7 +115,8 @@ const runEntrypoint = (
   root: string,
   filename: string,
   cache: TransformCacheCollection,
-  eventEmitter: EventEmitter
+  eventEmitter: EventEmitter,
+  resolve = createResolver(root)
 ) => {
   const services = createServices(root, filename, cache, eventEmitter);
   const entrypoint = Entrypoint.createRoot(
@@ -131,7 +132,7 @@ const runEntrypoint = (
   const handlers = {
     ...baseProcessingHandlers,
     resolveImports(this: IResolveImportsAction) {
-      return syncResolveImports.call(this, createResolver(root));
+      return syncResolveImports.call(this, resolve);
     },
   };
 
@@ -470,6 +471,49 @@ describe('barrel optimization', () => {
           (event) => event.mode
         )
       ).toEqual(['full']);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('does not re-resolve generated leaf imports after mixed-barrel rewrite', () => {
+    const root = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'wyw-barrel-mixed-preresolved-')
+    );
+
+    try {
+      const barrelFile = path.join(root, 'barrel.ts');
+      const redFile = path.join(root, 'red.ts');
+      const consumerFile = path.join(root, 'consumer.ts');
+      const baseResolver = createResolver(root);
+      const resolveCalls: Array<{ importer: string; what: string }> = [];
+
+      fs.writeFileSync(
+        barrelFile,
+        `import { red } from './red';\nexport { red };\nexport const local = 'local';\n`
+      );
+      fs.writeFileSync(redFile, `export const red = 'red';\n`);
+      fs.writeFileSync(
+        consumerFile,
+        `import { red } from './barrel';\nexport const value = red;\n`
+      );
+
+      runEntrypoint(
+        root,
+        consumerFile,
+        new TransformCacheCollection(),
+        createRecorder().eventEmitter,
+        (what, importer) => {
+          resolveCalls.push({ importer, what });
+          return baseResolver(what, importer);
+        }
+      );
+
+      expect(
+        resolveCalls.filter(
+          (call) => call.importer === consumerFile && call.what === redFile
+        )
+      ).toHaveLength(0);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

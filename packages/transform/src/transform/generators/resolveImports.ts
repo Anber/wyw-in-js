@@ -96,6 +96,14 @@ function filterUnresolved(
   });
 }
 
+function getPreResolvedImports(
+  preResolved: IResolveImportsAction['data']['preResolved']
+): Map<string, IEntrypointDependency> {
+  return new Map(
+    (preResolved ?? []).map((dependency) => [dependency.source, dependency])
+  );
+}
+
 /**
  * Synchronously resolves specified imports with a provided resolver.
  */
@@ -109,6 +117,7 @@ export function* syncResolveImports(
     services: { eventEmitter },
   } = this;
   const listOfImports = Array.from(imports?.entries() ?? []);
+  const preResolvedImports = getPreResolvedImports(this.data.preResolved);
   const { log } = entrypoint;
 
   if (listOfImports.length === 0) {
@@ -119,6 +128,21 @@ export function* syncResolveImports(
   }
 
   const resolvedImports = listOfImports.map(([source, only]) => {
+    const preResolved = preResolvedImports.get(source);
+    if (preResolved) {
+      const mergedOnly = mergeOnly(preResolved.only, only);
+      log(
+        '[sync-resolve] ♻️ %s -> %s (only: %o)',
+        source,
+        preResolved.resolved,
+        mergedOnly
+      );
+      return {
+        ...preResolved,
+        only: mergedOnly,
+      };
+    }
+
     let resolved: string | null = null;
     try {
       resolved = resolve(source, entrypoint.name, getStack(entrypoint));
@@ -162,6 +186,7 @@ export async function* asyncResolveImports(
     services: { eventEmitter },
   } = this;
   const listOfImports = Array.from(imports?.entries() ?? []);
+  const preResolvedImports = getPreResolvedImports(this.data.preResolved);
   const { log } = entrypoint;
 
   if (listOfImports.length === 0) {
@@ -208,6 +233,22 @@ export async function* asyncResolveImports(
 
   const resolvedImports = await Promise.all<IEntrypointDependency>(
     listOfImports.map(([source, importsOnly]) => {
+      const preResolved = preResolvedImports.get(source);
+      if (preResolved) {
+        const mergedOnly = mergeOnly(preResolved.only, importsOnly);
+        log(
+          '[async-resolve] ♻️ %s (%o) in %s -> %s',
+          source,
+          mergedOnly,
+          entrypoint.name,
+          preResolved.resolved
+        );
+        return {
+          ...preResolved,
+          only: mergedOnly,
+        };
+      }
+
       const cached = entrypoint.getDependency(source);
       if (cached) {
         return {
