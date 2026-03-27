@@ -1031,6 +1031,60 @@ describe('conditionNames', () => {
     expect(() => mod.resolve('./foo.js')).toThrow(missing);
     expect(resolveFilename.mock.calls.map(([id]) => id)).toEqual(['./foo.js']);
   });
+
+  it('does not retry scoped package roots when conditions cause MODULE_NOT_FOUND', () => {
+    const cache = new TransformCacheCollection();
+    const services = createServices({
+      cache,
+      options: {
+        filename,
+        pluginOptions: {
+          ...options,
+          conditionNames: ['custom', '...'],
+        },
+      },
+    });
+    const entrypoint = createEntrypoint(
+      services,
+      filename,
+      ['*'],
+      'module.exports = 1;'
+    );
+
+    const missing = new Error('MODULE_NOT_FOUND') as NodeJS.ErrnoException;
+    missing.code = 'MODULE_NOT_FOUND';
+    const resolveFilename = jest.fn((id: string) => {
+      if (id === '@scope/pkg') {
+        throw missing;
+      }
+
+      if (id === '@scope/pkg.js') {
+        return '/resolved/wrong-package.js';
+      }
+
+      throw missing;
+    });
+
+    const moduleImpl = {
+      _extensions: DefaultModuleImplementation._extensions,
+      _nodeModulePaths: DefaultModuleImplementation._nodeModulePaths.bind(
+        DefaultModuleImplementation
+      ),
+      _resolveFilename: resolveFilename as never,
+    };
+
+    const mod = new Module(
+      services,
+      entrypoint,
+      undefined,
+      moduleImpl as never
+    );
+
+    expect(() => mod.resolve('@scope/pkg')).toThrow(missing);
+    expect(resolveFilename.mock.calls.map(([id]) => id)).toEqual([
+      '@scope/pkg',
+    ]);
+  });
 });
 
 describe('DOM', () => {

@@ -71,6 +71,18 @@ function expandConditions(conditionNames: string[]): Set<string> {
   return result;
 }
 
+function isBarePackageSubpath(id: string): boolean {
+  if (id.startsWith('.') || path.isAbsolute(id)) {
+    return false;
+  }
+
+  if (id.startsWith('@')) {
+    return id.split('/').length > 2;
+  }
+
+  return id.includes('/');
+}
+
 export const DefaultModuleImplementation = NativeModule as typeof NativeModule &
   HiddenModuleMembers;
 
@@ -556,7 +568,7 @@ export class Module {
     const shouldRetryWithExtensions =
       conditions &&
       path.extname(id) === '' &&
-      (id.startsWith('.') || path.isAbsolute(id) || id.includes('/'));
+      (id.startsWith('.') || path.isAbsolute(id) || isBarePackageSubpath(id));
     try {
       return this.moduleImpl._resolveFilename(
         id,
