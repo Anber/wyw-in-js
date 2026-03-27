@@ -7,6 +7,10 @@ on:
 
 concurrency: ${{ github.workflow }}-${{ github.ref }}
 
+permissions:
+  contents: read
+  id-token: write
+
 jobs:
   release:
     name: Release
@@ -20,10 +24,11 @@ jobs:
       - name: Checkout Repo
         uses: actions/checkout@v3
 
-      - name: Setup Node.js 20.x
+      - name: Setup Node.js 22.x
         uses: actions/setup-node@v3
         with:
-          node-version: 20.x
+          node-version: 22.14.0
+          registry-url: https://registry.npmjs.org
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -49,4 +54,3 @@ jobs:
           publish: bun run release
         env:
           GITHUB_TOKEN: ${{ secrets.ANBER_GITHUB_TOKEN }}
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
