@@ -23,6 +23,7 @@ export interface IProcessedEvent {
   fileIdx: string;
   imports: { from: string; what: string[] }[];
   only: string[];
+  phase?: 'initial' | 'rewritten';
   type: 'dependency';
 }
 

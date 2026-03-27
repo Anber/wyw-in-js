@@ -21,10 +21,18 @@ import type { Services, ITransformAction } from '../types';
 type RewriteResult = {
   ast: t.File;
   code: string;
+  fullyRewrittenSources: string[];
   imports: Map<string, string[]> | null;
   optimizedCount: number;
-  optimizedSources: string[];
+  partialFallbackSources: string[];
   skippedCount: number;
+};
+
+type RewriteMode = 'full' | 'partial' | 'unchanged';
+
+type StatementRewriteResult = {
+  mode: RewriteMode;
+  statements: t.Statement[];
 };
 
 type ResolvedDependencyMap = Map<string, IEntrypointDependency>;
@@ -732,13 +740,16 @@ function* rewriteImportDeclaration(
   analysisServices: Services,
   statement: t.ImportDeclaration,
   dependencies: ResolvedDependencyMap
-): Generator<any, t.Statement[], any> {
+): Generator<any, StatementRewriteResult, any> {
   const dependency = getResolvedDependency(
     dependencies,
     statement.source.value
   );
   if (!dependency?.resolved) {
-    return [statement];
+    return {
+      mode: 'unchanged',
+      statements: [statement],
+    };
   }
 
   const manifest = yield* getOrBuildBarrelManifest.call(
@@ -747,7 +758,10 @@ function* rewriteImportDeclaration(
     dependency.resolved
   );
   if (!isBarrelEntry(manifest)) {
-    return [statement];
+    return {
+      mode: 'unchanged',
+      statements: [statement],
+    };
   }
 
   const optimized: RewrittenImportSpecifier[] = [];
@@ -799,20 +813,30 @@ function* rewriteImportDeclaration(
   }
 
   if (optimized.length === 0) {
-    return [statement];
+    return {
+      mode: 'unchanged',
+      statements: [statement],
+    };
   }
 
   const rewritten = groupImportSpecifiers(optimized);
   const fallbackDeclaration = createImportFallback(statement, fallback);
+  const mode: RewriteMode = fallbackDeclaration ? 'partial' : 'full';
 
   this.services.eventEmitter.single({
     file: this.entrypoint.name,
     kind: 'barrelRewrite',
+    mode,
     optimized: optimized.length,
     source: statement.source.value,
   });
 
-  return fallbackDeclaration ? [fallbackDeclaration, ...rewritten] : rewritten;
+  return {
+    mode,
+    statements: fallbackDeclaration
+      ? [fallbackDeclaration, ...rewritten]
+      : rewritten,
+  };
 }
 
 function* rewriteExportNamedDeclaration(
@@ -820,9 +844,12 @@ function* rewriteExportNamedDeclaration(
   analysisServices: Services,
   statement: t.ExportNamedDeclaration,
   dependencies: ResolvedDependencyMap
-): Generator<any, t.Statement[], any> {
+): Generator<any, StatementRewriteResult, any> {
   if (!statement.source || !t.isStringLiteral(statement.source)) {
-    return [statement];
+    return {
+      mode: 'unchanged',
+      statements: [statement],
+    };
   }
 
   const dependency = getResolvedDependency(
@@ -830,7 +857,10 @@ function* rewriteExportNamedDeclaration(
     statement.source.value
   );
   if (!dependency?.resolved) {
-    return [statement];
+    return {
+      mode: 'unchanged',
+      statements: [statement],
+    };
   }
 
   const manifest = yield* getOrBuildBarrelManifest.call(
@@ -839,7 +869,10 @@ function* rewriteExportNamedDeclaration(
     dependency.resolved
   );
   if (!isBarrelEntry(manifest)) {
-    return [statement];
+    return {
+      mode: 'unchanged',
+      statements: [statement],
+    };
   }
 
   const optimized: RewrittenExportSpecifier[] = [];
@@ -900,20 +933,30 @@ function* rewriteExportNamedDeclaration(
   }
 
   if (optimized.length === 0) {
-    return [statement];
+    return {
+      mode: 'unchanged',
+      statements: [statement],
+    };
   }
 
   const rewritten = groupExportSpecifiers(optimized);
   const fallbackDeclaration = createExportFallback(statement, fallback);
+  const mode: RewriteMode = fallbackDeclaration ? 'partial' : 'full';
 
   this.services.eventEmitter.single({
     file: this.entrypoint.name,
     kind: 'barrelRewrite',
+    mode,
     optimized: optimized.length,
     source: statement.source.value,
   });
 
-  return fallbackDeclaration ? [fallbackDeclaration, ...rewritten] : rewritten;
+  return {
+    mode,
+    statements: fallbackDeclaration
+      ? [fallbackDeclaration, ...rewritten]
+      : rewritten,
+  };
 }
 
 function* rewriteExportAllDeclaration(
@@ -921,13 +964,16 @@ function* rewriteExportAllDeclaration(
   analysisServices: Services,
   statement: t.ExportAllDeclaration,
   dependencies: ResolvedDependencyMap
-): Generator<any, t.Statement[], any> {
+): Generator<any, StatementRewriteResult, any> {
   const dependency = getResolvedDependency(
     dependencies,
     statement.source.value
   );
   if (!dependency?.resolved) {
-    return [statement];
+    return {
+      mode: 'unchanged',
+      statements: [statement],
+    };
   }
 
   const manifest = yield* getOrBuildBarrelManifest.call(
@@ -936,7 +982,10 @@ function* rewriteExportAllDeclaration(
     dependency.resolved
   );
   if (!isBarrelEntry(manifest) || !manifest.complete) {
-    return [statement];
+    return {
+      mode: 'unchanged',
+      statements: [statement],
+    };
   }
 
   const optimized: RewrittenExportSpecifier[] = [];
@@ -976,22 +1025,40 @@ function* rewriteExportAllDeclaration(
   }
 
   if (hasUnrewritableExport) {
-    return [statement];
+    return {
+      mode: 'unchanged',
+      statements: [statement],
+    };
   }
 
   if (optimized.length === 0) {
-    return [];
+    this.services.eventEmitter.single({
+      file: this.entrypoint.name,
+      kind: 'barrelRewrite',
+      mode: 'full',
+      optimized: 0,
+      source: statement.source.value,
+    });
+
+    return {
+      mode: 'full',
+      statements: [],
+    };
   }
 
   this.services.eventEmitter.single({
     complete: true,
     file: this.entrypoint.name,
     kind: 'barrelRewrite',
+    mode: 'full',
     optimized: optimized.length,
     source: statement.source.value,
   });
 
-  return groupExportSpecifiers(optimized);
+  return {
+    mode: 'full',
+    statements: groupExportSpecifiers(optimized),
+  };
 }
 
 export function* rewriteOptimizedBarrelImports(
@@ -1004,8 +1071,31 @@ export function* rewriteOptimizedBarrelImports(
   const analysisServices = createAnalysisServices(this.services);
   const nextBody: t.Statement[] = [];
   let optimizedCount = 0;
-  const optimizedSources = new Set<string>();
+  const sourceModes = new Map<string, Exclude<RewriteMode, 'unchanged'>>();
   let skippedCount = 0;
+
+  const recordSourceMode = (
+    source: string,
+    mode: RewriteMode,
+    statementChanged: boolean
+  ) => {
+    if (mode === 'unchanged') {
+      return;
+    }
+
+    if (statementChanged) {
+      optimizedCount += 1;
+    }
+
+    if (mode === 'partial') {
+      sourceModes.set(source, 'partial');
+      return;
+    }
+
+    if (!sourceModes.has(source)) {
+      sourceModes.set(source, 'full');
+    }
+  };
 
   for (const statement of ast.program.body) {
     if (
@@ -1018,11 +1108,15 @@ export function* rewriteOptimizedBarrelImports(
         statement,
         dependencies
       );
-      if (!(rewritten.length === 1 && rewritten[0] === statement)) {
-        optimizedCount += 1;
-        optimizedSources.add(statement.source.value);
-      }
-      nextBody.push(...rewritten);
+      recordSourceMode(
+        statement.source.value,
+        rewritten.mode,
+        !(
+          rewritten.statements.length === 1 &&
+          rewritten.statements[0] === statement
+        )
+      );
+      nextBody.push(...rewritten.statements);
       continue;
     }
 
@@ -1037,11 +1131,15 @@ export function* rewriteOptimizedBarrelImports(
         statement,
         dependencies
       );
-      if (!(rewritten.length === 1 && rewritten[0] === statement)) {
-        optimizedCount += 1;
-        optimizedSources.add(statement.source.value);
-      }
-      nextBody.push(...rewritten);
+      recordSourceMode(
+        statement.source.value,
+        rewritten.mode,
+        !(
+          rewritten.statements.length === 1 &&
+          rewritten.statements[0] === statement
+        )
+      );
+      nextBody.push(...rewritten.statements);
       continue;
     }
 
@@ -1056,13 +1154,22 @@ export function* rewriteOptimizedBarrelImports(
         statement,
         dependencies
       );
-      if (rewritten.length === 1 && rewritten[0] === statement) {
+      if (
+        rewritten.mode === 'unchanged' &&
+        rewritten.statements.length === 1 &&
+        rewritten.statements[0] === statement
+      ) {
         skippedCount += 1;
-      } else {
-        optimizedCount += 1;
-        optimizedSources.add(statement.source.value);
       }
-      nextBody.push(...rewritten);
+      recordSourceMode(
+        statement.source.value,
+        rewritten.mode,
+        !(
+          rewritten.statements.length === 1 &&
+          rewritten.statements[0] === statement
+        )
+      );
+      nextBody.push(...rewritten.statements);
       continue;
     }
 
@@ -1075,9 +1182,14 @@ export function* rewriteOptimizedBarrelImports(
   return {
     ast,
     code: rewrittenCode,
+    fullyRewrittenSources: Array.from(sourceModes.entries())
+      .filter(([, mode]) => mode === 'full')
+      .map(([source]) => source),
     imports: collectOptimizedImports(ast),
     optimizedCount,
-    optimizedSources: [...optimizedSources],
+    partialFallbackSources: Array.from(sourceModes.entries())
+      .filter(([, mode]) => mode === 'partial')
+      .map(([source]) => source),
     skippedCount,
   };
 }

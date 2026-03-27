@@ -62,12 +62,14 @@ function applyImportOverrides(
 function emitDependency(
   emitter: Services['eventEmitter'],
   entrypoint: IResolveImportsAction['entrypoint'],
-  imports: IEntrypointDependency[]
+  imports: IEntrypointDependency[],
+  phase?: IResolveImportsAction['data']['phase']
 ) {
   emitter.single({
     type: 'dependency',
     file: entrypoint.name,
     only: entrypoint.only,
+    phase,
     imports: imports.map(({ resolved, only }) => ({
       from: resolved,
       what: only,
@@ -110,7 +112,7 @@ export function* syncResolveImports(
   const { log } = entrypoint;
 
   if (listOfImports.length === 0) {
-    emitDependency(eventEmitter, entrypoint, []);
+    emitDependency(eventEmitter, entrypoint, [], this.data.phase);
 
     log('%s has no imports', entrypoint.name);
     return [];
@@ -138,7 +140,7 @@ export function* syncResolveImports(
     resolvedImports
   );
   const filteredImports = filterUnresolved(entrypoint, overriddenImports);
-  emitDependency(eventEmitter, entrypoint, filteredImports);
+  emitDependency(eventEmitter, entrypoint, filteredImports, this.data.phase);
 
   return filteredImports;
 }
@@ -163,7 +165,7 @@ export async function* asyncResolveImports(
   const { log } = entrypoint;
 
   if (listOfImports.length === 0) {
-    emitDependency(eventEmitter, entrypoint, []);
+    emitDependency(eventEmitter, entrypoint, [], this.data.phase);
 
     log('%s has no imports', entrypoint.name);
     return [];
@@ -252,6 +254,6 @@ export async function* asyncResolveImports(
     resolvedImports
   );
   const filteredImports = filterUnresolved(entrypoint, overriddenImports);
-  emitDependency(eventEmitter, entrypoint, filteredImports);
+  emitDependency(eventEmitter, entrypoint, filteredImports, this.data.phase);
   return filteredImports;
 }
