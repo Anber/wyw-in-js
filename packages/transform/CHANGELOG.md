@@ -1,5 +1,24 @@
 # @wyw-in-js/transform
 
+## 1.0.7
+
+### Patch Changes
+
+- 8158b6b: Coalesce `only` updates while a transform is already in flight so expanding export requests does not repeatedly restart the same entrypoint work.
+- 6b1a996: Distinguish fully rewritten barrel sources from partial fallbacks during barrel import rewriting and annotate dependency reporting with rewrite phases so post-rewrite graphs are easier to interpret.
+- 6a44e71: Extend barrel import rewriting to optimize passthrough exports in mixed modules while preserving fallback imports for local exports that still need the original barrel.
+- 2a7b534: Keep invalidation-only dependencies for rewritten barrel imports out of normal dependency merging so optimized imports no longer need `noShake` as much to avoid repeated dependency churn.
+- 7a2ec2e: Optimize pure re-export barrel files by caching barrel manifests and rewriting imports to leaf modules before CommonJS emission. This avoids repeated `only` supersede churn on large barrel files while preserving existing runtime behavior for non-optimized paths.
+- c0497c3: Fix the transform shaker so exports pruned from output can still remain as local declarations when surviving code depends on them, including chained references, enums, and mixed variable export declarations.
+- 26e85ef: Fix transform cache invalidation so entrypoints are evicted when direct or transitive dependencies change, preventing stale eval results from being reused across rebuilds.
+- 225d70d: Add support for custom `conditionNames` during eval-time fallback resolution so transform can honor package export conditions in monorepo development setups, while keeping extension retry limited to extensionless subpath requests.
+- 6daea8c: Invalidate cached barrel analysis when leaf export sets change, so warm rebuilds do not reuse stale rewritten `export *` output.
+- 4fbbd20: Reuse already resolved leaf dependencies after barrel import rewriting so mixed-barrel optimization avoids re-resolving generated direct imports during the rewritten resolve pass.
+- e9999e8: Avoid retrying extension guesses for scoped package roots when `conditionNames` is enabled.
+- Updated dependencies
+  - @wyw-in-js/processor-utils@1.0.5
+  - @wyw-in-js/shared@1.0.5
+
 ## 1.0.6
 
 ### Patch Changes

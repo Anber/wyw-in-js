@@ -1,5 +1,14 @@
 # @wyw-in-js/webpack-loader
 
+## 1.0.7
+
+### Patch Changes
+
+- 3e6f7c4: Avoid stale resolver warnings when webpack child entrypoints are reprocessed after an earlier root loader instance has already finished.
+- Updated dependencies
+  - @wyw-in-js/shared@1.0.5
+  - @wyw-in-js/transform@1.0.7
+
 ## 1.0.6
 
 ### Patch Changes

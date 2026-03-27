@@ -1,5 +1,11 @@
 # @wyw-in-js/shared
 
+## 1.0.5
+
+### Patch Changes
+
+- 225d70d: Add support for custom `conditionNames` during eval-time fallback resolution so transform can honor package export conditions in monorepo development setups, while keeping extension retry limited to extensionless subpath requests.
+
 ## 1.0.4
 
 ### Patch Changes
