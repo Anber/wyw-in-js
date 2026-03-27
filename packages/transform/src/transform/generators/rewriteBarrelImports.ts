@@ -609,6 +609,9 @@ function* getOrBuildBarrelManifest(
     },
     null
   );
+  const manifestDependencies = resolvedImports.flatMap((dependency) =>
+    dependency.resolved ? [dependency.resolved] : []
+  );
 
   const resolutionMap = getReexportResolutionMap(resolvedImports);
   const manifest: BarrelManifest = {
@@ -687,6 +690,11 @@ function* getOrBuildBarrelManifest(
   }
 
   this.services.cache.add('barrelManifests', filename, manifest);
+  this.services.cache.setCacheDependencies(
+    'barrelManifests',
+    filename,
+    manifestDependencies
+  );
   this.services.eventEmitter.single({
     complete: manifest.complete,
     file: filename,
