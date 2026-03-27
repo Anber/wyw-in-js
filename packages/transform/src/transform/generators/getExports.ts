@@ -77,6 +77,9 @@ export function* getExports(
     const resolvedImports = yield* this.getNext('resolveImports', entrypoint, {
       imports: new Map(withWildcardReexport.map((i) => [i.source, []])),
     });
+    const dependencyFilenames = resolvedImports.flatMap((dependency) =>
+      dependency.resolved ? [dependency.resolved] : []
+    );
 
     const importedEntrypoints = findExportsInImports(
       entrypoint,
@@ -92,6 +95,13 @@ export function* getExports(
 
       result.push(...exports);
     }
+
+    cache.add('exports', entrypoint.name, result);
+    cache.setCacheDependencies('exports', entrypoint.name, dependencyFilenames);
+
+    entrypoint.log(`exports: %o`, result);
+
+    return result;
   }
 
   entrypoint.log(`exports: %o`, result);

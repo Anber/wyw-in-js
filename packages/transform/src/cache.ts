@@ -49,7 +49,11 @@ export class TransformCacheCollection<
 
   public readonly exports: Map<string, string[]>;
 
+  private readonly barrelManifestDependencies = new Map<string, Set<string>>();
+
   private contentHashes = new Map<string, { fs?: string; loaded?: string }>();
+
+  private readonly exportDependencies = new Map<string, Set<string>>();
 
   constructor(caches: Partial<ICaches<TEntrypoint>> = {}) {
     this.barrelManifests = caches.barrelManifests || new Map();
@@ -77,9 +81,11 @@ export class TransformCacheCollection<
     if (value === undefined) {
       cache.delete(key);
       this.contentHashes.delete(key);
+      this.clearCacheDependencies(cacheName, key);
       return;
     }
 
+    this.clearCacheDependencies(cacheName, key);
     cache.set(key, value);
 
     if ('initialCode' in value) {
@@ -133,6 +139,7 @@ export class TransformCacheCollection<
     const cache = this[cacheName] as Map<string, unknown>;
 
     cache.clear();
+    this.clearCacheDependencies(cacheName);
   }
 
   public delete(cacheName: CacheNames, key: string): void {
@@ -167,6 +174,7 @@ export class TransformCacheCollection<
     loggers[cacheName]('invalidate', key);
 
     cache.delete(key);
+    this.clearCacheDependencies(cacheName, key);
   }
 
   public invalidateForFile(filename: string) {
@@ -179,30 +187,54 @@ export class TransformCacheCollection<
     filename: string,
     content: string,
     previousVisitedFiles?: Set<string>,
-    source: 'fs' | 'loaded' = 'loaded'
+    source: 'fs' | 'loaded' = 'loaded',
+    changedFiles = new Set<string>()
   ) {
+    if (changedFiles.has(filename)) {
+      return true;
+    }
+
     const visitedFiles = new Set(previousVisitedFiles);
     const fileEntrypoint = this.get('entrypoints', filename);
     let anyDepChanged = false;
 
     // We need to check all dependencies of the file
     // because they might have changed as well.
-    if (fileEntrypoint && !visitedFiles.has(filename)) {
+    if (
+      !visitedFiles.has(filename) &&
+      (fileEntrypoint || this.hasCachedDependencies(filename))
+    ) {
       visitedFiles.add(filename);
+      const invalidateOnDependencyChange =
+        fileEntrypoint?.invalidateOnDependencyChange;
 
       const dependenciesToCheck = new Map<
         string,
         { resolved: string | null }
       >();
 
-      for (const [key, dependency] of fileEntrypoint.dependencies) {
+      for (const [key, dependency] of fileEntrypoint?.dependencies ?? []) {
         dependenciesToCheck.set(key, dependency);
       }
 
-      for (const [key, dependency] of fileEntrypoint.invalidationDependencies ??
-        []) {
+      for (const [
+        key,
+        dependency,
+      ] of fileEntrypoint?.invalidationDependencies ?? []) {
         if (!dependenciesToCheck.has(key)) {
           dependenciesToCheck.set(key, dependency);
+        }
+      }
+
+      for (const dependencyFilename of this.getCachedDependencies(filename)) {
+        if (
+          ![...dependenciesToCheck.values()].some(
+            (dependency) => dependency.resolved === dependencyFilename
+          )
+        ) {
+          dependenciesToCheck.set(dependencyFilename, {
+            resolved: dependencyFilename,
+          });
         }
       }
 
@@ -218,18 +250,20 @@ export class TransformCacheCollection<
             dependencyFilename,
             dependencyContent,
             visitedFiles,
-            'fs'
+            'fs',
+            changedFiles
           );
 
           if (
             dependencyChanged &&
-            fileEntrypoint.invalidateOnDependencyChange?.has(dependencyFilename)
+            invalidateOnDependencyChange?.has(dependencyFilename)
           ) {
             cacheLogger(
               'dependency affecting output has changed, invalidate all for %s',
               filename
             );
             this.invalidateForFile(filename);
+            changedFiles.add(filename);
 
             return true;
           }
@@ -253,6 +287,7 @@ export class TransformCacheCollection<
         cacheLogger('content has changed, invalidate all for %s', filename);
         this.setContentHash(filename, source, newHash);
         this.invalidateForFile(filename);
+        changedFiles.add(filename);
 
         return true;
       }
@@ -260,6 +295,7 @@ export class TransformCacheCollection<
       this.setContentHash(filename, source, newHash);
       if (anyDepChanged) {
         this.invalidateForFile(filename);
+        changedFiles.add(filename);
         return true;
       }
       return false;
@@ -269,11 +305,72 @@ export class TransformCacheCollection<
       cacheLogger('content has changed, invalidate all for %s', filename);
       this.setContentHash(filename, source, newHash);
       this.invalidateForFile(filename);
+      changedFiles.add(filename);
 
       return true;
     }
 
     return false;
+  }
+
+  public setCacheDependencies(
+    cacheName: 'barrelManifests' | 'exports',
+    key: string,
+    dependencies: Iterable<string>
+  ): void {
+    const cache = this.getDependencyCache(cacheName);
+    const nextDependencies = new Set(
+      [...dependencies].filter((dependency) => dependency.length > 0)
+    );
+
+    if (nextDependencies.size === 0) {
+      cache.delete(key);
+      return;
+    }
+
+    cache.set(key, nextDependencies);
+  }
+
+  private clearCacheDependencies(cacheName: CacheNames | 'all', key?: string) {
+    if (cacheName === 'all') {
+      this.barrelManifestDependencies.clear();
+      this.exportDependencies.clear();
+      return;
+    }
+
+    if (cacheName === 'barrelManifests') {
+      if (key === undefined) {
+        this.barrelManifestDependencies.clear();
+      } else {
+        this.barrelManifestDependencies.delete(key);
+      }
+      return;
+    }
+
+    if (cacheName === 'exports') {
+      if (key === undefined) {
+        this.exportDependencies.clear();
+      } else {
+        this.exportDependencies.delete(key);
+      }
+    }
+  }
+
+  private getCachedDependencies(filename: string): Set<string> {
+    return new Set([
+      ...(this.barrelManifestDependencies.get(filename) ?? []),
+      ...(this.exportDependencies.get(filename) ?? []),
+    ]);
+  }
+
+  private getDependencyCache(cacheName: 'barrelManifests' | 'exports') {
+    return cacheName === 'barrelManifests'
+      ? this.barrelManifestDependencies
+      : this.exportDependencies;
+  }
+
+  private hasCachedDependencies(filename: string): boolean {
+    return this.getCachedDependencies(filename).size > 0;
   }
 
   private setContentHash(

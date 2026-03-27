@@ -627,6 +627,106 @@ describe('barrel optimization', () => {
     }
   });
 
+  it('invalidates cached barrel manifests when a leaf behind export-star changes', () => {
+    const root = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'wyw-barrel-leaf-cache-')
+    );
+
+    try {
+      const leafFile = path.join(root, 'leaf.ts');
+      const barrelFile = path.join(root, 'barrel.ts');
+      const consumerFile = path.join(root, 'consumer.ts');
+      const cache = new TransformCacheCollection();
+
+      fs.writeFileSync(leafFile, `export const foo = 'foo';\n`);
+      fs.writeFileSync(barrelFile, `export * from './leaf';\n`);
+      fs.writeFileSync(consumerFile, `export * from './barrel';\n`);
+
+      const first = runEntrypoint(
+        root,
+        consumerFile,
+        cache,
+        createRecorder().eventEmitter
+      );
+
+      expect(first.transformedCode).toContain(
+        `Object.defineProperty(exports, "foo"`
+      );
+
+      fs.writeFileSync(leafFile, `export const bar = 'bar';\n`);
+
+      const second = runEntrypoint(
+        root,
+        consumerFile,
+        cache,
+        createRecorder().eventEmitter
+      );
+
+      expect(second.transformedCode).toContain(
+        `Object.defineProperty(exports, "bar"`
+      );
+      expect(second.transformedCode).not.toContain(
+        `Object.defineProperty(exports, "foo"`
+      );
+      expect(second.transformedCode).not.toContain(barrelFile);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('invalidates cached direct-export analysis when an impure export-star source changes', () => {
+    const root = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'wyw-exports-cache-leaf-')
+    );
+
+    try {
+      const leafFile = path.join(root, 'leaf.ts');
+      const impureFile = path.join(root, 'impure.ts');
+      const barrelFile = path.join(root, 'barrel.ts');
+      const consumerFile = path.join(root, 'consumer.ts');
+      const cache = new TransformCacheCollection();
+
+      fs.writeFileSync(leafFile, `export const foo = 'foo';\n`);
+      fs.writeFileSync(
+        impureFile,
+        `console.log('side effect');\nexport * from './leaf';\n`
+      );
+      fs.writeFileSync(barrelFile, `export * from './impure';\n`);
+      fs.writeFileSync(consumerFile, `export * from './barrel';\n`);
+
+      const first = runEntrypoint(
+        root,
+        consumerFile,
+        cache,
+        createRecorder().eventEmitter
+      );
+
+      expect(first.transformedCode).toContain(
+        `Object.defineProperty(exports, "foo"`
+      );
+      expect(first.transformedCode).toContain(impureFile);
+
+      fs.writeFileSync(leafFile, `export const bar = 'bar';\n`);
+
+      const second = runEntrypoint(
+        root,
+        consumerFile,
+        cache,
+        createRecorder().eventEmitter
+      );
+
+      expect(second.transformedCode).toContain(
+        `Object.defineProperty(exports, "bar"`
+      );
+      expect(second.transformedCode).not.toContain(
+        `Object.defineProperty(exports, "foo"`
+      );
+      expect(second.transformedCode).toContain(impureFile);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('invalidates cached output when a rewritten barrel changes', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wyw-barrel-cache-'));
 
