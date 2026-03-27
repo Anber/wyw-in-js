@@ -197,6 +197,7 @@ export interface IResolveImportsAction
     {
       imports: Map<string, string[]> | null;
       phase?: 'initial' | 'rewritten';
+      preResolved?: IEntrypointDependency[];
     }
   > {
   type: 'resolveImports';

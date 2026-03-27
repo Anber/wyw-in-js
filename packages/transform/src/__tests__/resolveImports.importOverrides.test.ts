@@ -158,6 +158,105 @@ describe('resolveImports: importOverrides', () => {
     ]);
   });
 
+  it('reuses pre-resolved file imports and still applies file-key noShake overrides', () => {
+    const root = '/project';
+    const pluginOptions = createPluginOptions({
+      './src/foo.js': { noShake: true },
+    });
+
+    const services = createServices({
+      filename: '/project/src/a.js',
+      root,
+      pluginOptions,
+    });
+
+    const resolve = jest.fn(() => {
+      throw new Error('resolver should not be called for pre-resolved imports');
+    });
+
+    const entrypoint = Entrypoint.createRoot(
+      services,
+      '/project/src/a.js',
+      ['*'],
+      ''
+    );
+    const action = {
+      data: {
+        imports: new Map([['/project/src/foo.js', ['default']]]),
+        preResolved: [
+          {
+            source: '/project/src/foo.js',
+            only: ['default'],
+            resolved: '/project/src/foo.js',
+          },
+        ],
+      },
+      entrypoint,
+      services,
+    } as IResolveImportsAction;
+
+    const deps = syncResolveImports.call(action, resolve).next().value;
+    expect(deps).toEqual([
+      {
+        source: '/project/src/foo.js',
+        only: ['*'],
+        resolved: '/project/src/foo.js',
+      },
+    ]);
+    expect(resolve).not.toHaveBeenCalled();
+  });
+
+  it('reuses pre-resolved file imports and still applies file-key mock overrides', () => {
+    const root = __dirname;
+    const sourceFile = path.join(root, 'src', 'foo.js');
+    const mockSpecifier = './__fixtures__/sample-script.js';
+
+    const pluginOptions = createPluginOptions({
+      './src/foo.js': { mock: mockSpecifier },
+    });
+
+    const services = createServices({
+      filename: path.join(root, 'a.js'),
+      root,
+      pluginOptions,
+    });
+
+    const resolve = jest.fn(() => {
+      throw new Error('resolver should not be called for pre-resolved imports');
+    });
+
+    const entrypoint = Entrypoint.createRoot(
+      services,
+      path.join(root, 'a.js'),
+      ['*'],
+      ''
+    );
+    const action = {
+      data: {
+        imports: new Map([[sourceFile, ['default']]]),
+        preResolved: [
+          {
+            source: sourceFile,
+            only: ['default'],
+            resolved: sourceFile,
+          },
+        ],
+      },
+      entrypoint,
+      services,
+    } as IResolveImportsAction;
+
+    const deps = syncResolveImports.call(action, resolve).next().value;
+    expect(deps).toEqual([
+      {
+        source: sourceFile,
+        only: ['default'],
+        resolved: require.resolve(path.resolve(root, mockSpecifier)),
+      },
+    ]);
+    expect(resolve).not.toHaveBeenCalled();
+  });
+
   it('applies package-key overrides by source specifier', () => {
     const root = __dirname;
     const mockSpecifier = './__fixtures__/sample-script.js';
