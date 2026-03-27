@@ -76,6 +76,10 @@ export class Entrypoint extends BaseEntrypoint {
       Promise<IEntrypointDependency>
     >(),
     readonly dependencies = new Map<string, IEntrypointDependency>(),
+    readonly invalidationDependencies = new Map<
+      string,
+      IEntrypointDependency
+    >(),
     readonly invalidateOnDependencyChange = new Set<string>(),
     generation = 1
   ) {
@@ -88,6 +92,7 @@ export class Entrypoint extends BaseEntrypoint {
       only,
       parents,
       dependencies,
+      invalidationDependencies,
       invalidateOnDependencyChange
     );
 
@@ -281,6 +286,9 @@ export class Entrypoint extends BaseEntrypoint {
       undefined,
       cached && 'resolveTasks' in cached ? cached.resolveTasks : undefined,
       cached && 'dependencies' in cached ? cached.dependencies : undefined,
+      cached && 'invalidationDependencies' in cached
+        ? cached.invalidationDependencies
+        : undefined,
       cached && 'invalidateOnDependencyChange' in cached
         ? cached.invalidateOnDependencyChange
         : undefined,
@@ -298,6 +306,11 @@ export class Entrypoint extends BaseEntrypoint {
   public addDependency(dependency: IEntrypointDependency): void {
     this.resolveTasks.delete(dependency.source);
     this.dependencies.set(dependency.source, dependency);
+  }
+
+  public addInvalidationDependency(dependency: IEntrypointDependency): void {
+    this.resolveTasks.delete(dependency.source);
+    this.invalidationDependencies.set(dependency.source, dependency);
   }
 
   public addResolveTask(
@@ -403,6 +416,7 @@ export class Entrypoint extends BaseEntrypoint {
       this.only,
       this.parents,
       this.dependencies,
+      this.invalidationDependencies,
       this.invalidateOnDependencyChange
     );
 
@@ -417,6 +431,12 @@ export class Entrypoint extends BaseEntrypoint {
 
   public getDependency(name: string): IEntrypointDependency | undefined {
     return this.dependencies.get(name);
+  }
+
+  public getInvalidationDependency(
+    name: string
+  ): IEntrypointDependency | undefined {
+    return this.invalidationDependencies.get(name);
   }
 
   public markInvalidateOnDependencyChange(filename: string): void {
@@ -481,6 +501,7 @@ export class Entrypoint extends BaseEntrypoint {
             this.loadedAndParsed,
             this.resolveTasks,
             this.dependencies,
+            this.invalidationDependencies,
             this.invalidateOnDependencyChange,
             this.generation + 1
           );
