@@ -330,6 +330,7 @@ export function* transform(
       this.entrypoint,
       {
         imports: shakenImports,
+        phase: 'initial',
       }
     );
 
@@ -344,11 +345,17 @@ export function* transform(
       nextAst = rewritten.ast;
       nextCode = rewritten.code;
       if (rewritten.optimizedCount > 0) {
-        const optimizedSources = new Set(rewritten.optimizedSources);
-        const rewrittenSources = new Set(rewritten.imports?.keys() ?? []);
+        const fullyRewrittenSources = new Set(rewritten.fullyRewrittenSources);
+        const partialFallbackSources = new Set(
+          rewritten.partialFallbackSources
+        );
         for (const dependency of resolvedImports) {
-          if (dependency.resolved && optimizedSources.has(dependency.source)) {
-            if (rewrittenSources.has(dependency.source)) {
+          if (
+            dependency.resolved &&
+            (fullyRewrittenSources.has(dependency.source) ||
+              partialFallbackSources.has(dependency.source))
+          ) {
+            if (partialFallbackSources.has(dependency.source)) {
               this.entrypoint.addDependency(dependency);
             } else {
               this.entrypoint.addInvalidationDependency(dependency);
@@ -364,6 +371,7 @@ export function* transform(
           this.entrypoint,
           {
             imports: rewritten.imports,
+            phase: 'rewritten',
           }
         );
       } else {

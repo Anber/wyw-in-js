@@ -143,6 +143,22 @@ const runEntrypoint = (
   return entrypoint;
 };
 
+const getDependencyEventsForFile = (
+  recorder: ReturnType<typeof createRecorder>,
+  filename: string
+) =>
+  recorder.singles.filter(
+    (event) => event.type === 'dependency' && event.file === filename
+  );
+
+const getBarrelRewriteEventsForSource = (
+  recorder: ReturnType<typeof createRecorder>,
+  source: string
+) =>
+  recorder.singles.filter(
+    (event) => event.kind === 'barrelRewrite' && event.source === source
+  );
+
 describe('barrel optimization', () => {
   it('rewrites pure barrel imports to leaf modules and reuses the manifest cache', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wyw-barrel-opt-'));
@@ -367,6 +383,28 @@ describe('barrel optimization', () => {
       });
       expect(entrypoint.getInvalidationDependency('./barrel')).toBeUndefined();
       expect(
+        getDependencyEventsForFile(recorder, consumerFile).map(
+          (event) => event.phase
+        )
+      ).toEqual(['initial', 'rewritten']);
+      expect(
+        getDependencyEventsForFile(recorder, consumerFile).at(-1)?.imports
+      ).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            from: barrelFile,
+          }),
+          expect.objectContaining({
+            from: redFile,
+          }),
+        ])
+      );
+      expect(
+        getBarrelRewriteEventsForSource(recorder, './barrel').map(
+          (event) => event.mode
+        )
+      ).toEqual(['partial']);
+      expect(
         recorder.singles.find(
           (event) =>
             event.kind === 'barrelManifest' &&
@@ -376,6 +414,62 @@ describe('barrel optimization', () => {
       ).toMatchObject({
         complete: false,
       });
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('treats passthrough-only imports from mixed barrels as fully rewritten', () => {
+    const root = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'wyw-barrel-mixed-fully-')
+    );
+
+    try {
+      const barrelFile = path.join(root, 'barrel.ts');
+      const redFile = path.join(root, 'red.ts');
+      const consumerFile = path.join(root, 'consumer.ts');
+      const recorder = createRecorder();
+
+      fs.writeFileSync(
+        barrelFile,
+        `import { red } from './red';\nexport { red };\nexport const local = 'local';\n`
+      );
+      fs.writeFileSync(redFile, `export const red = 'red';\n`);
+      fs.writeFileSync(
+        consumerFile,
+        `import { red } from './barrel';\nexport const value = red;\n`
+      );
+
+      const entrypoint = runEntrypoint(
+        root,
+        consumerFile,
+        new TransformCacheCollection(),
+        recorder.eventEmitter
+      );
+
+      expect(entrypoint.transformedCode).toContain(redFile);
+      expect(entrypoint.transformedCode).not.toContain(`require("./barrel")`);
+      expect(entrypoint.getDependency('./barrel')).toBeUndefined();
+      expect(entrypoint.getInvalidationDependency('./barrel')).toMatchObject({
+        resolved: barrelFile,
+      });
+      expect(
+        getDependencyEventsForFile(recorder, consumerFile).map(
+          (event) => event.phase
+        )
+      ).toEqual(['initial', 'rewritten']);
+      expect(
+        getDependencyEventsForFile(recorder, consumerFile).at(-1)?.imports
+      ).toEqual([
+        expect.objectContaining({
+          from: redFile,
+        }),
+      ]);
+      expect(
+        getBarrelRewriteEventsForSource(recorder, './barrel').map(
+          (event) => event.mode
+        )
+      ).toEqual(['full']);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
