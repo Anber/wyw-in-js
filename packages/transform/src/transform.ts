@@ -73,6 +73,17 @@ export function transformSync(
     services.cache = new TransformCacheCollection();
   }
 
+  if (!memoizedSyncResolve.has(syncResolve)) {
+    memoizedSyncResolve.set(
+      syncResolve,
+      function resolveImports(this: IResolveImportsAction) {
+        return syncResolveImports.call(this, syncResolve);
+      }
+    );
+  }
+
+  const resolveImportsHandler = memoizedSyncResolve.get(syncResolve)!;
+
   const entrypoint = Entrypoint.createRoot(
     services,
     options.filename,
@@ -87,22 +98,18 @@ export function transformSync(
     };
   }
 
-  const workflowAction = entrypoint.createAction('workflow', undefined);
-
-  if (!memoizedSyncResolve.has(syncResolve)) {
-    memoizedSyncResolve.set(
-      syncResolve,
-      function resolveImports(this: IResolveImportsAction) {
-        return syncResolveImports.call(this, syncResolve);
-      }
-    );
-  }
+  const workflowAction = entrypoint.createAction(
+    'workflow',
+    undefined,
+    null,
+    resolveImportsHandler
+  );
 
   try {
     const result = syncActionRunner(workflowAction, {
       ...baseHandlers,
       ...customHandlers,
-      resolveImports: memoizedSyncResolve.get(syncResolve)!,
+      resolveImports: resolveImportsHandler,
     });
 
     entrypoint.log('%s is ready', entrypoint.name);
@@ -162,6 +169,18 @@ export async function transform(
    * but the "only" option has changed, the file will be re-processed using
    * the combined "only" option.
    */
+  if (!memoizedAsyncResolve.has(asyncResolve)) {
+    const resolveImports = function resolveImports(
+      this: IResolveImportsAction
+    ) {
+      return asyncResolveImports.call(this, asyncResolve);
+    };
+
+    memoizedAsyncResolve.set(asyncResolve, resolveImports);
+  }
+
+  const resolveImportsHandler = memoizedAsyncResolve.get(asyncResolve)!;
+
   const entrypoint = Entrypoint.createRoot(
     services,
     options.filename,
@@ -176,23 +195,18 @@ export async function transform(
     };
   }
 
-  const workflowAction = entrypoint.createAction('workflow', undefined);
-
-  if (!memoizedAsyncResolve.has(asyncResolve)) {
-    const resolveImports = function resolveImports(
-      this: IResolveImportsAction
-    ) {
-      return asyncResolveImports.call(this, asyncResolve);
-    };
-
-    memoizedAsyncResolve.set(asyncResolve, resolveImports);
-  }
+  const workflowAction = entrypoint.createAction(
+    'workflow',
+    undefined,
+    null,
+    resolveImportsHandler
+  );
 
   try {
     const result = await asyncActionRunner(workflowAction, {
       ...baseHandlers,
       ...customHandlers,
-      resolveImports: memoizedAsyncResolve.get(asyncResolve)!,
+      resolveImports: resolveImportsHandler,
     });
 
     entrypoint.log('%s is ready', entrypoint.name);

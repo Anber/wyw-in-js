@@ -6,7 +6,11 @@ import type { IProcessEntrypointAction, SyncScenarioForAction } from '../types';
 const shouldSkipExplodeReexports = (
   action: IProcessEntrypointAction
 ): boolean => {
-  const { loadedAndParsed } = action.entrypoint;
+  const { loadedAndParsed, only } = action.entrypoint;
+  if (only.length === 1 && only[0] === '__wywPreval') {
+    return true;
+  }
+
   if (loadedAndParsed.evaluator !== shaker || !loadedAndParsed.ast) {
     return false;
   }

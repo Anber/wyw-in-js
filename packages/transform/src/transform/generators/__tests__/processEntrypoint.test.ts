@@ -47,6 +47,24 @@ describe('processEntrypoint', () => {
     expectIteratorReturnResult(gen.next(), undefined);
   });
 
+  it('should skip explodeReexports for __wywPreval-only entrypoints', () => {
+    const fooBarPreval = createEntrypoint(services, '/foo/bar.js', [
+      '__wywPreval',
+    ]);
+
+    const action = fooBarPreval.createAction(
+      'processEntrypoint',
+      undefined,
+      null
+    );
+    const gen = processEntrypoint.call(action);
+
+    const result = gen.next();
+    expectIteratorYieldResult(result);
+    expect(result.value[0]).toBe('transform');
+    expect(result.value[1]).toBe(fooBarPreval);
+  });
+
   it('should abort previously emitted actions if entrypoint code changed and emit a new processEntrypoint', () => {
     const fooBarDefault = createEntrypoint(
       services,

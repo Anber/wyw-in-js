@@ -62,7 +62,12 @@ export async function asyncActionRunner<TAction extends ActionQueueItem>(
     }
 
     const [type, entrypoint, data, abortSignal] = result.value;
-    const nextAction = entrypoint.createAction(type, data, abortSignal);
+    const nextAction = entrypoint.createAction(
+      type,
+      data,
+      abortSignal,
+      action.actionContext
+    );
 
     try {
       actionResult = await asyncActionRunner(nextAction, actionHandlers, [
@@ -104,7 +109,12 @@ export function syncActionRunner<TAction extends ActionQueueItem>(
     }
 
     const [type, entrypoint, data, abortSignal] = result.value;
-    const nextAction = entrypoint.createAction(type, data, abortSignal);
+    const nextAction = entrypoint.createAction(
+      type,
+      data,
+      abortSignal,
+      action.actionContext
+    );
 
     try {
       actionResult = syncActionRunner(nextAction, actionHandlers, [

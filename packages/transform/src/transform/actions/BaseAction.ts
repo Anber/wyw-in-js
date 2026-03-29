@@ -58,7 +58,8 @@ export class BaseAction<TAction extends ActionQueueItem>
     public readonly services: Services,
     public readonly entrypoint: Entrypoint,
     public readonly data: TAction['data'],
-    public readonly abortSignal: AbortSignal | null
+    public readonly abortSignal: AbortSignal | null,
+    public readonly actionContext: unknown
   ) {
     actionIdx += 1;
     this.idx = actionIdx.toString(16).padStart(6, '0');
