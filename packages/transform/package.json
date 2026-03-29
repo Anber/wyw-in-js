@@ -1,6 +1,6 @@
 {
   "name": "@wyw-in-js/transform",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "dependencies": {
     "@babel/core": "^7.23.5",
     "@babel/generator": "^7.23.5",

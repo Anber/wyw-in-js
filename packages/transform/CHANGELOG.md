@@ -1,5 +1,11 @@
 # @wyw-in-js/transform
 
+## 1.0.8
+
+### Patch Changes
+
+- b416a98: Avoid unnecessary reexport expansion for `__wywPreval`-only entrypoints and isolate cached action trees per resolver context to prevent concurrent transform crashes.
+
 ## 1.0.7
 
 ### Patch Changes
