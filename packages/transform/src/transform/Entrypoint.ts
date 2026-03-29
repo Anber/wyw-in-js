@@ -19,6 +19,7 @@ import type { Services, ActionTypes, ActionQueueItem } from './types';
 import { stripQueryAndHash } from '../utils/parseRequest';
 
 const EMPTY_FILE = '=== empty file ===';
+const DEFAULT_ACTION_CONTEXT = Symbol('defaultActionContext');
 
 function hasLoop(
   name: string,
@@ -49,7 +50,7 @@ export class Entrypoint extends BaseEntrypoint {
 
   private actionsCache: Map<
     ActionTypes,
-    Map<unknown, BaseAction<ActionQueueItem>>
+    Map<unknown, Map<unknown, BaseAction<ActionQueueItem>>>
   > = new Map();
 
   #hasWywMetadata: boolean = false;
@@ -364,13 +365,19 @@ export class Entrypoint extends BaseEntrypoint {
   >(
     actionType: TType,
     data: TAction['data'],
-    abortSignal: AbortSignal | null = null
+    abortSignal: AbortSignal | null = null,
+    actionContext: unknown = DEFAULT_ACTION_CONTEXT
   ): BaseAction<TAction> {
     if (!this.actionsCache.has(actionType)) {
       this.actionsCache.set(actionType, new Map());
     }
 
-    const cache = this.actionsCache.get(actionType)!;
+    const contexts = this.actionsCache.get(actionType)!;
+    if (!contexts.has(actionContext)) {
+      contexts.set(actionContext, new Map());
+    }
+
+    const cache = contexts.get(actionContext)!;
     const cached = cache.get(data);
     if (cached && !cached.abortSignal?.aborted) {
       return cached as BaseAction<TAction>;
@@ -381,7 +388,8 @@ export class Entrypoint extends BaseEntrypoint {
       this.services,
       this,
       data,
-      abortSignal
+      abortSignal,
+      actionContext
     );
 
     cache.set(data, newAction);

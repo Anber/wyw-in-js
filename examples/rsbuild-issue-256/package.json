@@ -1,0 +1,23 @@
+{
+  "name": "rsbuild-issue-256-repro",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "gen": "node ./perf/generate.mjs",
+    "dev": "node ./perf/generate.mjs && rsbuild dev",
+    "build": "node ./perf/generate.mjs && rsbuild build",
+    "build:warnings": "WYW_REPRO_EXPORTS=8 WYW_REPRO_CONSUMERS=2 node ./perf/generate.mjs && rsbuild build",
+    "build:smoke": "WYW_REPRO_EXPORTS=8 WYW_REPRO_CONSUMERS=2 node ./perf/generate.mjs && rsbuild build",
+    "build:oom": "node ./perf/generate.mjs && rsbuild build"
+  },
+  "dependencies": {
+    "@rsbuild/core": "^1.2.19",
+    "@rsbuild/plugin-babel": "^1.0.3",
+    "@rsbuild/plugin-react": "^1.1.0",
+    "@wyw-in-js/template-tag-syntax": "workspace:*",
+    "@wyw-in-js/webpack-loader": "workspace:*",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
+  }
+}

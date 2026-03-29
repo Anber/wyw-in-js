@@ -52,6 +52,7 @@ export type AnyIteratorResult<TMode extends 'async' | 'sync', TResult> = {
 
 export interface IBaseAction<TAction extends ActionQueueItem, TResult, TData>
   extends IBaseNode {
+  actionContext: unknown;
   abortSignal: AbortSignal | null;
   createAbortSignal: () => AbortSignal & Disposable;
   data: TData;

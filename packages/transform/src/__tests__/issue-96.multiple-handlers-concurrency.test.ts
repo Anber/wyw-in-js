@@ -133,4 +133,120 @@ describe('issue #96: actions must not run with multiple handlers', () => {
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it('allows concurrent transforms when asyncResolve identity changes', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wyw-96-'));
+    const entryFile = path.join(root, 'main.ts');
+    const tokensFile = path.join(root, 'tokens.ts');
+
+    const code = dedent`
+      import { css } from 'test-css-processor';
+      import { colors } from './tokens';
+
+      export const className = css\`
+        color: \${colors.red};
+      \`;
+
+      export const _usage = [className];
+    `;
+
+    const cache = new TransformCacheCollection();
+
+    const started = createDeferred();
+    const unblock = createDeferred();
+
+    fs.writeFileSync(tokensFile, `export const colors = { red: 'red' };`);
+
+    const resolveWithExtensions = (candidate: string) => {
+      if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
+        return candidate;
+      }
+
+      const extensions = ['.ts', '.tsx', '.js', '.jsx', '.cjs', '.mjs'];
+      for (const ext of extensions) {
+        const withExt = `${candidate}${ext}`;
+        if (fs.existsSync(withExt) && fs.statSync(withExt).isFile()) {
+          return withExt;
+        }
+      }
+
+      return null;
+    };
+
+    const makeAsyncResolve =
+      (label: string) => async (what: string, importer: string) => {
+        if (what === 'test-css-processor') {
+          return processorFile;
+        }
+
+        if (what.startsWith('.') || path.isAbsolute(what)) {
+          const resolved = resolveWithExtensions(
+            path.resolve(path.dirname(importer), what)
+          );
+          if (resolved) {
+            if (resolved === tokensFile) {
+              started.resolve();
+              await unblock.promise;
+            }
+            return resolved;
+          }
+        }
+
+        throw new Error(
+          `[${label}] Unexpected resolve ${JSON.stringify(
+            what
+          )} from ${importer}`
+        );
+      };
+
+    type AsyncResolve = ReturnType<typeof makeAsyncResolve>;
+
+    const run = (asyncResolve: AsyncResolve) =>
+      transform(
+        {
+          cache,
+          options: {
+            filename: entryFile,
+            root,
+            pluginOptions: {
+              configFile: false,
+              evaluate: true,
+              tagResolver: (source, tag) => {
+                if (source === 'test-css-processor' && tag === 'css') {
+                  return processorFile;
+                }
+
+                return null;
+              },
+              babelOptions: {
+                babelrc: false,
+                configFile: false,
+                presets: [
+                  ['@babel/preset-env', { loose: true }],
+                  '@babel/preset-react',
+                  '@babel/preset-typescript',
+                ],
+              },
+            },
+          },
+        },
+        code,
+        asyncResolve
+      );
+
+    const first = run(makeAsyncResolve('first'));
+    await started.promise;
+
+    const second = run(makeAsyncResolve('second'));
+
+    unblock.resolve();
+
+    try {
+      const [firstResult, secondResult] = await Promise.all([first, second]);
+      expect(firstResult.cssText).toContain('color:red');
+      expect(secondResult.cssText).toContain('color:red');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
