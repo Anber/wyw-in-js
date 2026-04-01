@@ -8,13 +8,14 @@ import { existsSync } from 'fs';
 import type { IncomingMessage, ServerResponse } from 'http';
 import path from 'path';
 
-import { createFilter, loadEnv } from 'vite';
+import { createFilter, DevEnvironment, isRunnableDevEnvironment, loadEnv } from 'vite';
 import type {
   ModuleNode,
   Plugin,
   ResolvedConfig,
   ViteDevServer,
   FilterPattern,
+  Environment,
 } from 'vite';
 
 import { asyncResolverFactory, logger, syncResolve } from '@wyw-in-js/shared';
@@ -225,8 +226,7 @@ export default function wywInJS({
   const filter = createFilter(include, exclude);
   const cssLookup: { [key: string]: string } = {};
   const cssFileLookup: { [key: string]: string } = {};
-  const pendingCssReloads = new Set<string>();
-  let pendingCssReloadTimer: ReturnType<typeof setTimeout> | undefined;
+  const pendingCssReloads = new WeakMap<Environment, { files: Set<string>; timer?: ReturnType<typeof setTimeout> }>();
   let ssrDevCssVersion = 0;
   let config: ResolvedConfig;
   let devServer: ViteDevServer;
@@ -264,21 +264,26 @@ export default function wywInJS({
 
   const { emitter, onDone } = createFileReporter(debug ?? false);
 
-  const scheduleCssReload = (cssFilename: string) => {
-    if (!devServer?.moduleGraph) return;
+  const scheduleCssReload = (environment: Environment, cssFilename: string) => {
+    if (!(environment instanceof DevEnvironment)) return;
+    let state = pendingCssReloads.get(environment);
+    if (!state) {
+      state = { files: new Set() };
+      pendingCssReloads.set(environment, state);
+    }
+    state.files.add(cssFilename);
 
-    pendingCssReloads.add(cssFilename);
+    if (state.timer) return;
+    state.timer = setTimeout(() => {
+      state.timer = undefined;
 
-    if (pendingCssReloadTimer) return;
-    pendingCssReloadTimer = setTimeout(() => {
-      pendingCssReloadTimer = undefined;
+      const ids = Array.from(state.files);
+      state.files.clear();
 
-      const ids = Array.from(pendingCssReloads);
-      pendingCssReloads.clear();
-
+      const moduleGraph = environment.moduleGraph;
       for (const id of ids) {
-        const module = devServer.moduleGraph.getModuleById(id);
-        if (module) devServer.reloadModule(module);
+        const module = moduleGraph.getModuleById(id);
+        if (module) environment.reloadModule(module);
       }
     }, 0);
   };
@@ -712,7 +717,7 @@ export default function wywInJS({
       else target.dependencies = dependencies;
 
       if (didCssChange) {
-        scheduleCssReload(cssFilename);
+        scheduleCssReload(this.environment, cssFilename);
         if (ssrDevCssEnabled && config.command === 'serve') {
           ssrDevCssVersion += 1;
         }
