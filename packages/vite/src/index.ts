@@ -283,7 +283,6 @@ export default function wywInJS({
       const moduleGraph = environment.moduleGraph;
       for (const id of ids) {
         const module = moduleGraph.getModuleById(id);
-        console.log(`[wyw-in-js] Reloading CSS: ${id}`, !!module);
         if (module) environment.reloadModule(module);
       }
     }, 0);
