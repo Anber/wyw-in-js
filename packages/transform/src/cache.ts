@@ -53,6 +53,8 @@ export class TransformCacheCollection<
 
   private contentHashes = new Map<string, { fs?: string; loaded?: string }>();
 
+  private fileMtimes = new Map<string, number>();
+
   private readonly exportDependencies = new Map<string, Set<string>>();
 
   constructor(caches: Partial<ICaches<TEntrypoint>> = {}) {
@@ -373,6 +375,34 @@ export class TransformCacheCollection<
     return this.getCachedDependencies(filename).size > 0;
   }
 
+  /**
+   * Fast check if a file changed on disk since last seen.
+   * Uses mtime as a fast path — only reads the file if mtime differs.
+   * Returns true if the file changed (cache was invalidated).
+   */
+  public checkFreshness(filename: string, strippedFilename: string): boolean {
+    try {
+      const currentMtime = fs.statSync(strippedFilename).mtimeMs;
+      const cachedMtime = this.fileMtimes.get(filename);
+
+      if (cachedMtime !== undefined && currentMtime === cachedMtime) {
+        return false;
+      }
+
+      const content = fs.readFileSync(strippedFilename, 'utf-8');
+      this.fileMtimes.set(filename, currentMtime);
+
+      if (this.invalidateIfChanged(filename, content, undefined, 'fs')) {
+        return true;
+      }
+
+      return false;
+    } catch {
+      this.invalidateForFile(filename);
+      return true;
+    }
+  }
+
   private setContentHash(
     filename: string,
     source: 'fs' | 'loaded',
@@ -381,9 +411,19 @@ export class TransformCacheCollection<
     const current = this.contentHashes.get(filename);
     if (current) {
       current[source] = hash;
-      return;
+    } else {
+      this.contentHashes.set(filename, { [source]: hash });
     }
 
-    this.contentHashes.set(filename, { [source]: hash });
+    if (source === 'fs') {
+      try {
+        this.fileMtimes.set(
+          filename,
+          fs.statSync(stripQueryAndHash(filename)).mtimeMs
+        );
+      } catch {
+        // ignore
+      }
+    }
   }
 }

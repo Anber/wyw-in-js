@@ -473,10 +473,16 @@ export class Module {
       return null;
     }
 
-    const entrypoint = this.cache.get('entrypoints', filename);
+    let entrypoint = this.cache.get('entrypoints', filename);
     if (entrypoint && isSuperSet(entrypoint.evaluatedOnly ?? [], only)) {
-      log('✅ file has been already evaluated');
-      return entrypoint;
+      if (this.cache.checkFreshness(filename, strippedFilename)) {
+        entrypoint = undefined;
+      }
+
+      if (entrypoint) {
+        log('✅ file has been already evaluated');
+        return entrypoint;
+      }
     }
 
     if (entrypoint?.ignored) {
