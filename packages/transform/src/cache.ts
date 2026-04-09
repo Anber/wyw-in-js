@@ -242,10 +242,19 @@ export class TransformCacheCollection<
         const dependencyFilename = dependency.resolved;
 
         if (dependencyFilename) {
-          const dependencyContent = fs.readFileSync(
-            stripQueryAndHash(dependencyFilename),
-            'utf8'
-          );
+          let dependencyContent: string;
+          try {
+            dependencyContent = fs.readFileSync(
+              stripQueryAndHash(dependencyFilename),
+              'utf8'
+            );
+          } catch {
+            this.invalidateForFile(dependencyFilename);
+            anyDepChanged = true;
+            // eslint-disable-next-line no-continue
+            continue;
+          }
+
           const dependencyChanged = this.invalidateIfChanged(
             dependencyFilename,
             dependencyContent,
