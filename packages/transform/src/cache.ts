@@ -12,6 +12,15 @@ function hashContent(content: string) {
   return createHash('sha256').update(content).digest('hex');
 }
 
+function isMissingFileError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') {
+    return false;
+  }
+
+  const { code } = error as NodeJS.ErrnoException;
+  return code === 'ENOENT' || code === 'ENOTDIR';
+}
+
 interface IBaseCachedEntrypoint {
   dependencies: Map<string, { resolved: string | null }>;
   initialCode?: string;
@@ -242,10 +251,23 @@ export class TransformCacheCollection<
         const dependencyFilename = dependency.resolved;
 
         if (dependencyFilename) {
-          const dependencyContent = fs.readFileSync(
-            stripQueryAndHash(dependencyFilename),
-            'utf8'
-          );
+          let dependencyContent: string;
+          try {
+            dependencyContent = fs.readFileSync(
+              stripQueryAndHash(dependencyFilename),
+              'utf8'
+            );
+          } catch (error) {
+            if (!isMissingFileError(error)) {
+              throw error;
+            }
+
+            this.invalidateForFile(dependencyFilename);
+            anyDepChanged = true;
+            // eslint-disable-next-line no-continue
+            continue;
+          }
+
           const dependencyChanged = this.invalidateIfChanged(
             dependencyFilename,
             dependencyContent,
