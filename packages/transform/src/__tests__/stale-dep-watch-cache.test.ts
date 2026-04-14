@@ -72,6 +72,15 @@ const createServices = (
   };
 };
 
+const createErrnoError = (
+  code: string,
+  message = code
+): NodeJS.ErrnoException => {
+  const error = new Error(message) as NodeJS.ErrnoException;
+  error.code = code;
+  return error;
+};
+
 describe('stale dependency detection in watch mode', () => {
   it('getEntrypoint detects stale evaluated entrypoint when file changed on disk', () => {
     // Directly tests the getEntrypoint short-circuit at module.ts:477.
@@ -190,5 +199,47 @@ describe('stale dependency detection in watch mode', () => {
 
     const result = parentModule.getEntrypoint(depFile, ['val'], logger);
     expect(result?.evaluated).toBe(true);
+  });
+
+  it('checkFreshness rethrows non-missing filesystem errors', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wyw-getep-eacces-'));
+    const depFile = path.join(root, 'dep.ts');
+
+    fs.writeFileSync(depFile, dedent`export const val = 'same';`);
+
+    const cache = new TransformCacheCollection();
+    cache.add('entrypoints', depFile, {
+      name: depFile,
+      initialCode: 'export const val = "same";',
+      dependencies: new Map(),
+      invalidationDependencies: new Map(),
+      invalidateOnDependencyChange: new Set(),
+      generation: 1,
+      evaluated: true,
+      evaluatedOnly: ['val'],
+      only: ['val'],
+      ignored: false,
+      exports: {},
+      log: logger,
+    } as any);
+
+    const eacces = createErrnoError(
+      'EACCES',
+      `EACCES: permission denied, stat '${depFile}'`
+    );
+    const statSpy = jest.spyOn(fs, 'statSync').mockImplementation((pathArg) => {
+      if (pathArg === depFile) {
+        throw eacces;
+      }
+
+      throw new Error(`Unexpected statSync call: ${String(pathArg)}`);
+    });
+
+    try {
+      expect(() => cache.checkFreshness(depFile, depFile)).toThrow(eacces);
+      expect(cache.has('entrypoints', depFile)).toBe(true);
+    } finally {
+      statSpy.mockRestore();
+    }
   });
 });
