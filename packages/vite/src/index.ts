@@ -8,7 +8,7 @@ import { existsSync } from 'fs';
 import type { IncomingMessage, ServerResponse } from 'http';
 import path from 'path';
 
-import { createFilter, DevEnvironment, isRunnableDevEnvironment, loadEnv } from 'vite';
+import { createFilter, DevEnvironment, loadEnv } from 'vite';
 import type {
   ModuleNode,
   Plugin,
@@ -226,7 +226,10 @@ export default function wywInJS({
   const filter = createFilter(include, exclude);
   const cssLookup: { [key: string]: string } = {};
   const cssFileLookup: { [key: string]: string } = {};
-  const pendingCssReloads = new WeakMap<Environment, { files: Set<string>; timer?: ReturnType<typeof setTimeout> }>();
+  const pendingCssReloads = new WeakMap<
+    Environment,
+    { files: Set<string>; timer?: ReturnType<typeof setTimeout> }
+  >();
   let ssrDevCssVersion = 0;
   let config: ResolvedConfig;
   let devServer: ViteDevServer;
@@ -280,7 +283,7 @@ export default function wywInJS({
       const ids = Array.from(state.files);
       state.files.clear();
 
-      const moduleGraph = environment.moduleGraph;
+      const { moduleGraph } = environment;
       for (const id of ids) {
         const module = moduleGraph.getModuleById(id);
         if (module) environment.reloadModule(module);
