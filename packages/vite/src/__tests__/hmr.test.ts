@@ -2,12 +2,16 @@ import path from 'path';
 
 const transformMock = jest.fn();
 
-jest.mock('vite', () => ({
-  __esModule: true,
-  optimizeDeps: jest.fn(),
-  createFilter: () => () => true,
-  loadEnv: jest.fn(() => ({})),
-}));
+const createReloadTarget = () => ({
+  moduleGraph: { getModuleById: jest.fn() },
+  reloadModule: jest.fn(),
+});
+
+jest.mock('vite', () =>
+  require('./viteMock').createViteMock({
+    optimizeDeps: jest.fn(),
+  })
+);
 
 jest.mock('@wyw-in-js/transform', () => {
   return {
@@ -48,10 +52,118 @@ describe('vite HMR', () => {
       .normalize(`${entryId.replace(/\.[jt]sx?$/, '')}.wyw-in-js.css`)
       .replace(/\\/g, path.posix.sep);
 
-    const reloadModule = jest.fn();
+    const environment = createReloadTarget();
+    environment.moduleGraph.getModuleById.mockImplementation((id: string) => ({
+      id,
+    }));
+
+    const plugin = wywInJS();
+    plugin.configResolved?.({
+      root,
+      mode: 'development',
+      command: 'serve',
+      base: '/',
+      createResolver: () => jest.fn().mockResolvedValue(undefined),
+    } as any);
+    plugin.configureServer?.({
+      moduleGraph: { getModuleById: jest.fn() },
+    } as any);
+
+    await plugin.transform?.call(
+      { resolve: jest.fn(), environment } as any,
+      'console.log("test")',
+      entryId
+    );
+
+    expect(environment.reloadModule).not.toHaveBeenCalled();
+
+    jest.runOnlyPendingTimers();
+
+    expect(environment.moduleGraph.getModuleById).toHaveBeenCalledWith(
+      expectedCssFilename
+    );
+    expect(environment.reloadModule).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not reload CSS when generated CSS is unchanged', async () => {
+    const { default: wywInJS } = await import('../index');
+    const root = process.cwd();
+    const entryId = path.join(root, 'src', 'entry.tsx');
+
+    const environment = createReloadTarget();
+    environment.moduleGraph.getModuleById.mockImplementation((id: string) => ({
+      id,
+    }));
+
+    const plugin = wywInJS();
+    plugin.configResolved?.({
+      root,
+      mode: 'development',
+      command: 'serve',
+      base: '/',
+      createResolver: () => jest.fn().mockResolvedValue(undefined),
+    } as any);
+    plugin.configureServer?.({
+      moduleGraph: { getModuleById: jest.fn() },
+    } as any);
+
+    transformMock.mockResolvedValue({
+      code: 'export const x = 1;',
+      sourceMap: null,
+      cssText: '.a{color:red;}',
+      cssSourceMapText: null,
+      dependencies: [],
+    });
+
+    await plugin.transform?.call(
+      { resolve: jest.fn(), environment } as any,
+      'console.log("test")',
+      entryId
+    );
+    jest.runOnlyPendingTimers();
+    expect(environment.reloadModule).toHaveBeenCalledTimes(1);
+
+    environment.reloadModule.mockClear();
+    environment.moduleGraph.getModuleById.mockClear();
+
+    transformMock.mockResolvedValue({
+      code: 'export const x = 2;',
+      sourceMap: null,
+      cssText: '.a{color:red;}',
+      cssSourceMapText: null,
+      dependencies: [],
+    });
+
+    await plugin.transform?.call(
+      { resolve: jest.fn(), environment } as any,
+      'console.log("test2")',
+      entryId
+    );
+    jest.runOnlyPendingTimers();
+
+    expect(environment.reloadModule).not.toHaveBeenCalled();
+  });
+
+  it('falls back to devServer moduleGraph when transform context has no environment', async () => {
+    const { default: wywInJS } = await import('../index');
+    transformMock.mockResolvedValue({
+      code: 'export const x = 1;',
+      sourceMap: null,
+      cssText: '.a{color:red;}',
+      cssSourceMapText: null,
+      dependencies: [],
+    });
+
+    const root = process.cwd();
+    const entryId = path.join(root, 'src', 'entry.tsx');
+    const expectedCssFilename = path
+      .normalize(`${entryId.replace(/\.[jt]sx?$/, '')}.wyw-in-js.css`)
+      .replace(/\\/g, path.posix.sep);
+
     const getModuleById = jest
       .fn()
       .mockImplementation((id: string) => ({ id }));
+    const reloadModule = jest.fn();
 
     const plugin = wywInJS();
     plugin.configResolved?.({
@@ -78,65 +190,5 @@ describe('vite HMR', () => {
 
     expect(getModuleById).toHaveBeenCalledWith(expectedCssFilename);
     expect(reloadModule).toHaveBeenCalledTimes(1);
-  });
-
-  it('does not reload CSS when generated CSS is unchanged', async () => {
-    const { default: wywInJS } = await import('../index');
-    const root = process.cwd();
-    const entryId = path.join(root, 'src', 'entry.tsx');
-
-    const reloadModule = jest.fn();
-    const getModuleById = jest
-      .fn()
-      .mockImplementation((id: string) => ({ id }));
-
-    const plugin = wywInJS();
-    plugin.configResolved?.({
-      root,
-      mode: 'development',
-      command: 'serve',
-      base: '/',
-      createResolver: () => jest.fn().mockResolvedValue(undefined),
-    } as any);
-    plugin.configureServer?.({
-      moduleGraph: { getModuleById },
-      reloadModule,
-    } as any);
-
-    transformMock.mockResolvedValue({
-      code: 'export const x = 1;',
-      sourceMap: null,
-      cssText: '.a{color:red;}',
-      cssSourceMapText: null,
-      dependencies: [],
-    });
-
-    await plugin.transform?.call(
-      { resolve: jest.fn() } as any,
-      'console.log("test")',
-      entryId
-    );
-    jest.runOnlyPendingTimers();
-    expect(reloadModule).toHaveBeenCalledTimes(1);
-
-    reloadModule.mockClear();
-    getModuleById.mockClear();
-
-    transformMock.mockResolvedValue({
-      code: 'export const x = 2;',
-      sourceMap: null,
-      cssText: '.a{color:red;}',
-      cssSourceMapText: null,
-      dependencies: [],
-    });
-
-    await plugin.transform?.call(
-      { resolve: jest.fn() } as any,
-      'console.log("test2")',
-      entryId
-    );
-    jest.runOnlyPendingTimers();
-
-    expect(reloadModule).not.toHaveBeenCalled();
   });
 });

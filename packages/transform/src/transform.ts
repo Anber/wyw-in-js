@@ -50,6 +50,34 @@ const memoizedAsyncResolve = new WeakMap<
   Handler<'async' | 'sync', IResolveImportsAction>
 >();
 
+const EMPTY_CUSTOM_HANDLERS = {};
+const memoizedActionContexts = new WeakMap<object, WeakMap<object, object>>();
+
+const getActionContext = (
+  resolveImportsHandler: object,
+  customHandlers: object
+): object => {
+  const customHandlersKey =
+    Object.keys(customHandlers).length === 0
+      ? EMPTY_CUSTOM_HANDLERS
+      : customHandlers;
+  let actionContextsByHandlers = memoizedActionContexts.get(
+    resolveImportsHandler
+  );
+  if (!actionContextsByHandlers) {
+    actionContextsByHandlers = new WeakMap();
+    memoizedActionContexts.set(resolveImportsHandler, actionContextsByHandlers);
+  }
+
+  let actionContext = actionContextsByHandlers.get(customHandlersKey);
+  if (!actionContext) {
+    actionContext = {};
+    actionContextsByHandlers.set(customHandlersKey, actionContext);
+  }
+
+  return actionContext;
+};
+
 export function transformSync(
   partialServices: PartialServices,
   originalCode: string,
@@ -83,6 +111,12 @@ export function transformSync(
   }
 
   const resolveImportsHandler = memoizedSyncResolve.get(syncResolve)!;
+  const actionHandlers = {
+    ...baseHandlers,
+    ...customHandlers,
+    resolveImports: resolveImportsHandler,
+  };
+  const actionContext = getActionContext(resolveImportsHandler, customHandlers);
 
   const entrypoint = Entrypoint.createRoot(
     services,
@@ -102,15 +136,11 @@ export function transformSync(
     'workflow',
     undefined,
     null,
-    resolveImportsHandler
+    actionContext
   );
 
   try {
-    const result = syncActionRunner(workflowAction, {
-      ...baseHandlers,
-      ...customHandlers,
-      resolveImports: resolveImportsHandler,
-    });
+    const result = syncActionRunner(workflowAction, actionHandlers);
 
     entrypoint.log('%s is ready', entrypoint.name);
 
@@ -180,6 +210,12 @@ export async function transform(
   }
 
   const resolveImportsHandler = memoizedAsyncResolve.get(asyncResolve)!;
+  const actionHandlers = {
+    ...baseHandlers,
+    ...customHandlers,
+    resolveImports: resolveImportsHandler,
+  };
+  const actionContext = getActionContext(resolveImportsHandler, customHandlers);
 
   const entrypoint = Entrypoint.createRoot(
     services,
@@ -199,15 +235,11 @@ export async function transform(
     'workflow',
     undefined,
     null,
-    resolveImportsHandler
+    actionContext
   );
 
   try {
-    const result = await asyncActionRunner(workflowAction, {
-      ...baseHandlers,
-      ...customHandlers,
-      resolveImports: resolveImportsHandler,
-    });
+    const result = await asyncActionRunner(workflowAction, actionHandlers);
 
     entrypoint.log('%s is ready', entrypoint.name);
 

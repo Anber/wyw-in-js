@@ -41,6 +41,19 @@ function staticEval(
 ): [unknown] | undefined {
   if (!evaluate) return undefined;
 
+  if (ex.isIdentifier()) {
+    const binding = ex.scope.getBinding(ex.node.name);
+
+    // Babel may "evaluate" a destructured binding to its source container
+    // object/array instead of the bound value, which changes template semantics.
+    if (
+      binding?.path.isVariableDeclarator() &&
+      !binding.path.get('id').isIdentifier()
+    ) {
+      return undefined;
+    }
+  }
+
   const result = ex.evaluate();
   if (result.confident && !hasEvalMeta(result.value)) {
     return [result.value];

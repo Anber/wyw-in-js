@@ -111,6 +111,32 @@ describe('extractExpression', () => {
     expect(bindings).toEqual(['_exp', 'foo']);
   });
 
+  it('does not inline destructured bindings as their source object', () => {
+    const { bindings, code } = runWithEval`
+      function foo() {
+        const result = "result";
+        const { variable } = { variable: result };
+
+        return /* extract */variable;
+      }
+    `;
+
+    expect(code).toBe(dedent`
+      let result = "result";
+      let {
+        variable
+      } = {
+        variable: result
+      };
+      const _exp = () => variable;
+      function foo() {
+        return _exp();
+      }
+    `);
+    expect(code).not.toContain('({');
+    expect(bindings).toEqual(['_exp', 'foo', 'result', 'variable']);
+  });
+
   it('should hoist functions', () => {
     const { bindings, code } = runWithoutEval`
       function foo() {

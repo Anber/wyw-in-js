@@ -56,6 +56,13 @@ type RollupOutputLike = {
   preserveModulesRoot?: unknown;
 } & Record<string, unknown>;
 
+type CssReloadTarget = {
+  moduleGraph: {
+    getModuleById(id: string): ModuleNode | null | undefined;
+  };
+  reloadModule(module: ModuleNode): void;
+};
+
 const isWindowsAbsolutePath = (value: string): boolean =>
   /^[a-zA-Z]:[\\/]/.test(value);
 
@@ -99,6 +106,35 @@ const safeDecodeURIComponent = (value: string): string => {
 const normalizeViteFsPath = (value: string): string => {
   const fsPath = value.slice(VITE_FS_PREFIX.length);
   return path.normalize(safeDecodeURIComponent(fsPath));
+};
+
+const isCssReloadTarget = (value: unknown): value is CssReloadTarget => {
+  if (!value || typeof value !== 'object') return false;
+
+  const reloadTarget = value as Partial<CssReloadTarget>;
+  return (
+    !!reloadTarget.moduleGraph &&
+    typeof reloadTarget.moduleGraph.getModuleById === 'function' &&
+    typeof reloadTarget.reloadModule === 'function'
+  );
+};
+
+const getCssReloadTarget = (
+  environment: unknown,
+  server: ViteDevServer | undefined
+): CssReloadTarget | null => {
+  if (isCssReloadTarget(environment)) {
+    return environment;
+  }
+
+  if (server?.moduleGraph) {
+    return {
+      moduleGraph: server.moduleGraph,
+      reloadModule: (module) => server.reloadModule(module),
+    };
+  }
+
+  return null;
 };
 
 const getWywCssAssetFileNames = (
@@ -225,8 +261,10 @@ export default function wywInJS({
   const filter = createFilter(include, exclude);
   const cssLookup: { [key: string]: string } = {};
   const cssFileLookup: { [key: string]: string } = {};
-  const pendingCssReloads = new Set<string>();
-  let pendingCssReloadTimer: ReturnType<typeof setTimeout> | undefined;
+  const pendingCssReloads = new WeakMap<
+    CssReloadTarget,
+    { files: Set<string>; timer?: ReturnType<typeof setTimeout> }
+  >();
   let ssrDevCssVersion = 0;
   let config: ResolvedConfig;
   let devServer: ViteDevServer;
@@ -264,21 +302,28 @@ export default function wywInJS({
 
   const { emitter, onDone } = createFileReporter(debug ?? false);
 
-  const scheduleCssReload = (cssFilename: string) => {
-    if (!devServer?.moduleGraph) return;
+  const scheduleCssReload = (
+    reloadTarget: CssReloadTarget,
+    cssFilename: string
+  ) => {
+    let state = pendingCssReloads.get(reloadTarget);
+    if (!state) {
+      state = { files: new Set() };
+      pendingCssReloads.set(reloadTarget, state);
+    }
+    state.files.add(cssFilename);
 
-    pendingCssReloads.add(cssFilename);
+    if (state.timer) return;
+    state.timer = setTimeout(() => {
+      state.timer = undefined;
 
-    if (pendingCssReloadTimer) return;
-    pendingCssReloadTimer = setTimeout(() => {
-      pendingCssReloadTimer = undefined;
+      const ids = Array.from(state.files);
+      state.files.clear();
 
-      const ids = Array.from(pendingCssReloads);
-      pendingCssReloads.clear();
-
+      const { moduleGraph } = reloadTarget;
       for (const id of ids) {
-        const module = devServer.moduleGraph.getModuleById(id);
-        if (module) devServer.reloadModule(module);
+        const module = moduleGraph.getModuleById(id);
+        if (module) reloadTarget.reloadModule(module);
       }
     }, 0);
   };
@@ -712,7 +757,13 @@ export default function wywInJS({
       else target.dependencies = dependencies;
 
       if (didCssChange) {
-        scheduleCssReload(cssFilename);
+        const reloadTarget = getCssReloadTarget(
+          (this as typeof this & { environment?: unknown }).environment,
+          devServer
+        );
+        if (reloadTarget) {
+          scheduleCssReload(reloadTarget, cssFilename);
+        }
         if (ssrDevCssEnabled && config.command === 'serve') {
           ssrDevCssVersion += 1;
         }

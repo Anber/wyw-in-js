@@ -39,12 +39,11 @@ jest.mock('@wyw-in-js/shared', () => ({
   syncResolve: (...args: unknown[]) => syncResolveMock(...args),
 }));
 
-jest.mock('vite', () => ({
-  __esModule: true,
-  optimizeDeps: (...args: unknown[]) => optimizeDepsMock(...args),
-  createFilter: () => () => true,
-  loadEnv: jest.fn(() => ({})),
-}));
+jest.mock('vite', () =>
+  require('./viteMock').createViteMock({
+    optimizeDeps: (...args: unknown[]) => optimizeDepsMock(...args),
+  })
+);
 
 jest.mock('@wyw-in-js/transform', () => ({
   __esModule: true,
