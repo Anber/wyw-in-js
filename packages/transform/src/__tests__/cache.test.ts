@@ -18,6 +18,15 @@ type MockEntrypoint = {
 
 const mockedReadFileSync = jest.spyOn(fs, 'readFileSync');
 
+const createErrnoError = (
+  code: string,
+  message = code
+): NodeJS.ErrnoException => {
+  const error = new Error(message) as NodeJS.ErrnoException;
+  error.code = code;
+  return error;
+};
+
 const setupCacheWithEntrypoint = (
   filename: string,
   content: string,
@@ -377,10 +386,10 @@ describe('TransformCacheCollection', () => {
       cache.add('entrypoints', depName, depEntrypoint as any);
       cache.invalidateIfChanged(depName, depContent, undefined, 'fs');
 
-      const enoent = new Error(
+      const enoent = createErrnoError(
+        'ENOENT',
         "ENOENT: no such file or directory, open 'deleted-dep.js'"
-      ) as NodeJS.ErrnoException;
-      enoent.code = 'ENOENT';
+      );
 
       mockedReadFileSync.mockImplementation((path) => {
         if (path === depName) {
@@ -394,6 +403,49 @@ describe('TransformCacheCollection', () => {
       ).not.toThrow();
       expect(cache.has('entrypoints', depName)).toBe(false);
       expect(cache.has('entrypoints', parentName)).toBe(false);
+    });
+
+    it('should rethrow non-missing dependency read errors', () => {
+      const depName = 'protected-dep.js';
+      const depContent = 'export const x = 1;';
+      const parentName = 'parent.js';
+      const parentContent = 'import { x } from "./protected-dep.js";';
+
+      const { entrypoint: depEntrypoint } = setupCacheWithEntrypoint(
+        depName,
+        depContent
+      );
+
+      const parentDeps = new Map<
+        string,
+        Pick<IEntrypointDependency, 'resolved'>
+      >([['./protected-dep.js', { resolved: depName }]]);
+      const { cache } = setupCacheWithEntrypoint(
+        parentName,
+        parentContent,
+        parentDeps
+      );
+
+      cache.add('entrypoints', depName, depEntrypoint as any);
+      cache.invalidateIfChanged(depName, depContent, undefined, 'fs');
+
+      const eacces = createErrnoError(
+        'EACCES',
+        "EACCES: permission denied, open 'protected-dep.js'"
+      );
+
+      mockedReadFileSync.mockImplementation((path) => {
+        if (path === depName) {
+          throw eacces;
+        }
+        throw new Error(`Unexpected readFileSync call: ${path}`);
+      });
+
+      expect(() =>
+        cache.invalidateIfChanged(parentName, parentContent)
+      ).toThrow(eacces);
+      expect(cache.has('entrypoints', depName)).toBe(true);
+      expect(cache.has('entrypoints', parentName)).toBe(true);
     });
 
     it('should invalidate deleted dependency cache entries for all cache types', () => {
@@ -422,7 +474,7 @@ describe('TransformCacheCollection', () => {
       cache.invalidateIfChanged(depName, depContent, undefined, 'fs');
 
       mockedReadFileSync.mockImplementation(() => {
-        throw new Error('ENOENT');
+        throw createErrnoError('ENOENT');
       });
 
       cache.invalidateIfChanged(parentName, parentContent);
@@ -470,7 +522,7 @@ describe('TransformCacheCollection', () => {
 
       mockedReadFileSync.mockImplementation((path) => {
         if (path === deletedDep) {
-          throw new Error('ENOENT');
+          throw createErrnoError('ENOENT');
         }
         if (path === aliveDep) {
           return newAliveContent;
@@ -520,7 +572,7 @@ describe('TransformCacheCollection', () => {
       cache.add('entrypoints', dep2, dep2Entrypoint as any);
 
       mockedReadFileSync.mockImplementation(() => {
-        throw new Error('ENOENT');
+        throw createErrnoError('ENOENT');
       });
 
       expect(() =>
@@ -573,7 +625,7 @@ describe('TransformCacheCollection', () => {
           return intermediateContent;
         }
         if (path === leafName) {
-          throw new Error('ENOENT');
+          throw createErrnoError('ENOENT');
         }
         throw new Error(`Unexpected readFileSync call: ${path}`);
       });
@@ -612,7 +664,7 @@ describe('TransformCacheCollection', () => {
 
       mockedReadFileSync.mockImplementation((path) => {
         if (path === depName) {
-          throw new Error('ENOENT');
+          throw createErrnoError('ENOENT');
         }
         throw new Error(`Unexpected readFileSync call: ${path}`);
       });
