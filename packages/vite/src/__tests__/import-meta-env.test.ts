@@ -1,11 +1,11 @@
 const loadEnvMock = jest.fn(() => ({ VITE_COLOR: 'red' }));
 const transformMock = jest.fn();
 
-jest.mock('vite', () => ({
-  __esModule: true,
-  createFilter: () => () => true,
-  loadEnv: (...args: unknown[]) => loadEnvMock(...args),
-}));
+jest.mock('vite', () =>
+  require('./viteMock').createViteMock({
+    loadEnv: (...args: unknown[]) => loadEnvMock(...args),
+  })
+);
 
 jest.mock('@wyw-in-js/transform', () => ({
   __esModule: true,

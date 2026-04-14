@@ -1,13 +1,14 @@
 import path from 'path';
 
+import { MockDevEnvironment } from './viteMock';
+
 const transformMock = jest.fn();
 
-jest.mock('vite', () => ({
-  __esModule: true,
-  optimizeDeps: jest.fn(),
-  createFilter: () => () => true,
-  loadEnv: jest.fn(() => ({})),
-}));
+jest.mock('vite', () =>
+  require('./viteMock').createViteMock({
+    optimizeDeps: jest.fn(),
+  })
+);
 
 jest.mock('@wyw-in-js/transform', () => {
   return {
@@ -48,10 +49,10 @@ describe('vite HMR', () => {
       .normalize(`${entryId.replace(/\.[jt]sx?$/, '')}.wyw-in-js.css`)
       .replace(/\\/g, path.posix.sep);
 
-    const reloadModule = jest.fn();
-    const getModuleById = jest
-      .fn()
-      .mockImplementation((id: string) => ({ id }));
+    const environment = new MockDevEnvironment();
+    environment.moduleGraph.getModuleById.mockImplementation((id: string) => ({
+      id,
+    }));
 
     const plugin = wywInJS();
     plugin.configResolved?.({
@@ -62,22 +63,23 @@ describe('vite HMR', () => {
       createResolver: () => jest.fn().mockResolvedValue(undefined),
     } as any);
     plugin.configureServer?.({
-      moduleGraph: { getModuleById },
-      reloadModule,
+      moduleGraph: { getModuleById: jest.fn() },
     } as any);
 
     await plugin.transform?.call(
-      { resolve: jest.fn() } as any,
+      { resolve: jest.fn(), environment } as any,
       'console.log("test")',
       entryId
     );
 
-    expect(reloadModule).not.toHaveBeenCalled();
+    expect(environment.reloadModule).not.toHaveBeenCalled();
 
     jest.runOnlyPendingTimers();
 
-    expect(getModuleById).toHaveBeenCalledWith(expectedCssFilename);
-    expect(reloadModule).toHaveBeenCalledTimes(1);
+    expect(environment.moduleGraph.getModuleById).toHaveBeenCalledWith(
+      expectedCssFilename
+    );
+    expect(environment.reloadModule).toHaveBeenCalledTimes(1);
   });
 
   it('does not reload CSS when generated CSS is unchanged', async () => {
@@ -85,10 +87,10 @@ describe('vite HMR', () => {
     const root = process.cwd();
     const entryId = path.join(root, 'src', 'entry.tsx');
 
-    const reloadModule = jest.fn();
-    const getModuleById = jest
-      .fn()
-      .mockImplementation((id: string) => ({ id }));
+    const environment = new MockDevEnvironment();
+    environment.moduleGraph.getModuleById.mockImplementation((id: string) => ({
+      id,
+    }));
 
     const plugin = wywInJS();
     plugin.configResolved?.({
@@ -99,8 +101,7 @@ describe('vite HMR', () => {
       createResolver: () => jest.fn().mockResolvedValue(undefined),
     } as any);
     plugin.configureServer?.({
-      moduleGraph: { getModuleById },
-      reloadModule,
+      moduleGraph: { getModuleById: jest.fn() },
     } as any);
 
     transformMock.mockResolvedValue({
@@ -112,15 +113,15 @@ describe('vite HMR', () => {
     });
 
     await plugin.transform?.call(
-      { resolve: jest.fn() } as any,
+      { resolve: jest.fn(), environment } as any,
       'console.log("test")',
       entryId
     );
     jest.runOnlyPendingTimers();
-    expect(reloadModule).toHaveBeenCalledTimes(1);
+    expect(environment.reloadModule).toHaveBeenCalledTimes(1);
 
-    reloadModule.mockClear();
-    getModuleById.mockClear();
+    environment.reloadModule.mockClear();
+    environment.moduleGraph.getModuleById.mockClear();
 
     transformMock.mockResolvedValue({
       code: 'export const x = 2;',
@@ -131,12 +132,12 @@ describe('vite HMR', () => {
     });
 
     await plugin.transform?.call(
-      { resolve: jest.fn() } as any,
+      { resolve: jest.fn(), environment } as any,
       'console.log("test2")',
       entryId
     );
     jest.runOnlyPendingTimers();
 
-    expect(reloadModule).not.toHaveBeenCalled();
+    expect(environment.reloadModule).not.toHaveBeenCalled();
   });
 });
