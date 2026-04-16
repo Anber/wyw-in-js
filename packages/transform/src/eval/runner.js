@@ -135,25 +135,55 @@ const isPlainObject = (value) => {
     return false;
   }
 
-  return Object.getPrototypeOf(value) === Object.prototype;
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype === null || prototype === Object.prototype) {
+    return true;
+  }
+
+  return Object.getPrototypeOf(prototype) === null;
 };
 
 const ENCODED_GLOBAL_ENVELOPE_KEY = '__wyw_eval_global';
 const ENCODED_GLOBAL_SIGNATURE = 'wyw-eval-global';
 const ENCODED_GLOBAL_VERSION = 1;
+const IDENTIFIER_RE = /^[A-Za-z_$][\w$]*$/u;
+const ARRAY_INDEX_RE = /^(?:0|[1-9]\d*)$/;
+const IPC_SUPPORTED_VALUE_HINT =
+  'Use importOverrides to mock the import or return plain data: null, booleans, strings, numbers, bigint, undefined, arrays, plain objects, and Error.';
 
-const formatGlobalsPath = (pathSegments) =>
+const getObjectTypeName = (value) => {
+  const { constructor } = value ?? {};
+  if (
+    constructor &&
+    typeof constructor.name === 'string' &&
+    constructor.name.length > 0
+  ) {
+    return constructor.name;
+  }
+
+  const tag = Object.prototype.toString.call(value);
+  return tag.slice(8, -1) || 'Object';
+};
+
+const formatPath = (rootLabel, pathSegments) =>
   pathSegments.reduce((acc, segment) => {
     if (typeof segment === 'number') {
       return `${acc}[${segment}]`;
     }
 
-    if (/^[A-Za-z_$][\w$]*$/u.test(segment)) {
+    if (typeof segment === 'symbol') {
+      return `${acc}[${String(segment)}]`;
+    }
+
+    if (IDENTIFIER_RE.test(segment)) {
       return `${acc}.${segment}`;
     }
 
     return `${acc}[${JSON.stringify(segment)}]`;
-  }, 'eval.globals');
+  }, rootLabel);
+
+const formatGlobalsPath = (pathSegments) =>
+  formatPath('eval.globals', pathSegments);
 
 const restoreGlobalFunction = (source, pathSegments) => {
   try {
@@ -256,38 +286,55 @@ const decodeGlobals = (value, pathSegments = []) => {
   return value;
 };
 
-const isJsonSafe = (value) => {
-  try {
-    JSON.stringify(value);
-    return true;
-  } catch {
-    return false;
-  }
+const getEnumerableSymbolKeys = (value) =>
+  Object.getOwnPropertySymbols(value).filter((key) =>
+    Object.prototype.propertyIsEnumerable.call(value, key)
+  );
+
+const isLikeError = (value) =>
+  typeof value === 'object' &&
+  value !== null &&
+  !isPlainObject(value) &&
+  'message' in value &&
+  typeof value.message === 'string' &&
+  ('stack' in value || 'name' in value);
+
+const throwUnsupportedIpcValue = (rootLabel, pathSegments, description) => {
+  throw new Error(
+    `[wyw-in-js] ${rootLabel} contains ${description} at ${formatPath(
+      rootLabel,
+      pathSegments
+    )}. ${IPC_SUPPORTED_VALUE_HINT}`
+  );
 };
 
-const isErrRequireEsm = (error) =>
-  typeof error === 'object' &&
-  error !== null &&
-  'code' in error &&
-  error.code === 'ERR_REQUIRE_ESM';
-
-const serializeValue = (value) => {
+const serializeValueAtPath = (value, rootLabel, pathSegments, seen) => {
+  if (value === null) {
+    return { kind: 'null' };
+  }
   if (value === undefined) return { kind: 'undefined' };
-  if (typeof value === 'bigint') {
-    return { kind: 'bigint', value: value.toString() };
+  if (typeof value === 'boolean') {
+    return { kind: 'boolean', value };
+  }
+  if (typeof value === 'string') {
+    return { kind: 'string', value };
   }
   if (typeof value === 'number') {
     if (Number.isNaN(value)) return { kind: 'nan' };
     if (value === Infinity) return { kind: 'infinity' };
     if (value === -Infinity) return { kind: '-infinity' };
+    return { kind: 'number', value };
   }
-  if (typeof value === 'function') return { kind: 'function' };
-  if (
-    value &&
-    typeof value === 'object' &&
-    'message' in value &&
-    'stack' in value
-  ) {
+  if (typeof value === 'bigint') {
+    return { kind: 'bigint', value: value.toString() };
+  }
+  if (typeof value === 'function') {
+    throwUnsupportedIpcValue(rootLabel, pathSegments, 'an unsupported function');
+  }
+  if (typeof value === 'symbol') {
+    throwUnsupportedIpcValue(rootLabel, pathSegments, 'an unsupported symbol');
+  }
+  if (isLikeError(value)) {
     return {
       kind: 'error',
       error: {
@@ -297,16 +344,109 @@ const serializeValue = (value) => {
       },
     };
   }
-  if (!isJsonSafe(value)) {
+
+  const currentPath = formatPath(rootLabel, pathSegments);
+  const seenAt = seen.get(value);
+  if (seenAt) {
     throw new Error(
-      `[wyw-in-js] __wywPreval produced a non-serializable value during eval.`
+      `[wyw-in-js] ${rootLabel} contains a circular reference at ${currentPath} (from ${seenAt}). ${IPC_SUPPORTED_VALUE_HINT}`
     );
   }
-  return { kind: 'value', value };
+
+  if (Array.isArray(value)) {
+    const symbolKeys = getEnumerableSymbolKeys(value);
+    if (symbolKeys.length > 0) {
+      throwUnsupportedIpcValue(
+        rootLabel,
+        [...pathSegments, symbolKeys[0]],
+        'an unsupported symbol-keyed property'
+      );
+    }
+
+    const extraKey = Object.keys(value).find(
+      (key) => !ARRAY_INDEX_RE.test(key) || Number(key) >= value.length
+    );
+    if (extraKey !== undefined) {
+      throwUnsupportedIpcValue(
+        rootLabel,
+        [...pathSegments, extraKey],
+        'an unsupported non-index array property'
+      );
+    }
+
+    seen.set(value, currentPath);
+    try {
+      return {
+        kind: 'array',
+        items: Array.from({ length: value.length }, (_, index) =>
+          serializeValueAtPath(
+            value[index],
+            rootLabel,
+            [...pathSegments, index],
+            seen
+          )
+        ),
+      };
+    } finally {
+      seen.delete(value);
+    }
+  }
+
+  if (!isPlainObject(value)) {
+    throwUnsupportedIpcValue(
+      rootLabel,
+      pathSegments,
+      `an unsupported non-plain object (${getObjectTypeName(value)})`
+    );
+  }
+
+  const symbolKeys = getEnumerableSymbolKeys(value);
+  if (symbolKeys.length > 0) {
+    throwUnsupportedIpcValue(
+      rootLabel,
+      [...pathSegments, symbolKeys[0]],
+      'an unsupported symbol-keyed property'
+    );
+  }
+
+  seen.set(value, currentPath);
+  try {
+    return {
+      kind: 'object',
+      entries: Object.fromEntries(
+        Object.entries(value).map(([key, item]) => [
+          key,
+          serializeValueAtPath(item, rootLabel, [...pathSegments, key], seen),
+        ])
+      ),
+    };
+  } finally {
+    seen.delete(value);
+  }
 };
+
+const isErrRequireEsm = (error) =>
+  typeof error === 'object' &&
+  error !== null &&
+  'code' in error &&
+  error.code === 'ERR_REQUIRE_ESM';
+
+const serializeValue = (value, options = {}) =>
+  serializeValueAtPath(
+    value,
+    options.rootLabel ?? 'value',
+    options.path ?? [],
+    new WeakMap()
+  );
 
 const deserializeValue = (value) => {
   switch (value?.kind) {
+    case 'null':
+      return null;
+    case 'boolean':
+    case 'string':
+    case 'number':
+      return value.value;
     case 'undefined':
       return undefined;
     case 'bigint':
@@ -329,6 +469,15 @@ const deserializeValue = (value) => {
       }
       return error;
     }
+    case 'array':
+      return value.items.map((item) => deserializeValue(item));
+    case 'object':
+      return Object.fromEntries(
+        Object.entries(value.entries).map(([key, item]) => [
+          key,
+          deserializeValue(item),
+        ])
+      );
     case 'value':
     default:
       return value?.value;
@@ -1453,7 +1602,10 @@ const collectModuleExports = () => {
     keys.forEach((key) => {
       const value = resolveExportValue(source, key);
       try {
-        serialized[key] = serializeValue(value);
+        serialized[key] = serializeValue(value, {
+          rootLabel: 'module exports',
+          path: [id, key],
+        });
       } catch {
         // Skip non-serializable exports when caching eval values.
       }
@@ -1508,7 +1660,10 @@ async function evaluateEntrypoint(id) {
     } catch (error) {
       value = error;
     }
-    values[key] = serializeValue(value);
+    values[key] = serializeValue(value, {
+      rootLabel: '__wywPreval',
+      path: [key],
+    });
   });
 
   return { values, modules };

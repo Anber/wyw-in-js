@@ -546,6 +546,7 @@ export class EvalBroker {
         return;
       }
 
+      const existingEvaluatedOnly = cached.evaluatedOnly ?? [];
       const target =
         cached.evaluated || !('createEvaluated' in cached)
           ? cached
@@ -557,7 +558,7 @@ export class EvalBroker {
       });
 
       const merged = mergeOnly(
-        target.evaluatedOnly ?? [],
+        existingEvaluatedOnly,
         Object.keys(serializedExports)
       );
       if (target.evaluatedOnly) {

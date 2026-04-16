@@ -554,6 +554,100 @@ describe('EvalBroker', () => {
       broker.dispose();
       rmSync(root, { recursive: true, force: true });
     });
+
+    it('reports path-aware errors for unsupported __wywPreval values', async () => {
+      const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
+      const entry = join(root, 'entry.js');
+
+      writeFileSync(
+        entry,
+        [
+          'export const __wywPreval = {',
+          '  value: () => ({',
+          "    nested: new Map([['answer', 42]]),",
+          '  }),',
+          '};',
+        ].join('\n')
+      );
+
+      const services = createServices(root, entry);
+      const broker = new EvalBroker(
+        services,
+        jest.fn(async () => null)
+      );
+      const entrypoint = Entrypoint.createRoot(
+        services,
+        entry,
+        ['__wywPreval'],
+        readFileSync(entry, 'utf-8')
+      );
+
+      try {
+        await broker.evaluate(entrypoint);
+        throw new Error('Expected broker.evaluate() to reject');
+      } catch (error) {
+        expect(String(error)).toContain('[wyw-in-js] __wywPreval');
+        expect(String(error)).toContain('__wywPreval.value.nested');
+        expect(String(error)).toContain('unsupported non-plain object (Map)');
+      } finally {
+        broker.dispose();
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+
+    it('skips non-serializable dependency exports when caching module results', async () => {
+      const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
+      const entry = join(root, 'entry.js');
+      const dep = join(root, 'dep.js');
+
+      writeFileSync(
+        dep,
+        [
+          'export const serializable = 41;',
+          'export const skipped = () => 2;',
+        ].join('\n')
+      );
+      writeFileSync(
+        entry,
+        [
+          "import { serializable, skipped } from './dep.js';",
+          'export const __wywPreval = {',
+          "  value: () => serializable + (typeof skipped === 'function' ? 1 : 0),",
+          '};',
+        ].join('\n')
+      );
+
+      const asyncResolve = jest.fn(async (what: string, importer: string) => {
+        if (what.startsWith('.')) {
+          return resolve(dirname(importer), what);
+        }
+        return null;
+      });
+      const services = createServices(root, entry);
+      const broker = new EvalBroker(services, asyncResolve);
+      const entrypoint = Entrypoint.createRoot(
+        services,
+        entry,
+        ['__wywPreval'],
+        readFileSync(entry, 'utf-8')
+      );
+
+      const result = await broker.evaluate(entrypoint);
+      const cachedDep = services.cache.get('entrypoints', dep) as
+        | {
+            exports?: Record<string, unknown>;
+            evaluatedOnly?: string[];
+          }
+        | undefined;
+
+      expect(result.values?.get('value')).toBe(42);
+      expect(cachedDep).toBeDefined();
+      expect(cachedDep?.exports?.serializable).toBe(41);
+      expect(cachedDep?.exports && 'skipped' in cachedDep.exports).toBe(false);
+
+      broker.dispose();
+      rmSync(root, { recursive: true, force: true });
+    });
   });
 
   it('evaluates a cyclic module graph via runner', async () => {

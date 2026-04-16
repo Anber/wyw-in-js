@@ -507,4 +507,32 @@ To use this preset, add `@wyw-in-js/babel-preset` to your Babel configuration at
 }
 ```
 
-The babel preset can accept the same options supported by the configuration file, however it's recommended to use the configuration file directly.
+The preset understands the same option names as the configuration file, but not every option should be passed inline:
+
+- Inline Babel preset options are forwarded to a separate Node process, so they must be JSON-serializable.
+- Function-valued WyW options such as `tagResolver`, `eval.customResolver`, `eval.onWarn`, or custom `importLoaders` should live in a WyW config file instead.
+- When you need those function-valued options, pass only `configFile` inline and let the preset load the rest from that file.
+
+Example:
+
+```json
+{
+  "presets": [
+    "@babel/preset-env",
+    "@babel/preset-react",
+    ["@wyw-in-js", { "configFile": "./wyw-in-js.config.cjs" }]
+  ]
+}
+```
+
+If you only need simple inline options, keep them JSON-serializable:
+
+```json
+{
+  "presets": [
+    "@babel/preset-env",
+    "@babel/preset-react",
+    ["@wyw-in-js", { "displayName": true }]
+  ]
+}
+```
