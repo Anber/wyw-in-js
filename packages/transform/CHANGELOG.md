@@ -1,5 +1,14 @@
 # @wyw-in-js/transform
 
+## 1.0.8
+
+### Patch Changes
+
+- b416a98: Avoid unnecessary reexport expansion for `__wywPreval`-only entrypoints and isolate cached action trees per resolver context to prevent concurrent transform crashes.
+- 33e4abf: Revalidate evaluated dependencies against disk during entrypoint freshness checks, and rethrow non-missing filesystem errors instead of treating them as cache invalidations.
+- 21ecabf: Handle deleted or renamed dependency files during cache invalidation without swallowing unrelated filesystem errors.
+- ba60b51: Add Vite 8 support without dropping Vite 5-7 compatibility, and fix destructured binding evaluation in `@wyw-in-js/transform` on newer Babel versions.
+
 ## 1.0.7
 
 ### Patch Changes

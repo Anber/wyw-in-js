@@ -1,5 +1,13 @@
 # @wyw-in-js/vite
 
+## 1.0.8
+
+### Patch Changes
+
+- ba60b51: Add Vite 8 support without dropping Vite 5-7 compatibility, and fix destructured binding evaluation in `@wyw-in-js/transform` on newer Babel versions.
+- Updated dependencies
+  - @wyw-in-js/transform@1.0.8
+
 ## 1.0.7
 
 ### Patch Changes
