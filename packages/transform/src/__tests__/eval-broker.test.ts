@@ -513,6 +513,137 @@ describe('EvalBroker', () => {
       rmSync(root, { recursive: true, force: true });
     });
 
+    it('reuses non-serializable dependency modules across entrypoints when globals are stable', async () => {
+      const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
+      const dep = join(root, 'dep.js');
+      const firstEntry = join(root, 'entry-a.js');
+      const secondEntry = join(root, 'entry-b.js');
+
+      writeFileSync(
+        dep,
+        [
+          'const value = () => undefined;',
+          'value.token = Math.random().toString(36).slice(2);',
+          'export default value;',
+        ].join('\n')
+      );
+      writeFileSync(
+        firstEntry,
+        [
+          "import dep from './dep.js';",
+          'export const __wywPreval = {',
+          '  value: () => dep.token,',
+          '};',
+        ].join('\n')
+      );
+      writeFileSync(
+        secondEntry,
+        [
+          "import dep from './dep.js';",
+          'export const __wywPreval = {',
+          '  value: () => dep.token,',
+          '};',
+        ].join('\n')
+      );
+
+      const asyncResolve = jest.fn(async (what: string, importer: string) => {
+        if (what.startsWith('.')) {
+          return resolve(dirname(importer), what);
+        }
+        return null;
+      });
+      const services = createServices(root, firstEntry);
+      const broker = new EvalBroker(services, asyncResolve);
+      const firstEntrypoint = Entrypoint.createRoot(
+        services,
+        firstEntry,
+        ['__wywPreval'],
+        readFileSync(firstEntry, 'utf-8')
+      );
+      const secondEntrypoint = Entrypoint.createRoot(
+        services,
+        secondEntry,
+        ['__wywPreval'],
+        readFileSync(secondEntry, 'utf-8')
+      );
+
+      const first = await broker.evaluate(firstEntrypoint);
+      const second = await broker.evaluate(secondEntrypoint);
+
+      expect(first.values?.get('value')).toBe(second.values?.get('value'));
+
+      broker.dispose();
+      rmSync(root, { recursive: true, force: true });
+    });
+
+    it('does not reuse non-serializable dependency modules across entrypoints when overrideContext is enabled', async () => {
+      const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
+      const dep = join(root, 'dep.js');
+      const firstEntry = join(root, 'entry-a.js');
+      const secondEntry = join(root, 'entry-b.js');
+
+      writeFileSync(
+        dep,
+        [
+          'const value = () => undefined;',
+          'value.token = Math.random().toString(36).slice(2);',
+          'export default value;',
+        ].join('\n')
+      );
+      writeFileSync(
+        firstEntry,
+        [
+          "import dep from './dep.js';",
+          'export const __wywPreval = {',
+          '  value: () => dep.token,',
+          '};',
+        ].join('\n')
+      );
+      writeFileSync(
+        secondEntry,
+        [
+          "import dep from './dep.js';",
+          'export const __wywPreval = {',
+          '  value: () => dep.token,',
+          '};',
+        ].join('\n')
+      );
+
+      const asyncResolve = jest.fn(async (what: string, importer: string) => {
+        if (what.startsWith('.')) {
+          return resolve(dirname(importer), what);
+        }
+        return null;
+      });
+      const services = createServices(root, firstEntry, {
+        overrideContext: (context) => ({
+          ...context,
+          CURRENT_FILE: context.__filename,
+        }),
+      });
+      const broker = new EvalBroker(services, asyncResolve);
+      const firstEntrypoint = Entrypoint.createRoot(
+        services,
+        firstEntry,
+        ['__wywPreval'],
+        readFileSync(firstEntry, 'utf-8')
+      );
+      const secondEntrypoint = Entrypoint.createRoot(
+        services,
+        secondEntry,
+        ['__wywPreval'],
+        readFileSync(secondEntry, 'utf-8')
+      );
+
+      const first = await broker.evaluate(firstEntrypoint);
+      const second = await broker.evaluate(secondEntrypoint);
+
+      expect(first.values?.get('value')).not.toBe(second.values?.get('value'));
+
+      broker.dispose();
+      rmSync(root, { recursive: true, force: true });
+    });
+
     it('wraps decode failures with path-aware globals diagnostics', async () => {
       const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
       const entry = join(root, 'entry.js');
@@ -595,6 +726,84 @@ describe('EvalBroker', () => {
       }
     });
 
+    it('preserves function-valued __wywPreval entries as callable placeholders', async () => {
+      const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
+      const entry = join(root, 'entry.js');
+
+      writeFileSync(
+        entry,
+        [
+          'const helper = () => 1;',
+          'export const __wywPreval = {',
+          '  value: () => helper,',
+          '};',
+        ].join('\n')
+      );
+
+      const services = createServices(root, entry);
+      const broker = new EvalBroker(
+        services,
+        jest.fn(async () => null)
+      );
+      const entrypoint = Entrypoint.createRoot(
+        services,
+        entry,
+        ['__wywPreval'],
+        readFileSync(entry, 'utf-8')
+      );
+
+      try {
+        const result = await broker.evaluate(entrypoint);
+        const value = result.values?.get('value');
+
+        expect(typeof value).toBe('function');
+        expect((value as () => unknown)()).toBeUndefined();
+      } finally {
+        broker.dispose();
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+
+    it('preserves symbol markers inside __wywPreval objects', async () => {
+      const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
+      const entry = join(root, 'entry.js');
+
+      writeFileSync(
+        entry,
+        [
+          "const marker = Symbol.for('react.forward_ref');",
+          'export const __wywPreval = {',
+          '  value: () => ({ marker }),',
+          '};',
+        ].join('\n')
+      );
+
+      const services = createServices(root, entry);
+      const broker = new EvalBroker(
+        services,
+        jest.fn(async () => null)
+      );
+      const entrypoint = Entrypoint.createRoot(
+        services,
+        entry,
+        ['__wywPreval'],
+        readFileSync(entry, 'utf-8')
+      );
+
+      try {
+        const result = await broker.evaluate(entrypoint);
+        const value = result.values?.get('value') as
+          | { marker?: symbol }
+          | undefined;
+
+        expect(typeof value?.marker).toBe('symbol');
+        expect(value?.marker).toBe(Symbol.for('react.forward_ref'));
+      } finally {
+        broker.dispose();
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+
     it('skips non-serializable dependency exports when caching module results', async () => {
       const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
       const entry = join(root, 'entry.js');
@@ -644,6 +853,72 @@ describe('EvalBroker', () => {
       expect(cachedDep).toBeDefined();
       expect(cachedDep?.exports?.serializable).toBe(41);
       expect(cachedDep?.exports && 'skipped' in cachedDep.exports).toBe(false);
+
+      broker.dispose();
+      rmSync(root, { recursive: true, force: true });
+    });
+
+    it('builds direct proxy modules for requested exports from mixed re-export barrels', async () => {
+      const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
+      const entry = join(root, 'entry.js');
+      const barrel = join(root, 'barrel.js');
+      const main = join(root, 'main.js');
+      const used = join(root, 'used.js');
+      const unused = join(root, 'unused.js');
+
+      writeFileSync(main, 'export default 1;');
+      writeFileSync(used, 'export default 41;');
+      writeFileSync(unused, 'throw new Error("unused export should stay cold");');
+      writeFileSync(
+        barrel,
+        [
+          "import main from './main.js';",
+          "export { default as used } from './used.js';",
+          "export { default as unused } from './unused.js';",
+          'export default main;',
+        ].join('\n')
+      );
+      writeFileSync(
+        entry,
+        [
+          "import { used } from './barrel.js';",
+          'export const __wywPreval = {',
+          '  value: () => used,',
+          '};',
+        ].join('\n')
+      );
+
+      const asyncResolve = jest.fn(async (what: string, importer: string) => {
+        if (what.startsWith('.')) {
+          return resolve(dirname(importer), what);
+        }
+        return null;
+      });
+      const services = createServices(root, entry);
+      const broker = new EvalBroker(services, asyncResolve);
+      const privateBroker = getPrivateBroker(broker);
+
+      privateBroker.onlyByModule.set(barrel, ['used']);
+      const prepared = await privateBroker.loadModule({
+        id: barrel,
+        importerId: entry,
+        request: './barrel.js',
+      });
+
+      expect(prepared.code).toContain('./used.js');
+      expect(prepared.code).not.toContain('./unused.js');
+      expect(prepared.code).not.toContain('./main.js');
+
+      const entrypoint = Entrypoint.createRoot(
+        services,
+        entry,
+        ['__wywPreval'],
+        readFileSync(entry, 'utf-8')
+      );
+
+      const result = await broker.evaluate(entrypoint);
+
+      expect(result.values?.get('value')).toBe(41);
 
       broker.dispose();
       rmSync(root, { recursive: true, force: true });

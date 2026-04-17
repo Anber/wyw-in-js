@@ -114,7 +114,10 @@ const serializedValues = (() => {
   const values: ValueCache = capturedValues;
   const entries: Array<[string, ReturnType<typeof serializeValue>]> = [];
   values.forEach((value: unknown, key: string | number | boolean | null) => {
-    entries.push([String(key), serializeValue(value)]);
+    entries.push([
+      String(key),
+      serializeValue(value, { allowFunctions: true, allowSymbols: true }),
+    ]);
   });
 
   return Object.fromEntries(entries);

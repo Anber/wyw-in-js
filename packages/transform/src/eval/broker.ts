@@ -4,6 +4,7 @@ import NativeModule from 'module';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process';
+import type { File, Program } from '@babel/types';
 
 import { invariant } from 'ts-invariant';
 
@@ -175,6 +176,7 @@ const MAX_MESSAGE_SIZE = 10 * 1024 * 1024;
 const MAX_CHUNK_SIZE = 512 * 1024;
 const RESOLVE_CACHE_SIZE = 5000;
 const LOAD_CACHE_SIZE = 1000;
+const IDENTIFIER_RE = /^[A-Za-z_$][\w$]*$/u;
 const REQUEST_TIMEOUT_MS = 30_000;
 const EVAL_TIMEOUT_MS = Number(process.env.WYW_EVAL_TIMEOUT_MS ?? 300_000);
 const INIT_TIMEOUT_MS = 120_000;
@@ -196,6 +198,17 @@ type PreparedCacheEntry = PreparedModule & {
   hash: string;
   exports?: Record<string, SerializedValue>;
 };
+
+type DirectBarrelBinding =
+  | {
+      kind: 'named';
+      imported: string;
+      source: string;
+    }
+  | {
+      kind: 'namespace';
+      source: string;
+    };
 
 type PendingRequest = {
   resolve: (payload: unknown) => void;
@@ -271,7 +284,7 @@ const buildRunnerInitPayload = (
   };
   const globals = overrideContext
     ? overrideContext(withFilename, entrypoint.name)
-    : withFilename;
+    : baseGlobals;
 
   return {
     evalOptions: {
@@ -379,6 +392,276 @@ const loadByImportLoaders = (
 
 const hashContent = (content: string): string =>
   createHash('sha256').update(content).digest('hex');
+
+const isTypeOnlyImport = (statement: Program['body'][number]): boolean => {
+  if (statement.type !== 'ImportDeclaration') {
+    return false;
+  }
+
+  if (statement.importKind === 'type') {
+    return true;
+  }
+
+  if (statement.specifiers.length === 0) {
+    return false;
+  }
+
+  return statement.specifiers.every(
+    (specifier) =>
+      specifier.type === 'ImportSpecifier' && specifier.importKind === 'type'
+  );
+};
+
+const isTypeOnlyExport = (
+  statement: Extract<Program['body'][number], { type: 'ExportNamedDeclaration' }>
+): boolean => statement.exportKind === 'type';
+
+const getModuleExportName = (
+  node: { type: 'Identifier'; name: string } | { type: 'StringLiteral'; value: string }
+): string => (node.type === 'Identifier' ? node.name : node.value);
+
+const getImportSpecifierName = (
+  specifier: Extract<
+    Program['body'][number],
+    { type: 'ImportDeclaration' }
+  >['specifiers'][number] & { type: 'ImportSpecifier' }
+): string => getModuleExportName(specifier.imported);
+
+const buildDirectBarrelProxy = (
+  services: Services,
+  id: string,
+  only: string[]
+): PreparedModule | null => {
+  const requested = only.filter((key) => !isEvalOnlyKey(key));
+  if (requested.length === 0 || requested.includes('*')) {
+    return null;
+  }
+
+  const loadedAndParsed = services.loadAndParseFn(
+    services,
+    id,
+    undefined,
+    services.log
+  );
+
+  if (
+    loadedAndParsed.evaluator === 'ignored' ||
+    loadedAndParsed.ast === undefined
+  ) {
+    return null;
+  }
+
+  const importedBindings = new Map<string, DirectBarrelBinding>();
+  const exportedBindings = new Map<string, DirectBarrelBinding>();
+  const ast = loadedAndParsed.ast as File;
+
+  for (const statement of ast.program.body) {
+    if (statement.type === 'ImportDeclaration') {
+      if (isTypeOnlyImport(statement)) {
+        continue;
+      }
+
+      if (statement.specifiers.length === 0) {
+        return null;
+      }
+
+      for (const specifier of statement.specifiers) {
+        if (
+          specifier.type === 'ImportSpecifier' &&
+          specifier.importKind === 'type'
+        ) {
+          continue;
+        }
+
+        if (specifier.type === 'ImportSpecifier') {
+          importedBindings.set(specifier.local.name, {
+            kind: 'named',
+            imported: getImportSpecifierName(specifier),
+            source: statement.source.value,
+          });
+          continue;
+        }
+
+        if (specifier.type === 'ImportDefaultSpecifier') {
+          importedBindings.set(specifier.local.name, {
+            kind: 'named',
+            imported: 'default',
+            source: statement.source.value,
+          });
+          continue;
+        }
+
+        importedBindings.set(specifier.local.name, {
+          kind: 'namespace',
+          source: statement.source.value,
+        });
+      }
+
+      continue;
+    }
+
+    if (statement.type === 'ExportNamedDeclaration') {
+      if (isTypeOnlyExport(statement)) {
+        continue;
+      }
+
+      if (statement.source) {
+        for (const specifier of statement.specifiers) {
+          if (specifier.type === 'ExportSpecifier') {
+            if (specifier.exportKind === 'type') {
+              continue;
+            }
+
+            exportedBindings.set(getModuleExportName(specifier.exported), {
+              kind: 'named',
+              imported: getModuleExportName(specifier.local),
+              source: statement.source.value,
+            });
+            continue;
+          }
+
+          if (specifier.type === 'ExportDefaultSpecifier') {
+            exportedBindings.set(getModuleExportName(specifier.exported), {
+              kind: 'named',
+              imported: 'default',
+              source: statement.source.value,
+            });
+            continue;
+          }
+
+          if (specifier.type === 'ExportNamespaceSpecifier') {
+            exportedBindings.set(getModuleExportName(specifier.exported), {
+              kind: 'namespace',
+              source: statement.source.value,
+            });
+            continue;
+          }
+
+          return null;
+        }
+
+        continue;
+      }
+
+      if (statement.declaration) {
+        return null;
+      }
+
+      for (const specifier of statement.specifiers) {
+        if (specifier.type !== 'ExportSpecifier' || specifier.exportKind === 'type') {
+          return null;
+        }
+
+        if (specifier.local.type !== 'Identifier') {
+          return null;
+        }
+
+        const binding = importedBindings.get(specifier.local.name);
+        if (!binding) {
+          return null;
+        }
+
+        exportedBindings.set(getModuleExportName(specifier.exported), binding);
+      }
+
+      continue;
+    }
+
+    if (statement.type === 'ExportDefaultDeclaration') {
+      if (statement.declaration.type !== 'Identifier') {
+        return null;
+      }
+
+      const binding = importedBindings.get(statement.declaration.name);
+      if (!binding || binding.kind !== 'named') {
+        return null;
+      }
+
+      exportedBindings.set('default', binding);
+      continue;
+    }
+
+    if (
+      statement.type === 'EmptyStatement' ||
+      statement.type === 'TSDeclareFunction' ||
+      statement.type === 'TSInterfaceDeclaration' ||
+      statement.type === 'TSTypeAliasDeclaration'
+    ) {
+      continue;
+    }
+
+    return null;
+  }
+
+  const imports = new Map<string, string[]>();
+  const lines: string[] = [];
+  let namespaceIdx = 0;
+
+  const addImport = (source: string, imported: string) => {
+    if (!imports.has(source)) {
+      imports.set(source, []);
+    }
+
+    const bucket = imports.get(source)!;
+    if (!bucket.includes(imported)) {
+      bucket.push(imported);
+    }
+  };
+
+  for (const exported of requested) {
+    const binding = exportedBindings.get(exported);
+    if (!binding) {
+      return null;
+    }
+
+    if (binding.kind === 'namespace') {
+      if (exported === 'default' || !IDENTIFIER_RE.test(exported)) {
+        return null;
+      }
+
+      const local = `__wyw_ns_${namespaceIdx++}`;
+      lines.push(`import * as ${local} from ${JSON.stringify(binding.source)};`);
+      lines.push(`export { ${local} as ${exported} };`);
+      addImport(binding.source, '*');
+      continue;
+    }
+
+    if (
+      binding.imported !== 'default' &&
+      !IDENTIFIER_RE.test(binding.imported)
+    ) {
+      return null;
+    }
+
+    if (exported !== 'default' && !IDENTIFIER_RE.test(exported)) {
+      return null;
+    }
+
+    const imported =
+      binding.imported === 'default' ? 'default' : binding.imported;
+    const exportClause =
+      exported === 'default'
+        ? `${imported} as default`
+        : imported === exported
+          ? imported
+          : `${imported} as ${exported}`;
+
+    lines.push(
+      `export { ${exportClause} } from ${JSON.stringify(binding.source)};`
+    );
+    addImport(binding.source, binding.imported);
+  }
+
+  if (lines.length === 0) {
+    return null;
+  }
+
+  return {
+    code: `${lines.join('\n')}\n`,
+    imports,
+    only,
+  };
+};
 
 const isPlainObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -603,7 +886,7 @@ export class EvalBroker {
     this.runner.stdout.setEncoding('utf8');
     this.runner.stderr.setEncoding('utf8');
 
-    this.runner.stdout.on('data', (chunk) => this.onData(chunk));
+    this.runner.stdout.on('data', (chunk) => this.onData(String(chunk)));
     this.runner.stderr.on('data', (chunk) => {
       emitWarning(this.services, `[wyw-eval-runner] ${chunk.toString()}`);
     });
@@ -1186,6 +1469,30 @@ export class EvalBroker {
 
   private collectEntrypointDependencies(entrypointId: string): string[] {
     const collected = new Set(this.dependencies);
+    const cachedEntrypoint = this.services.cache.get(
+      'entrypoints',
+      entrypointId
+    ) as
+      | {
+          dependencies?: Map<
+            string,
+            {
+              source: string;
+              resolved: string | null;
+              only: string[];
+            }
+          >;
+        }
+      | undefined;
+    cachedEntrypoint?.dependencies?.forEach((dependency, specifier) => {
+      if (
+        dependency.resolved !== null &&
+        !isBuiltinSpecifier(specifier) &&
+        !isVirtualSpecifier(specifier)
+      ) {
+        collected.add(specifier);
+      }
+    });
     const imports = this.importsByModule.get(entrypointId);
     if (imports) {
       for (const specifier of imports.keys()) {
@@ -1551,6 +1858,18 @@ export class EvalBroker {
         };
       }
 
+      const directBarrelProxy = buildDirectBarrelProxy(
+        this.services,
+        id,
+        requiredOnly
+      );
+      if (directBarrelProxy) {
+        return {
+          ...directBarrelProxy,
+          hash: hashContent(directBarrelProxy.code),
+        };
+      }
+
       const prepared = prepareModuleOnDemand(
         this.services,
         id,
@@ -1629,7 +1948,7 @@ export class EvalBroker {
     };
     const serialized = JSON.stringify(message);
     if (serialized.length < MAX_MESSAGE_SIZE) {
-      this.runner?.stdin.write(`${serialized}\n`);
+      this.sendMessage(message);
       return;
     }
 

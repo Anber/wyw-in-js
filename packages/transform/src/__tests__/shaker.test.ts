@@ -382,6 +382,29 @@ describe('shaker', () => {
     expect(code).not.toContain('exports.mode');
   });
 
+  it('should keep base classes local when a surviving export extends them', () => {
+    const code = run(['TaskNotFoundException'])`
+      export class NotFoundException extends Error {
+        constructor(message: string) {
+          super(message);
+          this.name = 'NotFoundException';
+        }
+      }
+
+      export class TaskNotFoundException extends NotFoundException {
+        constructor(message: string) {
+          super(message);
+          this.name = 'TaskNotFoundException';
+        }
+      }
+    `;
+
+    expect(code).toContain('class NotFoundException');
+    expect(code).toContain('class TaskNotFoundException extends NotFoundException');
+    expect(code).toContain('exports.TaskNotFoundException = TaskNotFoundException;');
+    expect(code).not.toContain('exports.NotFoundException');
+  });
+
   it('should split multi-declarator exports when only one binding survives', () => {
     const code = run(['b'])`
       export const a = globalThis.location?.hostname || 'localhost', b = a + '-dev';

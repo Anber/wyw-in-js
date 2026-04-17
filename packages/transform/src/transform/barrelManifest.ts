@@ -1,5 +1,5 @@
 /* eslint-disable no-continue, @typescript-eslint/no-use-before-define */
-import traverse from '@babel/traverse';
+import babelTraverse from '@babel/traverse';
 import { getBindingIdentifiers } from '@babel/types';
 import type {
   ClassDeclaration,
@@ -18,6 +18,10 @@ import type {
   StringLiteral,
   VariableDeclaration,
 } from '@babel/types';
+
+const traverse =
+  (babelTraverse as unknown as { default?: typeof babelTraverse }).default ??
+  babelTraverse;
 
 export type BarrelSkipReason =
   | 'custom-evaluator'

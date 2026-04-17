@@ -308,7 +308,14 @@ const throwUnsupportedIpcValue = (rootLabel, pathSegments, description) => {
   );
 };
 
-const serializeValueAtPath = (value, rootLabel, pathSegments, seen) => {
+const serializeValueAtPath = (
+  value,
+  rootLabel,
+  pathSegments,
+  seen,
+  allowFunctions,
+  allowSymbols
+) => {
   if (value === null) {
     return { kind: 'null' };
   }
@@ -329,9 +336,20 @@ const serializeValueAtPath = (value, rootLabel, pathSegments, seen) => {
     return { kind: 'bigint', value: value.toString() };
   }
   if (typeof value === 'function') {
+    if (allowFunctions) {
+      // __wywPreval consumers only rely on function-ness, not implementation
+      // identity. Preserve that signal explicitly instead of letting JSON
+      // coerce to null/undefined.
+      return { kind: 'function' };
+    }
+
     throwUnsupportedIpcValue(rootLabel, pathSegments, 'an unsupported function');
   }
   if (typeof value === 'symbol') {
+    if (allowSymbols) {
+      return { kind: 'symbol', description: value.description ?? '' };
+    }
+
     throwUnsupportedIpcValue(rootLabel, pathSegments, 'an unsupported symbol');
   }
   if (isLikeError(value)) {
@@ -383,7 +401,9 @@ const serializeValueAtPath = (value, rootLabel, pathSegments, seen) => {
             value[index],
             rootLabel,
             [...pathSegments, index],
-            seen
+            seen,
+            allowFunctions,
+            allowSymbols
           )
         ),
       };
@@ -416,7 +436,14 @@ const serializeValueAtPath = (value, rootLabel, pathSegments, seen) => {
       entries: Object.fromEntries(
         Object.entries(value).map(([key, item]) => [
           key,
-          serializeValueAtPath(item, rootLabel, [...pathSegments, key], seen),
+          serializeValueAtPath(
+            item,
+            rootLabel,
+            [...pathSegments, key],
+            seen,
+            allowFunctions,
+            allowSymbols
+          ),
         ])
       ),
     };
@@ -436,7 +463,9 @@ const serializeValue = (value, options = {}) =>
     value,
     options.rootLabel ?? 'value',
     options.path ?? [],
-    new WeakMap()
+    new WeakMap(),
+    options.allowFunctions ?? false,
+    options.allowSymbols ?? false
   );
 
 const deserializeValue = (value) => {
@@ -459,6 +488,8 @@ const deserializeValue = (value) => {
       return -Infinity;
     case 'function':
       return () => {};
+    case 'symbol':
+      return value.description ? Symbol.for(value.description) : Symbol();
     case 'error': {
       const error = new Error(value.error?.message ?? '');
       if (value.error?.name) {
@@ -893,6 +924,16 @@ const resetEvaluationState = () => {
 
 const sendMessage = (message) => {
   process.stdout.write(`${JSON.stringify(message)}\n`);
+};
+
+const keepAlive = setInterval(() => {}, 60_000);
+
+const shutdown = () => {
+  clearInterval(keepAlive);
+  if (state.teardown) {
+    state.teardown();
+  }
+  process.exit(0);
 };
 
 const sendWarn = (warning) => {
@@ -1661,6 +1702,8 @@ async function evaluateEntrypoint(id) {
       value = error;
     }
     values[key] = serializeValue(value, {
+      allowFunctions: true,
+      allowSymbols: true,
       rootLabel: '__wywPreval',
       path: [key],
     });
@@ -1794,6 +1837,7 @@ const handleMessage = async (message) => {
 
 let buffer = '';
 process.stdin.setEncoding('utf8');
+process.stdin.resume();
 process.stdin.on('data', (chunk) => {
   buffer += chunk;
   const lines = buffer.split('\n');
@@ -1805,9 +1849,4 @@ process.stdin.on('data', (chunk) => {
   });
 });
 
-process.stdin.on('close', () => {
-  if (state.teardown) {
-    state.teardown();
-  }
-  process.exit(0);
-});
+process.stdin.on('close', shutdown);

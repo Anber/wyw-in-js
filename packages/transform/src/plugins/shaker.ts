@@ -317,7 +317,10 @@ function stripExportKeepDeclaration(
     declaration.isClassDeclaration() ||
     declaration.isTSEnumDeclaration()
   ) {
-    exportDeclaration.replaceWith(t.cloneNode(declaration.node, true));
+    // Reuse the existing declaration node to unwrap `export class Foo {}`
+    // into `class Foo {}` without introducing a second binding during
+    // replacement. Cloning here can transiently create duplicate declarations.
+    exportDeclaration.replaceWith(declaration.node);
     return [path];
   }
 

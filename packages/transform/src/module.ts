@@ -54,9 +54,40 @@ type HiddenModuleMembers = {
   _extensions: Record<string, () => void>;
   _resolveFilename: (
     id: string,
-    options: { filename: string; id: string; paths: string[] }
+    options: { filename: string; id: string; paths: string[] },
+    isMain?: boolean,
+    resolveOptions?: { conditions?: Set<string> }
   ) => string;
   _nodeModulePaths(filename: string): string[];
+};
+
+const CJS_DEFAULT_CONDITIONS = ['require', 'node', 'default'] as const;
+
+const expandConditions = (conditionNames: string[]): Set<string> => {
+  const result = new Set<string>();
+
+  conditionNames.forEach((name) => {
+    if (name === '...') {
+      CJS_DEFAULT_CONDITIONS.forEach((condition) => result.add(condition));
+      return;
+    }
+
+    result.add(name);
+  });
+
+  return result;
+};
+
+const isBarePackageSubpath = (id: string): boolean => {
+  if (id.startsWith('.') || path.isAbsolute(id)) {
+    return false;
+  }
+
+  if (id.startsWith('@')) {
+    return id.split('/').length > 2;
+  }
+
+  return id.includes('/');
 };
 
 export const DefaultModuleImplementation = NativeModule as typeof NativeModule &
@@ -471,10 +502,16 @@ export class Module {
       return null;
     }
 
-    const entrypoint = this.cache.get('entrypoints', filename);
+    let entrypoint = this.cache.get('entrypoints', filename);
     if (entrypoint && isSuperSet(entrypoint.evaluatedOnly ?? [], only)) {
-      log('✅ file has been already evaluated');
-      return entrypoint;
+      if (this.cache.checkFreshness(filename, strippedFilename)) {
+        entrypoint = undefined;
+      }
+
+      if (entrypoint) {
+        log('✅ file has been already evaluated');
+        return entrypoint;
+      }
     }
 
     if (entrypoint?.ignored) {
@@ -1007,6 +1044,48 @@ export class Module {
     return this.getModuleForEntrypoint(entrypoint);
   }
 
+  private resolveWithConditions(
+    id: string,
+    parent: { id: string; filename: string; paths: string[] },
+    conditions?: Set<string>
+  ): string {
+    const resolveOptions = conditions ? { conditions } : undefined;
+    const shouldRetryWithExtensions =
+      conditions &&
+      path.extname(id) === '' &&
+      (id.startsWith('.') || path.isAbsolute(id) || isBarePackageSubpath(id));
+
+    try {
+      return this.moduleImpl._resolveFilename(
+        id,
+        parent,
+        false,
+        resolveOptions
+      );
+    } catch (error) {
+      if (
+        shouldRetryWithExtensions &&
+        error instanceof Error &&
+        (error as NodeJS.ErrnoException).code === 'MODULE_NOT_FOUND'
+      ) {
+        for (const ext of this.extensions) {
+          try {
+            return this.moduleImpl._resolveFilename(
+              `${id}${ext}`,
+              parent,
+              false,
+              resolveOptions
+            );
+          } catch {
+            // Try the next supported extension.
+          }
+        }
+      }
+
+      throw error;
+    }
+  }
+
   resolveWithNodeFallback = (
     id: string,
     importer: Entrypoint | IEvaluatedEntrypoint,
@@ -1040,12 +1119,21 @@ export class Module {
 
       const filename = importer.name;
       const strippedId = stripQueryAndHash(id);
-
-      let resolved = this.moduleImpl._resolveFilename(strippedId, {
+      const parent = {
         id: filename,
         filename,
         paths: this.moduleImpl._nodeModulePaths(path.dirname(filename)),
-      });
+      };
+      const { conditionNames } = this.services.options.pluginOptions;
+      const conditions = conditionNames?.length
+        ? expandConditions(conditionNames)
+        : undefined;
+
+      let resolved = this.resolveWithConditions(
+        strippedId,
+        parent,
+        conditions
+      );
 
       const isFileSpecifier =
         strippedId.startsWith('.') || path.isAbsolute(strippedId);

@@ -172,7 +172,14 @@ export async function transform(
     };
   }
 
-  const workflowAction = entrypoint.createAction('workflow', undefined);
+  // Separate top-level runs must not share action state, even for the same
+  // entrypoint, otherwise concurrent transforms can collide in BaseAction.run.
+  const workflowAction = entrypoint.createAction(
+    'workflow',
+    undefined,
+    null,
+    {}
+  );
 
   if (!memoizedAsyncResolve.has(asyncResolve)) {
     const resolveImports = function resolveImports(

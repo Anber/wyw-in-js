@@ -46,6 +46,7 @@ type VitePluginOptions = {
 } & Partial<PluginOptions>;
 
 type OverrideContext = NonNullable<PluginOptions['overrideContext']>;
+type OverrideContextArgs = Parameters<OverrideContext>;
 
 export type { Plugin };
 
@@ -275,7 +276,10 @@ export default function wywInJS({
   } | null = null;
   const buildOverrideContext =
     (getEnv: () => Record<string, unknown> | undefined): OverrideContext =>
-    (context, filename) => {
+    (
+      context: OverrideContextArgs[0],
+      filename: OverrideContextArgs[1]
+    ) => {
       const env = getEnv();
       const withEnv = env
         ? { ...context, __wyw_import_meta_env: env }
@@ -525,7 +529,10 @@ export default function wywInJS({
 
       throw new Error(`Could not resolve ${what}`);
     },
-    (what, importer) => [what, importer]
+    (what: Parameters<ResolveFn>[0], importer: Parameters<ResolveFn>[1]) => [
+      what,
+      importer,
+    ]
   );
 
   const asyncResolveClient = createAsyncResolver(resolveClient);

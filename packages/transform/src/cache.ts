@@ -2,6 +2,7 @@ import { createHash } from 'crypto';
 import fs from 'node:fs';
 import { logger } from '@wyw-in-js/shared';
 
+import type { BarrelManifestCacheEntry } from './transform/barrelManifest';
 import type { Entrypoint } from './transform/Entrypoint';
 import type { IEvaluatedEntrypoint } from './transform/EvaluatedEntrypoint';
 import { getFileIdx } from './utils/getFileIdx';
@@ -11,12 +12,24 @@ function hashContent(content: string) {
   return createHash('sha256').update(content).digest('hex');
 }
 
+function isMissingFileError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') {
+    return false;
+  }
+
+  const { code } = error as NodeJS.ErrnoException;
+  return code === 'ENOENT' || code === 'ENOTDIR';
+}
+
 interface IBaseCachedEntrypoint {
   dependencies: Map<string, { resolved: string | null }>;
   initialCode?: string;
+  invalidateOnDependencyChange?: Set<string>;
+  invalidationDependencies?: Map<string, { resolved: string | null }>;
 }
 
 interface ICaches<TEntrypoint extends IBaseCachedEntrypoint> {
+  barrelManifests: Map<string, BarrelManifestCacheEntry>;
   entrypoints: Map<string, TEntrypoint>;
   exports: Map<string, string[]>;
 }
@@ -25,7 +38,7 @@ type MapValue<T> = T extends Map<string, infer V> ? V : never;
 
 const cacheLogger = logger.extend('cache');
 
-const cacheNames = ['entrypoints', 'exports'] as const;
+const cacheNames = ['barrelManifests', 'entrypoints', 'exports'] as const;
 type CacheNames = (typeof cacheNames)[number];
 
 const loggers = cacheNames.reduce(
@@ -39,11 +52,19 @@ const loggers = cacheNames.reduce(
 export class TransformCacheCollection<
   TEntrypoint extends IBaseCachedEntrypoint = Entrypoint | IEvaluatedEntrypoint,
 > {
+  public readonly barrelManifests: Map<string, BarrelManifestCacheEntry>;
+
   public readonly entrypoints: Map<string, TEntrypoint>;
 
   public readonly exports: Map<string, string[]>;
 
+  private readonly barrelManifestDependencies = new Map<string, Set<string>>();
+
   private contentHashes = new Map<string, { fs?: string; loaded?: string }>();
+
+  private fileMtimes = new Map<string, number>();
+
+  private readonly exportDependencies = new Map<string, Set<string>>();
 
   private keySalt: string | null = null;
 
@@ -52,12 +73,14 @@ export class TransformCacheCollection<
   private consumedInvalidationVersions = new Map<string, number>();
 
   constructor(caches: Partial<ICaches<TEntrypoint>> = {}) {
+    this.barrelManifests = caches.barrelManifests || new Map();
     this.entrypoints = caches.entrypoints || new Map();
     this.exports = caches.exports || new Map();
   }
 
   public setKeySalt(keySalt: string | null) {
     if (this.keySalt === keySalt) return;
+
     const prevKeySalt = this.keySalt;
     this.keySalt = keySalt;
 
@@ -69,13 +92,19 @@ export class TransformCacheCollection<
           cache.set(this.getKey(key), value);
         });
       };
+
+      migrate(this.barrelManifests);
       migrate(this.entrypoints);
       migrate(this.exports);
+      migrate(this.barrelManifestDependencies);
+      migrate(this.exportDependencies);
       return;
     }
 
+    this.barrelManifests.clear();
     this.entrypoints.clear();
     this.exports.clear();
+    this.clearCacheDependencies('all');
   }
 
   private getKey(key: string) {
@@ -104,9 +133,11 @@ export class TransformCacheCollection<
     if (value === undefined) {
       cache.delete(cacheKey);
       this.contentHashes.delete(key);
+      this.clearCacheDependencies(cacheName, key);
       return;
     }
 
+    this.clearCacheDependencies(cacheName, key);
     cache.set(cacheKey, value);
 
     if ('initialCode' in value) {
@@ -133,6 +164,17 @@ export class TransformCacheCollection<
       } catch {
         this.setContentHash(key, source, hashContent(''));
       }
+
+      return;
+    }
+
+    if (cacheName === 'barrelManifests') {
+      try {
+        const fileContent = fs.readFileSync(stripQueryAndHash(key), 'utf8');
+        this.setContentHash(key, 'fs', hashContent(fileContent));
+      } catch {
+        this.setContentHash(key, 'fs', hashContent(''));
+      }
     }
   }
 
@@ -149,6 +191,7 @@ export class TransformCacheCollection<
     const cache = this[cacheName] as Map<string, unknown>;
 
     cache.clear();
+    this.clearCacheDependencies(cacheName);
   }
 
   public delete(cacheName: CacheNames, key: string): void {
@@ -160,16 +203,16 @@ export class TransformCacheCollection<
     TValue extends MapValue<ICaches<TEntrypoint>[TCache]>,
   >(cacheName: TCache, key: string): TValue | undefined {
     const cache = this[cacheName] as Map<string, TValue>;
-
     const res = cache.get(this.getKey(key));
+
     loggers[cacheName]('get', key, res === undefined ? 'miss' : 'hit');
     return res;
   }
 
   public has(cacheName: CacheNames, key: string): boolean {
     const cache = this[cacheName] as Map<string, unknown>;
-
     const res = cache.has(this.getKey(key));
+
     loggers[cacheName]('has', key, res);
     return res;
   }
@@ -177,6 +220,7 @@ export class TransformCacheCollection<
   public invalidate(cacheName: CacheNames, key: string): void {
     const cache = this[cacheName] as Map<string, unknown>;
     const cacheKey = this.getKey(key);
+
     if (!cache.has(cacheKey)) {
       return;
     }
@@ -184,12 +228,14 @@ export class TransformCacheCollection<
     loggers[cacheName]('invalidate', key);
 
     cache.delete(cacheKey);
+    this.clearCacheDependencies(cacheName, key);
   }
 
   public invalidateForFile(filename: string) {
     cacheNames.forEach((cacheName) => {
       this.invalidate(cacheName, filename);
     });
+
     const key = stripQueryAndHash(filename);
     const version = this.invalidatedFiles.get(key) ?? 0;
     this.invalidatedFiles.set(key, version + 1);
@@ -198,6 +244,7 @@ export class TransformCacheCollection<
   public consumeInvalidation(filename: string) {
     const key = stripQueryAndHash(filename);
     const invalidationVersion = this.invalidatedFiles.get(key);
+
     if (invalidationVersion === undefined) {
       return false;
     }
@@ -216,30 +263,101 @@ export class TransformCacheCollection<
     filename: string,
     content: string,
     previousVisitedFiles?: Set<string>,
-    source: 'fs' | 'loaded' = 'loaded'
+    source: 'fs' | 'loaded' = 'loaded',
+    changedFiles = new Set<string>()
   ) {
+    if (changedFiles.has(filename)) {
+      return true;
+    }
+
     const visitedFiles = new Set(previousVisitedFiles);
     const fileEntrypoint = this.get('entrypoints', filename);
+    let anyDepChanged = false;
 
-    // We need to check all dependencies of the file
-    // because they might have changed as well.
-    if (fileEntrypoint && !visitedFiles.has(filename)) {
+    if (
+      !visitedFiles.has(filename) &&
+      (fileEntrypoint || this.hasCachedDependencies(filename))
+    ) {
       visitedFiles.add(filename);
+      const invalidateOnDependencyChange =
+        fileEntrypoint?.invalidateOnDependencyChange;
 
-      for (const [, dependency] of fileEntrypoint.dependencies) {
+      const dependenciesToCheck = new Map<
+        string,
+        { resolved: string | null }
+      >();
+
+      for (const [key, dependency] of fileEntrypoint?.dependencies ?? []) {
+        dependenciesToCheck.set(key, dependency);
+      }
+
+      for (const [
+        key,
+        dependency,
+      ] of fileEntrypoint?.invalidationDependencies ?? []) {
+        if (!dependenciesToCheck.has(key)) {
+          dependenciesToCheck.set(key, dependency);
+        }
+      }
+
+      for (const dependencyFilename of this.getCachedDependencies(filename)) {
+        if (
+          ![...dependenciesToCheck.values()].some(
+            (dependency) => dependency.resolved === dependencyFilename
+          )
+        ) {
+          dependenciesToCheck.set(dependencyFilename, {
+            resolved: dependencyFilename,
+          });
+        }
+      }
+
+      for (const [, dependency] of dependenciesToCheck) {
         const dependencyFilename = dependency.resolved;
 
         if (dependencyFilename) {
-          const dependencyContent = fs.readFileSync(
-            stripQueryAndHash(dependencyFilename),
-            'utf8'
-          );
-          this.invalidateIfChanged(
+          let dependencyContent: string;
+
+          try {
+            dependencyContent = fs.readFileSync(
+              stripQueryAndHash(dependencyFilename),
+              'utf8'
+            );
+          } catch (error) {
+            if (!isMissingFileError(error)) {
+              throw error;
+            }
+
+            this.invalidateForFile(dependencyFilename);
+            anyDepChanged = true;
+            continue;
+          }
+
+          const dependencyChanged = this.invalidateIfChanged(
             dependencyFilename,
             dependencyContent,
             visitedFiles,
-            'fs'
+            'fs',
+            changedFiles
           );
+
+          if (
+            dependencyChanged &&
+            invalidateOnDependencyChange?.has(dependencyFilename)
+          ) {
+            cacheLogger(
+              'dependency affecting output has changed, invalidate all for %s',
+              filename
+            );
+            this.invalidateForFile(filename);
+            changedFiles.add(filename);
+
+            return true;
+          }
+
+          if (dependencyChanged) {
+            anyDepChanged = true;
+          }
         }
       }
     }
@@ -252,35 +370,130 @@ export class TransformCacheCollection<
       const otherSource = source === 'fs' ? 'loaded' : 'fs';
       const otherHash = existing?.[otherSource];
 
-      if (otherHash !== undefined && otherHash !== newHash) {
-        cacheLogger(
-          'content has changed (%s), invalidate all for %s',
-          source,
-          filename
-        );
+      if ((otherHash !== undefined && otherHash !== newHash) || anyDepChanged) {
+        cacheLogger('content has changed, invalidate all for %s', filename);
         this.setContentHash(filename, source, newHash);
         this.invalidateForFile(filename);
+        changedFiles.add(filename);
 
         return true;
       }
 
       this.setContentHash(filename, source, newHash);
+
+      if (anyDepChanged) {
+        this.invalidateForFile(filename);
+        changedFiles.add(filename);
+        return true;
+      }
+
       return false;
     }
 
-    if (previousHash !== newHash) {
-      cacheLogger(
-        'content has changed (%s), invalidate all for %s',
-        source,
-        filename
-      );
+    if (previousHash !== newHash || anyDepChanged) {
+      cacheLogger('content has changed, invalidate all for %s', filename);
       this.setContentHash(filename, source, newHash);
       this.invalidateForFile(filename);
+      changedFiles.add(filename);
 
       return true;
     }
 
     return false;
+  }
+
+  public setCacheDependencies(
+    cacheName: 'barrelManifests' | 'exports',
+    key: string,
+    dependencies: Iterable<string>
+  ): void {
+    const cache = this.getDependencyCache(cacheName);
+    const nextDependencies = new Set(
+      [...dependencies].filter((dependency) => dependency.length > 0)
+    );
+    const cacheKey = this.getKey(key);
+
+    if (nextDependencies.size === 0) {
+      cache.delete(cacheKey);
+      return;
+    }
+
+    cache.set(cacheKey, nextDependencies);
+  }
+
+  /**
+   * Fast check if a file changed on disk since last seen.
+   * Uses mtime as a fast path and only reads the file if mtime differs.
+   */
+  public checkFreshness(filename: string, strippedFilename: string): boolean {
+    try {
+      const currentMtime = fs.statSync(strippedFilename).mtimeMs;
+      const cachedMtime = this.fileMtimes.get(filename);
+
+      if (cachedMtime !== undefined && currentMtime === cachedMtime) {
+        return false;
+      }
+
+      const content = fs.readFileSync(strippedFilename, 'utf8');
+      this.fileMtimes.set(filename, currentMtime);
+
+      if (this.invalidateIfChanged(filename, content, undefined, 'fs')) {
+        return true;
+      }
+
+      return false;
+    } catch (error) {
+      if (!isMissingFileError(error)) {
+        throw error;
+      }
+
+      this.invalidateForFile(filename);
+      return true;
+    }
+  }
+
+  private clearCacheDependencies(cacheName: CacheNames | 'all', key?: string) {
+    if (cacheName === 'all') {
+      this.barrelManifestDependencies.clear();
+      this.exportDependencies.clear();
+      return;
+    }
+
+    if (cacheName === 'barrelManifests') {
+      if (key === undefined) {
+        this.barrelManifestDependencies.clear();
+      } else {
+        this.barrelManifestDependencies.delete(this.getKey(key));
+      }
+      return;
+    }
+
+    if (cacheName === 'exports') {
+      if (key === undefined) {
+        this.exportDependencies.clear();
+      } else {
+        this.exportDependencies.delete(this.getKey(key));
+      }
+    }
+  }
+
+  private getCachedDependencies(filename: string): Set<string> {
+    const key = this.getKey(filename);
+
+    return new Set([
+      ...(this.barrelManifestDependencies.get(key) ?? []),
+      ...(this.exportDependencies.get(key) ?? []),
+    ]);
+  }
+
+  private getDependencyCache(cacheName: 'barrelManifests' | 'exports') {
+    return cacheName === 'barrelManifests'
+      ? this.barrelManifestDependencies
+      : this.exportDependencies;
+  }
+
+  private hasCachedDependencies(filename: string): boolean {
+    return this.getCachedDependencies(filename).size > 0;
   }
 
   private setContentHash(
@@ -291,9 +504,19 @@ export class TransformCacheCollection<
     const current = this.contentHashes.get(filename);
     if (current) {
       current[source] = hash;
-      return;
+    } else {
+      this.contentHashes.set(filename, { [source]: hash });
     }
 
-    this.contentHashes.set(filename, { [source]: hash });
+    if (source === 'fs') {
+      try {
+        this.fileMtimes.set(
+          filename,
+          fs.statSync(stripQueryAndHash(filename)).mtimeMs
+        );
+      } catch {
+        // ignore
+      }
+    }
   }
 }

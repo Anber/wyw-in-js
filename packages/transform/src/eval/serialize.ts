@@ -11,6 +11,7 @@ export type SerializedValue =
   | { kind: 'string'; value: string }
   | { kind: 'number'; value: number }
   | { kind: 'function' }
+  | { kind: 'symbol'; description: string }
   | { kind: 'error'; error: SerializedError }
   | { kind: 'undefined' }
   | { kind: 'bigint'; value: string }
@@ -51,6 +52,8 @@ export type EncodedGlobal = {
 type PathSegment = string | number | symbol;
 
 type SerializeValueOptions = {
+  allowFunctions?: boolean;
+  allowSymbols?: boolean;
   path?: PathSegment[];
   rootLabel?: string;
 };
@@ -139,7 +142,9 @@ const serializeValueAtPath = (
   value: unknown,
   rootLabel: string,
   path: PathSegment[],
-  seen: WeakMap<object, string>
+  seen: WeakMap<object, string>,
+  allowFunctions: boolean,
+  allowSymbols: boolean
 ): SerializedValue => {
   if (value === null) {
     return { kind: 'null' };
@@ -176,10 +181,21 @@ const serializeValueAtPath = (
   }
 
   if (typeof value === 'function') {
+    if (allowFunctions) {
+      // __wywPreval consumers only rely on function-ness, not implementation
+      // identity. Preserve that signal explicitly instead of letting JSON
+      // coerce to null/undefined.
+      return { kind: 'function' };
+    }
+
     throwUnsupportedIpcValue(rootLabel, path, 'an unsupported function');
   }
 
   if (typeof value === 'symbol') {
+    if (allowSymbols) {
+      return { kind: 'symbol', description: value.description ?? '' };
+    }
+
     throwUnsupportedIpcValue(rootLabel, path, 'an unsupported symbol');
   }
 
@@ -228,7 +244,14 @@ const serializeValueAtPath = (
       return {
         kind: 'array',
         items: Array.from({ length: value.length }, (_, index) =>
-          serializeValueAtPath(value[index], rootLabel, [...path, index], seen)
+          serializeValueAtPath(
+            value[index],
+            rootLabel,
+            [...path, index],
+            seen,
+            allowFunctions,
+            allowSymbols
+          )
         ),
       };
     } finally {
@@ -262,7 +285,14 @@ const serializeValueAtPath = (
       entries: Object.fromEntries(
         Object.entries(value).map(([key, item]) => [
           key,
-          serializeValueAtPath(item, rootLabel, [...path, key], seen),
+          serializeValueAtPath(
+            item,
+            rootLabel,
+            [...path, key],
+            seen,
+            allowFunctions,
+            allowSymbols
+          ),
         ])
       ),
     };
@@ -279,7 +309,9 @@ export const serializeValue = (
     value,
     options.rootLabel ?? 'value',
     options.path ?? [],
-    new WeakMap<object, string>()
+    new WeakMap<object, string>(),
+    options.allowFunctions ?? false,
+    options.allowSymbols ?? false
   );
 
 export const deserializeValue = (value: SerializedValue): unknown => {
@@ -302,6 +334,8 @@ export const deserializeValue = (value: SerializedValue): unknown => {
       return -Infinity;
     case 'function':
       return () => {};
+    case 'symbol':
+      return value.description ? Symbol.for(value.description) : Symbol();
     case 'error': {
       const error = new Error(value.error.message);
       if (value.error.name) {
@@ -336,6 +370,8 @@ export const serializePreval = (
     Object.entries(values).map(([key, value]) => [
       key,
       serializeValue(value, {
+        allowFunctions: true,
+        allowSymbols: true,
         rootLabel: '__wywPreval',
         path: [key],
       }),

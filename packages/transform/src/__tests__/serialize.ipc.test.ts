@@ -22,7 +22,9 @@ describe('eval IPC serialization', () => {
       },
     };
 
-    const roundTripped = deserializeValue(serializeValue(input)) as {
+    const roundTripped = deserializeValue(
+      serializeValue(input, { allowFunctions: true })
+    ) as {
       nothing: null;
       enabled: boolean;
       label: string;
@@ -56,6 +58,33 @@ describe('eval IPC serialization', () => {
     });
   });
 
+  it('preserves functions as opaque callable sentinels', () => {
+    const input = {
+      topLevel: () => 'value',
+      nested: {
+        list: [() => 1],
+        marker: Symbol.for('react.forward_ref'),
+      },
+    };
+
+    const roundTripped = deserializeValue(
+      serializeValue(input, { allowFunctions: true, allowSymbols: true })
+    ) as {
+      topLevel: () => unknown;
+      nested: {
+        list: Array<() => unknown>;
+        marker: symbol;
+      };
+    };
+
+    expect(typeof roundTripped.topLevel).toBe('function');
+    expect(roundTripped.topLevel()).toBeUndefined();
+    expect(typeof roundTripped.nested.list[0]).toBe('function');
+    expect(roundTripped.nested.list[0]()).toBeUndefined();
+    expect(typeof roundTripped.nested.marker).toBe('symbol');
+    expect(roundTripped.nested.marker).toBe(Symbol.for('react.forward_ref'));
+  });
+
   it.each([
     {
       label: 'Date',
@@ -74,12 +103,6 @@ describe('eval IPC serialization', () => {
       value: { value: new Set([1]) },
       path: '__wywPreval.value',
       detail: 'unsupported non-plain object (Set)',
-    },
-    {
-      label: 'function',
-      value: { value: () => 1 },
-      path: '__wywPreval.value',
-      detail: 'unsupported function',
     },
     {
       label: 'class instance',

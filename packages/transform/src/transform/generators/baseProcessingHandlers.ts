@@ -2,12 +2,18 @@ import type {
   SyncScenarioForAction,
   ICollectAction,
   IEvalAction,
+  IExplodeReexportsAction,
   IExtractAction,
+  IGetExportsAction,
+  IProcessImportsAction,
   IWorkflowAction,
   ActionQueueItem,
 } from '../types';
 
+import { explodeReexports } from './explodeReexports';
+import { getExports } from './getExports';
 import { processEntrypoint } from './processEntrypoint';
+import { processImports } from './processImports';
 import { transform } from './transform';
 
 // eslint-disable-next-line require-yield
@@ -22,6 +28,9 @@ export const baseProcessingHandlers = {
   evalFile: emptyHandler<IEvalAction>,
   extract: emptyHandler<IExtractAction>,
   workflow: emptyHandler<IWorkflowAction>,
+  explodeReexports,
+  getExports,
   processEntrypoint,
+  processImports,
   transform,
 };

@@ -1004,7 +1004,7 @@ describe('definable globals', () => {
 });
 
 describe('conditionNames', () => {
-  it('passes expanded conditions to _resolveFilename', () => {
+  it('passes expanded conditions to _resolveFilename', async () => {
     const code = dedent`
       module.exports = require.resolve('my-pkg');
     `;
@@ -1049,7 +1049,7 @@ describe('conditionNames', () => {
       undefined,
       moduleImpl as never
     );
-    safeEvaluate(mod);
+    await safeEvaluate(mod);
 
     expect(JSON.parse(mod.exports as string)).toEqual([
       'custom',
@@ -1059,7 +1059,7 @@ describe('conditionNames', () => {
     ]);
   });
 
-  it('"..." expands to CJS defaults (require, node, default)', () => {
+  it('"..." expands to CJS defaults (require, node, default)', async () => {
     const code = dedent`
       module.exports = require.resolve('my-pkg');
     `;
@@ -1103,7 +1103,7 @@ describe('conditionNames', () => {
       undefined,
       moduleImpl as never
     );
-    safeEvaluate(mod);
+    await safeEvaluate(mod);
 
     expect(JSON.parse(mod.exports as string)).toEqual([
       'default',
@@ -1112,7 +1112,7 @@ describe('conditionNames', () => {
     ]);
   });
 
-  it('without "..." only listed conditions are passed', () => {
+  it('without "..." only listed conditions are passed', async () => {
     const code = dedent`
       module.exports = require.resolve('my-pkg');
     `;
@@ -1154,12 +1154,12 @@ describe('conditionNames', () => {
       undefined,
       moduleImpl as never
     );
-    safeEvaluate(mod);
+    await safeEvaluate(mod);
 
     expect(JSON.parse(mod.exports as string)).toEqual(['custom-only']);
   });
 
-  it('does not pass conditions when conditionNames is not set', () => {
+  it('does not pass conditions when conditionNames is not set', async () => {
     const code = dedent`
       module.exports = require.resolve('my-pkg');
     `;
@@ -1192,12 +1192,12 @@ describe('conditionNames', () => {
       undefined,
       moduleImpl as never
     );
-    safeEvaluate(mod);
+    await safeEvaluate(mod);
 
     expect(mod.exports).toBe('undefined');
   });
 
-  it('retries with extensions when conditions cause MODULE_NOT_FOUND', () => {
+  it('retries with extensions when conditions cause MODULE_NOT_FOUND', async () => {
     const code = dedent`
       module.exports = require.resolve('my-pkg/src/util');
     `;
@@ -1243,7 +1243,7 @@ describe('conditionNames', () => {
       undefined,
       moduleImpl as never
     );
-    safeEvaluate(mod);
+    await safeEvaluate(mod);
 
     expect(mod.exports).toBe('/resolved/my-pkg/src/util.ts');
   });
