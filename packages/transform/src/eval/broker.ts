@@ -713,6 +713,8 @@ export class EvalBroker {
 
   private lastInitKey: string | null = null;
 
+  private lastHappyDomEnabled = false;
+
   private evalQueue: Promise<void> = Promise.resolve();
 
   private readonly pending = new Map<string, PendingRequest>();
@@ -860,6 +862,53 @@ export class EvalBroker {
       this.runnerReady = null;
     }
     this.lastInitKey = null;
+    this.lastHappyDomEnabled = false;
+  }
+
+  private createRunnerProcess(): ChildProcessWithoutNullStreams {
+    const runnerPath = buildRunnerPath();
+    const nodeBinary =
+      process.env.WYW_NODE_BINARY ||
+      (process.execPath.includes('bun') ? 'node' : process.execPath);
+
+    const runner = spawn(
+      nodeBinary,
+      ['--experimental-vm-modules', runnerPath],
+      {
+        stdio: ['pipe', 'pipe', 'pipe'],
+        cwd: this.services.options.root ?? process.cwd(),
+        env: {
+          ...process.env,
+          WYW_EVAL_RUNNER: '1',
+          NODE_NO_WARNINGS: '1',
+        },
+      }
+    );
+
+    runner.stdout.setEncoding('utf8');
+    runner.stderr.setEncoding('utf8');
+
+    return runner;
+  }
+
+  private attachRunnerListeners(runner: ChildProcessWithoutNullStreams) {
+    runner.stdout.on('data', (chunk) => this.onData(String(chunk)));
+    runner.stderr.on('data', (chunk) => {
+      emitWarning(this.services, `[wyw-eval-runner] ${chunk.toString()}`);
+    });
+    runner.on('exit', (code, signal) => {
+      if (this.runner !== runner) {
+        return;
+      }
+      const reason = `Eval runner exited (${code ?? 'null'} / ${
+        signal ?? 'null'
+      })`;
+      this.rejectAllPending(new Error(reason));
+      this.runner = null;
+      this.runnerReady = null;
+      this.lastInitKey = null;
+      this.lastHappyDomEnabled = false;
+    });
   }
 
   private async ensureRunner() {
@@ -868,40 +917,130 @@ export class EvalBroker {
       return;
     }
 
-    const runnerPath = buildRunnerPath();
-    const nodeBinary =
-      process.env.WYW_NODE_BINARY ||
-      (process.execPath.includes('bun') ? 'node' : process.execPath);
-
-    this.runner = spawn(nodeBinary, ['--experimental-vm-modules', runnerPath], {
-      stdio: ['pipe', 'pipe', 'pipe'],
-      cwd: this.services.options.root ?? process.cwd(),
-      env: {
-        ...process.env,
-        WYW_EVAL_RUNNER: '1',
-        NODE_NO_WARNINGS: '1',
-      },
-    });
-
-    this.runner.stdout.setEncoding('utf8');
-    this.runner.stderr.setEncoding('utf8');
-
-    this.runner.stdout.on('data', (chunk) => this.onData(String(chunk)));
-    this.runner.stderr.on('data', (chunk) => {
-      emitWarning(this.services, `[wyw-eval-runner] ${chunk.toString()}`);
-    });
-    this.runner.on('exit', (code, signal) => {
-      const reason = `Eval runner exited (${code ?? 'null'} / ${
-        signal ?? 'null'
-      })`;
-      this.rejectAllPending(new Error(reason));
-      this.runner = null;
-      this.runnerReady = null;
-      this.lastInitKey = null;
-    });
-
+    this.runner = this.createRunnerProcess();
+    this.attachRunnerListeners(this.runner);
     this.runnerReady = Promise.resolve();
     await this.runnerReady;
+  }
+
+  private async initIsolatedRunner(
+    payload: EvalRunnerInitPayload,
+    timeoutMs: number
+  ): Promise<ChildProcessWithoutNullStreams> {
+    const runner = this.createRunnerProcess();
+    const requestId = `candidate-init-${++this.nextId}`;
+    let buffer = '';
+
+    return new Promise<ChildProcessWithoutNullStreams>((resolve, reject) => {
+      let settled = false;
+
+      const cleanup = () => {
+        runner.stdout.off('data', onStdout);
+        runner.stderr.off('data', onStderr);
+        runner.off('exit', onExit);
+      };
+
+      const finalizeResolve = (value: ChildProcessWithoutNullStreams) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        clearTimeout(timeout);
+        cleanup();
+        resolve(value);
+      };
+
+      const finalizeReject = (value: Error | { message: string; stack?: string }) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        clearTimeout(timeout);
+        cleanup();
+        reject(value);
+      };
+
+      const onStderr = (chunk: string | Buffer) => {
+        emitWarning(this.services, `[wyw-eval-runner] ${chunk.toString()}`);
+      };
+
+      const onExit = (code: number | null, signal: NodeJS.Signals | null) => {
+        finalizeReject(
+          new Error(
+            `Eval runner exited during init (${code ?? 'null'} / ${
+              signal ?? 'null'
+            })`
+          )
+        );
+      };
+
+      const onStdout = (chunk: string | Buffer) => {
+        const next = `${buffer}${chunk.toString()}`;
+        const lines = next.split('\n');
+        buffer = lines.pop() ?? '';
+
+        lines.forEach((line) => {
+          if (!line.trim()) return;
+
+          let message: RunnerToMainMessage;
+          try {
+            message = JSON.parse(line);
+          } catch {
+            emitWarning(
+              this.services,
+              `[wyw-eval-runner] Failed to parse message: ${line}`
+            );
+            return;
+          }
+
+          if (message.type === 'WARN') {
+            this.handleWarn(message.payload);
+            return;
+          }
+
+          if (message.type !== 'INIT_ACK' || message.id !== requestId) {
+            return;
+          }
+
+          if (message.error) {
+            runner.kill();
+            finalizeReject(message.error);
+            return;
+          }
+
+          finalizeResolve(runner);
+        });
+      };
+
+      const timeout = setTimeout(() => {
+        const error = new Error(`[wyw-in-js] Eval runner timed out for INIT`);
+        (error as { code?: string }).code = 'WYW_EVAL_TIMEOUT';
+        runner.kill();
+        finalizeReject(error);
+      }, timeoutMs);
+
+      runner.stdout.on('data', onStdout);
+      runner.stderr.on('data', onStderr);
+      runner.on('exit', onExit);
+
+      const message: MainToRunnerMessage = {
+        type: 'INIT',
+        id: requestId,
+        payload,
+      };
+      runner.stdin.write(`${JSON.stringify(message)}\n`);
+    });
+  }
+
+  private replaceRunner(nextRunner: ChildProcessWithoutNullStreams) {
+    if (this.runner) {
+      this.runner.removeAllListeners();
+      this.runner.kill();
+    }
+
+    this.runner = nextRunner;
+    this.attachRunnerListeners(nextRunner);
+    this.runnerReady = Promise.resolve();
   }
 
   private async initRunner(entrypoint: Entrypoint) {
@@ -909,14 +1048,55 @@ export class EvalBroker {
     const payload = buildRunnerInitPayload(this.services, entrypoint, features);
     payload.reuseModules = !this.services.options.pluginOptions.overrideContext;
     const initKey = getInitPayloadKey(payload);
+    const nextHappyDomEnabled = isFeatureEnabled(
+      features,
+      'happyDOM',
+      entrypoint.name
+    );
     if (this.lastInitKey === initKey) {
       return;
     }
     const timeoutMs = this.getInitTimeoutMs(entrypoint, features);
 
+    if (
+      this.runner &&
+      this.lastInitKey !== null &&
+      nextHappyDomEnabled &&
+      !this.lastHappyDomEnabled &&
+      !this.happyDomDisabled
+    ) {
+      try {
+        const nextRunner = await this.initIsolatedRunner(payload, timeoutMs);
+        this.replaceRunner(nextRunner);
+        this.lastInitKey = initKey;
+        this.lastHappyDomEnabled = true;
+        return;
+      } catch (error) {
+        if (isEvalTimeoutError(error)) {
+          this.happyDomDisabled = true;
+          this.warnHappyDomDisabledOnce(timeoutMs);
+          const fallbackFeatures = this.getRunnerFeatures();
+          const fallbackPayload = buildRunnerInitPayload(
+            this.services,
+            entrypoint,
+            fallbackFeatures
+          );
+          fallbackPayload.reuseModules =
+            !this.services.options.pluginOptions.overrideContext;
+          await this.request('INIT', fallbackPayload, INIT_TIMEOUT_MS);
+          this.lastInitKey = getInitPayloadKey(fallbackPayload);
+          this.lastHappyDomEnabled = false;
+          return;
+        }
+
+        throw error;
+      }
+    }
+
     try {
       await this.request('INIT', payload, timeoutMs);
       this.lastInitKey = initKey;
+      this.lastHappyDomEnabled = nextHappyDomEnabled;
     } catch (error) {
       if (
         isEvalTimeoutError(error) &&
@@ -933,8 +1113,11 @@ export class EvalBroker {
           entrypoint,
           fallbackFeatures
         );
+        fallbackPayload.reuseModules =
+          !this.services.options.pluginOptions.overrideContext;
         await this.request('INIT', fallbackPayload, INIT_TIMEOUT_MS);
         this.lastInitKey = getInitPayloadKey(fallbackPayload);
+        this.lastHappyDomEnabled = false;
         return;
       }
       throw error;

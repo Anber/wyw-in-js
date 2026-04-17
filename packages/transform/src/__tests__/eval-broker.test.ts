@@ -57,7 +57,15 @@ const createServices = (
 
 const getPrivateBroker = (broker: EvalBroker) =>
   broker as unknown as {
+    happyDomDisabled: boolean;
+    initIsolatedRunner: (
+      payload: unknown,
+      timeoutMs: number
+    ) => Promise<unknown>;
+    initRunner: (entrypoint: Entrypoint) => Promise<void>;
     importsByModule: Map<string, Map<string, string[]>>;
+    lastHappyDomEnabled: boolean;
+    lastInitKey: string | null;
     loadModule: (payload: {
       id: string;
       importerId?: string | null;
@@ -73,6 +81,12 @@ const getPrivateBroker = (broker: EvalBroker) =>
       kind: 'import' | 'dynamic-import' | 'require';
       specifier: string;
     }) => Promise<{ resolvedId: string | null }>;
+    request: (
+      type: 'INIT' | 'EVAL',
+      payload: unknown,
+      timeoutMs?: number
+    ) => Promise<unknown>;
+    runner: unknown;
   };
 
 describe('EvalBroker', () => {
@@ -508,6 +522,78 @@ describe('EvalBroker', () => {
 
       const second = await broker.evaluate(entrypoint);
       expect(second.values?.get('value')).toBe('missing');
+
+      broker.dispose();
+      rmSync(root, { recursive: true, force: true });
+    });
+
+    it('keeps the warm runner when a late happyDOM upgrade times out', async () => {
+      const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
+      const plainEntry = join(root, 'plain-entry.js');
+      const domEntry = join(root, 'dom-entry.js');
+
+      writeFileSync(
+        plainEntry,
+        ['export const __wywPreval = {', "  value: () => 'plain',", '};'].join(
+          '\n'
+        )
+      );
+      writeFileSync(
+        domEntry,
+        ['export const __wywPreval = {', "  value: () => 'dom',", '};'].join(
+          '\n'
+        )
+      );
+
+      const services = createServices(root, plainEntry, {
+        features: {
+          ...createPluginOptions().features,
+          happyDOM: [domEntry],
+        },
+      });
+      const broker = new EvalBroker(
+        services,
+        jest.fn(async () => null)
+      );
+      const privateBroker = getPrivateBroker(broker);
+      const request = jest
+        .spyOn(privateBroker, 'request')
+        .mockResolvedValue({});
+      const initIsolatedRunner = jest
+        .spyOn(privateBroker, 'initIsolatedRunner')
+        .mockImplementation(async () => {
+          const error = new Error('[wyw-in-js] Eval runner timed out for INIT');
+          (error as { code?: string }).code = 'WYW_EVAL_TIMEOUT';
+          throw error;
+        });
+
+      const plainEntrypoint = Entrypoint.createRoot(
+        services,
+        plainEntry,
+        ['__wywPreval'],
+        readFileSync(plainEntry, 'utf-8')
+      );
+      await privateBroker.initRunner(plainEntrypoint);
+
+      privateBroker.runner = {
+        kill: jest.fn(),
+        removeAllListeners: jest.fn(),
+      } as unknown;
+
+      const domEntrypoint = Entrypoint.createRoot(
+        services,
+        domEntry,
+        ['__wywPreval'],
+        readFileSync(domEntry, 'utf-8')
+      );
+      await privateBroker.initRunner(domEntrypoint);
+
+      expect(initIsolatedRunner).toHaveBeenCalledTimes(1);
+      expect(request).toHaveBeenCalledTimes(2);
+      expect(request.mock.calls[1]?.[0]).toBe('INIT');
+      expect(privateBroker.happyDomDisabled).toBe(true);
+      expect(privateBroker.lastHappyDomEnabled).toBe(false);
+      expect(privateBroker.lastInitKey).not.toBeNull();
 
       broker.dispose();
       rmSync(root, { recursive: true, force: true });
