@@ -1,5 +1,11 @@
 # @wyw-in-js/vite
 
+## 1.0.9
+
+### Patch Changes
+
+- 0a0b12f: Restore preserved-module JS-to-CSS links for WyW-generated CSS assets in Vite library builds.
+
 ## 1.0.8
 
 ### Patch Changes

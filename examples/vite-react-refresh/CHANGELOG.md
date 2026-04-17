@@ -1,5 +1,12 @@
 # vite-react-refresh-repro
 
+## 1.0.9
+
+### Patch Changes
+
+- Updated dependencies
+  - @wyw-in-js/vite@1.0.9
+
 ## 1.0.8
 
 ### Patch Changes
