@@ -347,7 +347,9 @@ describe('vite preserveCssPaths', () => {
       false as never
     );
 
-    expect((bundle['index.js'] as any).code).not.toContain('import "./index.css";');
+    expect((bundle['index.js'] as any).code).not.toContain(
+      'import "./index.css";'
+    );
   });
 
   it('restores nested css imports for preserveModules library chunks', async () => {
