@@ -82,6 +82,98 @@ const createErrnoError = (
 };
 
 describe('stale dependency detection in watch mode', () => {
+  it('invalidates cached prepare entrypoint when only a dependency changes on disk', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wyw-prepare-stale-'));
+    const parentFile = path.join(root, 'parent.ts');
+    const depFile = path.join(root, 'dep.ts');
+
+    fs.writeFileSync(depFile, dedent`export const val = 'old';`);
+    fs.writeFileSync(
+      parentFile,
+      dedent`
+        import { val } from './dep';
+        export const result = val;
+      `
+    );
+
+    const cache = new TransformCacheCollection();
+
+    const depServices = createServices(cache, depFile);
+    const depCode = fs.readFileSync(depFile, 'utf-8');
+    Entrypoint.createRoot(depServices, depFile, ['val'], depCode);
+
+    const parentServices = createServices(cache, parentFile);
+    const parentCode = fs.readFileSync(parentFile, 'utf-8');
+    const firstEntrypoint = Entrypoint.createRoot(
+      parentServices,
+      parentFile,
+      ['result'],
+      parentCode
+    );
+    firstEntrypoint.addDependency({
+      only: ['val'],
+      resolved: depFile,
+      source: './dep',
+    });
+
+    fs.writeFileSync(depFile, dedent`export const val = 'new';`);
+
+    const secondEntrypoint = Entrypoint.createRoot(
+      parentServices,
+      parentFile,
+      ['result'],
+      parentCode
+    );
+
+    expect(secondEntrypoint).not.toBe(firstEntrypoint);
+    expect(secondEntrypoint.generation).toBe(firstEntrypoint.generation + 1);
+    expect(cache.has('entrypoints', depFile)).toBe(false);
+  });
+
+  it('reuses cached prepare entrypoint when dependency is unchanged', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wyw-prepare-fresh-'));
+    const parentFile = path.join(root, 'parent.ts');
+    const depFile = path.join(root, 'dep.ts');
+
+    fs.writeFileSync(depFile, dedent`export const val = 'same';`);
+    fs.writeFileSync(
+      parentFile,
+      dedent`
+        import { val } from './dep';
+        export const result = val;
+      `
+    );
+
+    const cache = new TransformCacheCollection();
+
+    const depServices = createServices(cache, depFile);
+    const depCode = fs.readFileSync(depFile, 'utf-8');
+    Entrypoint.createRoot(depServices, depFile, ['val'], depCode);
+
+    const parentServices = createServices(cache, parentFile);
+    const parentCode = fs.readFileSync(parentFile, 'utf-8');
+    const firstEntrypoint = Entrypoint.createRoot(
+      parentServices,
+      parentFile,
+      ['result'],
+      parentCode
+    );
+    firstEntrypoint.addDependency({
+      only: ['val'],
+      resolved: depFile,
+      source: './dep',
+    });
+
+    const secondEntrypoint = Entrypoint.createRoot(
+      parentServices,
+      parentFile,
+      ['result'],
+      parentCode
+    );
+
+    expect(secondEntrypoint).toBe(firstEntrypoint);
+  });
+
   it('getEntrypoint detects stale evaluated entrypoint when file changed on disk', () => {
     // Directly tests the getEntrypoint short-circuit at module.ts:477.
     // When an entrypoint is cached as evaluated with sufficient evaluatedOnly,
