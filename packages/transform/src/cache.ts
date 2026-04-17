@@ -281,63 +281,18 @@ export class TransformCacheCollection<
       visitedFiles.add(filename);
       const invalidateOnDependencyChange =
         fileEntrypoint?.invalidateOnDependencyChange;
-
-      const dependenciesToCheck = new Map<
-        string,
-        { resolved: string | null }
-      >();
-
-      for (const [key, dependency] of fileEntrypoint?.dependencies ?? []) {
-        dependenciesToCheck.set(key, dependency);
-      }
-
-      for (const [
-        key,
-        dependency,
-      ] of fileEntrypoint?.invalidationDependencies ?? []) {
-        if (!dependenciesToCheck.has(key)) {
-          dependenciesToCheck.set(key, dependency);
-        }
-      }
-
-      for (const dependencyFilename of this.getCachedDependencies(filename)) {
-        if (
-          ![...dependenciesToCheck.values()].some(
-            (dependency) => dependency.resolved === dependencyFilename
-          )
-        ) {
-          dependenciesToCheck.set(dependencyFilename, {
-            resolved: dependencyFilename,
-          });
-        }
-      }
+      const dependenciesToCheck = this.getDependenciesToCheck(
+        filename,
+        fileEntrypoint
+      );
 
       for (const [, dependency] of dependenciesToCheck) {
         const dependencyFilename = dependency.resolved;
 
         if (dependencyFilename) {
-          let dependencyContent: string;
-
-          try {
-            dependencyContent = fs.readFileSync(
-              stripQueryAndHash(dependencyFilename),
-              'utf8'
-            );
-          } catch (error) {
-            if (!isMissingFileError(error)) {
-              throw error;
-            }
-
-            this.invalidateForFile(dependencyFilename);
-            anyDepChanged = true;
-            continue;
-          }
-
-          const dependencyChanged = this.invalidateIfChanged(
+          const dependencyChanged = this.didDependencyChange(
             dependencyFilename,
-            dependencyContent,
             visitedFiles,
-            'fs',
             changedFiles
           );
 
@@ -400,6 +355,130 @@ export class TransformCacheCollection<
     }
 
     return false;
+  }
+
+  private getDependenciesToCheck(
+    filename: string,
+    fileEntrypoint?: TEntrypoint
+  ): Map<string, { resolved: string | null }> {
+    const dependenciesToCheck = new Map<string, { resolved: string | null }>();
+
+    for (const [key, dependency] of fileEntrypoint?.dependencies ?? []) {
+      dependenciesToCheck.set(key, dependency);
+    }
+
+    for (const [key, dependency] of fileEntrypoint?.invalidationDependencies ??
+      []) {
+      if (!dependenciesToCheck.has(key)) {
+        dependenciesToCheck.set(key, dependency);
+      }
+    }
+
+    for (const dependencyFilename of this.getCachedDependencies(filename)) {
+      if (
+        ![...dependenciesToCheck.values()].some(
+          (dependency) => dependency.resolved === dependencyFilename
+        )
+      ) {
+        dependenciesToCheck.set(dependencyFilename, {
+          resolved: dependencyFilename,
+        });
+      }
+    }
+
+    return dependenciesToCheck;
+  }
+
+  private didDependencyChange(
+    dependencyFilename: string,
+    visitedFiles: Set<string>,
+    changedFiles: Set<string>
+  ): boolean {
+    if (changedFiles.has(dependencyFilename)) {
+      return true;
+    }
+
+    if (visitedFiles.has(dependencyFilename)) {
+      return false;
+    }
+
+    const strippedDependencyFilename = stripQueryAndHash(dependencyFilename);
+    const cachedMtime = this.fileMtimes.get(dependencyFilename);
+    const cachedEntrypoint = this.get('entrypoints', dependencyFilename);
+
+    if (cachedMtime !== undefined) {
+      let currentMtime: number;
+
+      try {
+        currentMtime = fs.statSync(strippedDependencyFilename).mtimeMs;
+      } catch (error) {
+        if (!isMissingFileError(error)) {
+          throw error;
+        }
+
+        this.invalidateForFile(dependencyFilename);
+        changedFiles.add(dependencyFilename);
+        return true;
+      }
+
+      if (currentMtime === cachedMtime) {
+        const nestedDependencies = this.getDependenciesToCheck(
+          dependencyFilename,
+          cachedEntrypoint
+        );
+
+        // A cached file without a cached entrypoint was invalidated earlier.
+        if (!cachedEntrypoint && nestedDependencies.size === 0) {
+          return true;
+        }
+
+        if (nestedDependencies.size === 0) {
+          return false;
+        }
+
+        const nextVisitedFiles = new Set(visitedFiles);
+        nextVisitedFiles.add(dependencyFilename);
+
+        for (const [, nestedDependency] of nestedDependencies) {
+          if (
+            nestedDependency.resolved &&
+            this.didDependencyChange(
+              nestedDependency.resolved,
+              nextVisitedFiles,
+              changedFiles
+            )
+          ) {
+            this.invalidateForFile(dependencyFilename);
+            changedFiles.add(dependencyFilename);
+            return true;
+          }
+        }
+
+        return false;
+      }
+    }
+
+    let dependencyContent: string;
+
+    try {
+      dependencyContent = fs.readFileSync(strippedDependencyFilename, 'utf8');
+    } catch (error) {
+      if (!isMissingFileError(error)) {
+        throw error;
+      }
+
+      this.invalidateForFile(dependencyFilename);
+      changedFiles.add(dependencyFilename);
+      return true;
+    }
+
+    return this.invalidateIfChanged(
+      dependencyFilename,
+      dependencyContent,
+      visitedFiles,
+      'fs',
+      changedFiles
+    );
   }
 
   public setCacheDependencies(

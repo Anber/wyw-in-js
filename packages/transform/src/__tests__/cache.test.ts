@@ -17,6 +17,7 @@ type MockEntrypoint = {
 };
 
 const mockedReadFileSync = jest.spyOn(fs, 'readFileSync');
+const mockedStatSync = jest.spyOn(fs, 'statSync');
 
 const createErrnoError = (
   code: string,
@@ -53,12 +54,17 @@ const setupCacheWithEntrypoint = (
 describe('TransformCacheCollection', () => {
   afterAll(() => {
     mockedReadFileSync.mockRestore();
+    mockedStatSync.mockRestore();
   });
 
   beforeEach(() => {
     mockedReadFileSync.mockReset();
     mockedReadFileSync.mockImplementation(() => {
       throw new Error('Unexpected readFileSync call.');
+    });
+    mockedStatSync.mockReset();
+    mockedStatSync.mockImplementation(() => {
+      throw createErrnoError('ENOENT');
     });
   });
 
@@ -209,6 +215,48 @@ describe('TransformCacheCollection', () => {
       expect(cache.has('entrypoints', parentName)).toBe(false); // Parent evicted
       expect(cache.has('entrypoints', depName)).toBe(false); // Dependency invalidated
       expect(mockedReadFileSync).toHaveBeenCalledWith(depName, 'utf8');
+    });
+
+    it('does not read unchanged leaf dependency content when mtime is unchanged', () => {
+      const depName = 'dep.js';
+      const depContent = 'export const b = 2;';
+      const parentName = 'parent.js';
+      const parentContent = 'import { b } from "./dep.js"; console.log(b);';
+
+      const { entrypoint: depEntrypoint } = setupCacheWithEntrypoint(
+        depName,
+        depContent
+      );
+
+      const parentDeps = new Map<
+        string,
+        Pick<IEntrypointDependency, 'resolved'>
+      >([['./dep.js', { resolved: depName }]]);
+      const { cache } = setupCacheWithEntrypoint(
+        parentName,
+        parentContent,
+        parentDeps
+      );
+
+      cache.add('entrypoints', depName, depEntrypoint as any);
+
+      mockedStatSync.mockImplementation((path) => {
+        if (path === depName) {
+          return { mtimeMs: 123 } as fs.Stats;
+        }
+
+        throw new Error(`Unexpected statSync call: ${String(path)}`);
+      });
+
+      cache.invalidateIfChanged(depName, depContent, undefined, 'fs');
+
+      const invalidated = cache.invalidateIfChanged(parentName, parentContent);
+
+      expect(invalidated).toBe(false);
+      expect(cache.has('entrypoints', parentName)).toBe(true);
+      expect(cache.has('entrypoints', depName)).toBe(true);
+      expect(mockedReadFileSync).not.toHaveBeenCalledWith(depName, 'utf8');
+      expect(mockedStatSync).toHaveBeenCalledWith(depName);
     });
 
     it('should invalidate parent when an invalidation-only dependency changed', () => {
@@ -714,8 +762,8 @@ describe('TransformCacheCollection', () => {
       expect(cache.has('entrypoints', fileA)).toBe(true);
       expect(cache.has('entrypoints', fileB)).toBe(true);
       expect(mockedReadFileSync).toHaveBeenCalledWith(fileB, 'utf8');
-      expect(mockedReadFileSync).toHaveBeenCalledWith(fileA, 'utf8');
-      expect(mockedReadFileSync).toHaveBeenCalledTimes(2);
+      expect(mockedReadFileSync).not.toHaveBeenCalledWith(fileA, 'utf8');
+      expect(mockedReadFileSync).toHaveBeenCalledTimes(1);
     });
 
     it('should invalidate parent when dependency content changed', () => {
@@ -853,7 +901,7 @@ describe('TransformCacheCollection', () => {
       expect(cache.has('entrypoints', fileB)).toBe(false);
       expect(cache.has('entrypoints', fileA)).toBe(true);
       expect(mockedReadFileSync).toHaveBeenCalledWith(fileA, 'utf8');
-      expect(mockedReadFileSync).toHaveBeenCalledWith(fileB, 'utf8');
+      expect(mockedReadFileSync).not.toHaveBeenCalledWith(fileB, 'utf8');
     });
   });
 
