@@ -850,7 +850,6 @@ export default function wywInJS({
     },
     generateBundle(outputOptions, bundle) {
       if (config.command !== 'build') return;
-      if (!config.build.lib) return;
       if (!outputOptions.preserveModules) return;
       if (config.build.cssCodeSplit === false) return;
 

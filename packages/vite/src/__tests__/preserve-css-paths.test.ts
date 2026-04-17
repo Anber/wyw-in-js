@@ -232,6 +232,124 @@ describe('vite preserveCssPaths', () => {
     );
   });
 
+  it('restores renamed root-level css imports for preserveModules chunks without build.lib', async () => {
+    const { default: wywInJS } = await import('../index');
+
+    const outputOptions = {
+      format: 'es',
+      preserveModules: true,
+      preserveModulesRoot: '/project/src',
+    };
+
+    const plugin = wywInJS({ preserveCssPaths: true });
+    plugin.configResolved?.({
+      root: '/project',
+      mode: 'production',
+      command: 'build',
+      base: '/',
+      createResolver: () => jest.fn().mockResolvedValue(undefined),
+      build: {
+        cssCodeSplit: true,
+        rollupOptions: { output: outputOptions },
+      },
+    } as any);
+
+    transformMock.mockResolvedValueOnce({
+      code: 'export const root = "root";',
+      sourceMap: null,
+      cssText: '.root { color: red; }',
+      dependencies: [],
+    });
+
+    await plugin.transform?.call(
+      { resolve: jest.fn(), warn: jest.fn() } as any,
+      'export const root = "root";',
+      '/project/src/index.ts'
+    );
+
+    const bundle = {
+      'index.js': {
+        type: 'chunk',
+        fileName: 'index.js',
+        code: '/* empty css */\nexport const root = "root";\n',
+        facadeModuleId: '/project/src/index.ts',
+      },
+      'index.css': {
+        type: 'asset',
+        fileName: 'index.css',
+        name: '/project/src/index.wyw-in-js.css',
+        source: '.root { color: red; }',
+      },
+    };
+
+    plugin.generateBundle?.(
+      outputOptions as any,
+      bundle as any,
+      false as never
+    );
+
+    expect((bundle['index.js'] as any).code).toContain('import "./index.css";');
+  });
+
+  it('does not inject css imports when preserveModules is disabled', async () => {
+    const { default: wywInJS } = await import('../index');
+
+    const outputOptions = {
+      format: 'es',
+      preserveModules: false,
+      preserveModulesRoot: '/project/src',
+    };
+
+    const plugin = wywInJS({ preserveCssPaths: true });
+    plugin.configResolved?.({
+      root: '/project',
+      mode: 'production',
+      command: 'build',
+      base: '/',
+      createResolver: () => jest.fn().mockResolvedValue(undefined),
+      build: {
+        cssCodeSplit: true,
+        rollupOptions: { output: outputOptions },
+      },
+    } as any);
+
+    transformMock.mockResolvedValueOnce({
+      code: 'export const root = "root";',
+      sourceMap: null,
+      cssText: '.root { color: red; }',
+      dependencies: [],
+    });
+
+    await plugin.transform?.call(
+      { resolve: jest.fn(), warn: jest.fn() } as any,
+      'export const root = "root";',
+      '/project/src/index.ts'
+    );
+
+    const bundle = {
+      'index.js': {
+        type: 'chunk',
+        fileName: 'index.js',
+        code: '/* empty css */\nexport const root = "root";\n',
+        facadeModuleId: '/project/src/index.ts',
+      },
+      'index.css': {
+        type: 'asset',
+        fileName: 'index.css',
+        name: '/project/src/index.wyw-in-js.css',
+        source: '.root { color: red; }',
+      },
+    };
+
+    plugin.generateBundle?.(
+      outputOptions as any,
+      bundle as any,
+      false as never
+    );
+
+    expect((bundle['index.js'] as any).code).not.toContain('import "./index.css";');
+  });
+
   it('restores nested css imports for preserveModules library chunks', async () => {
     const { default: wywInJS } = await import('../index');
 
@@ -409,6 +527,67 @@ describe('vite preserveCssPaths', () => {
 
     expect((bundle['index.js'] as any).code).toContain(
       '"use strict";require("./index.wyw-in-js.css");'
+    );
+  });
+
+  it('restores renamed root-level css requires for preserveModules CommonJS chunks without build.lib', async () => {
+    const { default: wywInJS } = await import('../index');
+
+    const outputOptions = {
+      format: 'cjs',
+      preserveModules: true,
+      preserveModulesRoot: '/project/src',
+    };
+
+    const plugin = wywInJS({ preserveCssPaths: true });
+    plugin.configResolved?.({
+      root: '/project',
+      mode: 'production',
+      command: 'build',
+      base: '/',
+      createResolver: () => jest.fn().mockResolvedValue(undefined),
+      build: {
+        cssCodeSplit: true,
+        rollupOptions: { output: outputOptions },
+      },
+    } as any);
+
+    transformMock.mockResolvedValueOnce({
+      code: 'exports.root = "root";',
+      sourceMap: null,
+      cssText: '.root { color: red; }',
+      dependencies: [],
+    });
+
+    await plugin.transform?.call(
+      { resolve: jest.fn(), warn: jest.fn() } as any,
+      'exports.root = "root";',
+      '/project/src/index.ts'
+    );
+
+    const bundle = {
+      'index.js': {
+        type: 'chunk',
+        fileName: 'index.js',
+        code: '"use strict";Object.defineProperty(exports,Symbol.toStringTag,{value:"Module"});exports.root = "root";\n',
+        facadeModuleId: '/project/src/index.ts',
+      },
+      'index.css': {
+        type: 'asset',
+        fileName: 'index.css',
+        name: '/project/src/index.wyw-in-js.css',
+        source: '.root { color: red; }',
+      },
+    };
+
+    plugin.generateBundle?.(
+      outputOptions as any,
+      bundle as any,
+      false as never
+    );
+
+    expect((bundle['index.js'] as any).code).toContain(
+      '"use strict";require("./index.css");'
     );
   });
 
