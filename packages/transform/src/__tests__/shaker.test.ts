@@ -432,4 +432,45 @@ describe('shaker', () => {
     expect(code).not.toContain('unused');
     expect(code).not.toContain('alsoUnused');
   });
+
+  it('should drop unreferenced helper declarations after component code is stripped', () => {
+    const code = run(['default'])`
+      import { ApolloError } from '@apollo/client';
+
+      class ResolveError extends Error {}
+
+      function getErrorData(error) {
+        if (error instanceof ResolveError) {
+          return getErrorData(error.innerError);
+        }
+
+        if (error instanceof ApolloError) {
+          return null;
+        }
+
+        return null;
+      }
+
+      const BareEditor = function BareEditor() {
+        return null;
+      };
+
+      const _exp = function _exp() {
+        return BareEditor;
+      };
+
+      export default {
+        displayName: 'Editor0',
+        __wyw_meta: {
+          className: 'editor',
+          extends: _exp(),
+        },
+      };
+    `;
+
+    expect(code).toContain('__wyw_meta');
+    expect(code).not.toContain('ApolloError');
+    expect(code).not.toContain('ResolveError');
+    expect(code).not.toContain('getErrorData');
+  });
 });

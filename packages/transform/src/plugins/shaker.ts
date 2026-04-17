@@ -818,9 +818,22 @@ export default function shakerPlugin(
           file.scope.crawl();
 
           // Find and mark for deleting all unreferenced variables
-          const unreferenced = Object.values(
-            file.scope.getAllBindings()
-          ).filter((i) => !i.referenced);
+          const unreferenced = Object.values(file.scope.getAllBindings()).filter(
+            (binding) => {
+              if (!binding.referenced) {
+                return true;
+              }
+
+              return (
+                (binding.path.isFunctionDeclaration() ||
+                  binding.path.isClassDeclaration()) &&
+                binding.referencePaths.length > 0 &&
+                binding.referencePaths.every((ref) =>
+                  binding.path.isAncestor(ref)
+                )
+              );
+            }
+          );
 
           for (const binding of unreferenced) {
             if (binding.path.isVariableDeclarator()) {
@@ -844,6 +857,17 @@ export default function shakerPlugin(
                 if (queueForDeleting(id)) {
                   changed = true;
                 }
+              }
+            }
+
+            if (
+              (binding.path.isFunctionDeclaration() ||
+                binding.path.isClassDeclaration()) &&
+              !isRemoved(binding.path) &&
+              !forDeletingSet.has(binding.path)
+            ) {
+              if (queueForDeleting(binding.path)) {
+                changed = true;
               }
             }
 
