@@ -127,6 +127,20 @@ describe('shaker', () => {
     expect(code).not.toContain('react/jsx-runtime');
   });
 
+  it('should unwrap single exported const declarations without cloning', () => {
+    const code = run(['__wywPreval'])`
+      export const Button = () => 'button';
+
+      export const __wywPreval = {
+        value: Button,
+      };
+    `;
+
+    expect(code).toContain('const Button =');
+    expect(code).not.toContain('export const Button');
+    expect(code).toContain('__wywPreval');
+  });
+
   it('should not crash when dropping an anonymous default export', () => {
     const code = run(['foo'])`
       export const foo = 1;
@@ -380,6 +394,24 @@ describe('shaker', () => {
     expect(code).toContain('const mode');
     expect(code).not.toContain('exports.Flags');
     expect(code).not.toContain('exports.mode');
+  });
+
+  it('should ignore type-only enum references when deciding liveness', () => {
+    const code = run(['__wywPreval'])`
+      export enum Flags {
+        Dev = 1,
+      }
+
+      type Mode = Flags;
+
+      const _exp = /*#__PURE__*/() => 'static-class';
+      export const __wywPreval = {
+        _exp: _exp,
+      };
+    `;
+
+    expect(code).not.toContain('var Flags');
+    expect(code).not.toContain('exports.Flags');
   });
 
   it('should keep base classes local when a surviving export extends them', () => {

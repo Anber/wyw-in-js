@@ -4,6 +4,7 @@ import type { CallExpression, Program } from '@babel/types';
 import type { IImport, ISideEffectImport } from './collectExportsAndImports';
 import { collectExportsAndImports } from './collectExportsAndImports';
 import { getScope } from './getScope';
+import { getTraversalCache } from './traversalCache';
 
 function getCallee(p: NodePath<CallExpression>) {
   const callee = p.get('callee');
@@ -22,82 +23,159 @@ function getCallee(p: NodePath<CallExpression>) {
   return callee;
 }
 
-const JSXRuntimeSource = 'react/jsx-runtime';
-
-function isJSXRuntime(
-  p: NodePath<CallExpression>,
-  imports: (IImport | ISideEffectImport)[]
-) {
-  const jsxRuntime = imports.find((i) => i.source === JSXRuntimeSource);
-  const jsxRuntimeName =
-    jsxRuntime?.local?.isIdentifier() && jsxRuntime?.local?.node?.name;
-
-  if (jsxRuntime) {
-    const callee = getCallee(p);
-    if (jsxRuntimeName && callee.isIdentifier({ name: jsxRuntimeName })) {
-      return true;
-    }
-
-    if (
-      callee.isMemberExpression() &&
-      imports.find((i) => i.source === JSXRuntimeSource && i.local === callee)
-    ) {
-      return true;
-    }
-  }
-
-  return false;
-}
-
 function isHookOrCreateElement(name: string): boolean {
   return name === 'createElement' || /use[A-Z]/.test(name);
 }
 
+const JSXRuntimeSource = 'react/jsx-runtime';
+
+export interface ReactImportSummary {
+  hasImports: boolean;
+  jsxRuntimeIdentifiers: Map<string, NodePath>;
+  jsxRuntimeMembers: WeakSet<NodePath>;
+  reactDefaultIdentifiers: Map<string, NodePath>;
+  reactIdentifiers: Map<string, NodePath>;
+  reactMembers: WeakSet<NodePath>;
+}
+
+const createReactImportSummary = (
+  imports: (IImport | ISideEffectImport)[]
+): ReactImportSummary => {
+  const summary: ReactImportSummary = {
+    hasImports: false,
+    jsxRuntimeIdentifiers: new Map(),
+    jsxRuntimeMembers: new WeakSet(),
+    reactDefaultIdentifiers: new Map(),
+    reactIdentifiers: new Map(),
+    reactMembers: new WeakSet(),
+  };
+
+  imports.forEach((item) => {
+    if (item.imported === 'side-effect') {
+      return;
+    }
+
+    if (item.source === JSXRuntimeSource) {
+      summary.hasImports = true;
+
+      if (item.local.isIdentifier()) {
+        summary.jsxRuntimeIdentifiers.set(item.local.node.name, item.local);
+      } else {
+        summary.jsxRuntimeMembers.add(item.local);
+      }
+
+      return;
+    }
+
+    if (
+      item.source === 'react' &&
+      (item.imported === 'default' ||
+        (item.imported && isHookOrCreateElement(item.imported)))
+    ) {
+      summary.hasImports = true;
+
+      if (item.local.isIdentifier()) {
+        if (item.imported === 'default') {
+          summary.reactDefaultIdentifiers.set(item.local.node.name, item.local);
+        } else {
+          summary.reactIdentifiers.set(item.local.node.name, item.local);
+        }
+      } else {
+        summary.reactMembers.add(item.local);
+      }
+    }
+  });
+
+  return summary;
+};
+
+export function getReactImportSummary(
+  programPath: NodePath<Program>
+): ReactImportSummary {
+  const cache = getTraversalCache<ReactImportSummary>(
+    programPath,
+    'isUnnecessaryReactCall:summary'
+  );
+
+  if (cache.has(programPath)) {
+    return cache.get(programPath)!;
+  }
+
+  const summary = createReactImportSummary(
+    collectExportsAndImports(programPath).imports
+  );
+  cache.set(programPath, summary);
+
+  return summary;
+}
+
+function isJSXRuntime(
+  p: NodePath<CallExpression>,
+  summary: ReactImportSummary
+) {
+  const callee = getCallee(p);
+  if (callee.isIdentifier()) {
+    const importPath = summary.jsxRuntimeIdentifiers.get(callee.node.name);
+    if (!importPath) {
+      return false;
+    }
+
+    const bindingPath = getScope(callee).getBinding(callee.node.name)?.path;
+    return bindingPath?.isAncestor(importPath) ?? false;
+  }
+
+  return callee.isMemberExpression() && summary.jsxRuntimeMembers.has(callee);
+}
+
 function isClassicReactRuntime(
   p: NodePath<CallExpression>,
-  imports: (IImport | ISideEffectImport)[]
+  summary: ReactImportSummary
 ) {
-  const reactImports = imports.filter(
-    (i) =>
-      i.source === 'react' &&
-      (i.imported === 'default' ||
-        (i.imported && isHookOrCreateElement(i.imported)))
-  ) as IImport[];
-
-  if (reactImports.length === 0) return false;
   const callee = getCallee(p);
   if (callee.isIdentifier() && isHookOrCreateElement(callee.node.name)) {
+    const importPath = summary.reactIdentifiers.get(callee.node.name);
+    if (!importPath) {
+      return false;
+    }
+
     const bindingPath = getScope(callee).getBinding(callee.node.name)?.path;
-    return reactImports.some((i) => bindingPath?.isAncestor(i.local));
+    return bindingPath?.isAncestor(importPath) ?? false;
   }
 
   if (callee.isMemberExpression()) {
-    if (reactImports.some((i) => i.local === callee)) {
+    if (summary.reactMembers.has(callee)) {
       // It's React.createElement in CJS
       return true;
     }
 
     const object = callee.get('object');
     const property = callee.get('property');
-    const defaultImport = reactImports.find((i) => i.imported === 'default');
     if (
-      !defaultImport ||
-      !defaultImport.local.isIdentifier() ||
       !property.isIdentifier() ||
       !isHookOrCreateElement(property.node.name) ||
-      !object.isIdentifier({ name: defaultImport.local.node.name })
+      !object.isIdentifier()
     ) {
       return false;
     }
 
+    const defaultImportPath = summary.reactDefaultIdentifiers.get(
+      object.node.name
+    );
+    if (!defaultImportPath) {
+      return false;
+    }
+
     const bindingPath = getScope(object).getBinding(object.node.name)?.path;
-    return bindingPath?.isAncestor(defaultImport.local) ?? false;
+    return bindingPath?.isAncestor(defaultImportPath) ?? false;
   }
 
   return false;
 }
 
-export function isUnnecessaryReactCall(path: NodePath<CallExpression>) {
+export function isUnnecessaryReactCall(
+  path: NodePath<CallExpression>,
+  summary?: ReactImportSummary
+) {
   const programPath = path.findParent((p) => p.isProgram()) as
     | NodePath<Program>
     | undefined;
@@ -105,7 +183,13 @@ export function isUnnecessaryReactCall(path: NodePath<CallExpression>) {
     return false;
   }
 
-  const { imports } = collectExportsAndImports(programPath);
+  const importSummary = summary ?? getReactImportSummary(programPath);
+  if (!importSummary.hasImports) {
+    return false;
+  }
 
-  return isJSXRuntime(path, imports) || isClassicReactRuntime(path, imports);
+  return (
+    isJSXRuntime(path, importSummary) ||
+    isClassicReactRuntime(path, importSummary)
+  );
 }

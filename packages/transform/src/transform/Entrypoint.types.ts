@@ -4,6 +4,7 @@ import type { File } from '@babel/types';
 import type { Debugger, Evaluator } from '@wyw-in-js/shared';
 
 import type { Services } from './types';
+import type { WYWTransformMetadata } from '../utils/TransformMetadata';
 
 export interface IEntrypointCode {
   readonly ast: File;
@@ -23,6 +24,12 @@ export interface IEntrypointDependency {
   only: string[];
   resolved: string | null;
   source: string;
+}
+
+export interface IPreevalResult {
+  ast: File;
+  code: string;
+  metadata: WYWTransformMetadata | null;
 }
 
 export type LoadAndParseFn = (

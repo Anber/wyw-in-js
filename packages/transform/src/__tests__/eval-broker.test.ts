@@ -16,7 +16,10 @@ import {
 import { shaker } from '../shaker';
 import { withDefaultServices } from '../transform/helpers/withDefaultServices';
 import { Entrypoint } from '../transform/Entrypoint';
-import { EvalBroker } from '../eval/broker';
+import {
+  EvalBroker,
+  stripEntrypointGlobalsFromRunnerContext,
+} from '../eval/broker';
 
 const createPluginOptions = (overrides: PartialOptions = {}) =>
   loadWywOptions({
@@ -90,6 +93,26 @@ const getPrivateBroker = (broker: EvalBroker) =>
   };
 
 describe('EvalBroker', () => {
+  it('strips default entrypoint globals from stable override context payloads', () => {
+    const entry = '/tmp/example/entry.js';
+    const globals = {
+      IMPORT_META_ENV: { MODE: 'test' },
+      __dirname: '/tmp/example',
+      __filename: entry,
+    };
+
+    expect(
+      stripEntrypointGlobalsFromRunnerContext(globals, entry)
+    ).toEqual({
+      IMPORT_META_ENV: { MODE: 'test' },
+    });
+    expect(globals).toEqual({
+      IMPORT_META_ENV: { MODE: 'test' },
+      __dirname: '/tmp/example',
+      __filename: entry,
+    });
+  });
+
   it('prefers custom resolver over bundler resolver', async () => {
     const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
     const importer = join(root, 'entry.js');
@@ -390,6 +413,46 @@ describe('EvalBroker', () => {
     rmSync(root, { recursive: true, force: true });
   });
 
+  it('does not resolve unused imports for __wywPreval-only runner loads', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
+    const entry = join(root, 'entry.js');
+    const dep = join(root, 'dep.js');
+
+    writeFileSync(dep, 'export const unused = 1;');
+    writeFileSync(
+      entry,
+      [
+        "import { unused } from './dep.js';",
+        'export const __wywPreval = {',
+        '  value: () => 1,',
+        '};',
+      ].join('\n')
+    );
+
+    const asyncResolve = jest.fn(async (what: string, importer: string) => {
+      if (what.startsWith('.')) {
+        return resolve(dirname(importer), what);
+      }
+      return null;
+    });
+    const services = createServices(root, entry);
+    const broker = new EvalBroker(services, asyncResolve);
+    const entrypoint = Entrypoint.createRoot(
+      services,
+      entry,
+      ['__wywPreval'],
+      readFileSync(entry, 'utf-8')
+    );
+
+    const result = await broker.evaluate(entrypoint);
+
+    expect(result.values?.get('value')).toBe(1);
+    expect(asyncResolve).not.toHaveBeenCalledWith('./dep.js', entry);
+
+    broker.dispose();
+    rmSync(root, { recursive: true, force: true });
+  });
+
   it('evaluates a module graph via runner', async () => {
     const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
     const entry = join(root, 'entry.js');
@@ -662,7 +725,77 @@ describe('EvalBroker', () => {
       rmSync(root, { recursive: true, force: true });
     });
 
-    it('does not reuse non-serializable dependency modules across entrypoints when overrideContext is enabled', async () => {
+    it('reuses non-serializable dependency modules across entrypoints when overrideContext globals stay stable', async () => {
+      const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
+      const dep = join(root, 'dep.js');
+      const firstEntry = join(root, 'entry-a.js');
+      const secondEntry = join(root, 'entry-b.js');
+
+      writeFileSync(
+        dep,
+        [
+          'const value = () => undefined;',
+          'value.token = Math.random().toString(36).slice(2);',
+          'export default value;',
+        ].join('\n')
+      );
+      writeFileSync(
+        firstEntry,
+        [
+          "import dep from './dep.js';",
+          'export const __wywPreval = {',
+          '  value: () => dep.token,',
+          '};',
+        ].join('\n')
+      );
+      writeFileSync(
+        secondEntry,
+        [
+          "import dep from './dep.js';",
+          'export const __wywPreval = {',
+          '  value: () => dep.token,',
+          '};',
+        ].join('\n')
+      );
+
+      const asyncResolve = jest.fn(async (what: string, importer: string) => {
+        if (what.startsWith('.')) {
+          return resolve(dirname(importer), what);
+        }
+        return null;
+      });
+      const services = createServices(root, firstEntry, {
+        overrideContext: (context) => ({
+          ...context,
+          __wyw_import_meta_env: {
+            MODE: 'production',
+          },
+        }),
+      });
+      const broker = new EvalBroker(services, asyncResolve);
+      const firstEntrypoint = Entrypoint.createRoot(
+        services,
+        firstEntry,
+        ['__wywPreval'],
+        readFileSync(firstEntry, 'utf-8')
+      );
+      const secondEntrypoint = Entrypoint.createRoot(
+        services,
+        secondEntry,
+        ['__wywPreval'],
+        readFileSync(secondEntry, 'utf-8')
+      );
+
+      const first = await broker.evaluate(firstEntrypoint);
+      const second = await broker.evaluate(secondEntrypoint);
+
+      expect(first.values?.get('value')).toBe(second.values?.get('value'));
+
+      broker.dispose();
+      rmSync(root, { recursive: true, force: true });
+    });
+
+    it('does not reuse non-serializable dependency modules across entrypoints when overrideContext globals change', async () => {
       const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
       const dep = join(root, 'dep.js');
       const firstEntry = join(root, 'entry-a.js');

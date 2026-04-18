@@ -1722,11 +1722,6 @@ const handleMessage = async (message) => {
         const nextGlobalsSignature = JSON.stringify(
           canonicalizeForSignature(encodedGlobals)
         );
-        const nextEvalOptions = {
-          ...state.evalOptions,
-          ...message.payload.evalOptions,
-          globals: decodeGlobals(encodedGlobals),
-        };
         const nextFeatures = message.payload.features ?? {};
         const nextEntrypoint = message.payload.entrypoint ?? 'eval-runner';
         const nextHappyDomEnabled = isFeatureEnabled(
@@ -1737,6 +1732,15 @@ const handleMessage = async (message) => {
         const globalsChanged =
           state.globalsSignature !== null &&
           state.globalsSignature !== nextGlobalsSignature;
+        const nextGlobals =
+          !globalsChanged && state.globalsSignature !== null
+            ? state.evalOptions.globals
+            : decodeGlobals(encodedGlobals);
+        const nextEvalOptions = {
+          ...state.evalOptions,
+          ...message.payload.evalOptions,
+          globals: nextGlobals,
+        };
 
         const canReuseContext =
           state.context &&
@@ -1752,6 +1756,8 @@ const handleMessage = async (message) => {
           state.features = nextFeatures;
           state.entrypoint = nextEntrypoint;
           Object.assign(state.context, {
+            __dirname: path.dirname(nextEntrypoint),
+            __filename: nextEntrypoint,
             ...nextEvalOptions.globals,
             __wyw_getModule: (moduleId) => getModuleData(moduleId),
           });

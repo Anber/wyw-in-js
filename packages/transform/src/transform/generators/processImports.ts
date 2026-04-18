@@ -6,6 +6,8 @@ import type {
 } from '../types';
 
 import { toImportKey } from '../../utils/importOverrides';
+import { stripQueryAndHash } from '../../utils/parseRequest';
+import { isSuperSet } from '../Entrypoint.helpers';
 
 const warnedSlowImportsByServices = new WeakMap<Services, Set<string>>();
 
@@ -30,6 +32,26 @@ function getWarnedSlowImports(services: Services): Set<string> {
 
 function isWarningEnabled(value: string | undefined): boolean {
   return Boolean(value) && value !== '0' && value !== 'false';
+}
+
+function hasLoop(
+  name: string,
+  parent: { name: string; parents: { name: string; parents: { name: string }[] }[] },
+  processed: string[] = []
+): boolean {
+  if (parent.name === name || processed.includes(parent.name)) {
+    return true;
+  }
+
+  for (const nextParent of parent.parents) {
+    if (
+      hasLoop(name, nextParent as typeof parent, [...processed, parent.name])
+    ) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 export function* processImports(
@@ -60,6 +82,21 @@ export function* processImports(
     }
 
     this.entrypoint.addDependency(dependency);
+
+    const cached = this.services.cache.get('entrypoints', resolved);
+    if (
+      cached &&
+      (cached.evaluated || ('transformed' in cached && cached.transformed)) &&
+      isSuperSet(cached.only, only) &&
+      !hasLoop(resolved, this.entrypoint) &&
+      !this.services.cache.checkFreshness(resolved, stripQueryAndHash(resolved))
+    ) {
+      if (!cached.parents.map((parent) => parent.name).includes(this.entrypoint.name)) {
+        cached.parents.push(this.entrypoint);
+      }
+
+      continue;
+    }
 
     const nextEntrypoint = this.entrypoint.createChild(resolved, only);
     if (nextEntrypoint === 'loop' || nextEntrypoint.ignored) {

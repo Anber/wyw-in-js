@@ -88,13 +88,18 @@ type PreparedEvaluatorInput =
       kind: 'short-circuit';
     };
 
+type PrepareEvaluatorInputOptions = {
+  shortCircuitOnMissingMetadata?: boolean;
+};
+
 const isPrevalOnly = (only: string[]) =>
   only.length === 1 && only[0] === '__wywPreval';
 
 const prepareEvaluatorInput = (
   services: Services,
   item: Entrypoint,
-  originalAst: File
+  originalAst: File,
+  prepareOptions: PrepareEvaluatorInputOptions = {}
 ): PreparedEvaluatorInput => {
   const { only, loadedAndParsed, log } = item;
   if (loadedAndParsed.evaluator === 'ignored') {
@@ -105,23 +110,38 @@ const prepareEvaluatorInput = (
   const { options, babel, eventEmitter } = services;
   const { pluginOptions } = options;
 
-  const preevalStageResult = eventEmitter.perf('transform:preeval', () =>
-    runPreevalStage(
-      babel,
-      evalConfig,
-      pluginOptions,
-      code,
-      originalAst,
-      eventEmitter
-    )
-  );
+  let preevalStageResult = item.getPreevalResult();
+  if (!preevalStageResult) {
+    preevalStageResult = eventEmitter.perf('transform:preeval', () => {
+      const result = runPreevalStage(
+        babel,
+        evalConfig,
+        pluginOptions,
+        code,
+        originalAst,
+        eventEmitter
+      );
 
-  const transformMetadata = getTransformMetadata(preevalStageResult.metadata);
-  if (isPrevalOnly(only) && !transformMetadata) {
+      return {
+        ast: result.ast!,
+        code: result.code ?? '',
+        metadata: getTransformMetadata(result.metadata) ?? null,
+      };
+    });
+
+    item.setPreevalResult(preevalStageResult);
+  }
+
+  const transformMetadata = preevalStageResult.metadata;
+  if (
+    isPrevalOnly(only) &&
+    !transformMetadata &&
+    prepareOptions.shortCircuitOnMissingMetadata !== false
+  ) {
     log('[evaluator:end] no metadata');
 
     return {
-      code: preevalStageResult.code!,
+      code: preevalStageResult.code,
       kind: 'short-circuit',
     };
   }
@@ -129,8 +149,8 @@ const prepareEvaluatorInput = (
   log('[preeval] metadata %O', transformMetadata);
 
   return {
-    ast: preevalStageResult.ast!,
-    code: preevalStageResult.code!,
+    ast: preevalStageResult.ast,
+    code: preevalStageResult.code,
     evalConfig,
     evaluatorConfig: {
       onlyExports: only,
@@ -144,10 +164,15 @@ const prepareEvaluatorInput = (
   };
 };
 
-export const prepareCode = (
+type PrepareCodeOptions = {
+  shortCircuitOnMissingMetadata?: boolean;
+};
+
+const prepareCodeImpl = (
   services: Services,
   item: Entrypoint,
-  originalAst: File
+  originalAst: File,
+  options: PrepareCodeOptions = {}
 ): ReturnType<PrepareCodeFn> => {
   const { log, loadedAndParsed } = item;
   if (loadedAndParsed.evaluator === 'ignored') {
@@ -157,7 +182,7 @@ export const prepareCode = (
 
   const { evaluator } = loadedAndParsed;
   const { babel, eventEmitter } = services;
-  const prepared = prepareEvaluatorInput(services, item, originalAst);
+  const prepared = prepareEvaluatorInput(services, item, originalAst, options);
   if (prepared.kind === 'short-circuit') {
     return [prepared.code, collectImportsFromAst(services, originalAst), null];
   }
@@ -181,6 +206,21 @@ export const prepareCode = (
 
   return [transformedCode, imports, prepared.metadata];
 };
+
+export const prepareCode = (
+  services: Services,
+  item: Entrypoint,
+  originalAst: File
+): ReturnType<PrepareCodeFn> => prepareCodeImpl(services, item, originalAst);
+
+export const prepareCodeForEvalRuntime = (
+  services: Services,
+  item: Entrypoint,
+  originalAst: File
+): ReturnType<PrepareCodeFn> =>
+  prepareCodeImpl(services, item, originalAst, {
+    shortCircuitOnMissingMetadata: item.loadedAndParsed.evaluator !== shaker,
+  });
 
 export function* internalTransform(
   this: ITransformAction,
@@ -214,6 +254,14 @@ export function* internalTransform(
     log('is skipped');
     return {
       code: loadedAndParsed.code ?? '',
+      metadata: null,
+    };
+  }
+
+  if (metadata === null && isPrevalOnly(only)) {
+    log('skip resolving imports for __wywPreval-only entrypoint without metadata');
+    return {
+      code: preparedCode,
       metadata: null,
     };
   }

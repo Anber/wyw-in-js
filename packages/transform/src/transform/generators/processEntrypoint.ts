@@ -13,6 +13,11 @@ export function* processEntrypoint(
   const { only, log } = this.entrypoint;
   log('start processing (only: %o)', only);
 
+  if (this.entrypoint.transformed) {
+    log('already transformed, skip processing');
+    return;
+  }
+
   this.entrypoint.beginProcessing();
 
   try {

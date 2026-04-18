@@ -2,15 +2,20 @@ import { join } from 'path';
 
 import * as babel from '@babel/core';
 import type { NodePath } from '@babel/core';
-import type { Program } from '@babel/types';
+import type { CallExpression, Program } from '@babel/types';
 import dedent from 'dedent';
 
 import type { MissedBabelCoreTypes } from '../../types';
-import { isUnnecessaryReactCall } from '../../utils/isUnnecessaryReactCall';
+import {
+  getReactImportSummary,
+  isUnnecessaryReactCall,
+} from '../../utils/isUnnecessaryReactCall';
 
 const { File } = babel as typeof babel & MissedBabelCoreTypes;
 
-const check = (rawCode: TemplateStringsArray): boolean => {
+const getExpression = (
+  rawCode: TemplateStringsArray
+): [NodePath<CallExpression>, NodePath<Program>] => {
   const code = dedent(rawCode);
   const filename = join(__dirname, 'source.ts');
   const ast = babel.parse(code, {
@@ -36,7 +41,17 @@ const check = (rawCode: TemplateStringsArray): boolean => {
     throw new Error('Last statement is not a call expression');
   }
 
+  return [expression, program];
+};
+
+const check = (rawCode: TemplateStringsArray): boolean => {
+  const [expression] = getExpression(rawCode);
   return isUnnecessaryReactCall(expression);
+};
+
+const checkWithSummary = (rawCode: TemplateStringsArray): boolean => {
+  const [expression, program] = getExpression(rawCode);
+  return isUnnecessaryReactCall(expression, getReactImportSummary(program));
 };
 
 describe('isUnnecessaryReactCall', () => {
@@ -46,8 +61,13 @@ describe('isUnnecessaryReactCall', () => {
         import { jsx as jsx_runtime_1 } from "react/jsx-runtime";
         jsx_runtime_1("span", null, "Hello World");
       `;
+      const summaryResult = checkWithSummary`
+        import { jsx as jsx_runtime_1 } from "react/jsx-runtime";
+        jsx_runtime_1("span", null, "Hello World");
+      `;
 
       expect(result).toBe(true);
+      expect(summaryResult).toBe(true);
     });
 
     it('should process usage wrapped with SequenceExpression', () => {

@@ -264,7 +264,8 @@ export class TransformCacheCollection<
     content: string,
     previousVisitedFiles?: Set<string>,
     source: 'fs' | 'loaded' = 'loaded',
-    changedFiles = new Set<string>()
+    changedFiles = new Set<string>(),
+    dependencyChangeMemo = new Map<string, boolean>()
   ) {
     if (changedFiles.has(filename)) {
       return true;
@@ -293,7 +294,8 @@ export class TransformCacheCollection<
           const dependencyChanged = this.didDependencyChange(
             dependencyFilename,
             visitedFiles,
-            changedFiles
+            changedFiles,
+            dependencyChangeMemo
           );
 
           if (
@@ -392,10 +394,16 @@ export class TransformCacheCollection<
   private didDependencyChange(
     dependencyFilename: string,
     visitedFiles: Set<string>,
-    changedFiles: Set<string>
+    changedFiles: Set<string>,
+    dependencyChangeMemo: Map<string, boolean>
   ): boolean {
     if (changedFiles.has(dependencyFilename)) {
       return true;
+    }
+
+    const memoized = dependencyChangeMemo.get(dependencyFilename);
+    if (memoized !== undefined) {
+      return memoized;
     }
 
     if (visitedFiles.has(dependencyFilename)) {
@@ -418,6 +426,7 @@ export class TransformCacheCollection<
 
         this.invalidateForFile(dependencyFilename);
         changedFiles.add(dependencyFilename);
+        dependencyChangeMemo.set(dependencyFilename, true);
         return true;
       }
 
@@ -429,10 +438,12 @@ export class TransformCacheCollection<
 
         // A cached file without a cached entrypoint was invalidated earlier.
         if (!cachedEntrypoint && nestedDependencies.size === 0) {
+          dependencyChangeMemo.set(dependencyFilename, true);
           return true;
         }
 
         if (nestedDependencies.size === 0) {
+          dependencyChangeMemo.set(dependencyFilename, false);
           return false;
         }
 
@@ -445,15 +456,18 @@ export class TransformCacheCollection<
             this.didDependencyChange(
               nestedDependency.resolved,
               nextVisitedFiles,
-              changedFiles
+              changedFiles,
+              dependencyChangeMemo
             )
           ) {
             this.invalidateForFile(dependencyFilename);
             changedFiles.add(dependencyFilename);
+            dependencyChangeMemo.set(dependencyFilename, true);
             return true;
           }
         }
 
+        dependencyChangeMemo.set(dependencyFilename, false);
         return false;
       }
     }
@@ -469,16 +483,21 @@ export class TransformCacheCollection<
 
       this.invalidateForFile(dependencyFilename);
       changedFiles.add(dependencyFilename);
+      dependencyChangeMemo.set(dependencyFilename, true);
       return true;
     }
 
-    return this.invalidateIfChanged(
+    const invalidated = this.invalidateIfChanged(
       dependencyFilename,
       dependencyContent,
       visitedFiles,
       'fs',
-      changedFiles
+      changedFiles,
+      dependencyChangeMemo
     );
+
+    dependencyChangeMemo.set(dependencyFilename, invalidated);
+    return invalidated;
   }
 
   public setCacheDependencies(

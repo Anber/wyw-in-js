@@ -544,6 +544,8 @@ export class Module {
 
     let uncachedExports: string[] | null = null;
     let reprocessOnly: string[] = only;
+    let cachedSource: string | undefined;
+
     // Requested file can be already prepared for evaluation on the stage 1
     if (only && entrypoint) {
       const evaluatedExports =
@@ -557,21 +559,32 @@ export class Module {
       }
 
       if (entrypoint.evaluatedOnly?.length) {
-        reprocessOnly = mergeOnly(evaluatedExports, only);
+        if (this.cache.checkFreshness(filename, strippedFilename)) {
+          entrypoint = undefined;
+          uncachedExports = null;
+        } else {
+          reprocessOnly = mergeOnly(evaluatedExports, only);
+          cachedSource =
+            entrypoint.loadedAndParsed?.code ?? entrypoint.initialCode;
+        }
       }
 
-      log(
-        '❌ file has been processed during prepare stage but %o is not evaluated yet (evaluated: %o)',
-        uncachedExports,
-        evaluatedExports
-      );
+      if (entrypoint) {
+        log(
+          '❌ file has been processed during prepare stage but %o is not evaluated yet (evaluated: %o)',
+          uncachedExports,
+          evaluatedExports
+        );
+      } else {
+        log('❌ file has not been processed during prepare stage');
+      }
     } else {
       log('❌ file has not been processed during prepare stage');
     }
 
     // If code wasn't extracted from cache, it indicates that we were unable
     // to process some of the imports on stage1. Let's try to reprocess.
-    const code = fs.readFileSync(strippedFilename, 'utf-8');
+    const code = cachedSource ?? fs.readFileSync(strippedFilename, 'utf-8');
     const newEntrypoint = Entrypoint.createRoot(
       this.services,
       filename,

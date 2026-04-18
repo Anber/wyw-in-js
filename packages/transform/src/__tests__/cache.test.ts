@@ -259,6 +259,86 @@ describe('TransformCacheCollection', () => {
       expect(mockedStatSync).toHaveBeenCalledWith(depName);
     });
 
+    it('memoizes unchanged shared dependency subtrees within one invalidation pass', () => {
+      const leafName = 'leaf.js';
+      const leafContent = 'export const c = 3;';
+      const leftName = 'left.js';
+      const leftContent = 'import { c } from "./leaf.js"; export const l = c;';
+      const rightName = 'right.js';
+      const rightContent =
+        'import { c } from "./leaf.js"; export const r = c + 1;';
+      const rootName = 'root.js';
+      const rootContent =
+        'import { l } from "./left.js"; import { r } from "./right.js";';
+
+      const { entrypoint: leafEntrypoint } = setupCacheWithEntrypoint(
+        leafName,
+        leafContent
+      );
+      const leftDeps = new Map<string, Pick<IEntrypointDependency, 'resolved'>>(
+        [['./leaf.js', { resolved: leafName }]]
+      );
+      const { entrypoint: leftEntrypoint } = setupCacheWithEntrypoint(
+        leftName,
+        leftContent,
+        leftDeps
+      );
+      const rightDeps = new Map<
+        string,
+        Pick<IEntrypointDependency, 'resolved'>
+      >([['./leaf.js', { resolved: leafName }]]);
+      const { entrypoint: rightEntrypoint } = setupCacheWithEntrypoint(
+        rightName,
+        rightContent,
+        rightDeps
+      );
+      const rootDeps = new Map<string, Pick<IEntrypointDependency, 'resolved'>>(
+        [
+          ['./left.js', { resolved: leftName }],
+          ['./right.js', { resolved: rightName }],
+        ]
+      );
+      const { cache } = setupCacheWithEntrypoint(rootName, rootContent, rootDeps);
+
+      cache.add('entrypoints', leafName, leafEntrypoint as any);
+      cache.add('entrypoints', leftName, leftEntrypoint as any);
+      cache.add('entrypoints', rightName, rightEntrypoint as any);
+
+      mockedStatSync.mockImplementation((path) => {
+        switch (path) {
+          case leafName:
+            return { mtimeMs: 101 } as fs.Stats;
+          case leftName:
+            return { mtimeMs: 202 } as fs.Stats;
+          case rightName:
+            return { mtimeMs: 303 } as fs.Stats;
+          default:
+            throw new Error(`Unexpected statSync call: ${String(path)}`);
+        }
+      });
+
+      cache.invalidateIfChanged(leafName, leafContent, undefined, 'fs');
+      cache.invalidateIfChanged(leftName, leftContent, undefined, 'fs');
+      cache.invalidateIfChanged(rightName, rightContent, undefined, 'fs');
+
+      mockedReadFileSync.mockClear();
+      mockedStatSync.mockClear();
+
+      const invalidated = cache.invalidateIfChanged(rootName, rootContent);
+
+      expect(invalidated).toBe(false);
+      expect(cache.has('entrypoints', rootName)).toBe(true);
+      expect(cache.has('entrypoints', leftName)).toBe(true);
+      expect(cache.has('entrypoints', rightName)).toBe(true);
+      expect(cache.has('entrypoints', leafName)).toBe(true);
+      expect(mockedReadFileSync).not.toHaveBeenCalled();
+
+      const statCalls = mockedStatSync.mock.calls.map(([path]) => path);
+      expect(statCalls.filter((path) => path === leafName)).toHaveLength(1);
+      expect(statCalls.filter((path) => path === leftName)).toHaveLength(1);
+      expect(statCalls.filter((path) => path === rightName)).toHaveLength(1);
+    });
+
     it('should invalidate parent when an invalidation-only dependency changed', () => {
       const depName = 'barrel.js';
       const depContent = 'export { b } from "./leaf.js";';

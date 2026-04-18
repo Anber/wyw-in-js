@@ -233,12 +233,18 @@ describe('stale dependency detection in watch mode', () => {
       metadata: null,
     });
     const parentModule = new Module(parentServices, parentEntrypoint);
+    const readSpy = jest.spyOn(fs, 'readFileSync');
 
     // getEntrypoint should detect the dep changed on disk
     // Without fix: returns stale evaluated entrypoint (evaluated=true)
     // With fix: invalidates stale entry, falls through to re-read from disk
-    const result = parentModule.getEntrypoint(depFile, ['val'], logger);
-    expect(result?.evaluated).toBe(false);
+    try {
+      const result = parentModule.getEntrypoint(depFile, ['val'], logger);
+      expect(result?.evaluated).toBe(false);
+      expect(readSpy).toHaveBeenCalledWith(depFile, 'utf-8');
+    } finally {
+      readSpy.mockRestore();
+    }
   });
 
   it('getEntrypoint returns cached entrypoint when file unchanged', () => {
@@ -291,6 +297,68 @@ describe('stale dependency detection in watch mode', () => {
 
     const result = parentModule.getEntrypoint(depFile, ['val'], logger);
     expect(result?.evaluated).toBe(true);
+  });
+
+  it('getEntrypoint widens a fresh cached entrypoint without rereading it from disk', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wyw-getep-widen-'));
+    const parentFile = path.join(root, 'parent.ts');
+    const depFile = path.join(root, 'dep.ts');
+
+    fs.writeFileSync(depFile, dedent`export const val = 'same';`);
+    fs.writeFileSync(
+      parentFile,
+      dedent`
+        import { val } from './dep';
+        export const result = val;
+      `
+    );
+
+    const cache = new TransformCacheCollection();
+
+    const depServices = createServices(cache, depFile);
+    const depCode = fs.readFileSync(depFile, 'utf-8');
+    const depEntrypoint = Entrypoint.createRoot(
+      depServices,
+      depFile,
+      ['val'],
+      depCode
+    );
+    depEntrypoint.setTransformResult({
+      code: '"use strict";\nexports.val = "same";',
+      metadata: null,
+    });
+
+    const depModule = new Module(depServices, depEntrypoint);
+    depModule.evaluate();
+
+    const parentServices = createServices(cache, parentFile);
+    const parentCode = fs.readFileSync(parentFile, 'utf-8');
+    const parentEntrypoint = Entrypoint.createRoot(
+      parentServices,
+      parentFile,
+      ['result'],
+      parentCode
+    );
+    parentEntrypoint.setTransformResult({
+      code: '"use strict";\nvar _dep = require("./dep");\nexports.result = _dep.val;',
+      metadata: null,
+    });
+    const parentModule = new Module(parentServices, parentEntrypoint);
+    const readSpy = jest.spyOn(fs, 'readFileSync');
+
+    try {
+      readSpy.mockClear();
+
+      const result = parentModule.getEntrypoint(depFile, ['extra', 'val'], logger);
+
+      expect(readSpy).not.toHaveBeenCalledWith(depFile, 'utf-8');
+      expect(result).not.toBe(depEntrypoint);
+      expect(result?.evaluated).toBe(false);
+      expect(result?.only).toEqual(['extra', 'val']);
+      expect(cache.get('entrypoints', depFile)).toBe(result);
+    } finally {
+      readSpy.mockRestore();
+    }
   });
 
   it('checkFreshness rethrows non-missing filesystem errors', () => {

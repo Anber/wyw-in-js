@@ -1,7 +1,12 @@
 import type { Debugger } from '@wyw-in-js/shared';
 
 import { BaseEntrypoint } from './BaseEntrypoint';
-import type { IEntrypointDependency } from './Entrypoint.types';
+import type {
+  IEntrypointCode,
+  IIgnoredEntrypoint,
+  IEntrypointDependency,
+  IPreevalResult,
+} from './Entrypoint.types';
 import type { ParentEntrypoint } from '../types';
 
 export interface IEvaluatedEntrypoint extends ParentEntrypoint {
@@ -10,12 +15,17 @@ export interface IEvaluatedEntrypoint extends ParentEntrypoint {
   evaluatedOnly: string[];
   exports: Record<string | symbol, unknown>;
   generation: number;
+  hasTransformResult: boolean;
+  hasWywMetadata: boolean;
   ignored: false;
   initialCode?: string;
   invalidationDependencies: Map<string, IEntrypointDependency>;
   invalidateOnDependencyChange: Set<string>;
+  loadedAndParsed?: IEntrypointCode | IIgnoredEntrypoint;
   log: Debugger;
   only: string[];
+  preevalResult: IPreevalResult | null;
+  transformResultCode: string | null;
 }
 
 export class EvaluatedEntrypoint
@@ -26,5 +36,15 @@ export class EvaluatedEntrypoint
 
   public readonly ignored = false;
 
+  public hasTransformResult = false;
+
+  public hasWywMetadata = false;
+
   public initialCode?: string;
+
+  public loadedAndParsed?: IEntrypointCode | IIgnoredEntrypoint;
+
+  public preevalResult: IPreevalResult | null = null;
+
+  public transformResultCode: string | null = null;
 }

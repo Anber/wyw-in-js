@@ -9,6 +9,7 @@ import type {
   IEntrypointCode,
   IEntrypointDependency,
   IIgnoredEntrypoint,
+  IPreevalResult,
 } from './Entrypoint.types';
 import { EvaluatedEntrypoint } from './EvaluatedEntrypoint';
 import { AbortError } from './actions/AbortError';
@@ -55,9 +56,13 @@ export class Entrypoint extends BaseEntrypoint {
 
   #hasWywMetadata: boolean = false;
 
+  #hasTransformResult = false;
+
   #isProcessing = false;
 
   #pendingOnly: string[] | null = null;
+
+  #preevalResult: IPreevalResult | null = null;
 
   #supersededWith: Entrypoint | null = null;
 
@@ -82,7 +87,8 @@ export class Entrypoint extends BaseEntrypoint {
       IEntrypointDependency
     >(),
     readonly invalidateOnDependencyChange = new Set<string>(),
-    generation = 1
+    generation = 1,
+    private readonly skipCacheInvalidation = false
   ) {
     super(
       services,
@@ -106,7 +112,10 @@ export class Entrypoint extends BaseEntrypoint {
         parents[0]?.log ?? services.log
       );
 
-    if (this.loadedAndParsed.code !== undefined) {
+    if (
+      !this.skipCacheInvalidation &&
+      this.loadedAndParsed.code !== undefined
+    ) {
       services.cache.invalidateIfChanged(
         name,
         this.loadedAndParsed.code,
@@ -139,6 +148,10 @@ export class Entrypoint extends BaseEntrypoint {
     return (
       this.#transformResultCode ?? this.supersededWith?.transformedCode ?? null
     );
+  }
+
+  public get transformed(): boolean {
+    return this.#hasTransformResult || this.supersededWith?.transformed || false;
   }
 
   public static createRoot(
@@ -223,11 +236,44 @@ export class Entrypoint extends BaseEntrypoint {
 
     const exports = cached?.exports;
     const evaluatedOnly = changed ? [] : cached?.evaluatedOnly ?? [];
-
     const mergedOnly = cached?.only ? mergeOnly(cached.only, only) : [...only];
+    const reusableEvaluatedState =
+      !changed && cached?.evaluated && cached.loadedAndParsed !== undefined;
+    const canReuseEvaluatedTransformResult =
+      reusableEvaluatedState &&
+      isSuperSet(cached.only, mergedOnly) &&
+      cached.hasTransformResult &&
+      cached.loadedAndParsed !== undefined;
 
     if (cached?.evaluated) {
       cached.log('is already evaluated with', cached.evaluatedOnly);
+    }
+
+    if (canReuseEvaluatedTransformResult) {
+      const isLoop = parent && hasLoop(name, parent);
+      const reusedEntrypoint = new Entrypoint(
+        services,
+        parent ? [parent] : [],
+        loadedCode,
+        name,
+        cached.only,
+        exports,
+        evaluatedOnly,
+        cached.loadedAndParsed,
+        undefined,
+        cached.dependencies,
+        cached.invalidationDependencies,
+        cached.invalidateOnDependencyChange,
+        cached.generation + 1,
+        true
+      );
+
+      reusedEntrypoint.reuseTransformResult(
+        cached.transformResultCode,
+        cached.hasWywMetadata
+      );
+
+      return [isLoop ? 'loop' : 'cached', reusedEntrypoint];
     }
 
     if (!changed && cached && !cached.evaluated) {
@@ -272,7 +318,7 @@ export class Entrypoint extends BaseEntrypoint {
       mergedOnly,
       exports,
       evaluatedOnly,
-      undefined,
+      reusableEvaluatedState ? cached.loadedAndParsed : undefined,
       cached && 'resolveTasks' in cached ? cached.resolveTasks : undefined,
       cached && 'dependencies' in cached ? cached.dependencies : undefined,
       cached && 'invalidationDependencies' in cached
@@ -283,6 +329,15 @@ export class Entrypoint extends BaseEntrypoint {
         : undefined,
       cached ? cached.generation + 1 : 1
     );
+
+    if (
+      reusableEvaluatedState &&
+      'preevalResult' in cached &&
+      cached.preevalResult !== null &&
+      cached.preevalResult !== undefined
+    ) {
+      newEntrypoint.setPreevalResult(cached.preevalResult);
+    }
 
     if (cached && !cached.evaluated) {
       cached.log('is cached, but with different code');
@@ -417,6 +472,11 @@ export class Entrypoint extends BaseEntrypoint {
     );
 
     evaluated.initialCode = this.initialCode;
+    evaluated.hasTransformResult = this.#hasTransformResult;
+    evaluated.hasWywMetadata = this.#hasWywMetadata;
+    evaluated.loadedAndParsed = this.loadedAndParsed;
+    evaluated.preevalResult = this.#preevalResult;
+    evaluated.transformResultCode = this.#transformResultCode;
 
     return evaluated;
   }
@@ -427,6 +487,10 @@ export class Entrypoint extends BaseEntrypoint {
 
   public getDependency(name: string): IEntrypointDependency | undefined {
     return this.dependencies.get(name);
+  }
+
+  public getPreevalResult(): IPreevalResult | null {
+    return this.#preevalResult;
   }
 
   public getInvalidationDependency(
@@ -449,6 +513,15 @@ export class Entrypoint extends BaseEntrypoint {
     return this.#hasWywMetadata;
   }
 
+  public reuseTransformResult(
+    code: string | null,
+    hasWywMetadata: boolean
+  ): void {
+    this.#hasTransformResult = true;
+    this.#hasWywMetadata = hasWywMetadata;
+    this.#transformResultCode = code;
+  }
+
   public onSupersede(callback: (newEntrypoint: Entrypoint) => void) {
     if (this.#supersededWith) {
       callback(this.#supersededWith);
@@ -466,6 +539,7 @@ export class Entrypoint extends BaseEntrypoint {
   }
 
   public setTransformResult(res: ITransformFileResult | null) {
+    this.#hasTransformResult = true;
     this.#hasWywMetadata = Boolean(res?.metadata);
     this.#transformResultCode = res?.code ?? null;
 
@@ -473,6 +547,10 @@ export class Entrypoint extends BaseEntrypoint {
       isNull: res === null,
       type: 'setTransformResult',
     });
+  }
+
+  public setPreevalResult(result: IPreevalResult): void {
+    this.#preevalResult = result;
   }
 
   private deferOnlySupersede(only: string[]) {
@@ -512,6 +590,7 @@ export class Entrypoint extends BaseEntrypoint {
       this.only,
       newEntrypoint.only
     );
+    newEntrypoint.#preevalResult = this.#preevalResult;
     this.#supersededWith = newEntrypoint;
     this.onSupersedeHandlers.forEach((handler) => handler(newEntrypoint));
 

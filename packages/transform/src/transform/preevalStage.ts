@@ -20,6 +20,15 @@ const hasKeyInList = (plugin: PluginItem, list: string[]): boolean => {
   return pluginKey ? list.some((i) => pluginKey.includes(i)) : false;
 };
 
+const DYNAMIC_IMPORT_RE = /\bimport(?:\s|\/\*[\s\S]*?\*\/)*\(/;
+const REQUIRE_CALL_RE = /\brequire(?:\s|\/\*[\s\S]*?\*\/)*\(/;
+
+export const maybeNeedsDynamicImportPlugin = (code: string): boolean =>
+  DYNAMIC_IMPORT_RE.test(code);
+
+export const maybeNeedsRequireFallbackPlugin = (code: string): boolean =>
+  REQUIRE_CALL_RE.test(code);
+
 export function runPreevalStage(
   babel: Core,
   evalConfig: TransformOptions,
@@ -32,6 +41,8 @@ export function runPreevalStage(
     evalConfig.plugins?.filter((i) =>
       hasKeyInList(i, pluginOptions.highPriorityPlugins)
     ) ?? [];
+  const needsDynamicImportPlugin = maybeNeedsDynamicImportPlugin(code);
+  const needsRequireFallbackPlugin = maybeNeedsRequireFallbackPlugin(code);
 
   const plugins = [
     ...preShakePlugins,
@@ -42,16 +53,16 @@ export function runPreevalStage(
         eventEmitter,
       },
     ],
-    dynamicImportPlugin,
-    requireFallbackPlugin,
+    ...(needsDynamicImportPlugin ? [dynamicImportPlugin] : []),
+    ...(needsRequireFallbackPlugin ? [requireFallbackPlugin] : []),
     ...(evalConfig.plugins ?? []).filter(
       (i) => !hasKeyInList(i, pluginOptions.highPriorityPlugins)
     ),
   ];
 
   const transformConfig = buildOptions({
-    ...evalConfig,
     envName: 'wyw-in-js',
+    ...evalConfig,
     plugins,
   });
 

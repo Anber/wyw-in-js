@@ -2,7 +2,7 @@ import type { File } from '@babel/types';
 
 import type { Services } from '../transform/types';
 import { Entrypoint } from '../transform/Entrypoint';
-import { prepareCode } from '../transform/generators/transform';
+import { prepareCodeForEvalRuntime } from '../transform/generators/transform';
 
 export type PreparedModule = {
   code: string;
@@ -26,7 +26,7 @@ export function prepareModuleOnDemand(
   }
 
   const ast = entrypoint.loadedAndParsed.ast as File;
-  const [code, imports] = prepareCode(services, entrypoint, ast);
+  const [code, imports] = prepareCodeForEvalRuntime(services, entrypoint, ast);
 
   return {
     code,

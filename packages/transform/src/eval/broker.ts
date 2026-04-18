@@ -265,6 +265,33 @@ const buildRunnerPath = (): string => {
   return fileURLToPath(url);
 };
 
+export const stripEntrypointGlobalsFromRunnerContext = (
+  globals: Record<string, unknown>,
+  entrypoint: string
+): Record<string, unknown> => {
+  const entrypointDir = path.dirname(entrypoint);
+  const shouldStripFilename =
+    Object.prototype.hasOwnProperty.call(globals, '__filename') &&
+    globals.__filename === entrypoint;
+  const shouldStripDirname =
+    Object.prototype.hasOwnProperty.call(globals, '__dirname') &&
+    globals.__dirname === entrypointDir;
+
+  if (!shouldStripFilename && !shouldStripDirname) {
+    return globals;
+  }
+
+  const nextGlobals = { ...globals };
+  if (shouldStripFilename) {
+    delete nextGlobals.__filename;
+  }
+  if (shouldStripDirname) {
+    delete nextGlobals.__dirname;
+  }
+
+  return nextGlobals;
+};
+
 const buildRunnerInitPayload = (
   services: Services,
   entrypoint: Entrypoint,
@@ -285,10 +312,14 @@ const buildRunnerInitPayload = (
   const globals = overrideContext
     ? overrideContext(withFilename, entrypoint.name)
     : baseGlobals;
+  const sanitizedGlobals = stripEntrypointGlobalsFromRunnerContext(
+    globals,
+    entrypoint.name
+  );
 
   return {
     evalOptions: {
-      globals: encodeGlobals(globals) as Record<string, unknown>,
+      globals: encodeGlobals(sanitizedGlobals) as Record<string, unknown>,
       importOverrides,
       mode: evalOptions.mode ?? 'strict',
       require: evalOptions.require ?? 'warn-and-run',
@@ -1046,7 +1077,7 @@ export class EvalBroker {
   private async initRunner(entrypoint: Entrypoint) {
     const features = this.getRunnerFeatures();
     const payload = buildRunnerInitPayload(this.services, entrypoint, features);
-    payload.reuseModules = !this.services.options.pluginOptions.overrideContext;
+    payload.reuseModules = true;
     const initKey = getInitPayloadKey(payload);
     const nextHappyDomEnabled = isFeatureEnabled(
       features,
@@ -1081,8 +1112,7 @@ export class EvalBroker {
             entrypoint,
             fallbackFeatures
           );
-          fallbackPayload.reuseModules =
-            !this.services.options.pluginOptions.overrideContext;
+          fallbackPayload.reuseModules = true;
           await this.request('INIT', fallbackPayload, INIT_TIMEOUT_MS);
           this.lastInitKey = getInitPayloadKey(fallbackPayload);
           this.lastHappyDomEnabled = false;
@@ -1113,8 +1143,7 @@ export class EvalBroker {
           entrypoint,
           fallbackFeatures
         );
-        fallbackPayload.reuseModules =
-          !this.services.options.pluginOptions.overrideContext;
+        fallbackPayload.reuseModules = true;
         await this.request('INIT', fallbackPayload, INIT_TIMEOUT_MS);
         this.lastInitKey = getInitPayloadKey(fallbackPayload);
         this.lastHappyDomEnabled = false;

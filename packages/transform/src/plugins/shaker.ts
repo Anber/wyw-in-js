@@ -332,7 +332,7 @@ function stripExportKeepDeclaration(
     );
 
     if (declarators.length === 1) {
-      exportDeclaration.replaceWith(t.cloneNode(declaration.node, true));
+      exportDeclaration.replaceWith(declaration.node);
       return staleExportPaths.length > 0 ? staleExportPaths : [path];
     }
 
@@ -351,14 +351,13 @@ function stripExportKeepDeclaration(
         return null;
       }
 
-      const clonedDeclarator = t.cloneNode(declarator.node, true);
       const currentSegment = segments[segments.length - 1];
       if (currentSegment && currentSegment.alive === isAlive) {
-        currentSegment.declarators.push(clonedDeclarator);
+        currentSegment.declarators.push(t.cloneNode(declarator.node, true));
       } else {
         segments.push({
           alive: isAlive,
-          declarators: [clonedDeclarator],
+          declarators: [t.cloneNode(declarator.node, true)],
         });
       }
     }
