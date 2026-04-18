@@ -1,10 +1,13 @@
-import generate from '@babel/generator';
+import generator from '@babel/generator';
 import type { ExportAllDeclaration, File, Node } from '@babel/types';
 
 import type { Core } from '../../babel';
 import type { IExplodeReexportsAction, SyncScenarioForAction } from '../types';
 
 import { findExportsInImports } from './getExports';
+
+const generate =
+  (generator as unknown as { default?: typeof generator }).default ?? generator;
 
 const getWildcardReexport = (babel: Core, ast: File) => {
   const reexportsFrom: { node: ExportAllDeclaration; source: string }[] = [];
@@ -24,11 +27,6 @@ const getWildcardReexport = (babel: Core, ast: File) => {
   return reexportsFrom;
 };
 
-/**
- * Replaces wildcard reexports with named reexports.
- * Recursively emits getExports for each reexported module,
- * and replaces wildcard with resolved named.
- */
 export function* explodeReexports(
   this: IExplodeReexportsAction
 ): SyncScenarioForAction<IExplodeReexportsAction> {
@@ -49,7 +47,7 @@ export function* explodeReexports(
     'resolveImports',
     this.entrypoint,
     {
-      imports: new Map(reexportsFrom.map((i) => [i.source, []])),
+      imports: new Map(reexportsFrom.map((item) => [item.source, []])),
     }
   );
 
@@ -62,7 +60,7 @@ export function* explodeReexports(
   for (const importedEntrypoint of importedEntrypoints) {
     if (importedEntrypoint.entrypoint.loadedAndParsed.evaluator !== 'ignored') {
       const reexport = reexportsFrom.find(
-        (i) => i.source === importedEntrypoint.import
+        (item) => item.source === importedEntrypoint.import
       );
       if (reexport) {
         const exports = yield* this.getNext(
@@ -77,10 +75,10 @@ export function* explodeReexports(
             reexport.node,
             babel.types.exportNamedDeclaration(
               null,
-              namedExports.map((i) =>
+              namedExports.map((name) =>
                 babel.types.exportSpecifier(
-                  babel.types.identifier(i),
-                  babel.types.identifier(i)
+                  babel.types.identifier(name),
+                  babel.types.identifier(name)
                 )
               ),
               babel.types.stringLiteral(importedEntrypoint.import)
@@ -91,7 +89,6 @@ export function* explodeReexports(
     }
   }
 
-  // Replace wildcard reexport with named reexports
   babel.traverse(loadedAndParsed.ast, {
     ExportAllDeclaration(path) {
       if (!replacements.has(path.node)) return;

@@ -1,13 +1,7 @@
-// Jest Snapshot v1, https://goo.gl/fbAQLP
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
 
 exports[`prepareCode Testing transformation for dynamic-import: code 1`] = `
-""use strict";
-
-Object.defineProperty(exports, "__esModule", {
-  value: true
-});
-exports.foo = foo;
-function foo(onImport) {
+"export function foo(onImport) {
   __wyw_dynamic_import('./foo').then(onImport);
 }"
 `;
@@ -22,66 +16,7 @@ Map {
 
 exports[`prepareCode Testing transformation for dynamic-import: metadata 1`] = `null`;
 
-exports[`prepareCode Testing transformation for dynamic-import-concat: code 1`] = `
-""use strict";
-
-Object.defineProperty(exports, "__esModule", {
-  value: true
-});
-exports.foo = foo;
-function foo(locale, onImport) {
-  __wyw_dynamic_import('./foo/' + locale).then(onImport);
-  __wyw_dynamic_import('./foo/'.concat(locale, '.json')).then(onImport);
-}"
-`;
-
-exports[`prepareCode Testing transformation for dynamic-import-concat: imports 1`] = `Map {}`;
-
-exports[`prepareCode Testing transformation for dynamic-import-concat: metadata 1`] = `null`;
-
-exports[`prepareCode Testing transformation for dynamic-import-param: code 1`] = `
-""use strict";
-
-Object.defineProperty(exports, "__esModule", {
-  value: true
-});
-exports.foo = foo;
-function foo(locale, onImport) {
-  __wyw_dynamic_import("./foo/" + locale).then(onImport);
-}"
-`;
-
-exports[`prepareCode Testing transformation for dynamic-import-param: imports 1`] = `Map {}`;
-
-exports[`prepareCode Testing transformation for dynamic-import-param: metadata 1`] = `null`;
-
-exports[`prepareCode Testing transformation for for-debug: code 1`] = `
-"'use strict';
-
-Object.defineProperty(exports, '__esModule', {
-  value: true
-});
-Object.defineProperty(exports, 'asyncResolveFallback', {
-  enumerable: true,
-  get: function get() {}
-});
-Object.defineProperty(exports, 'collectExportsAndImports', {
-  enumerable: true,
-  get: function get() {}
-});
-Object.defineProperty(exports, 'slugify', {
-  enumerable: true,
-  get: function get() {
-    return _slugify["default"];
-  }
-});
-var _slugify = _interopRequireDefault(require('./slugify'));
-function _interopRequireDefault(obj) {
-  return obj && obj.__esModule ? obj : {
-    "default": obj
-  };
-}"
-`;
+exports[`prepareCode Testing transformation for for-debug: code 1`] = `"export { default as slugify } from './slugify';"`;
 
 exports[`prepareCode Testing transformation for for-debug: imports 1`] = `
 Map {
@@ -94,14 +29,8 @@ Map {
 exports[`prepareCode Testing transformation for for-debug: metadata 1`] = `null`;
 
 exports[`prepareCode Testing transformation for unsupported-dynamic-import: code 1`] = `
-""use strict";
-
-Object.defineProperty(exports, "__esModule", {
-  value: true
-});
-exports.foo = foo;
-var random = Math.random() > 0.5 ? "first" : "second";
-function foo(onImport) {
+"var random = Math.random() > 0.5 ? "first" : "second";
+export function foo(onImport) {
   __wyw_dynamic_import(random).then(onImport);
 }"
 `;
@@ -109,3 +38,24 @@ function foo(onImport) {
 exports[`prepareCode Testing transformation for unsupported-dynamic-import: imports 1`] = `Map {}`;
 
 exports[`prepareCode Testing transformation for unsupported-dynamic-import: metadata 1`] = `null`;
+
+exports[`prepareCode Testing transformation for dynamic-import-param: code 1`] = `
+"export function foo(locale, onImport) {
+  __wyw_dynamic_import("./foo/" + locale).then(onImport);
+}"
+`;
+
+exports[`prepareCode Testing transformation for dynamic-import-param: imports 1`] = `Map {}`;
+
+exports[`prepareCode Testing transformation for dynamic-import-param: metadata 1`] = `null`;
+
+exports[`prepareCode Testing transformation for dynamic-import-concat: code 1`] = `
+"export function foo(locale, onImport) {
+  __wyw_dynamic_import('./foo/' + locale).then(onImport);
+  __wyw_dynamic_import('./foo/'.concat(locale, '.json')).then(onImport);
+}"
+`;
+
+exports[`prepareCode Testing transformation for dynamic-import-concat: imports 1`] = `Map {}`;
+
+exports[`prepareCode Testing transformation for dynamic-import-concat: metadata 1`] = `null`;

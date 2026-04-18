@@ -1,0 +1,122 @@
+# WyW v2 migration guide
+
+## Summary
+
+- WyW packages are **ESM-only**.
+- **Node.js >= 22** is required for evaluation.
+- Evaluation runs in an async **Node ESM runner** (vm.SourceTextModule).
+- `eval.require` defaults to **warn-and-run**; use `importOverrides` to avoid runtime-only code during eval.
+- `eval.globals` updates are supported between runs (value changes and removals both trigger re-init).
+- Turbopack loader options must be **JSON-serializable**.
+- `@wyw-in-js/babel-preset` is still supported, but runs evaluation in a separate Node process.
+  Keep inline preset options JSON-serializable, and use `configFile` for function-valued WyW config.
+
+## Breaking changes
+
+### ESM-only packages
+
+`require('@wyw-in-js/*')` no longer works. Move config files to ESM:
+
+- `next.config.js` → `next.config.mjs`
+- `wyw-in-js.config.js` → `wyw-in-js.config.mjs`
+
+If you must keep CJS, use dynamic `import()` and re-export from a thin CJS wrapper.
+
+### Node >= 22
+
+WyW v2 uses `vm.SourceTextModule`. Update your runtime to Node 22+ in CI and local dev.
+
+### Async evaluation + `require` fallback
+
+Eval-time `require()` is no longer part of the resolver/loader pipeline. By default, WyW will **warn and execute** it at
+runtime during eval. This can pull in heavy or browser-only modules.
+
+Control it via `eval.require`:
+
+```js
+// wyw-in-js.config.mjs
+export default {
+  eval: {
+    require: 'error', // or 'off'
+  },
+};
+```
+
+### `eval.globals` lifecycle (watch/dev)
+
+`eval.globals` is treated as part of evaluator input identity in v2.
+
+- If you change a global value between runs, WyW re-evaluates with the new value.
+- If you remove a global key, WyW re-evaluates without it.
+- Re-init is based on serialized globals payload (keys + values), not just key names.
+- Mutating globals at runtime inside evaluated modules is not a durable source of truth; subsequent runs read from config.
+- Non-plain object globals (`Date`, `Map`, `Set`, class instances) are rejected; use plain objects/arrays/primitives, functions, or symbols.
+
+Example:
+
+```js
+// wyw-in-js.config.mjs
+export default {
+  eval: {
+    globals: {
+      THEME_MODE: 'light',
+    },
+  },
+};
+```
+
+### Babel preset
+
+`@wyw-in-js/babel-preset` stays available, but uses a separate Node process for eval.
+
+- Inline preset options are sent to that child process, so they must stay JSON-serializable.
+- If you need function-valued WyW options such as custom resolver/loader hooks, keep them in a WyW config file and pass only `configFile` inline.
+- `configFile` is the escape hatch for non-serializable WyW config. It does not make already-loaded inline values serializable.
+
+### Turbopack loader options
+
+Next Turbopack rules accept only JSON-serializable options. Use `configFile` to pass non-JSON config:
+
+```js
+// next.config.mjs
+export default withWyw(
+  {},
+  {
+    turbopackLoaderOptions: {
+      configFile: './wyw-in-js.config.mjs',
+    },
+  }
+);
+```
+
+## Fixing `eval.require` warnings with `importOverrides`
+
+Use `importOverrides` to mock or skip heavy runtime-only dependencies:
+
+```js
+// wyw-in-js.config.mjs
+export default {
+  importOverrides: {
+    'browser-only-lib': { mock: './mocks/browser-only-lib.ts' },
+    'heavy-runtime-lib': { noShake: true },
+  },
+};
+```
+
+## Debugging
+
+- Enable debug logs: `DEBUG=wyw-in-js:*`
+- Trace resolver/loader decisions: `WYW_DEBUG_EVAL_RESOLVE=1`
+- Inspect logs with the [log analyzer](/debug/log-analyzer)
+
+## Adapter notes
+
+See the bundler-specific pages for configuration details and v2 notes:
+
+- [Vite](/bundlers/vite)
+- [Webpack](/bundlers/webpack)
+- [Rollup](/bundlers/rollup)
+- [esbuild](/bundlers/esbuild)
+- [Next.js](/bundlers/nextjs)
+- [Bun](/bundlers/bun)
+- [Parcel](/bundlers/parcel)

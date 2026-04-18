@@ -6,7 +6,8 @@
     "noEmit": true,
     "incremental": true,
     "resolveJsonModule": true,
-    "isolatedModules": true
+    "isolatedModules": true,
+    "module": "esnext"
   },
   "files": [],
   "include": [],

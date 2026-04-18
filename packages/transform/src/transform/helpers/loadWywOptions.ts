@@ -1,6 +1,7 @@
 import { cosmiconfigSync } from 'cosmiconfig';
 
 import type {
+  EvalOptionsV2,
   FeatureFlags,
   ImportLoaders,
   StrictOptions,
@@ -72,10 +73,16 @@ export function loadWywOptions(
     useBabelConfigs: true,
     useWeakRefInEval: true,
   };
+  const defaultEval: EvalOptionsV2 = {
+    mode: 'strict',
+    require: 'warn-and-run',
+    resolver: 'bundler',
+  };
 
   const config = (result?.config ?? {}) as Partial<StrictOptions>;
   const configImportLoaders = config.importLoaders;
   const configFeatures = config.features;
+  const configEval = config.eval;
 
   const options: StrictOptions = {
     displayName: false,
@@ -107,6 +114,11 @@ export function loadWywOptions(
     highPriorityPlugins: ['module-resolver'],
     ...config,
     ...rest,
+    eval: {
+      ...defaultEval,
+      ...(configEval ?? {}),
+      ...(rest.eval ?? {}),
+    },
     importLoaders: {
       ...defaultImportLoaders,
       ...(configImportLoaders ?? {}),

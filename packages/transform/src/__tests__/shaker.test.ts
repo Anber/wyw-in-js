@@ -47,15 +47,9 @@ const run = (only: string[]) => (code: TemplateStringsArray) =>
 describe('shaker', () => {
   it('should carefully shake used exports', () => {
     const code = run(['__wywPreval'])`
-      "use strict";
-
-      Object.defineProperty(exports, "__esModule", {
-        value: true
-      });
-      exports.activeClass = void 0;
-      exports.activeClass = "s1gxjcbn";
-      const _exp = /*#__PURE__*/() => exports.activeClass;
-      exports.__wywPreval = {
+      export const activeClass = "s1gxjcbn";
+      const _exp = /*#__PURE__*/() => activeClass;
+      export const __wywPreval = {
         _exp: _exp,
       };
     `;
@@ -65,13 +59,10 @@ describe('shaker', () => {
 
   it('should remove enum', () => {
     const code = run(['__wywPreval'])`
-      "use strict";
-
-      var PanelKinds;
-      (function (PanelKinds) {
-        PanelKinds["DEFAULT"] = "default";
-        PanelKinds["TRANSPARENT"] = "transparent";
-      })(PanelKinds = exports.PanelKinds || (exports.PanelKinds = {}));
+      export enum PanelKinds {
+        DEFAULT = "default",
+        TRANSPARENT = "transparent",
+      }
       const _exp2 = /*#__PURE__*/() => "t2nn9pk";
       export const __wywPreval = {
         _exp2: _exp2,
@@ -134,6 +125,20 @@ describe('shaker', () => {
     expect(code).toContain('__wywPreval');
     expect(code).not.toContain('react-aria-components');
     expect(code).not.toContain('react/jsx-runtime');
+  });
+
+  it('should unwrap single exported const declarations without cloning', () => {
+    const code = run(['__wywPreval'])`
+      export const Button = () => 'button';
+
+      export const __wywPreval = {
+        value: Button,
+      };
+    `;
+
+    expect(code).toContain('const Button =');
+    expect(code).not.toContain('export const Button');
+    expect(code).toContain('__wywPreval');
   });
 
   it('should not crash when dropping an anonymous default export', () => {
@@ -251,7 +256,7 @@ describe('shaker', () => {
         },
       };
 
-      exports.__wywPreval = {
+      export const __wywPreval = {
         value: () => 's1gxjcbn',
       };
     `;
@@ -391,6 +396,47 @@ describe('shaker', () => {
     expect(code).not.toContain('exports.mode');
   });
 
+  it('should ignore type-only enum references when deciding liveness', () => {
+    const code = run(['__wywPreval'])`
+      export enum Flags {
+        Dev = 1,
+      }
+
+      type Mode = Flags;
+
+      const _exp = /*#__PURE__*/() => 'static-class';
+      export const __wywPreval = {
+        _exp: _exp,
+      };
+    `;
+
+    expect(code).not.toContain('var Flags');
+    expect(code).not.toContain('exports.Flags');
+  });
+
+  it('should keep base classes local when a surviving export extends them', () => {
+    const code = run(['TaskNotFoundException'])`
+      export class NotFoundException extends Error {
+        constructor(message: string) {
+          super(message);
+          this.name = 'NotFoundException';
+        }
+      }
+
+      export class TaskNotFoundException extends NotFoundException {
+        constructor(message: string) {
+          super(message);
+          this.name = 'TaskNotFoundException';
+        }
+      }
+    `;
+
+    expect(code).toContain('class NotFoundException');
+    expect(code).toContain('class TaskNotFoundException extends NotFoundException');
+    expect(code).toContain('exports.TaskNotFoundException = TaskNotFoundException;');
+    expect(code).not.toContain('exports.NotFoundException');
+  });
+
   it('should split multi-declarator exports when only one binding survives', () => {
     const code = run(['b'])`
       export const a = globalThis.location?.hostname || 'localhost', b = a + '-dev';
@@ -417,5 +463,46 @@ describe('shaker', () => {
     // Both should be fully removed — nothing in __wywPreval references them
     expect(code).not.toContain('unused');
     expect(code).not.toContain('alsoUnused');
+  });
+
+  it('should drop unreferenced helper declarations after component code is stripped', () => {
+    const code = run(['default'])`
+      import { ApolloError } from '@apollo/client';
+
+      class ResolveError extends Error {}
+
+      function getErrorData(error) {
+        if (error instanceof ResolveError) {
+          return getErrorData(error.innerError);
+        }
+
+        if (error instanceof ApolloError) {
+          return null;
+        }
+
+        return null;
+      }
+
+      const BareEditor = function BareEditor() {
+        return null;
+      };
+
+      const _exp = function _exp() {
+        return BareEditor;
+      };
+
+      export default {
+        displayName: 'Editor0',
+        __wyw_meta: {
+          className: 'editor',
+          extends: _exp(),
+        },
+      };
+    `;
+
+    expect(code).toContain('__wyw_meta');
+    expect(code).not.toContain('ApolloError');
+    expect(code).not.toContain('ResolveError');
+    expect(code).not.toContain('getErrorData');
   });
 });

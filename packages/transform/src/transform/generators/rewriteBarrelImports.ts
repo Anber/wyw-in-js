@@ -1,6 +1,7 @@
 /* eslint-disable no-continue, @typescript-eslint/no-use-before-define, @typescript-eslint/no-explicit-any, no-param-reassign, prefer-destructuring */
-import generate from '@babel/generator';
+import generator from '@babel/generator';
 import * as t from '@babel/types';
+import path from 'path';
 
 import { EventEmitter } from '../../utils/EventEmitter';
 import { shaker } from '../../shaker';
@@ -17,6 +18,11 @@ import {
 } from '../barrelManifest';
 import type { IEntrypointDependency } from '../Entrypoint.types';
 import type { Services, ITransformAction } from '../types';
+
+const generate =
+  (generator as unknown as { default?: typeof generator }).default ?? generator;
+
+const NODE_MODULES_SEGMENT = `${path.sep}node_modules${path.sep}`;
 
 type RewriteResult = {
   ast: t.File;
@@ -571,6 +577,17 @@ function* getOrBuildBarrelManifest(
     undefined,
     analysisServices.log
   );
+
+  // Barrel expansion inside third-party dependencies is expensive and does not
+  // materially improve local project rewrites. Keep external imports unchanged.
+  if (filename.includes(NODE_MODULES_SEGMENT)) {
+    const externalEntry = {
+      kind: 'ineligible',
+      reason: 'custom-evaluator',
+    } as const;
+    this.services.cache.add('barrelManifests', filename, externalEntry);
+    return externalEntry;
+  }
 
   if (loadedAndParsed.evaluator === 'ignored') {
     const ignoredEntry = {

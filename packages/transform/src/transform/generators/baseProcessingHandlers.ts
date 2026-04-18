@@ -2,7 +2,10 @@ import type {
   SyncScenarioForAction,
   ICollectAction,
   IEvalAction,
+  IExplodeReexportsAction,
   IExtractAction,
+  IGetExportsAction,
+  IProcessImportsAction,
   IWorkflowAction,
   ActionQueueItem,
 } from '../types';

@@ -2,25 +2,28 @@
  * This file is an entry point for module evaluation for getting lazy dependencies.
  */
 
-import { Module } from '../module';
+import { invariant } from 'ts-invariant';
+
 import type { Entrypoint } from '../transform/Entrypoint';
 import type { Services } from '../transform/types';
 
 export interface IEvaluateResult {
   dependencies: string[];
-  value: Record<string | symbol, unknown>;
+  values: Map<string, unknown> | null;
 }
 
-export default function evaluate(
+export default async function evaluate(
   services: Services,
   entrypoint: Entrypoint
-): IEvaluateResult {
-  const m = new Module(services, entrypoint);
-
-  m.evaluate();
+): Promise<IEvaluateResult> {
+  invariant(
+    services.evalBroker,
+    '[wyw-in-js] Eval broker is missing for evaluation.'
+  );
+  const result = await services.evalBroker.evaluate(entrypoint);
 
   return {
-    value: entrypoint.exports,
-    dependencies: m.dependencies,
+    values: result.values,
+    dependencies: result.dependencies,
   };
 }

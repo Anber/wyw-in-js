@@ -5,7 +5,7 @@ import path from 'path';
 import dedent from 'dedent';
 
 import { TransformCacheCollection } from '../cache';
-import { transformSync } from '../transform';
+import { transform } from '../transform';
 
 const resolveWithExtensions = (candidate: string) => {
   if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
@@ -23,7 +23,7 @@ const resolveWithExtensions = (candidate: string) => {
   return null;
 };
 
-it('updates extracted CSS when an imported module changes (globalCache/watch)', () => {
+it('updates extracted CSS when an imported module changes (globalCache/watch)', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wyw-36-'));
 
   const entryFile = path.join(root, 'main.ts');
@@ -60,7 +60,7 @@ it('updates extracted CSS when an imported module changes (globalCache/watch)', 
   const cache = new TransformCacheCollection();
 
   const runEntrypoint = () =>
-    transformSync(
+    transform(
       {
         cache,
         options: {
@@ -88,7 +88,7 @@ it('updates extracted CSS when an imported module changes (globalCache/watch)', 
         },
       },
       fs.readFileSync(entryFile, 'utf8'),
-      (what, importer) => {
+      async (what, importer) => {
         if (what === 'test-css-processor') {
           return processorFile;
         }
@@ -107,7 +107,7 @@ it('updates extracted CSS when an imported module changes (globalCache/watch)', 
     );
 
   const runDependency = () =>
-    transformSync(
+    transform(
       {
         cache,
         options: {
@@ -135,7 +135,7 @@ it('updates extracted CSS when an imported module changes (globalCache/watch)', 
         },
       },
       fs.readFileSync(tokensFile, 'utf8'),
-      (what, importer) => {
+      async (what, importer) => {
         if (what === 'test-css-processor') {
           return processorFile;
         }
@@ -153,7 +153,7 @@ it('updates extracted CSS when an imported module changes (globalCache/watch)', 
       }
     );
 
-  const initial = runEntrypoint();
+  const initial = await runEntrypoint();
   expect(initial.cssText).toContain('blue');
 
   fs.writeFileSync(
@@ -166,7 +166,7 @@ it('updates extracted CSS when an imported module changes (globalCache/watch)', 
     `
   );
 
-  runDependency();
+  await runDependency();
 
   fs.writeFileSync(
     entryFile,
@@ -182,7 +182,7 @@ it('updates extracted CSS when an imported module changes (globalCache/watch)', 
     `
   );
 
-  const updated = runEntrypoint();
+  const updated = await runEntrypoint();
   expect(updated.cssText).toContain('red');
   expect(updated.cssText).not.toContain('blue');
 });

@@ -12,7 +12,7 @@ const nodeRequire = createRequire(import.meta.url);
 
 const hasKeyInList = (plugin: PluginItem, list: string[]): boolean => {
   const pluginKey = getPluginKey(plugin);
-  return pluginKey ? list.some((i) => pluginKey.includes(i)) : false;
+  return pluginKey ? list.some((item) => pluginKey.includes(item)) : false;
 };
 
 const isCommonJSPlugin = (plugin: PluginItem): boolean =>
@@ -21,7 +21,7 @@ const isCommonJSPlugin = (plugin: PluginItem): boolean =>
 const safeResolve = (id: string, paths: (string | null)[]): string | null => {
   try {
     return nodeRequire.resolve(id, {
-      paths: paths.filter((i) => i !== null) as string[],
+      paths: paths.filter((item) => item !== null) as string[],
     });
   } catch {
     return null;
@@ -42,7 +42,7 @@ const ensureTypescriptPlugin = (
   }
 
   const hasTypescriptPlugin = plugins.some(
-    (i) => getPluginKey(i) === 'transform-typescript'
+    (item) => getPluginKey(item) === 'transform-typescript'
   );
 
   if (hasTypescriptPlugin) {
@@ -67,14 +67,16 @@ const createShakerPlugins = (
 ): PluginItem[] => {
   const { highPriorityPlugins, ...shakerConfig } = config;
   const preShakePlugins =
-    evalConfig.plugins?.filter((i) => hasKeyInList(i, highPriorityPlugins)) ??
-    [];
+    evalConfig.plugins?.filter((item) =>
+      hasKeyInList(item, highPriorityPlugins)
+    ) ?? [];
 
   const plugins: PluginItem[] = [
     ...preShakePlugins,
     [shakerPlugin, shakerConfig],
     ...(evalConfig.plugins ?? []).filter(
-      (i) => !hasKeyInList(i, highPriorityPlugins) && !isCommonJSPlugin(i)
+      (item) =>
+        !hasKeyInList(item, highPriorityPlugins) && !isCommonJSPlugin(item)
     ),
   ];
 
@@ -143,16 +145,7 @@ export const emitCommonJS = (
 };
 
 export const shaker: Evaluator = (evalConfig, ast, code, config, babel) => {
-  const [esmAst, esmCode, imports] = shakeToESM(
-    evalConfig,
-    ast,
-    code,
-    config,
-    babel
-  );
-  const [, commonJSCode] = emitCommonJS(evalConfig, esmAst, esmCode, babel);
-
-  return [esmAst, commonJSCode, imports];
+  return shakeToESM(evalConfig, ast, code, config, babel);
 };
 
 export default shaker;

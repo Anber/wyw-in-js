@@ -22,7 +22,6 @@ export function findExportsInImports(
     const newEntrypoint = entrypoint.createChild(resolved, []);
 
     if (newEntrypoint === 'loop') {
-      // eslint-disable-next-line no-continue
       continue;
     }
 
@@ -43,11 +42,12 @@ export function* getExports(
     services: { cache },
   } = this;
   const { loadedAndParsed } = entrypoint;
+
   if (loadedAndParsed.ast === undefined) {
     return [];
   }
 
-  entrypoint.log(`get exports from %s`, entrypoint.name);
+  entrypoint.log('get exports from %s', entrypoint.name);
 
   if (cache.has('exports', entrypoint.name)) {
     return cache.get('exports', entrypoint.name)!;
@@ -56,26 +56,28 @@ export function* getExports(
   let withWildcardReexport: IReexport[] = [];
   const result: string[] = [];
 
-  this.services.babel.traverse(loadedAndParsed.ast!, {
+  this.services.babel.traverse(loadedAndParsed.ast, {
     Program(path) {
       const { exports, reexports } = collectExportsAndImports(path, 'disabled');
       Object.keys(exports).forEach((token) => {
         result.push(token);
       });
 
-      reexports.forEach((e) => {
-        if (e.exported !== '*') {
-          result.push(e.exported);
+      reexports.forEach((reexport) => {
+        if (reexport.exported !== '*') {
+          result.push(reexport.exported);
         }
       });
 
-      withWildcardReexport = reexports.filter((e) => e.exported === '*');
+      withWildcardReexport = reexports.filter(
+        (reexport) => reexport.exported === '*'
+      );
     },
   });
 
   if (withWildcardReexport.length) {
     const resolvedImports = yield* this.getNext('resolveImports', entrypoint, {
-      imports: new Map(withWildcardReexport.map((i) => [i.source, []])),
+      imports: new Map(withWildcardReexport.map((item) => [item.source, []])),
     });
     const dependencyFilenames = resolvedImports.flatMap((dependency) =>
       dependency.resolved ? [dependency.resolved] : []
@@ -99,13 +101,12 @@ export function* getExports(
     cache.add('exports', entrypoint.name, result);
     cache.setCacheDependencies('exports', entrypoint.name, dependencyFilenames);
 
-    entrypoint.log(`exports: %o`, result);
+    entrypoint.log('exports: %o', result);
 
     return result;
   }
 
-  entrypoint.log(`exports: %o`, result);
-
+  entrypoint.log('exports: %o', result);
   cache.add('exports', entrypoint.name, result);
 
   return result;

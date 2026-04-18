@@ -317,7 +317,10 @@ function stripExportKeepDeclaration(
     declaration.isClassDeclaration() ||
     declaration.isTSEnumDeclaration()
   ) {
-    exportDeclaration.replaceWith(t.cloneNode(declaration.node, true));
+    // Reuse the existing declaration node to unwrap `export class Foo {}`
+    // into `class Foo {}` without introducing a second binding during
+    // replacement. Cloning here can transiently create duplicate declarations.
+    exportDeclaration.replaceWith(declaration.node);
     return [path];
   }
 
@@ -329,7 +332,7 @@ function stripExportKeepDeclaration(
     );
 
     if (declarators.length === 1) {
-      exportDeclaration.replaceWith(t.cloneNode(declaration.node, true));
+      exportDeclaration.replaceWith(declaration.node);
       return staleExportPaths.length > 0 ? staleExportPaths : [path];
     }
 
@@ -348,14 +351,13 @@ function stripExportKeepDeclaration(
         return null;
       }
 
-      const clonedDeclarator = t.cloneNode(declarator.node, true);
       const currentSegment = segments[segments.length - 1];
       if (currentSegment && currentSegment.alive === isAlive) {
-        currentSegment.declarators.push(clonedDeclarator);
+        currentSegment.declarators.push(t.cloneNode(declarator.node, true));
       } else {
         segments.push({
           alive: isAlive,
-          declarators: [clonedDeclarator],
+          declarators: [t.cloneNode(declarator.node, true)],
         });
       }
     }
@@ -815,9 +817,22 @@ export default function shakerPlugin(
           file.scope.crawl();
 
           // Find and mark for deleting all unreferenced variables
-          const unreferenced = Object.values(
-            file.scope.getAllBindings()
-          ).filter((i) => !i.referenced);
+          const unreferenced = Object.values(file.scope.getAllBindings()).filter(
+            (binding) => {
+              if (!binding.referenced) {
+                return true;
+              }
+
+              return (
+                (binding.path.isFunctionDeclaration() ||
+                  binding.path.isClassDeclaration()) &&
+                binding.referencePaths.length > 0 &&
+                binding.referencePaths.every((ref) =>
+                  binding.path.isAncestor(ref)
+                )
+              );
+            }
+          );
 
           for (const binding of unreferenced) {
             if (binding.path.isVariableDeclarator()) {
@@ -841,6 +856,17 @@ export default function shakerPlugin(
                 if (queueForDeleting(id)) {
                   changed = true;
                 }
+              }
+            }
+
+            if (
+              (binding.path.isFunctionDeclaration() ||
+                binding.path.isClassDeclaration()) &&
+              !isRemoved(binding.path) &&
+              !forDeletingSet.has(binding.path)
+            ) {
+              if (queueForDeleting(binding.path)) {
+                changed = true;
               }
             }
 

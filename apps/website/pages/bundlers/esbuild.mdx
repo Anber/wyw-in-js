@@ -13,6 +13,10 @@ pnpm add -D @wyw-in-js/esbuild
 bun add -d @wyw-in-js/esbuild
 ```
 
+> Note: WyW packages are ESM-only and require Node.js `>=22`. If your build
+> script imports WyW packages from CommonJS, switch to ESM or use dynamic
+> `import()`.
+
 ### Configuration
 
 ```js
@@ -36,6 +40,9 @@ esbuild
   })
   .catch(() => process.exit(1));
 ```
+
+`eval.require` defaults to `warn-and-run` in v2. If eval-time `require()` happens, WyW will warn and execute it at
+runtime; use `importOverrides` or `eval.require: 'error'` to make it explicit.
 
 ### Additional Babel transformations
 
