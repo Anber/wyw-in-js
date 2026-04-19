@@ -7,6 +7,20 @@ import NativeModule, { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 import { Minimatch } from 'minimatch';
 
+// Redirect host process console to stderr BEFORE any module loads.
+// stdout is the IPC channel — any console.log (from us, vm context,
+// or external modules loaded via import()/require()) corrupts JSON
+// messages. This must happen at the top of the file.
+import { Console } from 'node:console';
+const _stderrConsole = new Console(process.stderr);
+globalThis.console = _stderrConsole;
+
+// Ignore EPIPE on stdout — broker may kill us mid-write.
+process.stdout.on('error', (err) => {
+  if (err.code === 'EPIPE') return;
+  throw err;
+});
+
 class LruCache {
   constructor(maxSize) {
     this.maxSize = Math.max(1, maxSize);
@@ -522,6 +536,17 @@ let happyDomLoadWarned = false;
 let happyDomUnavailable = false;
 let happyDomImportPromise = null;
 const debugEnabled = Boolean(process.env.WYW_EVAL_RUNNER_DEBUG);
+const diagLogPath = process.env.WYW_EVAL_DIAG;
+const diagStream = diagLogPath
+  ? fs.createWriteStream(diagLogPath, { flags: 'a' })
+  : null;
+
+const diag = (...args) => {
+  if (!diagStream) return;
+  const ts = (performance.now() / 1000).toFixed(1);
+  diagStream.write(`[runner ${ts}s] ${args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ')}\n`);
+};
+
 const debug = (...args) => {
   if (!debugEnabled) return;
   // eslint-disable-next-line no-console
@@ -665,6 +690,10 @@ const setReferencePropertyIfNotPresent = (context, key) => {
   context[key] = context;
 };
 
+// Redirect console to stderr so evaluated code's console.log doesn't
+// interleave with JSON IPC messages on stdout.
+const stderrConsole = _stderrConsole;
+
 const createBaseContext = (win, additionalContext) => {
   const baseContext = win ?? {};
   setReferencePropertyIfNotPresent(baseContext, 'window');
@@ -676,6 +705,7 @@ const createBaseContext = (win, additionalContext) => {
 
   baseContext.document = win?.document;
   baseContext.process = processShim;
+  baseContext.console = stderrConsole;
 
   baseContext.clearImmediate = NOOP;
   baseContext.clearInterval = NOOP;
@@ -943,15 +973,21 @@ const sendWarn = (warning) => {
 const request = (type, payload) => {
   nextId += 1;
   const id = `${nextId}`;
+  const t0 = performance.now();
+  diag(`request:send type=${type} id=${id}`, typeof payload === 'object' && payload ? { id: payload.id, specifier: payload.specifier, importerId: payload.importerId } : '');
   sendMessage({ type, id, payload });
   return new Promise((resolve, reject) => {
-    pending.set(id, { resolve, reject });
+    pending.set(id, { resolve, reject, type, t0 });
   });
 };
 
 const resolvePending = (id, payload) => {
   const pendingItem = pending.get(id);
   if (!pendingItem) return;
+  const dur = performance.now() - (pendingItem.t0 ?? 0);
+  if (dur > 1000) {
+    diag(`request:slow type=${pendingItem.type} id=${id} dur=${(dur/1000).toFixed(1)}s`);
+  }
   pending.delete(id);
   pendingItem.resolve(payload);
 };
@@ -1624,6 +1660,10 @@ const collectModuleExports = () => {
     const data = moduleData.get(id);
     if (!module || !data) return;
 
+    // Skip modules that haven't been fully linked+evaluated —
+    // accessing .namespace on them throws ERR_VM_MODULE_STATUS.
+    if (module.status !== 'evaluated') return;
+
     const { namespace } = module;
     const hasNamespace =
       namespace &&
@@ -1662,12 +1702,16 @@ const collectModuleExports = () => {
 
 async function evaluateEntrypoint(id) {
   const evalStart = Date.now();
+  diag(`eval:start ${id}`);
   debug('eval:start', id);
   const module = await loadModule(id, id, id);
+  diag(`eval:loaded ${id} ${Date.now() - evalStart}ms`);
   debug('eval:loaded', { id, durationMs: Date.now() - evalStart });
   await linkModule(module);
+  diag(`eval:linked ${id} ${Date.now() - evalStart}ms modules=${moduleCache.map.size}`);
   debug('eval:linked', { id, durationMs: Date.now() - evalStart });
   await module.evaluate();
+  diag(`eval:evaluated ${id} ${Date.now() - evalStart}ms`);
   debug('eval:evaluated', { id, durationMs: Date.now() - evalStart });
 
   const data = getModuleData(id);
@@ -1717,6 +1761,7 @@ const handleMessage = async (message) => {
     case 'INIT': {
       try {
         const initStart = Date.now();
+        diag(`INIT:start id=${message.id} entrypoint=${message.payload.entrypoint ?? 'eval-runner'} hasContext=${!!state.context} happyDOM=${message.payload.features?.happyDOM ?? false}`);
         debug('init:start', message.payload.entrypoint ?? 'eval-runner');
         const encodedGlobals = message.payload.evalOptions.globals ?? {};
         const nextGlobalsSignature = JSON.stringify(
@@ -1762,6 +1807,7 @@ const handleMessage = async (message) => {
             __wyw_getModule: (moduleId) => getModuleData(moduleId),
           });
           state.globalsSignature = nextGlobalsSignature;
+          diag(`INIT:reuse id=${message.id} dur=${Date.now() - initStart}ms`);
           debug('init:reuse', Date.now() - initStart);
           sendMessage({ type: 'INIT_ACK', id: message.id });
           break;
@@ -1788,9 +1834,11 @@ const handleMessage = async (message) => {
         state.happyDomEnabled = nextHappyDomEnabled;
         state.globalsSignature = nextGlobalsSignature;
 
+        diag(`INIT:fresh id=${message.id} dur=${Date.now() - initStart}ms contextDur=${Date.now() - windowStart}ms`);
         sendMessage({ type: 'INIT_ACK', id: message.id });
         debug('init:done', Date.now() - initStart);
       } catch (error) {
+        diag(`INIT:error id=${message.id} err=${error?.message?.slice(0, 200)}`);
         sendMessage({
           type: 'INIT_ACK',
           id: message.id,
@@ -1804,9 +1852,15 @@ const handleMessage = async (message) => {
     }
     case 'EVAL': {
       try {
+        diag(`EVAL:start id=${message.id} file=${message.payload.id}`);
+        const evalT0 = performance.now();
         const { values, modules } = await evaluateEntrypoint(
           message.payload.id
         );
+        const evalDur = performance.now() - evalT0;
+        const modCount = modules ? Object.keys(modules).length : 0;
+        const valCount = values ? Object.keys(values).length : 0;
+        diag(`EVAL:ok id=${message.id} dur=${(evalDur/1000).toFixed(1)}s vals=${valCount} mods=${modCount} pending=${pending.size}`);
         sendMessage({
           type: 'EVAL_RESULT',
           id: message.id,
@@ -1816,6 +1870,10 @@ const handleMessage = async (message) => {
           },
         });
       } catch (error) {
+        diag(`EVAL:fail id=${message.id} err=${error?.message?.slice(0, 200)} pending=${pending.size}`);
+        if (pending.size > 0) {
+          diag(`EVAL:fail:pending`, [...pending.entries()].map(([k, v]) => `${k}:${v.type}`).join(', '));
+        }
         sendMessage({
           type: 'EVAL_RESULT',
           id: message.id,
@@ -1851,8 +1909,10 @@ process.stdin.on('data', (chunk) => {
   lines.forEach((line) => {
     if (!line.trim()) return;
     const message = JSON.parse(line);
+    diag(`stdin:msg type=${message.type} id=${message.id}`);
     handleMessage(message);
   });
 });
+diag(`runner:ready pid=${process.pid}`);
 
 process.stdin.on('close', shutdown);

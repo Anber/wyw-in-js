@@ -53,6 +53,55 @@ type Loader = RawLoaderDefinitionFunction<LoaderOptions>;
 
 const cache = new TransformCacheCollection();
 
+// Single shared asyncResolve to ensure stable evalCacheKey across transform()
+// calls. getResolverId() assigns incrementing IDs to function references —
+// a new closure per file means a new ID → new cacheKey → new EvalBroker
+// → new child process per file. Sharing one function avoids this.
+//
+// Fallback resolver lookup: walk the stack from root to leaf looking for
+// any registered resolver. Transitive deps (e.g. color-utils.ts importing
+// culori) don't have their own resolver — we need the resolver from the
+// CSS entrypoint file that started the chain.
+const sharedAsyncResolve = (
+  what: string,
+  importer: string,
+  stack: string[] = [importer]
+): Promise<string> => {
+  const rootResolverKey = getResolverKey(importer, stack);
+  const rootResolvers = getActiveResolvers(rootResolverKey);
+  let resolver = rootResolvers.length > 0 ? rootResolvers : [];
+
+  if (resolver.length === 0) {
+    // Walk stack for any registered resolver (CSS entrypoint → transitive dep)
+    for (let i = stack.length - 1; i >= 0; i--) {
+      const key = stripQueryAndHash(stack[i]);
+      const found = getActiveResolvers(key);
+      if (found.length > 0) {
+        resolver = found;
+        break;
+      }
+    }
+  }
+
+  if (resolver.length === 0) {
+    resolver = getActiveResolvers(stripQueryAndHash(importer));
+  }
+
+  if (resolver.length === 0) {
+    throw new Error(`No resolver found for ${what} from ${importer}`);
+  }
+
+  return Promise.all(resolver.map((r) => r(what, importer, stack))).then(
+    (results) => {
+      const firstResult = results[0];
+      if (results.some((r) => r !== firstResult)) {
+        throw new Error('Resolvers returned different results');
+      }
+      return firstResult;
+    }
+  );
+};
+
 type Resolver = (
   what: string,
   importer: string,
@@ -203,7 +252,10 @@ const webpack5Loader: Loader = function webpack5LoaderPlugin(
       return result;
     });
   });
-  const asyncResolve = createAsyncResolve(this.resourcePath);
+  // Use sharedAsyncResolve to keep evalCacheKey stable across files.
+  // createAsyncResolve creates a new closure per file → new function ref
+  // → getResolverId increments → new cacheKey → new EvalBroker per file.
+  const asyncResolve = sharedAsyncResolve;
 
   logger('loader %s', this.resourcePath);
 

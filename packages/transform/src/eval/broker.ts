@@ -4,6 +4,16 @@ import NativeModule from 'module';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process';
+
+const diagLogPath = process.env.WYW_EVAL_DIAG;
+const diagStream = diagLogPath
+  ? fs.createWriteStream(diagLogPath.replace(/\.log$/, '') + '.broker.log', { flags: 'a' })
+  : null;
+const diag = (...args: unknown[]) => {
+  if (!diagStream) return;
+  const ts = (performance.now() / 1000).toFixed(1);
+  diagStream.write(`[broker ${ts}s] ${args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ')}\n`);
+};
 import type { File, Program } from '@babel/types';
 
 import { invariant } from 'ts-invariant';
@@ -162,6 +172,20 @@ const serializeCachedExports = (
   }
 
   return serialized;
+};
+
+const ESM_DEFAULT_CONDITIONS = ['import', 'node', 'default'] as const;
+
+const expandConditions = (conditionNames: string[]): Set<string> => {
+  const result = new Set<string>();
+  conditionNames.forEach((name) => {
+    if (name === '...') {
+      ESM_DEFAULT_CONDITIONS.forEach((c) => result.add(c));
+      return;
+    }
+    result.add(name);
+  });
+  return result;
 };
 
 const DEFAULT_EVAL_OPTIONS: Required<
@@ -803,6 +827,8 @@ export class EvalBroker {
     dependencies: string[];
   }> {
     const task = this.evalQueue.then(async () => {
+      diag(`evaluate:start ${entrypoint.name}`);
+      const t0 = performance.now();
       this.dependencies.clear();
       this.emittedDependencies.clear();
       this.importsByModule.clear();
@@ -821,6 +847,7 @@ export class EvalBroker {
         },
         EVAL_TIMEOUT_MS
       );
+      diag(`evaluate:done ${entrypoint.name} ${((performance.now() - t0) / 1000).toFixed(1)}s values=${payload.values ? Object.keys(payload.values).length : 0}`);
 
       if (payload.modules) {
         this.applyModuleExports(payload.modules);
@@ -928,6 +955,7 @@ export class EvalBroker {
       emitWarning(this.services, `[wyw-eval-runner] ${chunk.toString()}`);
     });
     runner.on('exit', (code, signal) => {
+      diag(`runner:exit pid=${runner.pid} code=${code} signal=${signal} isCurrentRunner=${this.runner === runner} pending=${this.pending.size}`);
       if (this.runner !== runner) {
         return;
       }
@@ -944,11 +972,14 @@ export class EvalBroker {
 
   private async ensureRunner() {
     if (this.runnerReady) {
+      diag(`ensureRunner:reuse pid=${this.runner?.pid}`);
       await this.runnerReady;
       return;
     }
 
+    diag(`ensureRunner:spawn (no runnerReady)`);
     this.runner = this.createRunnerProcess();
+    diag(`ensureRunner:spawned pid=${this.runner.pid}`);
     this.attachRunnerListeners(this.runner);
     this.runnerReady = Promise.resolve();
     await this.runnerReady;
@@ -1064,6 +1095,7 @@ export class EvalBroker {
   }
 
   private replaceRunner(nextRunner: ChildProcessWithoutNullStreams) {
+    diag(`replaceRunner: old pid=${this.runner?.pid} new pid=${nextRunner.pid}`);
     if (this.runner) {
       this.runner.removeAllListeners();
       this.runner.kill();
@@ -1085,9 +1117,11 @@ export class EvalBroker {
       entrypoint.name
     );
     if (this.lastInitKey === initKey) {
+      diag(`initRunner:skip (same initKey) runner=${!!this.runner} pid=${this.runner?.pid}`);
       return;
     }
     const timeoutMs = this.getInitTimeoutMs(entrypoint, features);
+    diag(`initRunner:start runner=${!!this.runner} pid=${this.runner?.pid} lastKey=${!!this.lastInitKey} happyDOM=${nextHappyDomEnabled} timeout=${timeoutMs}ms file=${entrypoint.name.split('/').slice(-2).join('/')}`);
 
     if (
       this.runner &&
@@ -1124,10 +1158,14 @@ export class EvalBroker {
     }
 
     try {
+      diag(`initRunner:request INIT pid=${this.runner?.pid} timeoutMs=${timeoutMs}`);
       await this.request('INIT', payload, timeoutMs);
+      diag(`initRunner:ok pid=${this.runner?.pid}`);
       this.lastInitKey = initKey;
       this.lastHappyDomEnabled = nextHappyDomEnabled;
     } catch (error) {
+      const errMsg = error instanceof Error ? error.message : String(error);
+      diag(`initRunner:error pid=${this.runner?.pid} err=${errMsg.slice(0, 200)} happyDomDisabled=${this.happyDomDisabled} isTimeout=${isEvalTimeoutError(error)}`);
       if (
         isEvalTimeoutError(error) &&
         !this.happyDomDisabled &&
@@ -1135,6 +1173,7 @@ export class EvalBroker {
       ) {
         this.happyDomDisabled = true;
         this.warnHappyDomDisabledOnce(timeoutMs);
+        diag(`initRunner:happyDOM-fallback dispose+respawn`);
         this.dispose();
         await this.ensureRunner();
         const fallbackFeatures = this.getRunnerFeatures();
@@ -1147,6 +1186,7 @@ export class EvalBroker {
         await this.request('INIT', fallbackPayload, INIT_TIMEOUT_MS);
         this.lastInitKey = getInitPayloadKey(fallbackPayload);
         this.lastHappyDomEnabled = false;
+        diag(`initRunner:happyDOM-fallback ok`);
         return;
       }
       throw error;
@@ -1273,7 +1313,12 @@ export class EvalBroker {
   }
 
   private async handleResolve(id: string, payload: ResolveRequestPayload) {
+    const t0 = performance.now();
     const result = await this.resolveImport(payload);
+    const dur = performance.now() - t0;
+    if (dur > 100) {
+      diag(`resolve:slow ${(dur).toFixed(0)}ms ${payload.specifier} from ${payload.importerId?.split('/').slice(-2).join('/')}`);
+    }
     this.sendMessage({
       type: 'RESOLVE_RESULT',
       id,
@@ -1780,14 +1825,23 @@ export class EvalBroker {
       const strippedId = stripQueryAndHash(specifier);
 
       let resolved: string;
+      const { conditionNames } = this.services.options.pluginOptions;
+      const conditions = conditionNames?.length
+        ? expandConditions(conditionNames)
+        : undefined;
       try {
-        resolved = DefaultModuleImplementation._resolveFilename(strippedId, {
-          id: filename,
-          filename,
-          paths: DefaultModuleImplementation._nodeModulePaths(
-            path.dirname(filename)
-          ),
-        });
+        resolved = DefaultModuleImplementation._resolveFilename(
+          strippedId,
+          {
+            id: filename,
+            filename,
+            paths: DefaultModuleImplementation._nodeModulePaths(
+              path.dirname(filename)
+            ),
+          },
+          false,
+          conditions ? { conditions } : undefined
+        );
       } catch (error) {
         throw new Error(
           [
@@ -2215,6 +2269,7 @@ export class EvalBroker {
 
     return new Promise<TPayload>((resolve, reject) => {
       const timeout = setTimeout(() => {
+        diag(`TIMEOUT type=${type} id=${id} timeoutMs=${timeoutMs} pending=${this.pending.size}`);
         this.pending.delete(id);
         this.runner?.kill();
         const error = new Error(

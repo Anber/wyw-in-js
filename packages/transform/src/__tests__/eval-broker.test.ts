@@ -1387,4 +1387,273 @@ describe('EvalBroker', () => {
     broker.dispose();
     rmSync(root, { recursive: true, force: true });
   });
+
+  it('evaluates large string results without IPC truncation', async () => {
+    // Regression: stylesFromTheme produces a ~100KB CSS string.
+    // When serialized and sent via runner stdout, large messages caused
+    // "Failed to parse message" because stdout pipe can split writes.
+    const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-large-'));
+    const entry = join(root, 'entry.js');
+
+    // Generate a CSS-like string with ~500 custom properties (~500KB)
+    // Real-world: stylesFromTheme with ~300 vars, each value is a long
+    // CSS expression. Must survive IPC stdout pipe without truncation.
+    const cssVars = Array.from({ length: 500 }, (_, i) =>
+      `--color-${i}: var(--fibery-color-${i}-${'x'.repeat(1000)});`
+    ).join('\\n');
+
+    writeFileSync(
+      entry,
+      [
+        `const bigCss = "${cssVars}";`,
+        'export const __wywPreval = {',
+        '  styles: () => bigCss,',
+        '};',
+      ].join('\n')
+    );
+
+    const asyncResolve = jest.fn(async (what: string, importer: string) => {
+      if (what.startsWith('.')) {
+        return resolve(dirname(importer), what);
+      }
+      return null;
+    });
+    const services = createServices(root, entry);
+    const broker = new EvalBroker(services, asyncResolve);
+    const entrypoint = Entrypoint.createRoot(
+      services,
+      entry,
+      ['__wywPreval'],
+      readFileSync(entry, 'utf-8')
+    );
+
+    const result = await broker.evaluate(entrypoint);
+
+    expect(result.values).not.toBeNull();
+    const styles = result.values?.get('styles');
+    expect(typeof styles).toBe('string');
+    expect((styles as string).length).toBeGreaterThan(50000);
+    expect((styles as string)).toContain('--color-0:');
+    expect((styles as string)).toContain('--color-299:');
+
+    broker.dispose();
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('console.log in evaluated code does not corrupt IPC', async () => {
+    // Regression: evaluated code calling console.log() wrote to
+    // process.stdout — the IPC channel. A console.log with \n in
+    // the output would split a JSON IPC message, causing broker's
+    // line-buffered parser to fail: "Failed to parse message".
+    //
+    // This test spawns the actual runner.js as a child process
+    // (like broker does) and verifies every stdout line is valid JSON.
+    const { spawn } = await import('child_process');
+    const { fileURLToPath } = await import('url');
+
+    const root = mkdtempSync(join(tmpdir(), 'wyw-eval-runner-console-'));
+    const entry = join(root, 'entry.js');
+
+    writeFileSync(
+      entry,
+      [
+        'console.log("hello from eval");',
+        'console.log("multi\\nline");',
+        'console.log(JSON.stringify({ fake: "json" }));',
+        'export const __wywPreval = {',
+        '  value: () => 42,',
+        '};',
+      ].join('\n')
+    );
+
+    const runnerPath = fileURLToPath(
+      new URL('../eval/runner.js', import.meta.url)
+    );
+    const runner = spawn(
+      process.execPath,
+      ['--experimental-vm-modules', runnerPath],
+      { stdio: ['pipe', 'pipe', 'pipe'] }
+    );
+
+    const stdoutLines: string[] = [];
+    const stderrChunks: string[] = [];
+    let stdoutBuf = '';
+
+    runner.stdout.setEncoding('utf8');
+    runner.stderr.setEncoding('utf8');
+    runner.stdout.on('data', (chunk: string) => {
+      stdoutBuf += chunk;
+      const lines = stdoutBuf.split('\n');
+      stdoutBuf = lines.pop() ?? '';
+      stdoutLines.push(...lines.filter((l: string) => l.trim()));
+    });
+    runner.stderr.on('data', (chunk: string) => {
+      stderrChunks.push(chunk);
+    });
+
+    const send = (msg: Record<string, unknown>) => {
+      runner.stdin.write(JSON.stringify(msg) + '\n');
+    };
+
+    const waitForMessage = (type: string, id: string): Promise<Record<string, unknown>> =>
+      new Promise((res, rej) => {
+        const timeout = setTimeout(() => rej(new Error(`timeout waiting for ${type} id=${id}`)), 30000);
+        const check = () => {
+          for (let i = 0; i < stdoutLines.length; i++) {
+            try {
+              const parsed = JSON.parse(stdoutLines[i]);
+              if (parsed.type === type && parsed.id === id) {
+                clearTimeout(timeout);
+                stdoutLines.splice(i, 1);
+                res(parsed);
+                return;
+              }
+            } catch { /* not json yet */ }
+          }
+          setTimeout(check, 10);
+        };
+        check();
+      });
+
+    // INIT
+    send({
+      type: 'INIT',
+      id: 'init-1',
+      payload: {
+        entrypoint: entry,
+        evalOptions: { globals: {}, mode: 'strict', require: 'warn-and-run' },
+        features: {},
+        reuseModules: true,
+      },
+    });
+    const initAck = await waitForMessage('INIT_ACK', 'init-1');
+    expect(initAck.error).toBeUndefined();
+
+    // Handle LOAD requests from runner
+    const handleLoads = () => {
+      for (let i = 0; i < stdoutLines.length; i++) {
+        try {
+          const parsed = JSON.parse(stdoutLines[i]);
+          if (parsed.type === 'LOAD') {
+            stdoutLines.splice(i, 1);
+            i--;
+            const filePath = parsed.payload?.id;
+            let code = '';
+            try { code = readFileSync(filePath, 'utf-8'); } catch { /* */ }
+            send({
+              type: 'LOAD_RESULT',
+              id: parsed.id,
+              payload: { id: filePath, code, only: ['*'] },
+            });
+          }
+        } catch { /* not json */ }
+      }
+    };
+
+    // EVAL
+    send({
+      type: 'EVAL',
+      id: 'eval-1',
+      payload: { id: entry },
+    });
+
+    // Poll for EVAL_RESULT while handling LOAD requests
+    const evalResult = await new Promise<Record<string, unknown>>((res, rej) => {
+      const timeout = setTimeout(() => rej(new Error('timeout waiting for EVAL_RESULT')), 30000);
+      const check = () => {
+        handleLoads();
+        for (let i = 0; i < stdoutLines.length; i++) {
+          try {
+            const parsed = JSON.parse(stdoutLines[i]);
+            if (parsed.type === 'EVAL_RESULT' && parsed.id === 'eval-1') {
+              clearTimeout(timeout);
+              stdoutLines.splice(i, 1);
+              res(parsed);
+              return;
+            }
+          } catch { /* not json yet */ }
+        }
+        setTimeout(check, 10);
+      };
+      check();
+    });
+
+    runner.stdin.end();
+    runner.kill();
+
+    // Every stdout line must be valid JSON (no console.log corruption)
+    for (const line of stdoutLines) {
+      expect(() => JSON.parse(line)).not.toThrow();
+    }
+
+    // Eval succeeded
+    expect(evalResult.error).toBeUndefined();
+    expect((evalResult as { payload?: { values?: Record<string, { kind: string; value: unknown }> } })
+      .payload?.values?.value?.value).toBe(42);
+
+    // console.log output went to stderr, not stdout
+    const stderr = stderrChunks.join('');
+    expect(stderr).toContain('hello from eval');
+
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('resolves custom conditionNames in Node resolver fallback', async () => {
+    // Regression: broker.resolveWithNodeFallback called _resolveFilename
+    // without conditions, so workspace packages with custom export
+    // conditions (e.g. "@my/source" → .ts files) were unresolvable.
+    const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-conditions-'));
+
+    // Create a "workspace package" with custom export condition
+    const pkgDir = join(root, 'node_modules', '@test', 'helpers');
+    mkdirSync(pkgDir, { recursive: true });
+    mkdirSync(join(pkgDir, 'src'));
+    writeFileSync(
+      join(pkgDir, 'package.json'),
+      JSON.stringify({
+        name: '@test/helpers',
+        exports: {
+          './src/*': {
+            '@test/source': './src/*.js',
+            default: './lib/src/*.js',
+          },
+        },
+      })
+    );
+    writeFileSync(
+      join(pkgDir, 'src', 'utils.js'),
+      'export const double = (x) => x * 2;'
+    );
+    // NOTE: lib/src/utils.js does NOT exist — default condition fails
+
+    const entry = join(root, 'entry.js');
+    writeFileSync(
+      entry,
+      [
+        "import { double } from '@test/helpers/src/utils';",
+        'export const __wywPreval = {',
+        '  value: () => double(21),',
+        '};',
+      ].join('\n')
+    );
+
+    const asyncResolve = jest.fn(async () => null);
+    const services = createServices(root, entry, {
+      conditionNames: ['@test/source', '...'],
+    });
+    const broker = new EvalBroker(services, asyncResolve);
+    const entrypoint = Entrypoint.createRoot(
+      services,
+      entry,
+      ['__wywPreval'],
+      readFileSync(entry, 'utf-8')
+    );
+
+    const result = await broker.evaluate(entrypoint);
+
+    expect(result.values?.get('value')).toBe(42);
+
+    broker.dispose();
+    rmSync(root, { recursive: true, force: true });
+  });
 });
