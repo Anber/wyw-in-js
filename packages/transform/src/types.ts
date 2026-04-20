@@ -15,6 +15,7 @@ import type {
   WYWTransformMetadata,
   WYWTransformResultMetadata,
 } from './utils/TransformMetadata';
+import type { WYWTransformDiagnostic } from './utils/TransformDiagnostics';
 
 export type PluginOptions = StrictOptions & {
   configFile?: string | false;
@@ -53,6 +54,7 @@ export type Result = {
   cssSourceMapText?: string;
   cssText?: string;
   dependencies?: string[];
+  diagnostics?: WYWTransformDiagnostic[];
   metadata?: WYWTransformResultMetadata;
   replacements?: Replacement[];
   rules?: Rules;

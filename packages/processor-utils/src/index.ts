@@ -1,4 +1,10 @@
 export { BaseProcessor } from './BaseProcessor';
+export {
+  createProcessorDiagnosticArtifact,
+  isProcessorDiagnosticArtifact,
+  PROCESSOR_DIAGNOSTIC_ARTIFACT,
+} from './diagnostics';
+export type { ProcessorDiagnosticArtifact } from './diagnostics';
 export type {
   Expression,
   TagSource,

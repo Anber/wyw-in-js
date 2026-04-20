@@ -1,4 +1,5 @@
 import type { BaseProcessor } from '@wyw-in-js/processor-utils';
+import { isProcessorDiagnosticArtifact } from '@wyw-in-js/processor-utils';
 import type { Artifact, Location, Replacement, Rules } from '@wyw-in-js/shared';
 
 type TransformMetadataProcessor = Pick<
@@ -59,9 +60,9 @@ export const toTransformResultMetadata = (
 ): WYWTransformResultMetadata => ({
   dependencies,
   processors: metadata.processors.map((processor) => ({
-    artifacts: processor.artifacts.map(
-      ([type, data]) => [type, data] as Artifact
-    ),
+    artifacts: processor.artifacts
+      .filter((artifact) => !isProcessorDiagnosticArtifact(artifact))
+      .map(([type, data]) => [type, data] as Artifact),
     className: processor.className,
     displayName: processor.displayName,
     start: processor.location?.start ?? null,

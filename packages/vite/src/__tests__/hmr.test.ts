@@ -190,6 +190,52 @@ describe('vite HMR', () => {
     });
   });
 
+  it('reports structured diagnostics returned by transform()', async () => {
+    const root = process.cwd();
+    const entryId = path.join(root, 'src', 'entry.tsx');
+    const warn = jest.fn();
+
+    transformMock.mockResolvedValue({
+      code: 'export const x = 1;',
+      cssText: '',
+      cssSourceMapText: null,
+      dependencies: [],
+      diagnostics: [
+        {
+          category: 'dx-style/raw-color',
+          className: 'entry_a',
+          displayName: 'entry',
+          filename: entryId,
+          message: 'Use a design token instead of a raw color.',
+          severity: 'warning',
+          start: { column: 4, line: 2 },
+        },
+      ],
+      sourceMap: null,
+    });
+
+    const plugin = wywInJS();
+    plugin.configResolved?.({ root } as any);
+
+    await plugin.transform?.call(
+      { resolve: jest.fn(), warn } as any,
+      'console.log("test")',
+      entryId
+    );
+
+    expect(warn).toHaveBeenCalledWith({
+      id: entryId,
+      loc: {
+        column: 4,
+        file: entryId,
+        line: 2,
+      },
+      message:
+        '[wyw-in-js] warning [dx-style/raw-color] Use a design token instead of a raw color.',
+      pluginCode: 'dx-style/raw-color',
+    });
+  });
+
   it('clears stale metadata sidecars when a file stops producing metadata', async () => {
     const root = process.cwd();
     const entryId = path.join(root, 'src', 'entry.tsx');

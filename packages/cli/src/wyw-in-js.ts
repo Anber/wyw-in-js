@@ -17,6 +17,7 @@ import mkdirp from 'mkdirp';
 import normalize from 'normalize-path';
 import yargs from 'yargs';
 
+import { reportTransformDiagnostics } from './diagnostics';
 import { createMetadataFile } from './metadata';
 
 const modulesOptions = [
@@ -191,7 +192,18 @@ async function processFiles(files: (number | string)[], options: Options) {
         fs.readFileSync(filename).toString(),
         asyncResolveFallback
       ).then(
-        ({ code, cssText, metadata, sourceMap, cssSourceMapText }): boolean => {
+        ({
+          code,
+          cssText,
+          diagnostics,
+          metadata,
+          sourceMap,
+          cssSourceMapText,
+        }): boolean => {
+          if (diagnostics?.length) {
+            reportTransformDiagnostics(diagnostics);
+          }
+
           const shouldWriteCss =
             typeof cssText === 'string' && cssText.length > 0;
 

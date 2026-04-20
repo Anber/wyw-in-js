@@ -345,6 +345,22 @@ export default function wywInJS({
       };
 
       const result = await transform(transformServices, code, asyncResolve);
+
+      result.diagnostics?.forEach((diagnostic) => {
+        this.warn({
+          id: diagnostic.filename,
+          loc: diagnostic.start
+            ? {
+                column: diagnostic.start.column,
+                file: diagnostic.filename,
+                line: diagnostic.start.line,
+              }
+            : undefined,
+          message: `[wyw-in-js] ${diagnostic.severity} [${diagnostic.category}] ${diagnostic.message}`,
+          pluginCode: diagnostic.category,
+        });
+      });
+
       const relativeId = normalizePathname(path.relative(config.root, id));
       const metadataFilename = replaceModuleExtension(id, '.wyw-in-js.json');
       const metadataRelativePath = toBundleRelativePath(metadataFilename);

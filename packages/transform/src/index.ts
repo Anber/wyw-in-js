@@ -17,6 +17,8 @@ export type {
   WYWTransformProcessorMetadata,
   WYWTransformResultMetadata,
 } from './utils/TransformMetadata';
+export { collectTransformDiagnostics } from './utils/TransformDiagnostics';
+export type { WYWTransformDiagnostic } from './utils/TransformDiagnostics';
 export { Module, DefaultModuleImplementation } from './module';
 export { default as shaker } from './shaker';
 export { transform } from './transform';

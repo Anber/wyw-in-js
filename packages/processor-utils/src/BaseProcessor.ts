@@ -11,7 +11,14 @@ import type {
 import type { Artifact, ExpressionValue } from '@wyw-in-js/shared';
 import { hasEvalMeta } from '@wyw-in-js/shared';
 
-import type { IInterpolation, Params, Value, ValueCache } from './types';
+import { createProcessorDiagnosticArtifact } from './diagnostics';
+import type {
+  IInterpolation,
+  Params,
+  ProcessorDiagnostic,
+  Value,
+  ValueCache,
+} from './types';
 import getClassNameAndSlug from './utils/getClassNameAndSlug';
 import { isCSSable } from './utils/toCSS';
 import type { IFileContext, IOptions } from './utils/types';
@@ -100,6 +107,16 @@ export abstract class BaseProcessor {
    * whereas `styled` tag will be replaced with an object with metadata.
    */
   public abstract get value(): Expression;
+
+  public addDiagnostic(diagnostic: ProcessorDiagnostic): void {
+    this.artifacts.push(
+      createProcessorDiagnosticArtifact({
+        ...diagnostic,
+        end: diagnostic.end ?? this.location?.end ?? null,
+        start: diagnostic.start ?? this.location?.start ?? null,
+      })
+    );
+  }
 
   public isValidValue(value: unknown): value is Value {
     return (
