@@ -833,7 +833,11 @@ export class EvalBroker {
       this.emittedDependencies.clear();
       this.importsByModule.clear();
       this.onlyByModule.clear();
-      this.resolveCache.clear();
+      // Keep resolveCache across evaluations — resolution results are stable
+      // within a single build (file paths don't change). Clearing forced
+      // redundant _resolveFilename calls: culori alone re-resolved 264×,
+      // costing ~35s out of 78s total resolveImports time.
+      // this.resolveCache.clear();
       this.resolveInFlight.clear();
       this.onlyByModule.set(entrypoint.name, ['__wywPreval']);
 
