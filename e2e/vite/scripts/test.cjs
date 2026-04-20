@@ -17,6 +17,15 @@ function normalizeLineEndings(value) {
   return value.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
 }
 
+async function exists(filename) {
+  try {
+    await fs.access(filename);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function buildArtefact(outDir, pluginOptions) {
   await build({
     build: {
@@ -26,6 +35,22 @@ async function buildArtefact(outDir, pluginOptions) {
     },
     configFile: false,
     plugins: [pluginOptions ? wyw.default(pluginOptions) : wyw.default()],
+  });
+}
+
+async function buildArtefactWithPlugin(root, outDir, plugin) {
+  await build({
+    build: {
+      outDir,
+      cssMinify: false,
+      rollupOptions: {
+        input: path.join(root, 'src', 'index.ts'),
+      },
+    },
+    configFile: false,
+    logLevel: 'silent',
+    plugins: [plugin],
+    root,
   });
 }
 
@@ -56,6 +81,54 @@ async function getCSSFromManifest(outDir) {
 async function getMetadataManifest(outDir) {
   const manifestPath = path.resolve(outDir, 'src', 'index.wyw-in-js.json');
   return JSON.parse(await fs.readFile(manifestPath, 'utf-8'));
+}
+
+async function runReusedPluginMetadataRebuildCase() {
+  const fixtureDir = await fs.mkdtemp(path.join(PKG_DIR, 'rebuild-fixture-'));
+  const srcDir = path.join(fixtureDir, 'src');
+  const outDir = path.join(fixtureDir, 'dist');
+  const entryFilename = path.join(srcDir, 'index.ts');
+  const metadataFilename = path.join(outDir, 'src', 'component.wyw-in-js.json');
+  const plugin = wyw.default({ outputMetadata: true });
+
+  try {
+    await fs.mkdir(srcDir, { recursive: true });
+    await fs.writeFile(
+      entryFilename,
+      `import './component';
+
+export const entry = 1;
+`,
+      'utf8'
+    );
+    await fs.writeFile(
+      path.join(srcDir, 'component.ts'),
+      `import { css } from '@wyw-in-js/template-tag-syntax';
+
+export const className = css\`
+  color: red;
+\`;
+`,
+      'utf8'
+    );
+
+    await buildArtefactWithPlugin(fixtureDir, outDir, plugin);
+
+    if (!(await exists(metadataFilename))) {
+      throw new Error('Expected metadata sidecar after initial build');
+    }
+
+    await fs.writeFile(entryFilename, `export const entry = 2;\n`, 'utf8');
+    await buildArtefactWithPlugin(fixtureDir, outDir, plugin);
+
+    if (await exists(metadataFilename)) {
+      throw new Error(
+        'Expected rebuilds with a reused plugin instance to remove metadata sidecars for modules that left the graph'
+      );
+    }
+  } finally {
+    await fs.rm(fixtureDir, { recursive: true, force: true });
+  }
 }
 
 async function main() {
@@ -135,6 +208,9 @@ async function main() {
       }
     }
   }
+
+  console.log(colors.blue('Running case:'), 'rebuildOutputMetadata');
+  await runReusedPluginMetadataRebuildCase();
 }
 
 main().then(
