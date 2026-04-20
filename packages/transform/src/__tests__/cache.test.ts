@@ -1,7 +1,7 @@
-import { createHash } from 'crypto';
 import fs from 'node:fs';
 
 import { TransformCacheCollection } from '../cache';
+import type { BarrelManifest } from '../transform/barrelManifest';
 import type { IEntrypointDependency } from '../transform/Entrypoint.types';
 
 // Mocking the minimal interface needed by the cache
@@ -9,21 +9,29 @@ type MockEntrypoint = {
   dependencies: Map<string, Pick<IEntrypointDependency, 'resolved'>>;
   generation: number;
   initialCode: string;
+  invalidationDependencies?: Map<
+    string,
+    Pick<IEntrypointDependency, 'resolved'>
+  >;
   name: string;
 };
 
-jest.mock('node:fs');
+const mockedReadFileSync = jest.spyOn(fs, 'readFileSync');
 
-const mockedReadFileSync = jest.mocked(fs.readFileSync);
-
-function hashContent(content: string) {
-  return createHash('sha256').update(content).digest('hex');
-}
+const createErrnoError = (
+  code: string,
+  message = code
+): NodeJS.ErrnoException => {
+  const error = new Error(message) as NodeJS.ErrnoException;
+  error.code = code;
+  return error;
+};
 
 const setupCacheWithEntrypoint = (
   filename: string,
   content: string,
-  dependencies: MockEntrypoint['dependencies'] = new Map()
+  dependencies: MockEntrypoint['dependencies'] = new Map(),
+  invalidationDependencies: MockEntrypoint['invalidationDependencies'] = new Map()
 ): {
   cache: TransformCacheCollection<MockEntrypoint>;
   entrypoint: MockEntrypoint;
@@ -33,22 +41,25 @@ const setupCacheWithEntrypoint = (
     name: filename,
     initialCode: content,
     dependencies,
+    invalidationDependencies,
     generation: 1,
   };
 
   cache.add('entrypoints', filename, entrypoint);
 
-  // Manually set content hash as `add` does
-  // @ts-expect-error contentHashes is private
-  const { contentHashes } = cache;
-  contentHashes.set(filename, hashContent(content));
-
   return { cache, entrypoint };
 };
 
 describe('TransformCacheCollection', () => {
+  afterAll(() => {
+    mockedReadFileSync.mockRestore();
+  });
+
   beforeEach(() => {
-    mockedReadFileSync.mockClear();
+    mockedReadFileSync.mockReset();
+    mockedReadFileSync.mockImplementation(() => {
+      throw new Error('Unexpected readFileSync call.');
+    });
   });
 
   describe('invalidateIfChanged', () => {
@@ -58,6 +69,67 @@ describe('TransformCacheCollection', () => {
       const { cache } = setupCacheWithEntrypoint(filename, content);
 
       const invalidated = cache.invalidateIfChanged(filename, content);
+
+      expect(invalidated).toBe(false);
+      expect(cache.has('entrypoints', filename)).toBe(true);
+    });
+
+    it('stores content hashes for filesystem-loaded entrypoints', () => {
+      const filename = 'fs.js';
+      const content = 'export const value = 1;';
+      const cache = new TransformCacheCollection();
+
+      cache.add('entrypoints', filename, {
+        dependencies: new Map(),
+        generation: 1,
+        initialCode: undefined,
+        name: filename,
+        originalCode: content,
+      } as any);
+
+      const invalidated = cache.invalidateIfChanged(
+        filename,
+        content,
+        undefined,
+        'fs'
+      );
+
+      expect(invalidated).toBe(false);
+      expect(cache.has('entrypoints', filename)).toBe(true);
+    });
+
+    it('invalidates if loaded content differs from fs content', () => {
+      const filename = 'fs.tsx';
+      const fsContent = 'export type Foo = string;';
+      const loadedContent = 'export const foo = "string";';
+      const { cache } = setupCacheWithEntrypoint(filename, fsContent);
+
+      cache.invalidateIfChanged(filename, fsContent, undefined, 'fs');
+
+      const invalidated = cache.invalidateIfChanged(
+        filename,
+        loadedContent,
+        undefined,
+        'loaded'
+      );
+
+      expect(invalidated).toBe(true);
+      expect(cache.has('entrypoints', filename)).toBe(false);
+    });
+
+    it('does not invalidate if loaded content matches fs content', () => {
+      const filename = 'fs.tsx';
+      const content = 'export const foo = "string";';
+      const { cache } = setupCacheWithEntrypoint(filename, content);
+
+      cache.invalidateIfChanged(filename, content, undefined, 'fs');
+
+      const invalidated = cache.invalidateIfChanged(
+        filename,
+        content,
+        undefined,
+        'loaded'
+      );
 
       expect(invalidated).toBe(false);
       expect(cache.has('entrypoints', filename)).toBe(true);
@@ -73,6 +145,25 @@ describe('TransformCacheCollection', () => {
 
       expect(invalidated).toBe(true);
       expect(cache.has('entrypoints', filename)).toBe(false);
+    });
+
+    it('invalidates barrel manifests together with entrypoints when content changes', () => {
+      const filename = 'barrel.ts';
+      const content = `export { foo } from './foo';`;
+      const newContent = `export { bar } from './bar';`;
+      const { cache } = setupCacheWithEntrypoint(filename, content);
+
+      cache.add('barrelManifests', filename, {
+        complete: true,
+        exports: {},
+        kind: 'barrel',
+      } satisfies BarrelManifest);
+
+      const invalidated = cache.invalidateIfChanged(filename, newContent);
+
+      expect(invalidated).toBe(true);
+      expect(cache.has('entrypoints', filename)).toBe(false);
+      expect(cache.has('barrelManifests', filename)).toBe(false);
     });
 
     it('should invalidate dependency if its content changed', () => {
@@ -99,7 +190,7 @@ describe('TransformCacheCollection', () => {
 
       // Add the dependency entry to the main cache
       cache.add('entrypoints', depName, depEntrypoint as any);
-      (cache as any).contentHashes.set(depName, hashContent(depContent));
+      cache.invalidateIfChanged(depName, depContent, undefined, 'fs');
 
       // Mock fs read to return new content for the dependency
       mockedReadFileSync.mockImplementation((path) => {
@@ -114,9 +205,50 @@ describe('TransformCacheCollection', () => {
         parentContent // Parent content itself hasn't changed
       );
 
-      expect(invalidated).toBe(false); // Parent itself wasn't invalidated
-      expect(cache.has('entrypoints', parentName)).toBe(true); // Parent still in cache
+      expect(invalidated).toBe(true); // Parent invalidated due to dep change
+      expect(cache.has('entrypoints', parentName)).toBe(false); // Parent evicted
       expect(cache.has('entrypoints', depName)).toBe(false); // Dependency invalidated
+      expect(mockedReadFileSync).toHaveBeenCalledWith(depName, 'utf8');
+    });
+
+    it('should invalidate parent when an invalidation-only dependency changed', () => {
+      const depName = 'barrel.js';
+      const depContent = 'export { b } from "./leaf.js";';
+      const newDepContent = 'export { c } from "./leaf.js";';
+      const parentName = 'parent.js';
+      const parentContent = 'const value = 1;';
+
+      const { entrypoint: depEntrypoint } = setupCacheWithEntrypoint(
+        depName,
+        depContent
+      );
+
+      const invalidationDeps = new Map<
+        string,
+        Pick<IEntrypointDependency, 'resolved'>
+      >([['./barrel.js', { resolved: depName }]]);
+      const { cache } = setupCacheWithEntrypoint(
+        parentName,
+        parentContent,
+        new Map(),
+        invalidationDeps
+      );
+
+      cache.add('entrypoints', depName, depEntrypoint as any);
+      cache.invalidateIfChanged(depName, depContent, undefined, 'fs');
+
+      mockedReadFileSync.mockImplementation((path) => {
+        if (path === depName) {
+          return newDepContent;
+        }
+        throw new Error(`Unexpected readFileSync call: ${path}`);
+      });
+
+      const invalidated = cache.invalidateIfChanged(parentName, parentContent);
+
+      expect(invalidated).toBe(true);
+      expect(cache.has('entrypoints', parentName)).toBe(false);
+      expect(cache.has('entrypoints', depName)).toBe(false);
       expect(mockedReadFileSync).toHaveBeenCalledWith(depName, 'utf8');
     });
 
@@ -142,7 +274,7 @@ describe('TransformCacheCollection', () => {
       );
 
       cache.add('entrypoints', depName, depEntrypoint as any);
-      (cache as any).contentHashes.set(depName, hashContent(depContent));
+      cache.invalidateIfChanged(depName, depContent, undefined, 'fs');
 
       mockedReadFileSync.mockImplementation((path) => {
         if (path === depName) {
@@ -202,12 +334,8 @@ describe('TransformCacheCollection', () => {
 
       // Add all to the main cache
       cache.add('entrypoints', leafName, leafEntrypoint as any);
-      (cache as any).contentHashes.set(leafName, hashContent(leafContent));
       cache.add('entrypoints', intermediateName, intermediateEntrypoint as any);
-      (cache as any).contentHashes.set(
-        intermediateName,
-        hashContent(intermediateContent)
-      );
+      cache.invalidateIfChanged(leafName, leafContent, undefined, 'fs');
 
       // Mock fs read to return new content for the leaf dependency
       mockedReadFileSync.mockImplementation((path) => {
@@ -226,12 +354,326 @@ describe('TransformCacheCollection', () => {
         rootContent // Root content itself hasn't changed
       );
 
-      expect(invalidated).toBe(false); // Root itself wasn't invalidated
-      expect(cache.has('entrypoints', rootName)).toBe(true); // Root still in cache
-      expect(cache.has('entrypoints', intermediateName)).toBe(true); // Intermediate still in cache
+      expect(invalidated).toBe(true); // Root invalidated due to transitive dep change
+      expect(cache.has('entrypoints', rootName)).toBe(false); // Root evicted
+      expect(cache.has('entrypoints', intermediateName)).toBe(false); // Intermediate evicted
       expect(cache.has('entrypoints', leafName)).toBe(false); // Leaf dependency invalidated
       expect(mockedReadFileSync).toHaveBeenCalledWith(intermediateName, 'utf8');
       expect(mockedReadFileSync).toHaveBeenCalledWith(leafName, 'utf8');
+    });
+
+    it('should not crash when a dependency file has been deleted', () => {
+      const depName = 'deleted-dep.js';
+      const depContent = 'export const x = 1;';
+      const parentName = 'parent.js';
+      const parentContent = 'import { x } from "./deleted-dep.js";';
+
+      const { entrypoint: depEntrypoint } = setupCacheWithEntrypoint(
+        depName,
+        depContent
+      );
+
+      const parentDeps = new Map<
+        string,
+        Pick<IEntrypointDependency, 'resolved'>
+      >([['./deleted-dep.js', { resolved: depName }]]);
+      const { cache } = setupCacheWithEntrypoint(
+        parentName,
+        parentContent,
+        parentDeps
+      );
+
+      cache.add('entrypoints', depName, depEntrypoint as any);
+      cache.invalidateIfChanged(depName, depContent, undefined, 'fs');
+
+      const enoent = createErrnoError(
+        'ENOENT',
+        "ENOENT: no such file or directory, open 'deleted-dep.js'"
+      );
+
+      mockedReadFileSync.mockImplementation((path) => {
+        if (path === depName) {
+          throw enoent;
+        }
+        throw new Error(`Unexpected readFileSync call: ${path}`);
+      });
+
+      expect(() =>
+        cache.invalidateIfChanged(parentName, parentContent)
+      ).not.toThrow();
+      expect(cache.has('entrypoints', depName)).toBe(false);
+      expect(cache.has('entrypoints', parentName)).toBe(false);
+    });
+
+    it('should rethrow non-missing dependency read errors', () => {
+      const depName = 'protected-dep.js';
+      const depContent = 'export const x = 1;';
+      const parentName = 'parent.js';
+      const parentContent = 'import { x } from "./protected-dep.js";';
+
+      const { entrypoint: depEntrypoint } = setupCacheWithEntrypoint(
+        depName,
+        depContent
+      );
+
+      const parentDeps = new Map<
+        string,
+        Pick<IEntrypointDependency, 'resolved'>
+      >([['./protected-dep.js', { resolved: depName }]]);
+      const { cache } = setupCacheWithEntrypoint(
+        parentName,
+        parentContent,
+        parentDeps
+      );
+
+      cache.add('entrypoints', depName, depEntrypoint as any);
+      cache.invalidateIfChanged(depName, depContent, undefined, 'fs');
+
+      const eacces = createErrnoError(
+        'EACCES',
+        "EACCES: permission denied, open 'protected-dep.js'"
+      );
+
+      mockedReadFileSync.mockImplementation((path) => {
+        if (path === depName) {
+          throw eacces;
+        }
+        throw new Error(`Unexpected readFileSync call: ${path}`);
+      });
+
+      expect(() =>
+        cache.invalidateIfChanged(parentName, parentContent)
+      ).toThrow(eacces);
+      expect(cache.has('entrypoints', depName)).toBe(true);
+      expect(cache.has('entrypoints', parentName)).toBe(true);
+    });
+
+    it('should invalidate deleted dependency cache entries for all cache types', () => {
+      const depName = 'deleted-dep.js';
+      const depContent = 'export const x = 1;';
+      const parentName = 'parent.js';
+      const parentContent = 'import { x } from "./deleted-dep.js";';
+
+      const { entrypoint: depEntrypoint } = setupCacheWithEntrypoint(
+        depName,
+        depContent
+      );
+
+      const parentDeps = new Map<
+        string,
+        Pick<IEntrypointDependency, 'resolved'>
+      >([['./deleted-dep.js', { resolved: depName }]]);
+      const { cache } = setupCacheWithEntrypoint(
+        parentName,
+        parentContent,
+        parentDeps
+      );
+
+      cache.add('entrypoints', depName, depEntrypoint as any);
+      cache.add('exports', depName, ['x']);
+      cache.invalidateIfChanged(depName, depContent, undefined, 'fs');
+
+      mockedReadFileSync.mockImplementation(() => {
+        throw createErrnoError('ENOENT');
+      });
+
+      cache.invalidateIfChanged(parentName, parentContent);
+
+      expect(cache.has('entrypoints', depName)).toBe(false);
+      expect(cache.has('exports', depName)).toBe(false);
+    });
+
+    it('should continue processing other dependencies when one is deleted', () => {
+      const deletedDep = 'deleted.js';
+      const deletedContent = 'export const a = 1;';
+      const aliveDep = 'alive.js';
+      const aliveContent = 'export const b = 2;';
+      const newAliveContent = 'export const b = 3;';
+      const parentName = 'parent.js';
+      const parentContent =
+        'import { a } from "./deleted"; import { b } from "./alive";';
+
+      const { entrypoint: deletedEntrypoint } = setupCacheWithEntrypoint(
+        deletedDep,
+        deletedContent
+      );
+      const { entrypoint: aliveEntrypoint } = setupCacheWithEntrypoint(
+        aliveDep,
+        aliveContent
+      );
+
+      const parentDeps = new Map<
+        string,
+        Pick<IEntrypointDependency, 'resolved'>
+      >([
+        ['./deleted', { resolved: deletedDep }],
+        ['./alive', { resolved: aliveDep }],
+      ]);
+      const { cache } = setupCacheWithEntrypoint(
+        parentName,
+        parentContent,
+        parentDeps
+      );
+
+      cache.add('entrypoints', deletedDep, deletedEntrypoint as any);
+      cache.add('entrypoints', aliveDep, aliveEntrypoint as any);
+      cache.invalidateIfChanged(deletedDep, deletedContent, undefined, 'fs');
+      cache.invalidateIfChanged(aliveDep, aliveContent, undefined, 'fs');
+
+      mockedReadFileSync.mockImplementation((path) => {
+        if (path === deletedDep) {
+          throw createErrnoError('ENOENT');
+        }
+        if (path === aliveDep) {
+          return newAliveContent;
+        }
+        throw new Error(`Unexpected readFileSync call: ${path}`);
+      });
+
+      cache.invalidateIfChanged(parentName, parentContent);
+
+      expect(cache.has('entrypoints', deletedDep)).toBe(false);
+      expect(cache.has('entrypoints', aliveDep)).toBe(false);
+      expect(cache.has('entrypoints', parentName)).toBe(false);
+    });
+
+    it('should handle all dependencies being deleted', () => {
+      const dep1 = 'dep1.js';
+      const dep1Content = 'export const a = 1;';
+      const dep2 = 'dep2.js';
+      const dep2Content = 'export const b = 2;';
+      const parentName = 'parent.js';
+      const parentContent =
+        'import { a } from "./dep1"; import { b } from "./dep2";';
+
+      const { entrypoint: dep1Entrypoint } = setupCacheWithEntrypoint(
+        dep1,
+        dep1Content
+      );
+      const { entrypoint: dep2Entrypoint } = setupCacheWithEntrypoint(
+        dep2,
+        dep2Content
+      );
+
+      const parentDeps = new Map<
+        string,
+        Pick<IEntrypointDependency, 'resolved'>
+      >([
+        ['./dep1', { resolved: dep1 }],
+        ['./dep2', { resolved: dep2 }],
+      ]);
+      const { cache } = setupCacheWithEntrypoint(
+        parentName,
+        parentContent,
+        parentDeps
+      );
+
+      cache.add('entrypoints', dep1, dep1Entrypoint as any);
+      cache.add('entrypoints', dep2, dep2Entrypoint as any);
+
+      mockedReadFileSync.mockImplementation(() => {
+        throw createErrnoError('ENOENT');
+      });
+
+      expect(() =>
+        cache.invalidateIfChanged(parentName, parentContent)
+      ).not.toThrow();
+      expect(cache.has('entrypoints', dep1)).toBe(false);
+      expect(cache.has('entrypoints', dep2)).toBe(false);
+      expect(cache.has('entrypoints', parentName)).toBe(false);
+    });
+
+    it('should handle deleted dependency in recursive chain', () => {
+      const leafName = 'leaf.js';
+      const leafContent = 'export const c = 3;';
+      const intermediateName = 'intermediate.js';
+      const intermediateContent =
+        'import { c } from "./leaf.js"; export const b = c;';
+      const rootName = 'root.js';
+      const rootContent = 'import { b } from "./intermediate.js";';
+
+      const { entrypoint: leafEntrypoint } = setupCacheWithEntrypoint(
+        leafName,
+        leafContent
+      );
+
+      const intermediateDeps = new Map<
+        string,
+        Pick<IEntrypointDependency, 'resolved'>
+      >([['./leaf.js', { resolved: leafName }]]);
+      const { entrypoint: intermediateEntrypoint } = setupCacheWithEntrypoint(
+        intermediateName,
+        intermediateContent,
+        intermediateDeps
+      );
+
+      const rootDeps = new Map<string, Pick<IEntrypointDependency, 'resolved'>>(
+        [['./intermediate.js', { resolved: intermediateName }]]
+      );
+      const { cache } = setupCacheWithEntrypoint(
+        rootName,
+        rootContent,
+        rootDeps
+      );
+
+      cache.add('entrypoints', leafName, leafEntrypoint as any);
+      cache.add('entrypoints', intermediateName, intermediateEntrypoint as any);
+      cache.invalidateIfChanged(leafName, leafContent, undefined, 'fs');
+
+      mockedReadFileSync.mockImplementation((path) => {
+        if (path === intermediateName) {
+          return intermediateContent;
+        }
+        if (path === leafName) {
+          throw createErrnoError('ENOENT');
+        }
+        throw new Error(`Unexpected readFileSync call: ${path}`);
+      });
+
+      expect(() =>
+        cache.invalidateIfChanged(rootName, rootContent)
+      ).not.toThrow();
+      expect(cache.has('entrypoints', leafName)).toBe(false);
+      expect(cache.has('entrypoints', intermediateName)).toBe(false);
+      expect(cache.has('entrypoints', rootName)).toBe(false);
+    });
+
+    it('should handle deleted dependency with query/hash in resolved path', () => {
+      const depName = 'dep.js';
+      const depContent = 'export const x = 1;';
+      const parentName = 'parent.js';
+      const parentContent = 'import { x } from "./dep.js?raw";';
+
+      const { entrypoint: depEntrypoint } = setupCacheWithEntrypoint(
+        depName,
+        depContent
+      );
+
+      const resolvedWithQuery = `${depName}?raw`;
+      const parentDeps = new Map<
+        string,
+        Pick<IEntrypointDependency, 'resolved'>
+      >([['./dep.js?raw', { resolved: resolvedWithQuery }]]);
+      const { cache } = setupCacheWithEntrypoint(
+        parentName,
+        parentContent,
+        parentDeps
+      );
+
+      cache.add('entrypoints', resolvedWithQuery, depEntrypoint as any);
+
+      mockedReadFileSync.mockImplementation((path) => {
+        if (path === depName) {
+          throw createErrnoError('ENOENT');
+        }
+        throw new Error(`Unexpected readFileSync call: ${path}`);
+      });
+
+      expect(() =>
+        cache.invalidateIfChanged(parentName, parentContent)
+      ).not.toThrow();
+      expect(cache.has('entrypoints', resolvedWithQuery)).toBe(false);
+      expect(mockedReadFileSync).toHaveBeenCalledWith(depName, 'utf8');
     });
 
     it('should handle cyclic dependencies without infinite recursion', () => {
@@ -255,7 +697,6 @@ describe('TransformCacheCollection', () => {
       );
 
       cache.add('entrypoints', fileB, entryB as any);
-      (cache as any).contentHashes.set(fileB, hashContent(contentB));
 
       mockedReadFileSync.mockImplementation((path) => {
         if (path === fileB) {
@@ -275,6 +716,102 @@ describe('TransformCacheCollection', () => {
       expect(mockedReadFileSync).toHaveBeenCalledWith(fileB, 'utf8');
       expect(mockedReadFileSync).toHaveBeenCalledWith(fileA, 'utf8');
       expect(mockedReadFileSync).toHaveBeenCalledTimes(2);
+    });
+
+    it('should invalidate parent when dependency content changed', () => {
+      const depName = 'dep.js';
+      const depContent = 'export const b = 2;';
+      const newDepContent = 'export const b = 3;';
+      const parentName = 'parent.js';
+      const parentContent = 'import { b } from "./dep.js"; console.log(b);';
+
+      const { entrypoint: depEntrypoint } = setupCacheWithEntrypoint(
+        depName,
+        depContent
+      );
+
+      const parentDeps = new Map<
+        string,
+        Pick<IEntrypointDependency, 'resolved'>
+      >([['./dep.js', { resolved: depName }]]);
+      const { cache } = setupCacheWithEntrypoint(
+        parentName,
+        parentContent,
+        parentDeps
+      );
+
+      cache.add('entrypoints', depName, depEntrypoint as any);
+      cache.invalidateIfChanged(depName, depContent, undefined, 'fs');
+
+      mockedReadFileSync.mockImplementation((path) => {
+        if (path === depName) {
+          return newDepContent;
+        }
+        throw new Error(`Unexpected readFileSync call: ${path}`);
+      });
+
+      const invalidated = cache.invalidateIfChanged(parentName, parentContent);
+
+      expect(invalidated).toBe(true);
+      expect(cache.has('entrypoints', parentName)).toBe(false);
+      expect(cache.has('entrypoints', depName)).toBe(false);
+    });
+
+    it('should invalidate root when recursive (transitive) dependency changed', () => {
+      const leafName = 'leaf.js';
+      const leafContent = 'export const c = 3;';
+      const newLeafContent = 'export const c = 4;';
+      const intermediateName = 'intermediate.js';
+      const intermediateContent =
+        'import { c } from "./leaf.js"; export const b = c + 1;';
+      const rootName = 'root.js';
+      const rootContent =
+        'import { b } from "./intermediate.js"; console.log(b);';
+
+      const { entrypoint: leafEntrypoint } = setupCacheWithEntrypoint(
+        leafName,
+        leafContent
+      );
+
+      const intermediateDeps = new Map<
+        string,
+        Pick<IEntrypointDependency, 'resolved'>
+      >([['./leaf.js', { resolved: leafName }]]);
+      const { entrypoint: intermediateEntrypoint } = setupCacheWithEntrypoint(
+        intermediateName,
+        intermediateContent,
+        intermediateDeps
+      );
+
+      const rootDeps = new Map<string, Pick<IEntrypointDependency, 'resolved'>>(
+        [['./intermediate.js', { resolved: intermediateName }]]
+      );
+      const { cache } = setupCacheWithEntrypoint(
+        rootName,
+        rootContent,
+        rootDeps
+      );
+
+      cache.add('entrypoints', leafName, leafEntrypoint as any);
+      cache.add('entrypoints', intermediateName, intermediateEntrypoint as any);
+      cache.invalidateIfChanged(leafName, leafContent, undefined, 'fs');
+
+      mockedReadFileSync.mockImplementation((path) => {
+        if (path === leafName) {
+          return newLeafContent;
+        }
+        if (path === intermediateName) {
+          return intermediateContent;
+        }
+        throw new Error(`Unexpected readFileSync call: ${path}`);
+      });
+
+      const invalidated = cache.invalidateIfChanged(rootName, rootContent);
+
+      expect(invalidated).toBe(true);
+      expect(cache.has('entrypoints', rootName)).toBe(false);
+      expect(cache.has('entrypoints', intermediateName)).toBe(false);
+      expect(cache.has('entrypoints', leafName)).toBe(false);
     });
 
     it('should still invalidate cyclic dependency content changes', () => {
@@ -299,7 +836,6 @@ describe('TransformCacheCollection', () => {
       );
 
       cache.add('entrypoints', fileB, entryB as any);
-      (cache as any).contentHashes.set(fileB, hashContent(contentB));
 
       mockedReadFileSync.mockImplementation((path) => {
         if (path === fileA) {

@@ -13,7 +13,7 @@ interface IRunOptions {
 
 const run = (code: string, options: IRunOptions = {}): BaseProcessor | null => {
   const opts = {
-    filename: join(__dirname, options.ts ? 'test.ts' : 'test.js'),
+    filename: join(__dirname, '..', options.ts ? 'test.ts' : 'test.js'),
     root: '.',
     code: true,
     ast: true,

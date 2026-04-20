@@ -1,14 +1,20 @@
 .idea
 node_modules
 
+.worktrees
 .next
+.next-dev.log
+.next-dev.pid
+.parcel-cache
 .turbo
 build
 dist
 esm
 lib
 tsconfig.tsbuildinfo
+*.tsbuildinfo
 types
+**/*.wyw-in-js.module.css
 
 # Rust related
 
@@ -18,4 +24,11 @@ crates/*/index.js
 target
 *.node
 tmp/*
+.tmp/*
+.tmp-log-analyzer-sample/
+.log-analyzer-*.png
 AGENTS.md
+
+# apps/website copies root docs at build time
+apps/website/content/README.md
+apps/website/content/CHANGELOG.md

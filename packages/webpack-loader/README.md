@@ -11,6 +11,8 @@ npm i -D @wyw-in-js/webpack-loader
 yarn add --dev @wyw-in-js/webpack-loader
 # pnpm
 pnpm add -D @wyw-in-js/webpack-loader
+# bun
+bun add -d @wyw-in-js/webpack-loader
 ```
 
 ## Usage
@@ -25,6 +27,24 @@ module.exports = {
       loader: '@wyw-in-js/webpack-loader',
       options: {
         sourceMap: process.env.NODE_ENV !== 'production',
+      },
+    },
+  ],
+};
+```
+
+## Disabling vendor prefixing
+
+Stylis adds vendor-prefixed CSS by default. To disable it (and reduce CSS size), pass `prefixer: false`:
+
+```js
+module.exports = {
+  test: /\.js$/,
+  use: [
+    {
+      loader: '@wyw-in-js/webpack-loader',
+      options: {
+        prefixer: false,
       },
     },
   ],

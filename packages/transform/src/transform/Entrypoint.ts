@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import { invariant } from 'ts-invariant';
 
 import type { ParentEntrypoint, ITransformFileResult } from '../types';
@@ -15,8 +16,10 @@ import type { ActionByType } from './actions/BaseAction';
 import { BaseAction } from './actions/BaseAction';
 import { UnprocessedEntrypointError } from './actions/UnprocessedEntrypointError';
 import type { Services, ActionTypes, ActionQueueItem } from './types';
+import { stripQueryAndHash } from '../utils/parseRequest';
 
 const EMPTY_FILE = '=== empty file ===';
+const DEFAULT_ACTION_CONTEXT = Symbol('defaultActionContext');
 
 function hasLoop(
   name: string,
@@ -47,10 +50,14 @@ export class Entrypoint extends BaseEntrypoint {
 
   private actionsCache: Map<
     ActionTypes,
-    Map<unknown, BaseAction<ActionQueueItem>>
+    Map<unknown, Map<unknown, BaseAction<ActionQueueItem>>>
   > = new Map();
 
   #hasWywMetadata: boolean = false;
+
+  #isProcessing = false;
+
+  #pendingOnly: string[] | null = null;
 
   #supersededWith: Entrypoint | null = null;
 
@@ -70,6 +77,11 @@ export class Entrypoint extends BaseEntrypoint {
       Promise<IEntrypointDependency>
     >(),
     readonly dependencies = new Map<string, IEntrypointDependency>(),
+    readonly invalidationDependencies = new Map<
+      string,
+      IEntrypointDependency
+    >(),
+    readonly invalidateOnDependencyChange = new Set<string>(),
     generation = 1
   ) {
     super(
@@ -80,7 +92,9 @@ export class Entrypoint extends BaseEntrypoint {
       name,
       only,
       parents,
-      dependencies
+      dependencies,
+      invalidationDependencies,
+      invalidateOnDependencyChange
     );
 
     this.loadedAndParsed =
@@ -93,7 +107,12 @@ export class Entrypoint extends BaseEntrypoint {
       );
 
     if (this.loadedAndParsed.code !== undefined) {
-      services.cache.invalidateIfChanged(name, this.loadedAndParsed.code);
+      services.cache.invalidateIfChanged(
+        name,
+        this.loadedAndParsed.code,
+        undefined,
+        this.initialCode === undefined ? 'fs' : 'loaded'
+      );
     }
 
     const code =
@@ -126,19 +145,9 @@ export class Entrypoint extends BaseEntrypoint {
     services: Services,
     name: string,
     only: string[],
-    loadedCode: string | undefined,
-    options?: {
-      skipCacheOnlyMerge?: boolean;
-    }
+    loadedCode: string | undefined
   ): Entrypoint {
-    const created = Entrypoint.create(
-      services,
-      null,
-      name,
-      only,
-      loadedCode,
-      options
-    );
+    const created = Entrypoint.create(services, null, name, only, loadedCode);
     invariant(created !== 'loop', 'loop detected');
 
     return created;
@@ -161,10 +170,7 @@ export class Entrypoint extends BaseEntrypoint {
     parent: ParentEntrypoint | null,
     name: string,
     only: string[],
-    loadedCode: string | undefined,
-    options?: {
-      skipCacheOnlyMerge?: boolean;
-    }
+    loadedCode: string | undefined
   ): Entrypoint | 'loop' {
     const { cache, eventEmitter } = services;
     return eventEmitter.perf('createEntrypoint', () => {
@@ -181,8 +187,7 @@ export class Entrypoint extends BaseEntrypoint {
           : null,
         name,
         only,
-        loadedCode,
-        options
+        loadedCode
       );
 
       if (status !== 'cached') {
@@ -198,29 +203,40 @@ export class Entrypoint extends BaseEntrypoint {
     parent: ParentEntrypoint | null,
     name: string,
     only: string[],
-    loadedCode: string | undefined,
-    options?: {
-      skipCacheOnlyMerge?: boolean;
-    }
+    loadedCode: string | undefined
   ): ['loop' | 'created' | 'cached', Entrypoint] {
     const { cache } = services;
 
     const cached = cache.get('entrypoints', name);
-    const changed =
-      loadedCode !== undefined
-        ? cache.invalidateIfChanged(name, loadedCode)
-        : false;
+    let changed = false;
+    if (loadedCode !== undefined) {
+      changed = cache.invalidateIfChanged(
+        name,
+        loadedCode,
+        undefined,
+        'loaded'
+      );
+    } else if (cached && cached.initialCode === undefined) {
+      try {
+        changed = cache.invalidateIfChanged(
+          name,
+          fs.readFileSync(stripQueryAndHash(name), 'utf8'),
+          undefined,
+          'fs'
+        );
+      } catch {
+        changed = false;
+      }
+    }
 
     if (!cached?.evaluated && cached?.ignored) {
       return ['cached', cached];
     }
 
     const exports = cached?.exports;
-    const evaluatedOnly = cached?.evaluatedOnly ?? [];
+    const evaluatedOnly = changed ? [] : cached?.evaluatedOnly ?? [];
 
-    const shouldMergeOnly = !options?.skipCacheOnlyMerge;
-    const mergedOnly =
-      cached?.only && shouldMergeOnly ? mergeOnly(cached.only, only) : only;
+    const mergedOnly = cached?.only ? mergeOnly(cached.only, only) : [...only];
 
     if (cached?.evaluated) {
       cached.log('is already evaluated with', cached.evaluatedOnly);
@@ -247,6 +263,16 @@ export class Entrypoint extends BaseEntrypoint {
         cached?.only
       );
 
+      if (cached.#isProcessing) {
+        cached.deferOnlySupersede(mergedOnly);
+        cached.log(
+          'is being processed, defer supersede (%o -> %o)',
+          cached.only,
+          mergedOnly
+        );
+        return [isLoop ? 'loop' : 'cached', cached];
+      }
+
       return [isLoop ? 'loop' : 'created', cached.supersede(mergedOnly)];
     }
 
@@ -261,6 +287,12 @@ export class Entrypoint extends BaseEntrypoint {
       undefined,
       cached && 'resolveTasks' in cached ? cached.resolveTasks : undefined,
       cached && 'dependencies' in cached ? cached.dependencies : undefined,
+      cached && 'invalidationDependencies' in cached
+        ? cached.invalidationDependencies
+        : undefined,
+      cached && 'invalidateOnDependencyChange' in cached
+        ? cached.invalidateOnDependencyChange
+        : undefined,
       cached ? cached.generation + 1 : 1
     );
 
@@ -277,11 +309,36 @@ export class Entrypoint extends BaseEntrypoint {
     this.dependencies.set(dependency.source, dependency);
   }
 
+  public addInvalidationDependency(dependency: IEntrypointDependency): void {
+    this.resolveTasks.delete(dependency.source);
+    this.invalidationDependencies.set(dependency.source, dependency);
+  }
+
   public addResolveTask(
     name: string,
     dependency: Promise<IEntrypointDependency>
   ): void {
     this.resolveTasks.set(name, dependency);
+  }
+
+  public applyDeferredSupersede() {
+    if (this.#supersededWith || this.#pendingOnly === null) {
+      return null;
+    }
+
+    const mergedOnly = mergeOnly(this.only, this.#pendingOnly);
+    this.#pendingOnly = null;
+
+    if (isSuperSet(this.only, mergedOnly)) {
+      return null;
+    }
+
+    this.log('apply deferred supersede (%o -> %o)', this.only, mergedOnly);
+
+    const nextEntrypoint = this.supersede(mergedOnly);
+    this.services.cache.add('entrypoints', this.name, nextEntrypoint);
+
+    return nextEntrypoint;
   }
 
   public assertNotSuperseded() {
@@ -298,19 +355,29 @@ export class Entrypoint extends BaseEntrypoint {
     }
   }
 
+  public beginProcessing() {
+    this.#isProcessing = true;
+  }
+
   public createAction<
     TType extends ActionTypes,
     TAction extends ActionByType<TType>,
   >(
     actionType: TType,
     data: TAction['data'],
-    abortSignal: AbortSignal | null = null
+    abortSignal: AbortSignal | null = null,
+    actionContext: unknown = DEFAULT_ACTION_CONTEXT
   ): BaseAction<TAction> {
     if (!this.actionsCache.has(actionType)) {
       this.actionsCache.set(actionType, new Map());
     }
 
-    const cache = this.actionsCache.get(actionType)!;
+    const contexts = this.actionsCache.get(actionType)!;
+    if (!contexts.has(actionContext)) {
+      contexts.set(actionContext, new Map());
+    }
+
+    const cache = contexts.get(actionContext)!;
     const cached = cache.get(data);
     if (cached && !cached.abortSignal?.aborted) {
       return cached as BaseAction<TAction>;
@@ -321,7 +388,8 @@ export class Entrypoint extends BaseEntrypoint {
       this.services,
       this,
       data,
-      abortSignal
+      abortSignal,
+      actionContext
     );
 
     cache.set(data, newAction);
@@ -347,7 +415,7 @@ export class Entrypoint extends BaseEntrypoint {
     const evaluatedOnly = mergeOnly(this.evaluatedOnly, this.only);
     this.log('create EvaluatedEntrypoint for %o', evaluatedOnly);
 
-    return new EvaluatedEntrypoint(
+    const evaluated = new EvaluatedEntrypoint(
       this.services,
       evaluatedOnly,
       this.exportsProxy,
@@ -355,12 +423,32 @@ export class Entrypoint extends BaseEntrypoint {
       this.name,
       this.only,
       this.parents,
-      this.dependencies
+      this.dependencies,
+      this.invalidationDependencies,
+      this.invalidateOnDependencyChange
     );
+
+    evaluated.initialCode = this.initialCode;
+
+    return evaluated;
+  }
+
+  public endProcessing() {
+    this.#isProcessing = false;
   }
 
   public getDependency(name: string): IEntrypointDependency | undefined {
     return this.dependencies.get(name);
+  }
+
+  public getInvalidationDependency(
+    name: string
+  ): IEntrypointDependency | undefined {
+    return this.invalidationDependencies.get(name);
+  }
+
+  public markInvalidateOnDependencyChange(filename: string): void {
+    this.invalidateOnDependencyChange.add(filename);
   }
 
   public getResolveTask(
@@ -399,7 +487,14 @@ export class Entrypoint extends BaseEntrypoint {
     });
   }
 
+  private deferOnlySupersede(only: string[]) {
+    this.#pendingOnly = this.#pendingOnly
+      ? mergeOnly(this.#pendingOnly, only)
+      : [...only];
+  }
+
   private supersede(newOnlyOrEntrypoint: string[] | Entrypoint): Entrypoint {
+    this.#pendingOnly = null;
     const newEntrypoint =
       newOnlyOrEntrypoint instanceof Entrypoint
         ? newOnlyOrEntrypoint
@@ -414,6 +509,8 @@ export class Entrypoint extends BaseEntrypoint {
             this.loadedAndParsed,
             this.resolveTasks,
             this.dependencies,
+            this.invalidationDependencies,
+            this.invalidateOnDependencyChange,
             this.generation + 1
           );
 

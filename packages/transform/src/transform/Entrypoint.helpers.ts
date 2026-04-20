@@ -315,7 +315,20 @@ export function loadAndParse(
     };
   }
 
-  const code = loadedCode ?? readFileSync(filename, 'utf-8');
+  let code = loadedCode;
+
+  if (code === undefined) {
+    const cachedEntrypoint = services.cache.get('entrypoints', name);
+    if (
+      cachedEntrypoint &&
+      'initialCode' in cachedEntrypoint &&
+      typeof cachedEntrypoint.initialCode === 'string'
+    ) {
+      code = cachedEntrypoint.initialCode;
+    }
+  }
+
+  code ??= readFileSync(filename, 'utf-8');
 
   const { action, babelOptions } = getMatchedRule(
     pluginOptions.rules,

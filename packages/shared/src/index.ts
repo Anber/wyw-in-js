@@ -1,6 +1,7 @@
-export { Debugger } from 'debug';
+export type { Debugger } from './debugger';
 
 export { asyncResolveFallback, syncResolve } from './asyncResolveFallback';
+export { asyncResolverFactory } from './asyncResolverFactory';
 export { hasEvalMeta } from './hasEvalMeta';
 export { findPackageJSON } from './findPackageJSON';
 export { isBoxedPrimitive } from './isBoxedPrimitive';
@@ -19,6 +20,7 @@ export type {
   ImportLoaders,
   ImportOverride,
   ImportOverrides,
+  TagResolverMeta,
   StrictOptions,
   EvalRule,
   Evaluator,

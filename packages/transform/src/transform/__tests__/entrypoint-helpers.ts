@@ -52,7 +52,19 @@ export const createServices: () => Services = () => ({
   babel,
   cache: new TransformCacheCollection(),
   loadAndParseFn: jest.fn<ReturnType<LoadAndParseFn>, []>(() => ({
-    ast: {} as File,
+    ast: {
+      type: 'File',
+      program: {
+        type: 'Program',
+        sourceType: 'module',
+        body: [
+          {
+            type: 'ExpressionStatement',
+            expression: { type: 'NumericLiteral', value: 0 },
+          },
+        ],
+      },
+    } as File,
     code: '',
     evaluator: jest.fn(),
     evalConfig: {},

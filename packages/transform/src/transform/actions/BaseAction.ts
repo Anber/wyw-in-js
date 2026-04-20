@@ -51,12 +51,15 @@ export class BaseAction<TAction extends ActionQueueItem>
     TypeOfResult<TAction>
   >[] = [];
 
+  private handler: null | unknown = null;
+
   public constructor(
     public readonly type: TAction['type'],
     public readonly services: Services,
     public readonly entrypoint: Entrypoint,
     public readonly data: TAction['data'],
-    public readonly abortSignal: AbortSignal | null
+    public readonly abortSignal: AbortSignal | null,
+    public readonly actionContext: unknown
   ) {
     actionIdx += 1;
     this.idx = actionIdx.toString(16).padStart(6, '0');
@@ -126,6 +129,14 @@ export class BaseAction<TAction extends ActionQueueItem>
     THandler extends Handler<TMode, TAction> = Handler<TMode, TAction>,
   >(handler: THandler) {
     type IterationResult = AnyIteratorResult<TMode, TypeOfResult<TAction>>;
+
+    if (this.handler && this.handler !== handler) {
+      throw new Error(
+        `action handler is already set for ${this.ref} (${this.entrypoint.name})`
+      );
+    }
+
+    this.handler = handler;
 
     if (!this.activeScenario) {
       this.activeScenario = handler.call(this);

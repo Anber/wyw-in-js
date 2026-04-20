@@ -5,9 +5,9 @@ export default {
   logo: <span>WyW-in-JS</span>,
   primaryHue: 210,
   primarySaturation: 100,
+  docsRepositoryBase:
+    'https://github.com/Anber/wyw-in-js/tree/main/apps/website',
   project: {
-    docsRepositoryBase:
-      'https://github.com/Anber/wyw-in-js/tree/main/apps/website',
     link: 'https://github.com/Anber/wyw-in-js',
   },
   useNextSeoProps() {

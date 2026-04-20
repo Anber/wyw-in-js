@@ -1,0 +1,27 @@
+# Usage with Parcel
+
+### Installation
+
+```sh
+# npm
+npm i -D @wyw-in-js/parcel-transformer
+# yarn
+yarn add --dev @wyw-in-js/parcel-transformer
+# pnpm
+pnpm add -D @wyw-in-js/parcel-transformer
+# bun
+bun add -d @wyw-in-js/parcel-transformer
+```
+
+### Configuration
+
+Prepend `@wyw-in-js/parcel-transformer` to the default JS pipeline in `.parcelrc`:
+
+```json
+{
+  "extends": "@parcel/config-default",
+  "transformers": {
+    "*.{js,mjs,jsm,jsx,es6,cjs,ts,tsx}": ["@wyw-in-js/parcel-transformer", "..."]
+  }
+}
+```

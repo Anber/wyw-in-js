@@ -413,6 +413,147 @@ export function createKeyframeSuffixerPlugin(): Middleware {
 const isMiddleware = (obj: Middleware | null): obj is Middleware =>
   obj !== null;
 
+const displayKeywordRegexp = /^[a-z-]+$/;
+const knownMultiKeywordDisplayTokens = new Set([
+  'block',
+  'inline',
+  'flow',
+  'flow-root',
+  'flex',
+  'grid',
+  'table',
+  'list-item',
+]);
+
+function normalizeMultiKeywordDisplayValue(value: string): string | null {
+  const trimmed = value.trim();
+  if (trimmed === '' || !/\s/.test(trimmed)) {
+    return null;
+  }
+
+  const importantRegexp = /!\s*important\s*$/i;
+  const hasImportant = importantRegexp.test(trimmed);
+  const withoutImportant = trimmed.replace(importantRegexp, '').trim();
+
+  const tokens = withoutImportant.split(/\s+/).filter(Boolean);
+  if (tokens.length < 2) {
+    return null;
+  }
+
+  const normalizedTokens = tokens.map((token) => token.toLowerCase());
+  if (!normalizedTokens.every((token) => displayKeywordRegexp.test(token))) {
+    return null;
+  }
+
+  const tokenSet = new Set(normalizedTokens);
+  const hasInline = tokenSet.has('inline');
+  const hasBlock = tokenSet.has('block');
+  if (hasInline && hasBlock) {
+    return null;
+  }
+
+  let outside: 'block' | 'inline' | null = null;
+  if (hasInline) {
+    outside = 'inline';
+  } else if (hasBlock) {
+    outside = 'block';
+  }
+
+  const insideCandidates = [
+    'flow-root',
+    'flow',
+    'flex',
+    'grid',
+    'table',
+  ].filter((candidate) => tokenSet.has(candidate));
+  if (insideCandidates.length > 1) {
+    return null;
+  }
+
+  const inside = insideCandidates[0] ?? null;
+  const hasListItem = tokenSet.has('list-item');
+
+  const canCanonicalize = normalizedTokens.every((token) =>
+    knownMultiKeywordDisplayTokens.has(token)
+  );
+
+  if (canCanonicalize) {
+    const canonicalOutside = outside ?? 'block';
+    const canonicalInside = inside ?? (hasListItem ? 'flow' : null);
+    if (canonicalInside) {
+      let canonical: string | null = null;
+      if (hasListItem) {
+        if (canonicalInside === 'flow' && canonicalOutside === 'block') {
+          canonical = 'list-item';
+        }
+      } else {
+        switch (canonicalInside) {
+          case 'flex':
+            canonical = canonicalOutside === 'inline' ? 'inline-flex' : 'flex';
+            break;
+          case 'grid':
+            canonical = canonicalOutside === 'inline' ? 'inline-grid' : 'grid';
+            break;
+          case 'table':
+            canonical =
+              canonicalOutside === 'inline' ? 'inline-table' : 'table';
+            break;
+          case 'flow-root':
+            canonical = canonicalOutside === 'block' ? 'flow-root' : null;
+            break;
+          case 'flow':
+            canonical = canonicalOutside === 'inline' ? 'inline' : 'block';
+            break;
+          default:
+            break;
+        }
+      }
+
+      if (canonical) {
+        return hasImportant ? `${canonical}!important` : canonical;
+      }
+    }
+  }
+
+  const innerDisplay = inside === 'flex' || inside === 'grid' ? inside : null;
+  if (
+    innerDisplay &&
+    normalizedTokens[0] === innerDisplay &&
+    normalizedTokens.length > 1
+  ) {
+    const reordered = [
+      ...(outside ? [outside] : []),
+      ...normalizedTokens.filter(
+        (token) => token !== innerDisplay && token !== outside
+      ),
+      innerDisplay,
+    ].join(' ');
+
+    return hasImportant ? `${reordered}!important` : reordered;
+  }
+
+  return null;
+}
+
+function createStylisDisplayNormalizationPlugin(): Middleware {
+  return (element) => {
+    if (!isDeclaration(element) || element.props !== 'display') {
+      return;
+    }
+
+    const normalized = normalizeMultiKeywordDisplayValue(element.children);
+    if (!normalized) {
+      return;
+    }
+
+    const decl = `display:${normalized};`;
+    Object.assign(element, {
+      children: normalized,
+      value: decl,
+    });
+  };
+}
+
 function createStylisStringifier(
   keepComments: boolean | RegExp | undefined
 ): Middleware {
@@ -460,6 +601,9 @@ export function createStylisPreprocessor(
             options.outputFilename
           ),
           stylisGlobalPlugin,
+          options.prefixer === false
+            ? null
+            : createStylisDisplayNormalizationPlugin(),
           options.prefixer === false ? null : prefixer,
           createKeyframeSuffixerPlugin(),
           stringifier,

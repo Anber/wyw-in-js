@@ -9,6 +9,15 @@ import { getWorkspaces } from './helpers/getWorkspaces.mjs';
 const { releases } = await getReleasePlan.default(cwd(), undefined, {});
 const workspaces = getWorkspaces(cwd());
 
+const shouldAlignAll = releases.some(
+  (release) => release.type === 'major' || release.type === 'minor'
+);
+
+if (!shouldAlignAll) {
+  console.log('No version alignment needed');
+  process.exit(0);
+}
+
 const maxVersion = releases.reduce((acc, release) => {
   workspaces[release.name] = release.newVersion;
 
@@ -24,6 +33,9 @@ const maxVersion = releases.reduce((acc, release) => {
 }, null);
 
 const maxVersionParsed = semver.parse(maxVersion);
+if (!maxVersionParsed) {
+  throw new Error(`Cannot parse max version: ${maxVersion}`);
+}
 
 const changeset = {
   confirmed: true,

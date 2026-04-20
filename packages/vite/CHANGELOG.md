@@ -1,5 +1,113 @@
 # @wyw-in-js/vite
 
+## 1.0.9
+
+### Patch Changes
+
+- 0a0b12f: Restore preserved-module JS-to-CSS links for WyW-generated CSS assets in Vite library builds.
+
+## 1.0.8
+
+### Patch Changes
+
+- ba60b51: Add Vite 8 support without dropping Vite 5-7 compatibility, and fix destructured binding evaluation in `@wyw-in-js/transform` on newer Babel versions.
+- Updated dependencies
+  - @wyw-in-js/transform@1.0.8
+
+## 1.0.7
+
+### Patch Changes
+
+- Updated dependencies
+  - @wyw-in-js/shared@1.0.5
+  - @wyw-in-js/transform@1.0.7
+
+## 1.0.6
+
+### Patch Changes
+
+- Updated dependencies
+  - @wyw-in-js/transform@1.0.6
+
+## 1.0.5
+
+### Patch Changes
+
+- 3dec017: Fix cache invalidation storms when loader-provided code differs from filesystem code, keep the Vite resolver stable across repeated `configResolved` calls, and avoid eagerly walking dynamic import targets during eval-only runs (prevents `action handler is already set` and improves build performance on large projects).
+- a936749: Drop Node.js <20 support (Node 18 is EOL).
+
+  Note: WyW `1.0.0` already effectively required Node 20 in practice; this change makes the support policy explicit and
+  aligns docs/CI accordingly.
+
+  If DOM emulation is enabled (`features.happyDOM`), but `happy-dom` cannot be loaded via `require()` (ESM-only), WyW will
+  fall back to running without DOM and print a one-time warning with guidance.
+
+- 9e08238: Fix cache invalidation when a file is first read from the filesystem and later provided by a bundler/loader, preventing stale transforms and related Vite build/dev issues.
+- ed6a3e6: Fix a Vite dev error ("action handler is already set") by isolating WyW transform cache per plugin context.
+- Updated dependencies
+  - @wyw-in-js/shared@1.0.4
+  - @wyw-in-js/transform@1.0.5
+
+## 1.0.4
+
+### Patch Changes
+
+- b3bc127: Fix async module resolution by calling the bundler `resolve()` with the correct plugin context.
+- Updated dependencies
+  - @wyw-in-js/shared@1.0.3
+  - @wyw-in-js/transform@1.0.4
+
+## 1.0.3
+
+### Patch Changes
+
+- adbd48c: Avoid falling back to Node resolution for Vite `external` resolved file ids (incl. `external: "absolute"`), which could break aliased imports during build-time evaluation (SSR/dev).
+- Updated dependencies
+  - @wyw-in-js/transform@1.0.3
+
+## 1.0.2
+
+### Patch Changes
+
+- 30121b1: Handle Vite `/@fs/` resolved ids so alias imports resolve during eval instead of falling back to Node.
+- Updated dependencies
+  - @wyw-in-js/shared@1.0.2
+  - @wyw-in-js/transform@1.0.2
+
+## 1.0.1
+
+### Patch Changes
+
+- 5882514: Fix publishing so released packages don't contain `workspace:*` dependency ranges (npm install compatibility).
+- Updated dependencies
+  - @wyw-in-js/shared@1.0.1
+  - @wyw-in-js/transform@1.0.1
+
+## 1.0.0
+
+### Major Changes
+
+- 94c5efa: Release **1.0.0** introduces no breaking changes compared to previous releases.
+
+  This release establishes a stable baseline for future development, including upcoming releases focused on performance
+  and build-time optimizations.
+
+### Patch Changes
+
+- 08475ce: Add an opt-in `ssrDevCss` mode to avoid SSR dev FOUC by serving aggregated CSS and injecting a stylesheet link in transformed HTML.
+- 16a64ad: Document the `prefixer: false` option to disable vendor prefixing in bundler plugins.
+- fcb118a: Add a `keepComments` option for the stylis preprocessor to preserve selected CSS comments.
+- 64b7698: Prevent concurrent transforms from reusing cached actions with different handler instances by stabilizing resolvers across bundlers.
+- 870b07b: Handle unknown/dynamic import specifiers without transform-time crashes, add `importOverrides` (mock/noShake/unknown policy), and emit a deduped warning only when eval reaches Node resolver fallback (bundler-native where possible).
+- ae740bf: Add `transformLibraries` option to allow transforming selected dependencies inside `node_modules` (opt-in; still recommended to narrow via filters).
+- f8744ad: Avoid manually calling `optimizeDeps()` from the plugin resolve path when Vite returns a missing optimized-deps entry. This prevents Vite 7 deprecation spam and reduces dev server startup overhead.
+- a5302b2: Defer reloading generated `*.wyw-in-js.css` modules to avoid Vite dev-server soft-invalidation errors.
+- 4c268ad: Support Vite's `import.meta.env.*` during build-time evaluation.
+- bd93f67: Add `preserveCssPaths` option to keep directory structure for generated `*.wyw-in-js.css` assets when using Rollup `preserveModules`.
+- Updated dependencies
+  - @wyw-in-js/shared@1.0.0
+  - @wyw-in-js/transform@1.0.0
+
 ## 0.8.1
 
 ### Patch Changes

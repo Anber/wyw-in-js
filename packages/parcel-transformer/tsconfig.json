@@ -1,0 +1,11 @@
+{
+  "extends": "@wyw-in-js/ts-config/node.json",
+  "files": [],
+  "include": [],
+  "references": [
+    {
+      "path": "./tsconfig.lib.json"
+    }
+  ]
+}
+

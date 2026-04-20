@@ -5,6 +5,23 @@ export interface ICache {
   setDependencies?: (key: string, value: string[]) => Promise<void>;
 }
 
+let cacheProviderSeq = 0;
+const cacheProviderIds = new WeakMap<ICache, string>();
+const cacheProvidersById = new Map<string, ICache>();
+
+export const registerCacheProvider = (cacheProvider: ICache): string => {
+  const knownId = cacheProviderIds.get(cacheProvider);
+  if (knownId) {
+    return knownId;
+  }
+
+  cacheProviderSeq += 1;
+  const id = `${cacheProviderSeq}`;
+  cacheProviderIds.set(cacheProvider, id);
+  cacheProvidersById.set(id, cacheProvider);
+  return id;
+};
+
 // memory cache, which is the default cache implementation in WYW-in-JS
 
 class MemoryCache implements ICache {
@@ -39,8 +56,18 @@ export const memoryCache = new MemoryCache();
  * @returns ICache instance
  */
 export const getCacheInstance = async (
-  cacheProvider: string | ICache | undefined
+  cacheProvider: string | ICache | undefined,
+  cacheProviderId?: string | undefined
 ): Promise<ICache> => {
+  if (cacheProviderId) {
+    const cacheProviderInstance = cacheProvidersById.get(cacheProviderId);
+    if (!cacheProviderInstance) {
+      throw new Error(`Invalid cache provider id: ${cacheProviderId}`);
+    }
+
+    return cacheProviderInstance;
+  }
+
   if (!cacheProvider) {
     return memoryCache;
   }

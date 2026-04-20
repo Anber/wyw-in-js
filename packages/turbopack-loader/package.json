@@ -1,0 +1,38 @@
+{
+  "name": "@wyw-in-js/turbopack-loader",
+  "version": "1.0.8",
+  "dependencies": {
+    "@wyw-in-js/shared": "workspace:*",
+    "@wyw-in-js/transform": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^16.18.55",
+    "@wyw-in-js/babel-config": "workspace:*",
+    "@wyw-in-js/eslint-config": "workspace:*",
+    "@wyw-in-js/ts-config": "workspace:*",
+    "source-map": "^0.7.4",
+    "webpack": "^5.76.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "files": [
+    "esm/",
+    "lib/",
+    "types/"
+  ],
+  "license": "MIT",
+  "main": "lib/index.js",
+  "module": "esm/index.js",
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build:esm": "babel src --out-dir esm --extensions '.js,.jsx,.ts,.tsx' --source-maps --delete-dir-on-start",
+    "build:lib": "cross-env NODE_ENV=legacy babel src --out-dir lib --extensions '.js,.jsx,.ts,.tsx' --source-maps --delete-dir-on-start",
+    "build:types": "tsc --project ./tsconfig.lib.json --baseUrl . --rootDir ./src",
+    "lint": "eslint --ext .js,.ts .",
+    "test": "bun test src"
+  },
+  "types": "types/index.d.ts"
+}

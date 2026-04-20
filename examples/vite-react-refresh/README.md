@@ -14,8 +14,8 @@ Minimal Vite + React project that triggers `/@react-refresh` resolution when usi
 ## Repro
 
 ```sh
-pnpm install --filter vite-react-refresh-repro...
-pnpm --filter vite-react-refresh-repro dev
+bun install
+bun run --filter vite-react-refresh-repro dev
 ```
 
 On current `main` before this fix the dev server crashes with:

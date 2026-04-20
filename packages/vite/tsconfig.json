@@ -1,5 +1,9 @@
 {
   "extends": "@wyw-in-js/ts-config/node.json",
+  "compilerOptions": {
+    "module": "nodenext",
+    "moduleResolution": "nodenext"
+  },
   "files": [],
   "include": [],
   "references": [

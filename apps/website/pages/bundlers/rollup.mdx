@@ -6,8 +6,15 @@ Compatible with Rollup v1, v2, v3, and v4.
 
 To use WyW-in-JS with Rollup, you need to use it together with a plugin which handles CSS files, such as `rollup-plugin-css-only`:
 
-```sh npm2yarn
+```sh
+# npm
 npm i -D rollup-plugin-css-only @wyw-in-js/rollup
+# yarn
+yarn add --dev rollup-plugin-css-only @wyw-in-js/rollup
+# pnpm
+pnpm add -D rollup-plugin-css-only @wyw-in-js/rollup
+# bun
+bun add -d rollup-plugin-css-only @wyw-in-js/rollup
 ```
 
 ### Configuration
@@ -26,6 +33,28 @@ export default {
     }),
   ],
 };
+```
+
+### Concurrency (tsdown/rolldown)
+
+Some Rollup-compatible bundlers may execute plugin hooks concurrently (e.g. tsdown/rolldown). To keep evaluation deterministic, `@wyw-in-js/rollup` serializes `transform()` calls by default.
+
+If you are sure your bundler runs transforms sequentially, you can opt out:
+
+```js
+wyw({
+  serializeTransform: false,
+});
+```
+
+### Disabling vendor prefixing
+
+Stylis adds vendor-prefixed CSS by default. To disable it (and reduce CSS size), pass `prefixer: false`:
+
+```js
+wyw({
+  prefixer: false,
+});
 ```
 
 ### Keeping CSS comments

@@ -111,6 +111,11 @@ export type ImportLoader =
 
 export type ImportLoaders = Record<string, ImportLoader | false>;
 
+export type TagResolverMeta = {
+  resolvedSource?: string;
+  sourceFile: string | null | undefined;
+};
+
 type AllFeatureFlags = {
   dangerousCodeRemover: FeatureFlag;
   globalCache: FeatureFlag;
@@ -133,6 +138,7 @@ export type StrictOptions = {
   babelOptions: TransformOptions;
   classNameSlug?: string | ClassNameFn;
   codeRemover?: CodeRemoverOptions;
+  conditionNames?: string[];
   displayName: boolean;
   evaluate: boolean;
   extensions: string[];
@@ -147,7 +153,11 @@ export type StrictOptions = {
     filename: string
   ) => Partial<VmContext>;
   rules: EvalRule[];
-  tagResolver?: (source: string, tag: string) => string | null;
+  tagResolver?: (
+    source: string,
+    tag: string,
+    meta: TagResolverMeta
+  ) => string | null;
   variableNameConfig?: 'var' | 'dashes' | 'raw';
   variableNameSlug?: string | VariableNameFn;
 };

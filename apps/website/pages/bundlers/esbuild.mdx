@@ -2,8 +2,15 @@
 
 ### Installation
 
-```sh npm2yarn
+```sh
+# npm
 npm i -D @wyw-in-js/esbuild
+# yarn
+yarn add --dev @wyw-in-js/esbuild
+# pnpm
+pnpm add -D @wyw-in-js/esbuild
+# bun
+bun add -d @wyw-in-js/esbuild
 ```
 
 ### Configuration
@@ -28,6 +35,52 @@ esbuild
     ],
   })
   .catch(() => process.exit(1));
+```
+
+### Additional Babel transformations
+
+esbuild doesn't support chaining multiple `onLoad` transforms for the same file. If your project needs extra Babel plugins
+to run before WyW evaluation (for example, plugins that operate on TS/JSX), enable `babelTransform`:
+
+```js
+wyw({
+  babelTransform: true,
+  babelOptions: {
+    plugins: [
+      // your custom Babel plugins
+    ],
+  },
+});
+```
+
+Order: `Babel(source) → esbuild.transform() → WyW transform`.
+
+Note: `babelOptions` are still used by WyW when parsing/evaluating modules. With `babelTransform: true`, the same plugins
+may run both before esbuild and again during WyW's internal Babel stage. Prefer idempotent plugins.
+
+This is opt-in and may impact performance, so keep `filter` narrow when possible.
+
+### Transforming libraries in `node_modules`
+
+By default, the esbuild plugin skips transforming files from `node_modules` for performance.
+
+To transform a specific library, enable `transformLibraries` and narrow `filter`:
+
+```js
+wyw({
+  transformLibraries: true,
+  filter: /node_modules\\/(?:@fluentui)\\//,
+});
+```
+
+### Disabling vendor prefixing
+
+Stylis adds vendor-prefixed CSS by default. To disable it (and reduce CSS size), pass `prefixer: false`:
+
+```js
+wyw({
+  prefixer: false,
+});
 ```
 
 ### Keeping CSS comments

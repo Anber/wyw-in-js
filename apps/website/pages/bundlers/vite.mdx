@@ -4,8 +4,15 @@
 
 ~~Since Vite supports Rollup plugin~~ Since Vite provides more features and flexibility, WyW-in-JS has a separate plugin for it `@wyw-in-js/vite`. Vite handles CSS by itself, you don't need a css plugin.
 
-```sh npm2yarn
+```sh
+# npm
 npm i -D @wyw-in-js/vite
+# yarn
+yarn add --dev @wyw-in-js/vite
+# pnpm
+pnpm add -D @wyw-in-js/vite
+# bun
+bun add -d @wyw-in-js/vite
 ```
 
 ### Configuration
@@ -17,6 +24,100 @@ import wyw from '@wyw-in-js/vite';
 export default defineConfig(() => ({
   // ...
   plugins: [wyw()],
+}));
+```
+
+### Transforming libraries in `node_modules`
+
+By default, the Vite plugin skips transforming files from `node_modules` for performance.
+
+To transform a specific library, enable `transformLibraries` and narrow `include`/`exclude`:
+
+```js
+export default defineConfig(() => ({
+  plugins: [
+    wyw({
+      transformLibraries: true,
+      include: [/node_modules\\/(?:@fluentui)\\//],
+    }),
+  ],
+}));
+```
+
+### Preserving generated CSS paths
+
+When `build.rollupOptions.output.preserveModules` is enabled, older Rollup versions (used by Vite 3/4) flatten asset names
+and drop directories for WyW-generated `*.wyw-in-js.css` files.
+
+To preserve the original directory layout for WyW CSS assets, enable `preserveCssPaths`:
+
+```js
+export default defineConfig(() => ({
+  build: {
+    rollupOptions: {
+      output: {
+        preserveModules: true,
+        preserveModulesRoot: 'src',
+      },
+    },
+  },
+  plugins: [wyw({ preserveCssPaths: true })],
+}));
+```
+
+### `import.meta.env` during evaluation
+
+WyW-in-JS evaluates a subset of your code at build time to extract styles. When that code relies on Vite's `import.meta.env.*`,
+the Vite plugin injects Vite env values into the evaluation context so the expressions behave like they do in Vite runtime.
+
+The injected object is available as `__wyw_import_meta_env` and includes:
+
+- Vite's `MODE`, `BASE_URL`, `DEV`, `PROD`, `SSR`
+- variables loaded via `loadEnv()` respecting `envPrefix` (by default `VITE_`)
+
+If you need to override values, you can provide your own `overrideContext` option and set `__wyw_import_meta_env` explicitly.
+
+### SSR dev FOUC (styles after hydration)
+
+When using Vite SSR in **dev** mode (`middlewareMode` + `ssrLoadModule`), the server-rendered HTML may not include the
+generated WyW CSS. The page then renders unstyled until the client runtime loads the CSS after hydration (FOUC).
+
+To avoid this, enable `ssrDevCss` to make the plugin:
+
+- collect generated CSS in memory,
+- expose it as a virtual stylesheet (`/_wyw-in-js/ssr.css` by default),
+- inject `<link rel="stylesheet">` via `transformIndexHtml()`.
+
+```js
+export default defineConfig(() => ({
+  // ...
+  plugins: [wyw({ ssrDevCss: true }), react()],
+}));
+```
+
+You can customize the URL via `ssrDevCssPath`:
+
+```js
+plugins: [wyw({ ssrDevCss: true, ssrDevCssPath: '/_wyw-in-js/ssr.css' }), react()],
+```
+
+This is **dev-only** and does not change production builds.
+
+Notes:
+
+- The served stylesheet is the raw WyW output (before Vite's CSS pipeline), so some edge cases like `url(...)` rewriting
+  may behave differently.
+- The `<link>` tag is injected on each HTML transform; CSS HMR does not “re-inject” the link on the client without a
+  page reload (which is fine for avoiding initial FOUC).
+
+### Disabling vendor prefixing
+
+Stylis adds vendor-prefixed CSS by default. To disable it (and reduce CSS size), pass `prefixer: false`:
+
+```js
+export default defineConfig(() => ({
+  // ...
+  plugins: [wyw({ prefixer: false })],
 }));
 ```
 
@@ -61,6 +162,9 @@ This path is opt-in and does not affect the default CSS or JS output when disabl
 
 If you are using language features that requires a babel transform (such as typescript), ensure the proper babel presets or plugins are passed to wyw.
 
+Avoid transforming `node_modules` by default (performance and compatibility). If you need to transform a specific library,
+use `transformLibraries` and narrow `include`/`exclude` (see above).
+
 ```js
 import { defineConfig } from 'vite';
 import wyw from '@wyw-in-js/vite';
@@ -71,6 +175,7 @@ export default defineConfig(() => ({
   plugins: [
     wyw({
       include: ['**/*.{ts,tsx}'],
+      exclude: ['**/node_modules/**'],
       babelOptions: {
         presets: ['@babel/preset-typescript', '@babel/preset-react'],
       },

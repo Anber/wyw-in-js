@@ -28,13 +28,18 @@ import {
 import './utils/dispose-polyfill';
 import type { TransformCacheCollection } from './cache';
 import { Entrypoint } from './transform/Entrypoint';
-import { getStack, isSuperSet } from './transform/Entrypoint.helpers';
+import {
+  getStack,
+  isSuperSet,
+  mergeOnly,
+} from './transform/Entrypoint.helpers';
 import type { IEntrypointDependency } from './transform/Entrypoint.types';
 import type { IEvaluatedEntrypoint } from './transform/EvaluatedEntrypoint';
 import { isUnprocessedEntrypointError } from './transform/actions/UnprocessedEntrypointError';
 import type { Services } from './transform/types';
 import {
   applyImportOverrideToOnly,
+  getImportOverride,
   resolveMockSpecifier,
   toImportKey,
 } from './utils/importOverrides';
@@ -45,10 +50,38 @@ type HiddenModuleMembers = {
   _extensions: Record<string, () => void>;
   _resolveFilename: (
     id: string,
-    options: { filename: string; id: string; paths: string[] }
+    options: { filename: string; id: string; paths: string[] },
+    isMain?: boolean,
+    resolveOptions?: { conditions?: Set<string> }
   ) => string;
   _nodeModulePaths(filename: string): string[];
 };
+
+const CJS_DEFAULT_CONDITIONS = ['require', 'node', 'default'] as const;
+
+function expandConditions(conditionNames: string[]): Set<string> {
+  const result = new Set<string>();
+  for (const name of conditionNames) {
+    if (name === '...') {
+      for (const d of CJS_DEFAULT_CONDITIONS) result.add(d);
+    } else {
+      result.add(name);
+    }
+  }
+  return result;
+}
+
+function isBarePackageSubpath(id: string): boolean {
+  if (id.startsWith('.') || path.isAbsolute(id)) {
+    return false;
+  }
+
+  if (id.startsWith('@')) {
+    return id.split('/').length > 2;
+  }
+
+  return id.includes('/');
+}
 
 export const DefaultModuleImplementation = NativeModule as typeof NativeModule &
   HiddenModuleMembers;
@@ -98,6 +131,33 @@ const reactRefreshRuntime = {
 };
 
 const NOOP = () => {};
+
+const browserOnlyEvalHintTriggers = [
+  'window is not defined',
+  "evaluating 'window",
+  'document is not defined',
+  "evaluating 'document",
+  'navigator is not defined',
+  "evaluating 'navigator",
+  'self is not defined',
+  "evaluating 'self",
+];
+
+const getBrowserOnlyEvalHint = (error: unknown): string | null => {
+  const message = error instanceof Error ? error.message : String(error);
+  const looksLikeBrowserOnly = browserOnlyEvalHintTriggers.some((trigger) =>
+    message.includes(trigger)
+  );
+  if (!looksLikeBrowserOnly) return null;
+
+  return [
+    '',
+    '[wyw-in-js] Evaluation hint:',
+    'This usually means browser-only code ran during build-time evaluation.',
+    'Move browser-only initialization out of evaluated modules, or mock the import via `importOverrides`.',
+    "Example: importOverrides: { 'msw/browser': { mock: './src/__mocks__/msw-browser.js' } }",
+  ].join('\n');
+};
 
 const warnedUnknownImportsByServices = new WeakMap<Services, Set<string>>();
 
@@ -391,9 +451,12 @@ export class Module {
       }
 
       this.debug('%O\n%O', e, this.callstack);
-      throw new EvalError(
-        `${(e as Error).message} in${this.callstack.join('\n| ')}\n`
-      );
+      const baseMessage = `${(e as Error).message} in${this.callstack.join(
+        '\n| '
+      )}\n`;
+      const hint = getBrowserOnlyEvalHint(e);
+
+      throw new EvalError(hint ? `${baseMessage}${hint}\n` : baseMessage);
     } finally {
       teardown();
     }
@@ -410,10 +473,16 @@ export class Module {
       return null;
     }
 
-    const entrypoint = this.cache.get('entrypoints', filename);
+    let entrypoint = this.cache.get('entrypoints', filename);
     if (entrypoint && isSuperSet(entrypoint.evaluatedOnly ?? [], only)) {
-      log('✅ file has been already evaluated');
-      return entrypoint;
+      if (this.cache.checkFreshness(filename, strippedFilename)) {
+        entrypoint = undefined;
+      }
+
+      if (entrypoint) {
+        log('✅ file has been already evaluated');
+        return entrypoint;
+      }
     }
 
     if (entrypoint?.ignored) {
@@ -445,6 +514,7 @@ export class Module {
     }
 
     let uncachedExports: string[] | null = null;
+    let reprocessOnly: string[] = only;
     // Requested file can be already prepared for evaluation on the stage 1
     if (only && entrypoint) {
       const evaluatedExports =
@@ -455,6 +525,10 @@ export class Module {
       if (uncachedExports.length === 0) {
         log('✅ ready for evaluation');
         return entrypoint;
+      }
+
+      if (entrypoint.evaluatedOnly?.length) {
+        reprocessOnly = mergeOnly(evaluatedExports, only);
       }
 
       log(
@@ -469,15 +543,11 @@ export class Module {
     // If code wasn't extracted from cache, it indicates that we were unable
     // to process some of the imports on stage1. Let's try to reprocess.
     const code = fs.readFileSync(strippedFilename, 'utf-8');
-    const shouldSkipCacheOnlyMerge = Boolean(
-      uncachedExports && entrypoint?.evaluatedOnly?.length
-    );
     const newEntrypoint = Entrypoint.createRoot(
       this.services,
       filename,
-      uncachedExports ?? only,
-      code,
-      shouldSkipCacheOnlyMerge ? { skipCacheOnlyMerge: true } : undefined
+      reprocessOnly,
+      code
     );
 
     if (newEntrypoint.evaluated) {
@@ -493,6 +563,49 @@ export class Module {
     }
 
     return newEntrypoint;
+  }
+
+  private resolveWithConditions(
+    id: string,
+    parent: { id: string; filename: string; paths: string[] },
+    conditions?: Set<string>
+  ): string {
+    const resolveOptions = conditions ? { conditions } : undefined;
+    const shouldRetryWithExtensions =
+      conditions &&
+      path.extname(id) === '' &&
+      (id.startsWith('.') || path.isAbsolute(id) || isBarePackageSubpath(id));
+    try {
+      return this.moduleImpl._resolveFilename(
+        id,
+        parent,
+        false,
+        resolveOptions
+      );
+    } catch (e: unknown) {
+      if (
+        shouldRetryWithExtensions &&
+        e instanceof Error &&
+        (e as NodeJS.ErrnoException).code === 'MODULE_NOT_FOUND'
+      ) {
+        // Extensionless subpath requests (e.g. "pkg/src/*" or "./src/*") may
+        // resolve to extensionless targets via conditional exports. Retry with
+        // each known extension, but never rewrite already explicit specifiers.
+        for (const ext of this.extensions) {
+          try {
+            return this.moduleImpl._resolveFilename(
+              id + ext,
+              parent,
+              false,
+              resolveOptions
+            );
+          } catch {
+            // try next extension
+          }
+        }
+      }
+      throw e;
+    }
   }
 
   resolveDependency = (id: string): IEntrypointDependency => {
@@ -529,11 +642,32 @@ export class Module {
       const { filename } = this;
       const strippedId = stripQueryAndHash(id);
 
-      const resolved = this.moduleImpl._resolveFilename(strippedId, {
+      const parent = {
         id: filename,
         filename,
         paths: this.moduleImpl._nodeModulePaths(path.dirname(filename)),
-      });
+      };
+      const { conditionNames } = this.services.options.pluginOptions;
+      const conditions = conditionNames?.length
+        ? expandConditions(conditionNames)
+        : undefined;
+
+      let resolved = this.resolveWithConditions(strippedId, parent, conditions);
+
+      const isFileSpecifier =
+        strippedId.startsWith('.') || path.isAbsolute(strippedId);
+
+      if (
+        isFileSpecifier &&
+        path.extname(strippedId) === '' &&
+        resolved.endsWith('.cjs') &&
+        fs.existsSync(`${resolved.slice(0, -4)}.js`)
+      ) {
+        // When both `.cjs` and `.js` exist for an extensionless specifier, the
+        // resolver may pick `.cjs` depending on the environment/extensions.
+        // Prefer `.js` to keep resolved paths stable (e.g. importOverrides keys).
+        resolved = `${resolved.slice(0, -4)}.js`;
+      }
 
       const { root } = this.services.options;
       const keyInfo = toImportKey({
@@ -542,8 +676,10 @@ export class Module {
         root,
       });
 
-      const override =
-        this.services.options.pluginOptions.importOverrides?.[keyInfo.key];
+      const override = getImportOverride(
+        this.services.options.pluginOptions.importOverrides,
+        keyInfo.key
+      );
 
       const policy = override?.unknown ?? (override?.mock ? 'allow' : 'warn');
       const shouldWarn = !this.ignored && policy === 'warn';

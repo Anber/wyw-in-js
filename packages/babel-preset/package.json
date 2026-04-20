@@ -1,6 +1,6 @@
 {
   "name": "@wyw-in-js/babel-preset",
-  "version": "0.8.1",
+  "version": "1.0.8",
   "dependencies": {
     "@babel/core": "^7.23.5",
     "@wyw-in-js/transform": "workspace:*"
@@ -12,7 +12,7 @@
     "@wyw-in-js/ts-config": "workspace:*"
   },
   "engines": {
-    "node": ">=16.0.0"
+    "node": ">=20.0.0"
   },
   "files": [
     "esm/",

@@ -19,8 +19,12 @@ import type {
   IFileContext,
   TagSource,
 } from '@wyw-in-js/processor-utils';
-import { findPackageJSON } from '@wyw-in-js/shared';
-import type { ExpressionValue, StrictOptions } from '@wyw-in-js/shared';
+import { findPackageJSON, syncResolve } from '@wyw-in-js/shared';
+import type {
+  ExpressionValue,
+  StrictOptions,
+  TagResolverMeta,
+} from '@wyw-in-js/shared';
 
 import type { IImport } from './collectExportsAndImports';
 import {
@@ -77,6 +81,32 @@ function buildCodeFrameError(path: NodePath, message: string): Error {
 }
 
 const definedTagsCache = new Map<string, Record<string, string> | undefined>();
+const resolvedTagResolverSourceCache = new Map<string, string | undefined>();
+let didWarnSkipSymbolMismatch = false;
+
+const getResolvedTagResolverSource = (
+  source: string,
+  sourceFile: string | null | undefined
+): string | undefined => {
+  if (!sourceFile) {
+    return undefined;
+  }
+
+  const key = `${sourceFile}\0${source}`;
+  if (resolvedTagResolverSourceCache.has(key)) {
+    return resolvedTagResolverSourceCache.get(key);
+  }
+
+  try {
+    const resolved = syncResolve(source, sourceFile, []);
+    resolvedTagResolverSourceCache.set(key, resolved);
+    return resolved;
+  } catch {
+    resolvedTagResolverSourceCache.set(key, undefined);
+    return undefined;
+  }
+};
+
 const getDefinedTagsFromPackage = (
   pkgName: string,
   filename: string | null | undefined
@@ -149,9 +179,17 @@ export function getProcessorForImport(
   filename: string | null | undefined,
   options: Pick<StrictOptions, 'tagResolver'>
 ): [ProcessorClass | null, TagSource] {
-  const tagResolver = options.tagResolver ?? (() => null);
+  const { tagResolver } = options;
 
-  const customFile = tagResolver(source, imported);
+  let customFile: string | null = null;
+  if (tagResolver) {
+    const tagResolverMeta: TagResolverMeta = {
+      sourceFile: filename,
+      resolvedSource: getResolvedTagResolverSource(source, filename),
+    };
+
+    customFile = tagResolver(source, imported, tagResolverMeta);
+  }
   const processor = customFile
     ? getProcessorFromFile(customFile)
     : getProcessorFromPackage(source, imported, filename);
@@ -250,10 +288,12 @@ function getBuilderForIdentifier(
     isPure: boolean
   ) => {
     mutate(prev, (p) => {
-      p.replaceWith(
-        typeof replacement === 'function' ? replacement(p) : replacement
-      );
-      if (isPure) {
+      const next =
+        typeof replacement === 'function' ? replacement(p) : replacement;
+
+      p.replaceWith(next);
+
+      if (isPure && (p.isCallExpression() || p.isNewExpression())) {
         p.addComment('leading', '#__PURE__');
       }
     });
@@ -488,6 +528,26 @@ function createProcessorInstance(
       }
     } catch (e) {
       if (e === BaseProcessor.SKIP) {
+        cache.set(path.node, null);
+        return null;
+      }
+
+      if (
+        typeof e === 'symbol' &&
+        e.description === BaseProcessor.SKIP.description
+      ) {
+        if (!didWarnSkipSymbolMismatch) {
+          didWarnSkipSymbolMismatch = true;
+          // eslint-disable-next-line no-console
+          console.warn(
+            [
+              "[wyw-in-js] Processor threw Symbol('skip') that does not match BaseProcessor.SKIP identity.",
+              'This usually means duplicate copies of @wyw-in-js/processor-utils (or the processor) are bundled/installed.',
+              'Consider deduping dependencies to avoid subtle issues (instanceof checks, sentinels, etc).',
+            ].join('\n')
+          );
+        }
+
         cache.set(path.node, null);
         return null;
       }

@@ -7,6 +7,7 @@ import type {
   Identifier,
   MemberExpression,
   Program,
+  VariableDeclaration,
   VariableDeclarator,
 } from '@babel/types';
 
@@ -31,7 +32,9 @@ import {
 } from '../utils/scopeHelpers';
 import { invalidateTraversalCache } from '../utils/traversalCache';
 import { stripQueryAndHash } from '../utils/parseRequest';
-import { toImportKey } from '../utils/importOverrides';
+import { getImportOverride, toImportKey } from '../utils/importOverrides';
+
+const warnedDynamicImportFiles = new Set<string>();
 
 export interface IShakerOptions {
   ifUnknownExport?: 'error' | 'ignore' | 'reexport-all' | 'skip-shaking';
@@ -83,7 +86,16 @@ function getBindingForExport(exportPath: NodePath): Binding | undefined {
   }
 
   if (exportPath.isFunctionDeclaration() || exportPath.isClassDeclaration()) {
-    return getNonParamBinding(exportPath, exportPath.node.id!.name);
+    const { id } = exportPath.node;
+    if (!id) {
+      // `export default function() {}` / `export default class {}` (anonymous)
+      return undefined;
+    }
+    return getNonParamBinding(exportPath, id.name);
+  }
+
+  if (exportPath.isTSEnumDeclaration()) {
+    return getNonParamBinding(exportPath, exportPath.node.id.name);
   }
 
   return undefined;
@@ -195,35 +207,176 @@ const isWithinAliveExport = (
 ): boolean =>
   [...aliveExports].some((alive) => alive === ref || alive.isAncestor(ref));
 
-function stripExportKeepDeclaration(path: NodePath): boolean {
+function getExportPathsForVariableDeclaration(
+  declaration: NodePath<VariableDeclaration>,
+  exports: Exports
+): NodePath[] {
+  const exportPaths: NodePath[] = [];
+
+  declaration.get('declarations').forEach((declarator) => {
+    Object.keys(declarator.getOuterBindingIdentifiers()).forEach((name) => {
+      const exportPath = exports[name];
+      if (exportPath && !exportPaths.includes(exportPath)) {
+        exportPaths.push(exportPath);
+      }
+    });
+  });
+
+  return exportPaths;
+}
+
+function getDeclaratorExportLiveness(
+  declarator: NodePath<VariableDeclarator>,
+  exports: Exports,
+  aliveExports: Set<NodePath>
+): boolean | null {
+  const bindingNames = Object.keys(declarator.getOuterBindingIdentifiers());
+  if (bindingNames.length === 0) {
+    return null;
+  }
+
+  let liveness: boolean | null = null;
+  for (const name of bindingNames) {
+    const exportPath = exports[name];
+    if (!exportPath) {
+      return null;
+    }
+
+    const isAlive = aliveExports.has(exportPath);
+    if (liveness === null) {
+      liveness = isAlive;
+    } else if (liveness !== isAlive) {
+      return null;
+    }
+  }
+
+  return liveness;
+}
+
+function hasRuntimeReferencesToEnum(path: NodePath): boolean {
+  if (!path.isTSEnumDeclaration()) {
+    return false;
+  }
+
+  const enumId = path.get('id');
+  const bindingName = enumId.node.name;
+  const program = path.scope.getProgramParent().path as NodePath<Program>;
+
+  let hasReference = false;
+  program.traverse({
+    Identifier(identifier) {
+      if (hasReference || identifier.node.name !== bindingName) {
+        return;
+      }
+
+      if (identifier.findParent((ancestor) => ancestor === path)) {
+        return;
+      }
+
+      if (
+        identifier.find(
+          (ancestor) => ancestor.isTSType() || ancestor.isFlowType()
+        )
+      ) {
+        return;
+      }
+
+      if (!identifier.isReferencedIdentifier()) {
+        return;
+      }
+
+      const localBinding = identifier.scope.getBinding(bindingName);
+      if (localBinding && localBinding.path !== enumId) {
+        return;
+      }
+
+      hasReference = true;
+      identifier.stop();
+    },
+  });
+
+  return hasReference;
+}
+
+function stripExportKeepDeclaration(
+  path: NodePath,
+  exports: Exports,
+  aliveExports: Set<NodePath>,
+  t: Core['types']
+): NodePath[] | null {
   const exportDeclaration = path.findParent((p) =>
     p.isExportNamedDeclaration()
   ) as NodePath<ExportNamedDeclaration> | null;
-  if (!exportDeclaration) return false;
+  if (!exportDeclaration) return null;
 
   const declaration = exportDeclaration.get('declaration');
-  if (!declaration.node) return false;
+  if (!declaration.node) return null;
 
   if (
     declaration.isFunctionDeclaration() ||
     declaration.isClassDeclaration() ||
     declaration.isTSEnumDeclaration()
   ) {
-    exportDeclaration.replaceWith(declaration.node);
-    return true;
+    exportDeclaration.replaceWith(t.cloneNode(declaration.node, true));
+    return [path];
   }
 
   if (declaration.isVariableDeclaration()) {
     const declarators = declaration.get('declarations');
-    if (declarators.length !== 1) {
-      return false;
+    const staleExportPaths = getExportPathsForVariableDeclaration(
+      declaration,
+      exports
+    );
+
+    if (declarators.length === 1) {
+      exportDeclaration.replaceWith(t.cloneNode(declaration.node, true));
+      return staleExportPaths.length > 0 ? staleExportPaths : [path];
     }
 
-    exportDeclaration.replaceWith(declaration.node);
-    return true;
+    const segments: Array<{
+      alive: boolean;
+      declarators: VariableDeclarator[];
+    }> = [];
+
+    for (const declarator of declarators) {
+      const isAlive = getDeclaratorExportLiveness(
+        declarator,
+        exports,
+        aliveExports
+      );
+      if (isAlive === null) {
+        return null;
+      }
+
+      const clonedDeclarator = t.cloneNode(declarator.node, true);
+      const currentSegment = segments[segments.length - 1];
+      if (currentSegment && currentSegment.alive === isAlive) {
+        currentSegment.declarators.push(clonedDeclarator);
+      } else {
+        segments.push({
+          alive: isAlive,
+          declarators: [clonedDeclarator],
+        });
+      }
+    }
+
+    exportDeclaration.replaceWithMultiple(
+      segments.map(({ alive, declarators: groupedDeclarators }) => {
+        const groupedDeclaration = t.variableDeclaration(
+          declaration.node.kind,
+          groupedDeclarators
+        );
+
+        return alive
+          ? t.exportNamedDeclaration(groupedDeclaration, [])
+          : groupedDeclaration;
+      })
+    );
+
+    return staleExportPaths.length > 0 ? staleExportPaths : [path];
   }
 
-  return false;
+  return null;
 }
 
 export default function shakerPlugin(
@@ -267,9 +420,9 @@ export default function shakerPlugin(
           const strippedSource = stripQueryAndHash(source);
 
           const direct =
-            importOverrides[source] ??
+            getImportOverride(importOverrides, source) ??
             (strippedSource !== source
-              ? importOverrides[strippedSource]
+              ? getImportOverride(importOverrides, strippedSource)
               : null);
           if (direct) {
             const result = shouldKeepOverride(direct);
@@ -292,7 +445,7 @@ export default function shakerPlugin(
               resolved,
               root,
             });
-            const override = importOverrides[key];
+            const override = getImportOverride(importOverrides, key);
             const result = shouldKeepOverride(override);
             cache.set(source, result);
             return result;
@@ -304,11 +457,12 @@ export default function shakerPlugin(
       })();
 
       const collected = collectExportsAndImports(file.path);
-      const sideEffectImports = collected.imports.filter(sideEffectImport);
+      const { imports } = collected;
+      const sideEffectImports = imports.filter(sideEffectImport);
       log(
         'import-and-exports',
         [
-          `imports: ${collected.imports.length} (side-effects: ${sideEffectImports.length})`,
+          `imports: ${imports.length} (side-effects: ${sideEffectImports.length})`,
           `exports: ${Object.values(collected.exports).length}`,
           `reexports: ${collected.reexports.length}`,
         ].join(', ')
@@ -368,7 +522,7 @@ export default function shakerPlugin(
         hasDefault &&
         !collected.isEsModule
       ) {
-        this.imports = collected.imports;
+        this.imports = imports;
         this.exports = exports;
         this.reexports = collected.reexports;
         this.deadExports = [];
@@ -380,7 +534,7 @@ export default function shakerPlugin(
         onlyExportsSet.add('__esModule');
 
         const aliveExports = new Set<NodePath>();
-        const importNames = collected.imports.map(({ imported }) => imported);
+        const importNames = imports.map(({ imported }) => imported);
 
         Object.entries(exports).forEach(([exported, local]) => {
           if (onlyExportsSet.has(exported)) {
@@ -454,7 +608,7 @@ export default function shakerPlugin(
           }
 
           if (ifUnknownExport === 'skip-shaking') {
-            this.imports = collected.imports;
+            this.imports = imports;
             this.exports = exports;
             this.reexports = collected.reexports;
             this.deadExports = [];
@@ -547,13 +701,39 @@ export default function shakerPlugin(
               dereferenced.push(path);
             }
 
-            if (
-              !deleted.has(path) &&
-              binding &&
-              blockingReferences.length > 0 &&
-              stripExportKeepDeclaration(path)
-            ) {
-              deleted.add(path);
+            const strippedEnum =
+              !deleted.has(path) && hasRuntimeReferencesToEnum(path)
+                ? stripExportKeepDeclaration(
+                    path,
+                    exports,
+                    aliveExports,
+                    babel.types
+                  )
+                : null;
+
+            if (strippedEnum) {
+              strippedEnum.forEach((stalePath) => {
+                deleted.add(stalePath);
+              });
+              changed = true;
+              // eslint-disable-next-line no-continue
+              continue;
+            }
+
+            const strippedWithBlocking =
+              !deleted.has(path) && binding && blockingReferences.length > 0
+                ? stripExportKeepDeclaration(
+                    path,
+                    exports,
+                    aliveExports,
+                    babel.types
+                  )
+                : null;
+
+            if (strippedWithBlocking) {
+              strippedWithBlocking.forEach((stalePath) => {
+                deleted.add(stalePath);
+              });
               changed = true;
               // eslint-disable-next-line no-continue
               continue;
@@ -563,6 +743,43 @@ export default function shakerPlugin(
               !deleted.has(path) &&
               (!binding || blockingReferences.length === 0)
             ) {
+              // For variable declaration exports, `path` is the init expression
+              // (not the Identifier). Other forDeleting candidates whose init
+              // expressions are ancestors of references to this binding can
+              // incorrectly filter them out of outerReferences. Those candidates
+              // may later survive via stripExportKeepDeclaration, leaving a
+              // dangling reference. Strip the export keyword but keep the
+              // declaration so the unreferenced sweep removes it only when dead.
+              // This only applies to expression paths (variable init), not
+              // Identifiers (function/class declarations) which can't be
+              // ancestors of external references.
+              const strippedWithoutBlocking =
+                binding && !path.isIdentifier()
+                  ? stripExportKeepDeclaration(
+                      path,
+                      exports,
+                      aliveExports,
+                      babel.types
+                    )
+                  : null;
+
+              if (strippedWithoutBlocking) {
+                strippedWithoutBlocking.forEach((stalePath) => {
+                  deleted.add(stalePath);
+                });
+                if (removableAssignmentStatements.size > 0) {
+                  for (const statement of removableAssignmentStatements) {
+                    if (queueForDeleting(statement)) {
+                      changed = true;
+                    }
+                  }
+                }
+
+                changed = true;
+                // eslint-disable-next-line no-continue
+                continue;
+              }
+
               if (removableAssignmentStatements.size > 0) {
                 for (const statement of removableAssignmentStatements) {
                   if (queueForDeleting(statement)) {
@@ -591,6 +808,12 @@ export default function shakerPlugin(
 
           dereferenced = [];
 
+          // stripExportKeepDeclaration replaces ExportNamedDeclaration with
+          // its declaration, creating new AST nodes. The old scope bindings
+          // become stale (pointing at disconnected paths). Recrawl so
+          // getAllBindings() returns fresh bindings with correct .referenced.
+          file.scope.crawl();
+
           // Find and mark for deleting all unreferenced variables
           const unreferenced = Object.values(
             file.scope.getAllBindings()
@@ -599,7 +822,15 @@ export default function shakerPlugin(
           for (const binding of unreferenced) {
             if (binding.path.isVariableDeclarator()) {
               const id = binding.path.get('id');
-              if (!isRemoved(id) && !forDeletingSet.has(id)) {
+              // Skip destructured patterns — removing the declarator would kill
+              // sibling bindings that may still be referenced (e.g. export {B}
+              // from `const [A, B] = createContext(...)` when only A is dead).
+              if (
+                !id.isArrayPattern() &&
+                !id.isObjectPattern() &&
+                !isRemoved(id) &&
+                !forDeletingSet.has(id)
+              ) {
                 // Drop dead variable declarations, e.g. `const foo = make();` when `foo` is no longer referenced.
                 for (const violation of binding.constantViolations) {
                   if (queueForDeleting(violation)) {
@@ -630,7 +861,7 @@ export default function shakerPlugin(
         }
       }
 
-      this.imports = withoutRemoved(collected.imports);
+      this.imports = withoutRemoved(imports);
       this.exports = {};
       this.deadExports = [];
 
@@ -647,6 +878,124 @@ export default function shakerPlugin(
     visitor: {},
     post(file: BabelFile) {
       const log = shakerLogger.extend(getFileIdx(file.opts.filename!));
+
+      const dynamicImportWarningsEnabled =
+        Boolean(process.env.WYW_WARN_DYNAMIC_IMPORTS) &&
+        process.env.WYW_WARN_DYNAMIC_IMPORTS !== '0' &&
+        process.env.WYW_WARN_DYNAMIC_IMPORTS !== 'false';
+
+      const filename = file.opts.filename!;
+
+      if (
+        dynamicImportWarningsEnabled &&
+        !warnedDynamicImportFiles.has(filename)
+      ) {
+        const dynamicImports = this.imports.filter(
+          (imp) => !sideEffectImport(imp) && imp.type === 'dynamic'
+        );
+        if (dynamicImports.length > 0) {
+          const sources = Array.from(
+            new Set(dynamicImports.map((imp) => imp.source))
+          ).sort();
+          const sourcesToWarn = (() => {
+            if (!importOverrides || Object.keys(importOverrides).length === 0) {
+              return sources;
+            }
+
+            const shouldWarn = (source: string): boolean => {
+              const strippedSource = stripQueryAndHash(source);
+              const direct =
+                getImportOverride(importOverrides, source) ??
+                (strippedSource !== source
+                  ? getImportOverride(importOverrides, strippedSource)
+                  : undefined);
+              if (direct !== undefined) {
+                return false;
+              }
+
+              const isFileImport =
+                strippedSource.startsWith('.') ||
+                pathLib.isAbsolute(strippedSource);
+              if (!isFileImport) {
+                return true;
+              }
+
+              try {
+                const resolved = syncResolve(strippedSource, filename, []);
+                const importKey = toImportKey({
+                  source: strippedSource,
+                  resolved,
+                  root,
+                }).key;
+                return (
+                  getImportOverride(importOverrides, importKey) === undefined
+                );
+              } catch {
+                return true;
+              }
+            };
+
+            return sources.filter(shouldWarn);
+          })();
+
+          if (sourcesToWarn.length > 0) {
+            warnedDynamicImportFiles.add(filename);
+            const overrideKeys = sourcesToWarn
+              .map((source) => {
+                const strippedSource = stripQueryAndHash(source);
+                const isFileImport =
+                  strippedSource.startsWith('.') ||
+                  pathLib.isAbsolute(strippedSource);
+
+                if (!isFileImport) {
+                  return { source, key: source };
+                }
+
+                try {
+                  const resolved = syncResolve(strippedSource, filename, []);
+                  return {
+                    source,
+                    key: toImportKey({
+                      source: strippedSource,
+                      resolved,
+                      root,
+                    }).key,
+                  };
+                } catch {
+                  return { source, key: strippedSource };
+                }
+              })
+              .filter((item, index, array) => {
+                const firstIndexForKey = array.findIndex(
+                  (i) => i.key === item.key
+                );
+                return firstIndexForKey === index;
+              });
+            const warning = [
+              `[wyw-in-js] Dynamic imports reached prepare stage`,
+              ``,
+              `file: ${filename}`,
+              `count: ${sourcesToWarn.length}`,
+              `sources:`,
+              ...sourcesToWarn.map((source) => `  - ${source}`),
+              ``,
+              `note: these imports will be resolved/processed even if they are lazy (e.g. React.lazy(() => import(...)))`,
+              ``,
+              `tip: if the imported module is runtime-only or heavy, mock it during evaluation via importOverrides:`,
+              `  importOverrides: {`,
+              ...overrideKeys.map(
+                ({ key, source }) =>
+                  `    '${key}': { mock: './path/to/mock' }, // from ${source}`
+              ),
+              `  }`,
+              ``,
+              `note: importOverrides affects only build-time evaluation (it does not change your bundler runtime behavior)`,
+            ].join('\n');
+            // eslint-disable-next-line no-console
+            console.warn(warning);
+          }
+        }
+      }
 
       const processedImports = new Set<string>();
       const imports = new Map<string, string[]>();

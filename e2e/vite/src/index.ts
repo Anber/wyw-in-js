@@ -1,4 +1,5 @@
 import { css } from '@wyw-in-js/template-tag-syntax';
+import { classB } from '@/alias';
 
 const classA = css`
   /*rtl:ignore*/
@@ -6,4 +7,4 @@ const classA = css`
   background: green;
 `;
 
-export { classA };
+export { classA, classB };

@@ -69,11 +69,34 @@ const toItemWithOptions = (key: string, options: PlainObject) =>
 const normalizeKey = (key: string) => key.replace(/\\/g, '/');
 
 const extractPackageNameFromPath = (key: string): string | null => {
-  const match = normalizeKey(key).match(
-    /\/node_modules\/(@[^/]+\/[^/]+|[^/]+)\//
-  );
+  const normalized = normalizeKey(key);
+  const token = '/node_modules/';
 
-  return match?.[1] ?? null;
+  let nodeModulesIndex = normalized.lastIndexOf(token);
+  while (nodeModulesIndex !== -1) {
+    const start = nodeModulesIndex + token.length;
+    const firstChar = normalized[start];
+    if (!firstChar) return null;
+
+    let packageName: string | null = null;
+    if (firstChar === '@') {
+      const scopeEnd = normalized.indexOf('/', start);
+      if (scopeEnd === -1) return null;
+      const nameEnd = normalized.indexOf('/', scopeEnd + 1);
+      if (nameEnd === -1) return null;
+      packageName = normalized.slice(start, nameEnd);
+    } else {
+      const nameEnd = normalized.indexOf('/', start);
+      if (nameEnd === -1) return null;
+      packageName = normalized.slice(start, nameEnd);
+    }
+
+    if (!packageName.startsWith('.')) return packageName;
+
+    nodeModulesIndex = normalized.lastIndexOf(token, nodeModulesIndex - 1);
+  }
+
+  return null;
 };
 
 const addBabelVariants = (

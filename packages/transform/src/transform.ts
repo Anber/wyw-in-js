@@ -25,6 +25,7 @@ import {
 } from './transform/generators/resolveImports';
 import { withDefaultServices } from './transform/helpers/withDefaultServices';
 import type {
+  Handler,
   Handlers,
   IResolveImportsAction,
   Services,
@@ -38,6 +39,44 @@ type PartialServices = Partial<Omit<Services, 'options'>> & {
 };
 
 type AllHandlers<TMode extends 'async' | 'sync'> = Handlers<TMode>;
+
+const memoizedSyncResolve = new WeakMap<
+  (what: string, importer: string, stack: string[]) => string | null,
+  Handler<'sync', IResolveImportsAction>
+>();
+
+const memoizedAsyncResolve = new WeakMap<
+  (what: string, importer: string, stack: string[]) => Promise<string | null>,
+  Handler<'async' | 'sync', IResolveImportsAction>
+>();
+
+const EMPTY_CUSTOM_HANDLERS = {};
+const memoizedActionContexts = new WeakMap<object, WeakMap<object, object>>();
+
+const getActionContext = (
+  resolveImportsHandler: object,
+  customHandlers: object
+): object => {
+  const customHandlersKey =
+    Object.keys(customHandlers).length === 0
+      ? EMPTY_CUSTOM_HANDLERS
+      : customHandlers;
+  let actionContextsByHandlers = memoizedActionContexts.get(
+    resolveImportsHandler
+  );
+  if (!actionContextsByHandlers) {
+    actionContextsByHandlers = new WeakMap();
+    memoizedActionContexts.set(resolveImportsHandler, actionContextsByHandlers);
+  }
+
+  let actionContext = actionContextsByHandlers.get(customHandlersKey);
+  if (!actionContext) {
+    actionContext = {};
+    actionContextsByHandlers.set(customHandlersKey, actionContext);
+  }
+
+  return actionContext;
+};
 
 export function transformSync(
   partialServices: PartialServices,
@@ -62,6 +101,23 @@ export function transformSync(
     services.cache = new TransformCacheCollection();
   }
 
+  if (!memoizedSyncResolve.has(syncResolve)) {
+    memoizedSyncResolve.set(
+      syncResolve,
+      function resolveImports(this: IResolveImportsAction) {
+        return syncResolveImports.call(this, syncResolve);
+      }
+    );
+  }
+
+  const resolveImportsHandler = memoizedSyncResolve.get(syncResolve)!;
+  const actionHandlers = {
+    ...baseHandlers,
+    ...customHandlers,
+    resolveImports: resolveImportsHandler,
+  };
+  const actionContext = getActionContext(resolveImportsHandler, customHandlers);
+
   const entrypoint = Entrypoint.createRoot(
     services,
     options.filename,
@@ -76,16 +132,15 @@ export function transformSync(
     };
   }
 
-  const workflowAction = entrypoint.createAction('workflow', undefined);
+  const workflowAction = entrypoint.createAction(
+    'workflow',
+    undefined,
+    null,
+    actionContext
+  );
 
   try {
-    const result = syncActionRunner(workflowAction, {
-      ...baseHandlers,
-      ...customHandlers,
-      resolveImports() {
-        return syncResolveImports.call(this, syncResolve);
-      },
-    });
+    const result = syncActionRunner(workflowAction, actionHandlers);
 
     entrypoint.log('%s is ready', entrypoint.name);
 
@@ -144,6 +199,24 @@ export async function transform(
    * but the "only" option has changed, the file will be re-processed using
    * the combined "only" option.
    */
+  if (!memoizedAsyncResolve.has(asyncResolve)) {
+    const resolveImports = function resolveImports(
+      this: IResolveImportsAction
+    ) {
+      return asyncResolveImports.call(this, asyncResolve);
+    };
+
+    memoizedAsyncResolve.set(asyncResolve, resolveImports);
+  }
+
+  const resolveImportsHandler = memoizedAsyncResolve.get(asyncResolve)!;
+  const actionHandlers = {
+    ...baseHandlers,
+    ...customHandlers,
+    resolveImports: resolveImportsHandler,
+  };
+  const actionContext = getActionContext(resolveImportsHandler, customHandlers);
+
   const entrypoint = Entrypoint.createRoot(
     services,
     options.filename,
@@ -158,16 +231,15 @@ export async function transform(
     };
   }
 
-  const workflowAction = entrypoint.createAction('workflow', undefined);
+  const workflowAction = entrypoint.createAction(
+    'workflow',
+    undefined,
+    null,
+    actionContext
+  );
 
   try {
-    const result = await asyncActionRunner(workflowAction, {
-      ...baseHandlers,
-      ...customHandlers,
-      resolveImports(this: IResolveImportsAction) {
-        return asyncResolveImports.call(this, asyncResolve);
-      },
-    });
+    const result = await asyncActionRunner(workflowAction, actionHandlers);
 
     entrypoint.log('%s is ready', entrypoint.name);
 

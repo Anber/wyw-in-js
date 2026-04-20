@@ -2,12 +2,15 @@
 
 const fs = require('node:fs/promises');
 const path = require('node:path');
+const { execFile } = require('node:child_process');
+const { promisify } = require('node:util');
 const colors = require('picocolors');
 const prettier = require('prettier');
 const { build } = require('vite');
 const wyw = require('@wyw-in-js/vite');
 
 const PKG_DIR = path.resolve(__dirname, '..');
+const execFileAsync = promisify(execFile);
 
 /**
  * @param {string} value
@@ -34,6 +37,11 @@ async function buildArtefact(outDir, pluginOptions) {
       cssMinify: false,
     },
     configFile: false,
+    resolve: {
+      alias: {
+        '@': path.resolve(PKG_DIR, 'src'),
+      },
+    },
     plugins: [pluginOptions ? wyw.default(pluginOptions) : wyw.default()],
   });
 }
@@ -51,6 +59,29 @@ async function buildArtefactWithPlugin(root, outDir, plugin) {
     logLevel: 'silent',
     plugins: [plugin],
     root,
+  });
+}
+
+async function buildPreserveModulesArtefact(outDir, format) {
+  await build({
+    build: {
+      outDir,
+      cssCodeSplit: true,
+      cssMinify: false,
+      lib: {
+        entry: path.resolve(PKG_DIR, 'src/preserve-modules/index.ts'),
+        formats: [format],
+      },
+      rollupOptions: {
+        output: {
+          assetFileNames: '[name][extname]',
+          preserveModules: true,
+          preserveModulesRoot: path.resolve(PKG_DIR, 'src/preserve-modules'),
+        },
+      },
+    },
+    configFile: false,
+    plugins: [wyw.default({ preserveCssPaths: true })],
   });
 }
 
@@ -129,6 +160,78 @@ export const className = css\`
   } finally {
     await fs.rm(fixtureDir, { recursive: true, force: true });
   }
+}
+
+async function assertFileMatches(filePath, pattern) {
+  const contents = normalizeLineEndings(await fs.readFile(filePath, 'utf-8'));
+
+  if (!pattern.test(contents)) {
+    throw new Error(
+      `${path.relative(PKG_DIR, filePath)} does not match ${pattern}`
+    );
+  }
+}
+
+async function assertFileDoesNotContain(filePath, text) {
+  const contents = normalizeLineEndings(await fs.readFile(filePath, 'utf-8'));
+
+  if (contents.includes(text)) {
+    throw new Error(
+      `${path.relative(PKG_DIR, filePath)} unexpectedly contains ${text}`
+    );
+  }
+}
+
+async function listFilesRecursively(dirPath) {
+  const entries = await fs.readdir(dirPath, { withFileTypes: true });
+  const files = await Promise.all(
+    entries.map(async (entry) => {
+      const entryPath = path.resolve(dirPath, entry.name);
+
+      if (entry.isDirectory()) {
+        return listFilesRecursively(entryPath);
+      }
+
+      return [entryPath];
+    })
+  );
+
+  return files.flat();
+}
+
+async function findFileMatching(dirPath, predicate) {
+  const files = await listFilesRecursively(dirPath);
+
+  for (const filePath of files) {
+    const contents = normalizeLineEndings(await fs.readFile(filePath, 'utf-8'));
+    if (predicate(filePath, contents)) {
+      return filePath;
+    }
+  }
+
+  throw new Error(
+    `No matching file found under ${path.relative(PKG_DIR, dirPath)}`
+  );
+}
+
+async function assertCjsModuleLoads(filePath) {
+  const script = `
+    require.extensions['.css'] = () => {};
+    const mod = require(process.argv[1]);
+    if (!mod || typeof mod.rootClass !== 'string') {
+      throw new Error('Missing rootClass export');
+    }
+    if (!mod || typeof mod.buttonClass !== 'string') {
+      throw new Error('Missing buttonClass export');
+    }
+    if (!mod || mod.plainValue !== 'plain') {
+      throw new Error('Unexpected plainValue export');
+    }
+  `;
+
+  await execFileAsync(process.execPath, ['-e', script, filePath], {
+    cwd: PKG_DIR,
+  });
 }
 
 async function main() {
@@ -211,6 +314,73 @@ async function main() {
 
   console.log(colors.blue('Running case:'), 'rebuildOutputMetadata');
   await runReusedPluginMetadataRebuildCase();
+
+  const preserveModulesCases = [
+    {
+      format: 'es',
+      name: 'preserveModules-es',
+      outDir: path.resolve(PKG_DIR, 'dist-preserve-modules'),
+      cssEdgePattern: /import ["']\.\/index\.wyw-in-js\.css["'];/,
+      nestedCssEdgePattern:
+        /import ["']\.\/(?:nested\/)+button\.wyw-in-js\.css["'];/,
+    },
+    {
+      format: 'cjs',
+      name: 'preserveModules-cjs',
+      outDir: path.resolve(PKG_DIR, 'dist-preserve-modules-cjs'),
+      cssEdgePattern: /require\(["']\.\/index\.wyw-in-js\.css["']\);/,
+      nestedCssEdgePattern:
+        /require\(["']\.\/(?:nested\/)+button\.wyw-in-js\.css["']\);/,
+    },
+  ];
+
+  for (const preserveModulesCase of preserveModulesCases) {
+    console.log(colors.blue('Running case:'), preserveModulesCase.name);
+    await fs.rm(preserveModulesCase.outDir, { recursive: true, force: true });
+
+    await buildPreserveModulesArtefact(
+      preserveModulesCase.outDir,
+      preserveModulesCase.format
+    );
+
+    const rootModulePath = await findFileMatching(
+      preserveModulesCase.outDir,
+      (filePath, contents) =>
+        /\.(?:mjs|js)$/.test(filePath) &&
+        contents.includes('rootClass') &&
+        contents.includes('./index.wyw-in-js.css')
+    );
+    const nestedModulePath = await findFileMatching(
+      preserveModulesCase.outDir,
+      (filePath, contents) =>
+        /\.(?:mjs|js)$/.test(filePath) &&
+        contents.includes('button.wyw-in-js.css')
+    );
+    const plainModulePath = await findFileMatching(
+      preserveModulesCase.outDir,
+      (filePath, contents) =>
+        /\.(?:mjs|js)$/.test(filePath) &&
+        contents.includes('"plain"') &&
+        !contents.includes('.css')
+    );
+
+    await assertFileMatches(rootModulePath, preserveModulesCase.cssEdgePattern);
+    await assertFileMatches(
+      nestedModulePath,
+      preserveModulesCase.nestedCssEdgePattern
+    );
+    await assertFileDoesNotContain(plainModulePath, '.css');
+    await fs.access(
+      path.resolve(preserveModulesCase.outDir, 'index.wyw-in-js.css')
+    );
+    await findFileMatching(preserveModulesCase.outDir, (filePath) =>
+      filePath.endsWith('button.wyw-in-js.css')
+    );
+
+    if (preserveModulesCase.format === 'cjs') {
+      await assertCjsModuleLoads(rootModulePath);
+    }
+  }
 }
 
 main().then(

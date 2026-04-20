@@ -5,6 +5,7 @@ import { getStack, isSuperSet, mergeOnly } from '../Entrypoint.helpers';
 import type { IEntrypointDependency } from '../Entrypoint.types';
 import {
   applyImportOverrideToOnly,
+  getImportOverride,
   resolveMockSpecifier,
   toImportKey,
 } from '../../utils/importOverrides';
@@ -35,7 +36,7 @@ function applyImportOverrides(
       resolved: dependency.resolved,
       root,
     });
-    const override = overrides[key];
+    const override = getImportOverride(overrides, key);
     if (!override) {
       return dependency;
     }
@@ -61,12 +62,14 @@ function applyImportOverrides(
 function emitDependency(
   emitter: Services['eventEmitter'],
   entrypoint: IResolveImportsAction['entrypoint'],
-  imports: IEntrypointDependency[]
+  imports: IEntrypointDependency[],
+  phase?: IResolveImportsAction['data']['phase']
 ) {
   emitter.single({
     type: 'dependency',
     file: entrypoint.name,
     only: entrypoint.only,
+    phase,
     imports: imports.map(({ resolved, only }) => ({
       from: resolved,
       what: only,
@@ -93,6 +96,14 @@ function filterUnresolved(
   });
 }
 
+function getPreResolvedImports(
+  preResolved: IResolveImportsAction['data']['preResolved']
+): Map<string, IEntrypointDependency> {
+  return new Map(
+    (preResolved ?? []).map((dependency) => [dependency.source, dependency])
+  );
+}
+
 /**
  * Synchronously resolves specified imports with a provided resolver.
  */
@@ -106,16 +117,32 @@ export function* syncResolveImports(
     services: { eventEmitter },
   } = this;
   const listOfImports = Array.from(imports?.entries() ?? []);
+  const preResolvedImports = getPreResolvedImports(this.data.preResolved);
   const { log } = entrypoint;
 
   if (listOfImports.length === 0) {
-    emitDependency(eventEmitter, entrypoint, []);
+    emitDependency(eventEmitter, entrypoint, [], this.data.phase);
 
     log('%s has no imports', entrypoint.name);
     return [];
   }
 
   const resolvedImports = listOfImports.map(([source, only]) => {
+    const preResolved = preResolvedImports.get(source);
+    if (preResolved) {
+      const mergedOnly = mergeOnly(preResolved.only, only);
+      log(
+        '[sync-resolve] ♻️ %s -> %s (only: %o)',
+        source,
+        preResolved.resolved,
+        mergedOnly
+      );
+      return {
+        ...preResolved,
+        only: mergedOnly,
+      };
+    }
+
     let resolved: string | null = null;
     try {
       resolved = resolve(source, entrypoint.name, getStack(entrypoint));
@@ -137,7 +164,7 @@ export function* syncResolveImports(
     resolvedImports
   );
   const filteredImports = filterUnresolved(entrypoint, overriddenImports);
-  emitDependency(eventEmitter, entrypoint, filteredImports);
+  emitDependency(eventEmitter, entrypoint, filteredImports, this.data.phase);
 
   return filteredImports;
 }
@@ -159,10 +186,11 @@ export async function* asyncResolveImports(
     services: { eventEmitter },
   } = this;
   const listOfImports = Array.from(imports?.entries() ?? []);
+  const preResolvedImports = getPreResolvedImports(this.data.preResolved);
   const { log } = entrypoint;
 
   if (listOfImports.length === 0) {
-    emitDependency(eventEmitter, entrypoint, []);
+    emitDependency(eventEmitter, entrypoint, [], this.data.phase);
 
     log('%s has no imports', entrypoint.name);
     return [];
@@ -205,6 +233,22 @@ export async function* asyncResolveImports(
 
   const resolvedImports = await Promise.all<IEntrypointDependency>(
     listOfImports.map(([source, importsOnly]) => {
+      const preResolved = preResolvedImports.get(source);
+      if (preResolved) {
+        const mergedOnly = mergeOnly(preResolved.only, importsOnly);
+        log(
+          '[async-resolve] ♻️ %s (%o) in %s -> %s',
+          source,
+          mergedOnly,
+          entrypoint.name,
+          preResolved.resolved
+        );
+        return {
+          ...preResolved,
+          only: mergedOnly,
+        };
+      }
+
       const cached = entrypoint.getDependency(source);
       if (cached) {
         return {
@@ -251,6 +295,6 @@ export async function* asyncResolveImports(
     resolvedImports
   );
   const filteredImports = filterUnresolved(entrypoint, overriddenImports);
-  emitDependency(eventEmitter, entrypoint, filteredImports);
+  emitDependency(eventEmitter, entrypoint, filteredImports, this.data.phase);
   return filteredImports;
 }

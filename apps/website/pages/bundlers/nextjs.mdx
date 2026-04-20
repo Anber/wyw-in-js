@@ -1,0 +1,129 @@
+# Usage with Next.js
+
+Next.js integration for WyW is provided via `@wyw-in-js/nextjs`.
+
+### Installation
+
+```sh
+# npm
+npm i -D @wyw-in-js/nextjs
+# yarn
+yarn add --dev @wyw-in-js/nextjs
+# pnpm
+pnpm add -D @wyw-in-js/nextjs
+# bun
+bun add -d @wyw-in-js/nextjs
+```
+
+### Configuration
+
+```js
+// next.config.js
+const { withWyw } = require('@wyw-in-js/nextjs');
+
+module.exports = withWyw({
+  // your Next config
+});
+```
+
+### Customizing the loader
+
+Pass `loaderOptions` through to `@wyw-in-js/webpack-loader`:
+
+```js
+// next.config.js
+const { withWyw } = require('@wyw-in-js/nextjs');
+
+module.exports = withWyw(
+  {
+    reactStrictMode: true,
+  },
+  {
+    loaderOptions: {
+      // see /bundlers/webpack for common loader options
+    },
+  }
+);
+```
+
+### Disabling vendor prefixing
+
+Stylis adds vendor-prefixed CSS by default. To disable it (and reduce CSS size), pass `prefixer: false`:
+
+```js
+// next.config.js
+const { withWyw } = require('@wyw-in-js/nextjs');
+
+module.exports = withWyw(
+  {},
+  {
+    loaderOptions: {
+      prefixer: false,
+    },
+    turbopackLoaderOptions: {
+      prefixer: false,
+    },
+  }
+);
+```
+
+### Notes
+
+- The plugin emits styles as `*.wyw-in-js.module.css` so imports are allowed from any module.
+- Add `**/*.wyw-in-js.module.css` to your `.gitignore` since these files are generated.
+
+### Turbopack
+
+Turbopack is the default dev bundler in modern Next.js versions. `@wyw-in-js/nextjs` configures WyW for Turbopack via
+`turbopack.rules` (webpack-style loaders).
+
+Under the hood, this runs `@wyw-in-js/turbopack-loader`, which:
+
+- calls `@wyw-in-js/transform`,
+- writes extracted CSS as `*.wyw-in-js.module.css` next to the source module,
+- injects `import './*.wyw-in-js.module.css'` into the transformed JS/TS output.
+
+To keep WyW class names stable, selectors are wrapped in `:global(...)` (so Next CSS Modules does not re-hash them), and
+`@keyframes` names are also marked as global.
+
+#### Turbopack loader options
+
+Use `turbopackLoaderOptions` to customize `@wyw-in-js/turbopack-loader`:
+
+```js
+// next.config.js
+const { withWyw } = require('@wyw-in-js/nextjs');
+
+module.exports = withWyw(
+  {
+    reactStrictMode: true,
+  },
+  {
+    turbopackLoaderOptions: {
+      // Turbopack requires JSON-serializable options.
+      // Pass all function-based config via a configFile path.
+      configFile: './wyw-in-js.config.js',
+    },
+  }
+);
+```
+
+If you already have `turbopack.rules` for JS/TS in your config, `withWyw()` merges them and does not override conflicting
+rule keys.
+
+#### Alternatives (3 approaches)
+
+1) `@wyw-in-js/nextjs` (official)
+
+- Works in `next dev` (Turbopack default) and `next dev --webpack`.
+- Requires generated `*.wyw-in-js.module.css` files (add them to `.gitignore`).
+
+2) `next-with-linaria` (community)
+
+- Repo: https://github.com/dlehmhus/next-with-linaria/
+- Not maintained by WyW; may use different CSS injection semantics and extra heuristics.
+
+3) Bundler-agnostic extraction (`@wyw-in-js/cli`)
+
+- Lets you precompile sources and extract CSS outside of any bundler integration.
+- See [Bundler-agnostic extraction](/how-to/bundler-agnostic) for details.

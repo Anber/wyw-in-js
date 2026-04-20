@@ -57,6 +57,15 @@ The `globalCache` is enabled by default. WyW-in-JS uses two levels of caching to
 
 The `happyDOM` is enabled by default. This feature enables usage of https://github.com/capricorn86/happy-dom to emulate a browser environment during the build process. Typically, the `dangerousCodeRemover` feature should remove all browser-related code. However, some libraries may still contain browser-specific code that cannot be statically evaluated. In such cases, the `happyDOM` feature can be used to emulate a browser environment during the build process. This allows WyW-in-JS to evaluate the code without encountering errors caused by missing browser APIs.
 
+## Node.js note
+
+As of `happy-dom@20`, the package is **ESM-only**. WyW-in-JS is currently published as **CJS**, so on Node versions where
+`require()` cannot load ESM (for example Node 20/22) WyW-in-JS will skip DOM emulation and print a one-time warning.
+
+- To silence the warning (and make the behavior explicit): `features: { happyDOM: false }`.
+- For “real” DOM emulation in Node 20+, WyW-in-JS needs an ESM-only eval architecture (planned for v2.0.0), or a runtime
+  that supports `require(ESM)` (Node 24+).
+
 
 # `softErrors` Feature
 

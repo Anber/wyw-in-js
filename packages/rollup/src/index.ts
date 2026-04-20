@@ -5,9 +5,14 @@
  */
 
 import { createFilter } from '@rollup/pluginutils';
-import type { Plugin } from 'rollup';
+import type { Plugin, PluginContext, ResolvedId } from 'rollup';
 
-import { logger, slugify, syncResolve } from '@wyw-in-js/shared';
+import {
+  asyncResolverFactory,
+  logger,
+  slugify,
+  syncResolve,
+} from '@wyw-in-js/shared';
 import type { PluginOptions, Preprocessor, Result } from '@wyw-in-js/transform';
 import {
   getFileIdx,
@@ -21,6 +26,7 @@ type RollupPluginOptions = {
   keepComments?: boolean | RegExp;
   prefixer?: boolean;
   preprocessor?: Preprocessor;
+  serializeTransform?: boolean;
   sourceMap?: boolean;
 } & Partial<PluginOptions>;
 
@@ -30,6 +36,7 @@ export default function wywInJS({
   keepComments,
   prefixer,
   preprocessor,
+  serializeTransform = true,
   sourceMap,
   ...rest
 }: RollupPluginOptions = {}): Plugin {
@@ -37,6 +44,71 @@ export default function wywInJS({
   const cssLookup: { [key: string]: string } = {};
   const cache = new TransformCacheCollection();
   const emptyConfig = {};
+  let transformQueue = Promise.resolve();
+
+  type ResolveFn = PluginContext['resolve'];
+
+  const boundResolveCache = new WeakMap<
+    PluginContext,
+    { boundResolve: ResolveFn; sourceResolve: ResolveFn }
+  >();
+
+  const getBoundResolve = (ctx: PluginContext): ResolveFn => {
+    const cached = boundResolveCache.get(ctx);
+    if (cached && cached.sourceResolve === ctx.resolve) {
+      return cached.boundResolve;
+    }
+
+    const boundResolve: ResolveFn = ctx.resolve.bind(ctx);
+    boundResolveCache.set(ctx, { sourceResolve: ctx.resolve, boundResolve });
+    return boundResolve;
+  };
+
+  const runSerialized = async <T>(fn: () => Promise<T>): Promise<T> => {
+    if (!serializeTransform) {
+      return fn();
+    }
+
+    let release: () => void;
+    const previous = transformQueue;
+    transformQueue = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+
+    await previous;
+
+    try {
+      return await fn();
+    } finally {
+      release!();
+    }
+  };
+
+  const createAsyncResolver = asyncResolverFactory(
+    async (resolved: ResolvedId | null, what, importer, stack) => {
+      if (resolved) {
+        if (resolved.external) {
+          // If module is marked as external, Rollup will not resolve it,
+          // so we need to resolve it ourselves with default resolver
+          return syncResolve(what, importer, stack);
+        }
+
+        // Vite adds param like `?v=667939b3` to cached modules
+        const resolvedId = resolved.id.split('?')[0];
+
+        if (resolvedId.startsWith('\0')) {
+          // \0 is a special character in Rollup that tells Rollup to not include this in the bundle
+          // https://rollupjs.org/guide/en/#outputexports
+          return null;
+        }
+
+        return resolvedId;
+      }
+
+      throw new Error(`Could not resolve ${what}`);
+    },
+    (what, importer) => [what, importer]
+  );
 
   const plugin: Plugin = {
     name: 'wyw-in-js',
@@ -51,84 +123,53 @@ export default function wywInJS({
       code: string,
       id: string
     ): Promise<{ code: string; map: Result['sourceMap'] } | undefined> {
-      // Do not transform ignored and generated files
-      if (!filter(id) || id in cssLookup) return;
+      return runSerialized(async () => {
+        // Do not transform ignored and generated files
+        if (!filter(id) || id in cssLookup) return;
 
-      const log = logger.extend('rollup').extend(getFileIdx(id));
+        const log = logger.extend('rollup').extend(getFileIdx(id));
 
-      log('init %s', id);
+        log('init %s', id);
 
-      const asyncResolve = async (
-        what: string,
-        importer: string,
-        stack: string[]
-      ) => {
-        const resolved = await this.resolve(what, importer);
-        if (resolved) {
-          if (resolved.external) {
-            // If module is marked as external, Rollup will not resolve it,
-            // so we need to resolve it ourselves with default resolver
-            const resolvedId = syncResolve(what, importer, stack);
-            log("resolve: ✅ '%s'@'%s -> %O\n%s", what, importer, resolved);
-            return resolvedId;
-          }
+        const transformServices = {
+          options: {
+            filename: id,
+            pluginOptions: rest,
+            prefixer,
+            keepComments,
+            preprocessor,
+            root: process.cwd(),
+          },
+          cache,
+          emitWarning: (message: string) => this.warn(message),
+        };
 
-          log("resolve: ✅ '%s'@'%s -> %O\n%s", what, importer, resolved);
+        const result = await transform(
+          transformServices,
+          code,
+          createAsyncResolver(getBoundResolve(this)),
+          emptyConfig
+        );
 
-          // Vite adds param like `?v=667939b3` to cached modules
-          const resolvedId = resolved.id.split('?')[0];
+        if (!result.cssText) return;
 
-          if (resolvedId.startsWith('\0')) {
-            // \0 is a special character in Rollup that tells Rollup to not include this in the bundle
-            // https://rollupjs.org/guide/en/#outputexports
-            return null;
-          }
+        let { cssText } = result;
 
-          return resolvedId;
+        const slug = slugify(cssText);
+        const filename = `${id.replace(/\.[jt]sx?$/, '')}_${slug}.css`;
+
+        if (sourceMap && result.cssSourceMapText) {
+          const map = Buffer.from(result.cssSourceMapText).toString('base64');
+          cssText += `/*# sourceMappingURL=data:application/json;base64,${map}*/`;
         }
 
-        log("resolve: ❌ '%s'@'%s", what, importer);
-        throw new Error(`Could not resolve ${what}`);
-      };
+        cssLookup[filename] = cssText;
 
-      const transformServices = {
-        options: {
-          filename: id,
-          pluginOptions: rest,
-          prefixer,
-          keepComments,
-          preprocessor,
-          root: process.cwd(),
-        },
-        cache,
-        emitWarning: (message: string) => this.warn(message),
-      };
+        result.code += `\nimport ${JSON.stringify(filename)};\n`;
 
-      const result = await transform(
-        transformServices,
-        code,
-        asyncResolve,
-        emptyConfig
-      );
-
-      if (!result.cssText) return;
-
-      let { cssText } = result;
-
-      const slug = slugify(cssText);
-      const filename = `${id.replace(/\.[jt]sx?$/, '')}_${slug}.css`;
-
-      if (sourceMap && result.cssSourceMapText) {
-        const map = Buffer.from(result.cssSourceMapText).toString('base64');
-        cssText += `/*# sourceMappingURL=data:application/json;base64,${map}*/`;
-      }
-
-      cssLookup[filename] = cssText;
-
-      result.code += `\nimport ${JSON.stringify(filename)};\n`;
-
-      /* eslint-disable-next-line consistent-return */
-      return { code: result.code, map: result.sourceMap };
+        /* eslint-disable-next-line consistent-return */
+        return { code: result.code, map: result.sourceMap };
+      });
     },
   };
 

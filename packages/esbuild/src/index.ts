@@ -8,7 +8,7 @@ import { readFileSync } from 'fs';
 import { dirname, isAbsolute, join, parse, posix } from 'path';
 
 import type { Plugin, TransformOptions, Loader } from 'esbuild';
-import { transformSync } from 'esbuild';
+import { transformSync as esbuildTransformSync } from 'esbuild';
 
 import type {
   PluginOptions,
@@ -20,9 +20,13 @@ import {
   transform,
   TransformCacheCollection,
   createFileReporter,
+  loadWywOptions,
+  withDefaultServices,
 } from '@wyw-in-js/transform';
+import { asyncResolverFactory } from '@wyw-in-js/shared';
 
 type EsbuildPluginOptions = {
+  babelTransform?: boolean;
   debug?: IFileReporterOptions | false | null | undefined;
   esbuildOptions?: TransformOptions;
   filter?: RegExp | string;
@@ -30,6 +34,7 @@ type EsbuildPluginOptions = {
   prefixer?: boolean;
   preprocessor?: Preprocessor;
   sourceMap?: boolean;
+  transformLibraries?: boolean;
 } & Partial<PluginOptions>;
 
 const supportedFilterFlags = new Set(['i', 'm', 's']);
@@ -37,6 +42,7 @@ const supportedFilterFlags = new Set(['i', 'm', 's']);
 const nodeModulesRegex = /^(?:.*[\\/])?node_modules(?:[\\/].*)?$/;
 
 export default function wywInJS({
+  babelTransform,
   debug,
   sourceMap,
   keepComments,
@@ -44,16 +50,54 @@ export default function wywInJS({
   preprocessor,
   esbuildOptions,
   filter = /\.(js|jsx|ts|tsx)$/,
+  transformLibraries,
   ...rest
 }: EsbuildPluginOptions = {}): Plugin {
   let options = esbuildOptions;
   const cache = new TransformCacheCollection();
+  let resolvedWywOptions: ReturnType<typeof loadWywOptions> | null = null;
+  let babel: ReturnType<typeof withDefaultServices>['babel'] | null = null;
+  if (babelTransform) {
+    resolvedWywOptions = loadWywOptions(rest);
+    babel = withDefaultServices({
+      options: {
+        filename: '<wyw-in-js/esbuild>',
+        pluginOptions: resolvedWywOptions,
+        root: process.cwd(),
+      },
+    }).babel;
+  }
+  const createAsyncResolver = asyncResolverFactory(
+    async (
+      resolved: {
+        errors: unknown[];
+        path: string;
+      },
+      token: string
+    ): Promise<string> => {
+      if (resolved.errors.length > 0) {
+        throw new Error(`Cannot resolve ${token}`);
+      }
+
+      return resolved.path.replace(/\\/g, posix.sep);
+    },
+    (what, importer) => [
+      what,
+      {
+        resolveDir: isAbsolute(importer)
+          ? dirname(importer)
+          : join(process.cwd(), dirname(importer)),
+        kind: 'import-statement',
+      },
+    ]
+  );
   return {
     name: 'wyw-in-js',
     setup(build) {
       const cssLookup = new Map<string, string>();
       const cssResolveDirs = new Map<string, string>();
       const warnedFilters = new Set<string>();
+      let warnedEmptyBabelOptions = false;
 
       const { emitter, onDone } = createFileReporter(debug ?? false);
 
@@ -93,25 +137,7 @@ export default function wywInJS({
         return new RegExp(filterRegexp.source, sanitizedFlags);
       };
 
-      const asyncResolve = async (
-        token: string,
-        importer: string
-      ): Promise<string> => {
-        const context = isAbsolute(importer)
-          ? dirname(importer)
-          : join(process.cwd(), dirname(importer));
-
-        const result = await build.resolve(token, {
-          resolveDir: context,
-          kind: 'import-statement',
-        });
-
-        if (result.errors.length > 0) {
-          throw new Error(`Cannot resolve ${token}`);
-        }
-
-        return result.path.replace(/\\/g, posix.sep);
-      };
+      const asyncResolve = createAsyncResolver(build.resolve);
 
       build.onEnd(() => {
         onDone(process.cwd());
@@ -142,7 +168,7 @@ export default function wywInJS({
         const { ext, name: filename } = parse(args.path);
         const loader = ext.replace(/^\./, '') as Loader;
 
-        if (nodeModulesRegex.test(args.path)) {
+        if (!transformLibraries && nodeModulesRegex.test(args.path)) {
           return {
             loader,
             contents: rawCode,
@@ -159,7 +185,58 @@ export default function wywInJS({
           }
         }
 
-        const transformed = transformSync(rawCode, {
+        let codeForEsbuild = rawCode;
+        if (babelTransform) {
+          if (!babel || !resolvedWywOptions) {
+            throw new Error(
+              '[wyw-in-js] Internal error: babelTransform is enabled but Babel services are not initialized'
+            );
+          }
+
+          const { babelOptions } = resolvedWywOptions;
+          if (!Object.keys(babelOptions).length) {
+            if (!warnedEmptyBabelOptions) {
+              warnedEmptyBabelOptions = true;
+              // eslint-disable-next-line no-console
+              console.warn(
+                '[wyw-in-js] babelTransform is enabled but babelOptions is empty; skipping Babel transform.'
+              );
+            }
+          } else {
+            let babelResult;
+            try {
+              babelResult = babel.transformSync(codeForEsbuild, {
+                ...babelOptions,
+                ast: false,
+                filename: args.path,
+                sourceFileName: args.path,
+                sourceMaps: sourceMap,
+              });
+            } catch (e) {
+              const message = e instanceof Error ? e.message : String(e);
+              throw new Error(
+                `[wyw-in-js] Babel transform failed for ${args.path}: ${message}`
+              );
+            }
+
+            if (!babelResult?.code) {
+              throw new Error(
+                `[wyw-in-js] Babel transform failed for ${args.path}`
+              );
+            }
+
+            codeForEsbuild = babelResult.code;
+
+            if (sourceMap && babelResult.map) {
+              const babelMap = Buffer.from(
+                JSON.stringify(babelResult.map)
+              ).toString('base64');
+              codeForEsbuild += `/*# sourceMappingURL=data:application/json;base64,${babelMap}*/`;
+            }
+          }
+        }
+
+        const transformed = esbuildTransformSync(codeForEsbuild, {
           ...options,
           sourcefile: args.path,
           sourcemap: sourceMap,
@@ -188,9 +265,26 @@ export default function wywInJS({
         const result = await transform(transformServices, code, asyncResolve);
         const resolveDir = dirname(args.path);
 
-        if (!result.cssText) {
+        if (typeof result.cssText === 'undefined') {
           return {
             contents: code,
+            loader,
+            resolveDir,
+          };
+        }
+
+        if (result.cssText === '') {
+          let contents = result.code;
+
+          if (sourceMap && result.sourceMap) {
+            const wywMap = Buffer.from(
+              JSON.stringify(result.sourceMap)
+            ).toString('base64');
+            contents += `/*# sourceMappingURL=data:application/json;base64,${wywMap}*/`;
+          }
+
+          return {
+            contents,
             loader,
             resolveDir,
           };

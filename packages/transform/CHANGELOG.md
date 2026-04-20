@@ -1,5 +1,143 @@
 # @wyw-in-js/transform
 
+## 1.0.8
+
+### Patch Changes
+
+- b416a98: Avoid unnecessary reexport expansion for `__wywPreval`-only entrypoints and isolate cached action trees per resolver context to prevent concurrent transform crashes.
+- 33e4abf: Revalidate evaluated dependencies against disk during entrypoint freshness checks, and rethrow non-missing filesystem errors instead of treating them as cache invalidations.
+- 21ecabf: Handle deleted or renamed dependency files during cache invalidation without swallowing unrelated filesystem errors.
+- ba60b51: Add Vite 8 support without dropping Vite 5-7 compatibility, and fix destructured binding evaluation in `@wyw-in-js/transform` on newer Babel versions.
+
+## 1.0.7
+
+### Patch Changes
+
+- 8158b6b: Coalesce `only` updates while a transform is already in flight so expanding export requests does not repeatedly restart the same entrypoint work.
+- 6b1a996: Distinguish fully rewritten barrel sources from partial fallbacks during barrel import rewriting and annotate dependency reporting with rewrite phases so post-rewrite graphs are easier to interpret.
+- 6a44e71: Extend barrel import rewriting to optimize passthrough exports in mixed modules while preserving fallback imports for local exports that still need the original barrel.
+- 2a7b534: Keep invalidation-only dependencies for rewritten barrel imports out of normal dependency merging so optimized imports no longer need `noShake` as much to avoid repeated dependency churn.
+- 7a2ec2e: Optimize pure re-export barrel files by caching barrel manifests and rewriting imports to leaf modules before CommonJS emission. This avoids repeated `only` supersede churn on large barrel files while preserving existing runtime behavior for non-optimized paths.
+- c0497c3: Fix the transform shaker so exports pruned from output can still remain as local declarations when surviving code depends on them, including chained references, enums, and mixed variable export declarations.
+- 26e85ef: Fix transform cache invalidation so entrypoints are evicted when direct or transitive dependencies change, preventing stale eval results from being reused across rebuilds.
+- 225d70d: Add support for custom `conditionNames` during eval-time fallback resolution so transform can honor package export conditions in monorepo development setups, while keeping extension retry limited to extensionless subpath requests.
+- 6daea8c: Invalidate cached barrel analysis when leaf export sets change, so warm rebuilds do not reuse stale rewritten `export *` output.
+- 4fbbd20: Reuse already resolved leaf dependencies after barrel import rewriting so mixed-barrel optimization avoids re-resolving generated direct imports during the rewritten resolve pass.
+- e9999e8: Avoid retrying extension guesses for scoped package roots when `conditionNames` is enabled.
+- Updated dependencies
+  - @wyw-in-js/processor-utils@1.0.5
+  - @wyw-in-js/shared@1.0.5
+
+## 1.0.6
+
+### Patch Changes
+
+- 038bf35: Strip Vite React Refresh helpers (`$RefreshReg$`/`$RefreshSig$`) when they are injected as local functions by `@vitejs/plugin-react@5.1.x`, preventing unintended code execution during eval.
+- 9142eac: Fix processor skip handling to accept `Symbol('skip')` by description (instead of object identity), and warn once when the symbol identity mismatches `BaseProcessor.SKIP` to help diagnose duplicated dependencies.
+
+## 1.0.5
+
+### Patch Changes
+
+- 3dec017: Fix cache invalidation storms when loader-provided code differs from filesystem code, keep the Vite resolver stable across repeated `configResolved` calls, and avoid eagerly walking dynamic import targets during eval-only runs (prevents `action handler is already set` and improves build performance on large projects).
+- a936749: Drop Node.js <20 support (Node 18 is EOL).
+
+  Note: WyW `1.0.0` already effectively required Node 20 in practice; this change makes the support policy explicit and
+  aligns docs/CI accordingly.
+
+  If DOM emulation is enabled (`features.happyDOM`), but `happy-dom` cannot be loaded via `require()` (ESM-only), WyW will
+  fall back to running without DOM and print a one-time warning with guidance.
+
+- 37d15aa: Fix Babel plugin/preset merging when keys are absolute paths from pnpm store (`node_modules/.pnpm/...`) so different packages don't get treated as duplicates.
+- 9e08238: Fix cache invalidation when a file is first read from the filesystem and later provided by a bundler/loader, preventing stale transforms and related Vite build/dev issues.
+- 3dec017: Add opt-in warnings to help identify dynamic and slow imports processed during prepare stage, with an `importOverrides.mock` hint for faster evaluation. Also support minimatch patterns in `importOverrides` keys to override groups of imports.
+- Updated dependencies
+  - @wyw-in-js/processor-utils@1.0.4
+  - @wyw-in-js/shared@1.0.4
+
+## 1.0.4
+
+### Patch Changes
+
+- Updated dependencies
+  - @wyw-in-js/processor-utils@1.0.3
+  - @wyw-in-js/shared@1.0.3
+
+## 1.0.3
+
+### Patch Changes
+
+- a7ece53: Improve eval error diagnostics: when build-time evaluation fails due to browser-only globals (e.g. `window`), include a hint about using `importOverrides` / moving runtime-only code out of evaluated modules.
+- d45b9bd: When expanding `export * from` to named re-exports, never include `default` (ESM export-star semantics). This avoids invalid code like duplicate default exports.
+- f45e458: Fix shaker crash when removing anonymous default exports like `export default function() {}`.
+
+## 1.0.2
+
+### Patch Changes
+
+- Bump versions
+- Updated dependencies
+  - @wyw-in-js/processor-utils@1.0.2
+  - @wyw-in-js/shared@1.0.2
+
+## 1.0.1
+
+### Patch Changes
+
+- 5882514: Fix publishing so released packages don't contain `workspace:*` dependency ranges (npm install compatibility).
+- Updated dependencies
+  - @wyw-in-js/processor-utils@1.0.1
+  - @wyw-in-js/shared@1.0.1
+
+## 1.0.0
+
+### Major Changes
+
+- 94c5efa: Release **1.0.0** introduces no breaking changes compared to previous releases.
+
+  This release establishes a stable baseline for future development, including upcoming releases focused on performance
+  and build-time optimizations.
+
+### Minor Changes
+
+- 62fef83: Fix shaker keeping unused imports in eval bundles (named/namespace/side-effect imports), which could trigger build-time evaluation crashes (e.g. `@radix-ui/react-tooltip`).
+
+  `@wyw-in-js/shared` now passes `importOverrides`/`root` through the evaluator config so the shaker can keep or mock side-effect imports when configured.
+
+  Note: eval bundles for `__wywPreval` now drop `import '...';` side-effect imports by default, to avoid executing unrelated runtime code in Node.js during build. If you rely on a side-effect import at eval time, keep it or stub it via `importOverrides`:
+
+  - `{ noShake: true }` to keep the import (and disable tree-shaking for that dependency).
+  - `{ mock: './path/to/mock' }` to redirect the import to a mock module.
+
+### Patch Changes
+
+- 7144b0c: Fix Babel TypeScript transform crashing on `declare` class fields by ensuring `allowDeclareFields` is enabled when using the TypeScript preset/plugin.
+- 0477b30: Fix export detection for array destructuring declarations (e.g. `export const [B] = ...`).
+- fad6207: Fix config merging with `@babel/core@7.25.7` by avoiding `babel-merge`'s `resolvePreset` regression.
+- c26b337: Bump `happy-dom` dependency to `^20.1.0`.
+- 485fd7d: Preserve cached exports when evaluating only missing imports to avoid re-running unused code.
+- 83d8915: Normalize multi-keyword `display` values (e.g. `flex inline`) before Stylis prefixing to avoid malformed CSS output.
+- 265a8d7: Fix `evaluate: true` export caching so additional export requests don’t combine exports from different module executions.
+- 9715eee: Fix `export * from` being dropped when the reexport target is ignored (e.g. via `extensions`).
+- 45ef60a: Fix missing CSS emission for tags inside named function expressions (e.g. `export const a = function a() { return css\`\`; }`).
+- 908968b: Avoid emitting `/*#__PURE__*/` on non-call/new expressions to prevent Rollup warnings during builds.
+- d2f5472: Fix shaker removing referenced bindings when dropping unused exports (e.g. object shorthand `{ fallback }`).
+- 06e80fb: Fix stale imported object exports during incremental rebuilds when `features.globalCache` is enabled.
+- c024a34: Avoid repeated evaluator re-runs for large, statically evaluatable modules by promoting them to wildcard `only` on first entrypoint creation.
+- fcb118a: Add a `keepComments` option for the stylis preprocessor to preserve selected CSS comments.
+- 64b7698: Prevent concurrent transforms from reusing cached actions with different handler instances by stabilizing resolvers across bundlers.
+- d4cefc9: Avoid leaving empty Promise callbacks when dangerous globals are removed.
+- 485fd7d: fix: drop unused imports when named and default exports share a binding
+- ac44dcc: Avoid retaining unused import specifiers during shaking so eval doesn't load unrelated deps.
+- 782e67f: Drop property assignments on shaken exports so eval doesn't touch Storybook globals.
+- 870b07b: Handle unknown/dynamic import specifiers without transform-time crashes, add `importOverrides` (mock/noShake/unknown policy), and emit a deduped warning only when eval reaches Node resolver fallback (bundler-native where possible).
+- 26ec4a3: Fix handling of import resource queries (e.g. `?raw`, `?url`) to avoid crashes and allow minimal eval-time loaders.
+- 2a8ab79: Extend `tagResolver` with a third `meta` argument (`sourceFile`, `resolvedSource`) so custom tag processors can be resolved reliably.
+- 4c268ad: Support Vite's `import.meta.env.*` during build-time evaluation.
+- Updated dependencies
+  - @wyw-in-js/processor-utils@1.0.0
+  - @wyw-in-js/shared@1.0.0
+
 ## 0.8.1
 
 ### Patch Changes

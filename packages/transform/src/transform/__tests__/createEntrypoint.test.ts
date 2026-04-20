@@ -105,4 +105,40 @@ describe('createEntrypoint', () => {
     expect(entrypoint1.supersededWith).toBe(entrypoint2);
     expect(callback).not.toBeCalled();
   });
+
+  it('should keep requested only for safe modules', () => {
+    services.loadAndParseFn = jest.fn((s, name, loadedCode) => ({
+      ast: s.babel.parseSync(loadedCode ?? '', {
+        babelrc: false,
+        configFile: false,
+        filename: name,
+      })!,
+      code: loadedCode ?? '',
+      evaluator: jest.fn(),
+      evalConfig: {},
+    }));
+
+    const code = `
+      export const a = 1;
+      export const b = 2;
+      export const c = { x: 'y' };
+    `;
+
+    const entrypoint1 = createEntrypoint(
+      services,
+      '/foo/tokens.ts',
+      ['a'],
+      code
+    );
+    expect(entrypoint1.only).toEqual(['a']);
+
+    const entrypoint2 = createEntrypoint(
+      services,
+      '/foo/tokens.ts',
+      ['b'],
+      code
+    );
+    expect(entrypoint2).not.toBe(entrypoint1);
+    expect(entrypoint2.only).toEqual(['a', 'b']);
+  });
 });

@@ -1,14 +1,17 @@
 import path from 'path';
 
-import wywInJS from '..';
-
 const transformMock = jest.fn();
 
-jest.mock('vite', () => ({
-  __esModule: true,
-  optimizeDeps: jest.fn(),
-  createFilter: () => () => true,
-}));
+const createReloadTarget = () => ({
+  moduleGraph: { getModuleById: jest.fn() },
+  reloadModule: jest.fn(),
+});
+
+jest.mock('vite', () =>
+  require('./viteMock').createViteMock({
+    optimizeDeps: jest.fn(),
+  })
+);
 
 jest.mock('@wyw-in-js/transform', () => {
   return {
@@ -41,6 +44,7 @@ describe('vite HMR', () => {
   });
 
   it('defers reloadModule for generated CSS until after transform()', async () => {
+    const { default: wywInJS } = await import('../index');
     transformMock.mockResolvedValue({
       code: 'export const x = 1;',
       sourceMap: null,
@@ -55,13 +59,127 @@ describe('vite HMR', () => {
       .normalize(`${entryId.replace(/\.[jt]sx?$/, '')}.wyw-in-js.css`)
       .replace(/\\/g, path.posix.sep);
 
-    const reloadModule = jest.fn();
+    const environment = createReloadTarget();
+    environment.moduleGraph.getModuleById.mockImplementation((id: string) => ({
+      id,
+    }));
+
+    const plugin = wywInJS();
+    plugin.configResolved?.({
+      root,
+      mode: 'development',
+      command: 'serve',
+      base: '/',
+      createResolver: () => jest.fn().mockResolvedValue(undefined),
+    } as any);
+    plugin.configureServer?.({
+      moduleGraph: { getModuleById: jest.fn() },
+    } as any);
+
+    await plugin.transform?.call(
+      { resolve: jest.fn(), environment } as any,
+      'console.log("test")',
+      entryId
+    );
+
+    expect(environment.reloadModule).not.toHaveBeenCalled();
+
+    jest.runOnlyPendingTimers();
+
+    expect(environment.moduleGraph.getModuleById).toHaveBeenCalledWith(
+      expectedCssFilename
+    );
+    expect(environment.reloadModule).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not reload CSS when generated CSS is unchanged', async () => {
+    const { default: wywInJS } = await import('../index');
+    const root = process.cwd();
+    const entryId = path.join(root, 'src', 'entry.tsx');
+
+    const environment = createReloadTarget();
+    environment.moduleGraph.getModuleById.mockImplementation((id: string) => ({
+      id,
+    }));
+
+    const plugin = wywInJS();
+    plugin.configResolved?.({
+      root,
+      mode: 'development',
+      command: 'serve',
+      base: '/',
+      createResolver: () => jest.fn().mockResolvedValue(undefined),
+    } as any);
+    plugin.configureServer?.({
+      moduleGraph: { getModuleById: jest.fn() },
+    } as any);
+
+    transformMock.mockResolvedValue({
+      code: 'export const x = 1;',
+      sourceMap: null,
+      cssText: '.a{color:red;}',
+      cssSourceMapText: null,
+      dependencies: [],
+    });
+
+    await plugin.transform?.call(
+      { resolve: jest.fn(), environment } as any,
+      'console.log("test")',
+      entryId
+    );
+    jest.runOnlyPendingTimers();
+    expect(environment.reloadModule).toHaveBeenCalledTimes(1);
+
+    environment.reloadModule.mockClear();
+    environment.moduleGraph.getModuleById.mockClear();
+
+    transformMock.mockResolvedValue({
+      code: 'export const x = 2;',
+      sourceMap: null,
+      cssText: '.a{color:red;}',
+      cssSourceMapText: null,
+      dependencies: [],
+    });
+
+    await plugin.transform?.call(
+      { resolve: jest.fn(), environment } as any,
+      'console.log("test2")',
+      entryId
+    );
+    jest.runOnlyPendingTimers();
+
+    expect(environment.reloadModule).not.toHaveBeenCalled();
+  });
+
+  it('falls back to devServer moduleGraph when transform context has no environment', async () => {
+    const { default: wywInJS } = await import('../index');
+    transformMock.mockResolvedValue({
+      code: 'export const x = 1;',
+      sourceMap: null,
+      cssText: '.a{color:red;}',
+      cssSourceMapText: null,
+      dependencies: [],
+    });
+
+    const root = process.cwd();
+    const entryId = path.join(root, 'src', 'entry.tsx');
+    const expectedCssFilename = path
+      .normalize(`${entryId.replace(/\.[jt]sx?$/, '')}.wyw-in-js.css`)
+      .replace(/\\/g, path.posix.sep);
+
     const getModuleById = jest
       .fn()
       .mockImplementation((id: string) => ({ id }));
+    const reloadModule = jest.fn();
 
     const plugin = wywInJS();
-    plugin.configResolved?.({ root } as any);
+    plugin.configResolved?.({
+      root,
+      mode: 'development',
+      command: 'serve',
+      base: '/',
+      createResolver: () => jest.fn().mockResolvedValue(undefined),
+    } as any);
     plugin.configureServer?.({
       moduleGraph: { getModuleById },
       reloadModule,
@@ -80,61 +198,8 @@ describe('vite HMR', () => {
     expect(getModuleById).toHaveBeenCalledWith(expectedCssFilename);
     expect(reloadModule).toHaveBeenCalledTimes(1);
   });
-
-  it('does not reload CSS when generated CSS is unchanged', async () => {
-    const root = process.cwd();
-    const entryId = path.join(root, 'src', 'entry.tsx');
-
-    const reloadModule = jest.fn();
-    const getModuleById = jest
-      .fn()
-      .mockImplementation((id: string) => ({ id }));
-
-    const plugin = wywInJS();
-    plugin.configResolved?.({ root } as any);
-    plugin.configureServer?.({
-      moduleGraph: { getModuleById },
-      reloadModule,
-    } as any);
-
-    transformMock.mockResolvedValue({
-      code: 'export const x = 1;',
-      sourceMap: null,
-      cssText: '.a{color:red;}',
-      cssSourceMapText: null,
-      dependencies: [],
-    });
-
-    await plugin.transform?.call(
-      { resolve: jest.fn() } as any,
-      'console.log("test")',
-      entryId
-    );
-    jest.runOnlyPendingTimers();
-    expect(reloadModule).toHaveBeenCalledTimes(1);
-
-    reloadModule.mockClear();
-    getModuleById.mockClear();
-
-    transformMock.mockResolvedValue({
-      code: 'export const x = 2;',
-      sourceMap: null,
-      cssText: '.a{color:red;}',
-      cssSourceMapText: null,
-      dependencies: [],
-    });
-
-    await plugin.transform?.call(
-      { resolve: jest.fn() } as any,
-      'console.log("test2")',
-      entryId
-    );
-    jest.runOnlyPendingTimers();
-
-    expect(reloadModule).not.toHaveBeenCalled();
-  });
-
   it('emits metadata sidecars during build when transform() returns metadata', async () => {
+    const { default: wywInJS } = await import('../index');
     const root = process.cwd();
     const entryId = path.join(root, 'src', 'entry.tsx');
     const emitFile = jest.fn();
@@ -168,7 +233,14 @@ describe('vite HMR', () => {
     });
 
     const plugin = wywInJS({ outputMetadata: true });
-    plugin.configResolved?.({ root } as any);
+    plugin.configResolved?.({
+      root,
+      mode: 'production',
+      command: 'build',
+      base: '/',
+      createResolver: () => jest.fn().mockResolvedValue(undefined),
+      build: { cssCodeSplit: true, rollupOptions: {} },
+    } as any);
 
     await plugin.transform?.call(
       { resolve: jest.fn() } as any,
@@ -191,6 +263,7 @@ describe('vite HMR', () => {
   });
 
   it('reports structured diagnostics returned by transform()', async () => {
+    const { default: wywInJS } = await import('../index');
     const root = process.cwd();
     const entryId = path.join(root, 'src', 'entry.tsx');
     const warn = jest.fn();
@@ -215,7 +288,13 @@ describe('vite HMR', () => {
     });
 
     const plugin = wywInJS();
-    plugin.configResolved?.({ root } as any);
+    plugin.configResolved?.({
+      root,
+      mode: 'development',
+      command: 'serve',
+      base: '/',
+      createResolver: () => jest.fn().mockResolvedValue(undefined),
+    } as any);
 
     await plugin.transform?.call(
       { resolve: jest.fn(), warn } as any,
@@ -237,12 +316,20 @@ describe('vite HMR', () => {
   });
 
   it('clears stale metadata sidecars when a file stops producing metadata', async () => {
+    const { default: wywInJS } = await import('../index');
     const root = process.cwd();
     const entryId = path.join(root, 'src', 'entry.tsx');
     const emitFile = jest.fn();
 
     const plugin = wywInJS({ outputMetadata: true });
-    plugin.configResolved?.({ root } as any);
+    plugin.configResolved?.({
+      root,
+      mode: 'production',
+      command: 'build',
+      base: '/',
+      createResolver: () => jest.fn().mockResolvedValue(undefined),
+      build: { cssCodeSplit: true, rollupOptions: {} },
+    } as any);
 
     transformMock.mockResolvedValueOnce({
       code: 'export const x = 1;',
@@ -284,12 +371,20 @@ describe('vite HMR', () => {
   });
 
   it('clears stale metadata sidecars between rebuilds when a file disappears from the graph', async () => {
+    const { default: wywInJS } = await import('../index');
     const root = process.cwd();
     const entryId = path.join(root, 'src', 'entry.tsx');
     const emitFile = jest.fn();
 
     const plugin = wywInJS({ outputMetadata: true });
-    plugin.configResolved?.({ root } as any);
+    plugin.configResolved?.({
+      root,
+      mode: 'production',
+      command: 'build',
+      base: '/',
+      createResolver: () => jest.fn().mockResolvedValue(undefined),
+      build: { cssCodeSplit: true, rollupOptions: {} },
+    } as any);
 
     plugin.buildStart?.call({} as any);
 
@@ -326,6 +421,7 @@ describe('vite HMR', () => {
   });
 
   it('uses safe metadata asset paths for sources outside Vite root', async () => {
+    const { default: wywInJS } = await import('../index');
     const root = path.join(path.sep, 'repo', 'app');
     const entryId = path.join(
       path.sep,
@@ -352,7 +448,14 @@ describe('vite HMR', () => {
     });
 
     const plugin = wywInJS({ outputMetadata: true });
-    plugin.configResolved?.({ root } as any);
+    plugin.configResolved?.({
+      root,
+      mode: 'production',
+      command: 'build',
+      base: '/',
+      createResolver: () => jest.fn().mockResolvedValue(undefined),
+      build: { cssCodeSplit: true, rollupOptions: {} },
+    } as any);
 
     await plugin.transform?.call(
       { resolve: jest.fn() } as any,
@@ -381,6 +484,7 @@ describe('vite HMR', () => {
   });
 
   it('normalizes metadata filenames for supported module extensions', async () => {
+    const { default: wywInJS } = await import('../index');
     const root = process.cwd();
     const entryId = path.join(root, 'src', 'entry.mts');
     const emitFile = jest.fn();
@@ -400,7 +504,14 @@ describe('vite HMR', () => {
     });
 
     const plugin = wywInJS({ outputMetadata: true });
-    plugin.configResolved?.({ root } as any);
+    plugin.configResolved?.({
+      root,
+      mode: 'production',
+      command: 'build',
+      base: '/',
+      createResolver: () => jest.fn().mockResolvedValue(undefined),
+      build: { cssCodeSplit: true, rollupOptions: {} },
+    } as any);
 
     await plugin.transform?.call(
       { resolve: jest.fn() } as any,

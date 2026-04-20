@@ -24,7 +24,9 @@ export function isRemoved(path: NodePath): boolean {
       if (listKey) {
         // If the current path is part of a list and the current node
         // is not presented in this list, return true
-        const found = parent.get(listKey).find((p) => p.node === node);
+        const found = (parent.get(listKey) as NodePath[]).find(
+          (p) => p.node === node
+        );
         if (!found) {
           return true;
         }

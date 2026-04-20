@@ -50,6 +50,167 @@ describe('createStylisPreprocessor', () => {
     });
   });
 
+  describe('display', () => {
+    it('normalizes multi-keyword flex display values before prefixing', () => {
+      const preprocessorWithPrefixer = createStylisPreprocessor({
+        filename: baseOptions.filename,
+      });
+      const compileRuleWithPrefixer = (rule: string) =>
+        preprocessorWithPrefixer('.foo', rule);
+
+      const a = compileRuleWithPrefixer(
+        'display: flex inline; align-items: center;'
+      );
+      const b = compileRuleWithPrefixer(
+        'display: inline flex; align-items: center;'
+      );
+
+      expect(a).toEqual(b);
+      expect(a).not.toContain('display:-webkit-boxdisplay');
+      expect(a).toMatchInlineSnapshot(
+        `".foo{display:-webkit-inline-box;display:-webkit-inline-flex;display:-ms-inline-flexbox;display:inline-flex;-webkit-align-items:center;-webkit-box-align:center;-ms-flex-align:center;align-items:center;}"`
+      );
+    });
+
+    it('normalizes multi-keyword grid display values before prefixing', () => {
+      const preprocessorWithPrefixer = createStylisPreprocessor({
+        filename: baseOptions.filename,
+      });
+      const compileRuleWithPrefixer = (rule: string) =>
+        preprocessorWithPrefixer('.foo', rule);
+
+      const a = compileRuleWithPrefixer(
+        'display: grid inline; align-items: center;'
+      );
+      const b = compileRuleWithPrefixer(
+        'display: inline grid; align-items: center;'
+      );
+
+      expect(a).toEqual(b);
+      expect(a).toMatchInlineSnapshot(
+        `".foo{display:-ms-inline-grid;display:inline-grid;-webkit-align-items:center;-webkit-box-align:center;-ms-flex-align:center;align-items:center;}"`
+      );
+    });
+
+    it('canonicalizes multi-keyword display values to legacy single keywords when equivalent', () => {
+      const preprocessorWithPrefixer = createStylisPreprocessor({
+        filename: baseOptions.filename,
+      });
+      const compileRuleWithPrefixer = (rule: string) =>
+        preprocessorWithPrefixer('.foo', rule);
+
+      expect(
+        compileRuleWithPrefixer('display: block flex; align-items: center;')
+      ).toMatchInlineSnapshot(
+        `".foo{display:-webkit-box;display:-webkit-flex;display:-ms-flexbox;display:flex;-webkit-align-items:center;-webkit-box-align:center;-ms-flex-align:center;align-items:center;}"`
+      );
+
+      expect(
+        compileRuleWithPrefixer('display: block grid; align-items: center;')
+      ).toMatchInlineSnapshot(
+        `".foo{display:-ms-grid;display:grid;-webkit-align-items:center;-webkit-box-align:center;-ms-flex-align:center;align-items:center;}"`
+      );
+
+      expect(
+        compileRuleWithPrefixer('display: inline flow; left: 0;')
+      ).toMatchInlineSnapshot(`".foo{display:inline;left:0;}"`);
+
+      expect(
+        compileRuleWithPrefixer('display: block flow; left: 0;')
+      ).toMatchInlineSnapshot(`".foo{display:block;left:0;}"`);
+
+      expect(
+        compileRuleWithPrefixer('display: inline table; left: 0;')
+      ).toMatchInlineSnapshot(`".foo{display:inline-table;left:0;}"`);
+
+      expect(
+        compileRuleWithPrefixer('display: block table; left: 0;')
+      ).toMatchInlineSnapshot(`".foo{display:table;left:0;}"`);
+
+      expect(
+        compileRuleWithPrefixer('display: block flow-root; left: 0;')
+      ).toMatchInlineSnapshot(`".foo{display:flow-root;left:0;}"`);
+
+      expect(
+        compileRuleWithPrefixer('display: block flow list-item; left: 0;')
+      ).toMatchInlineSnapshot(`".foo{display:list-item;left:0;}"`);
+    });
+
+    it('keeps non-collapsible multi-keyword display values intact', () => {
+      const preprocessorWithPrefixer = createStylisPreprocessor({
+        filename: baseOptions.filename,
+      });
+      const compileRuleWithPrefixer = (rule: string) =>
+        preprocessorWithPrefixer('.foo', rule);
+
+      expect(
+        compileRuleWithPrefixer('display: inline flow-root; left: 0;')
+      ).toMatchInlineSnapshot(`".foo{display:inline flow-root;left:0;}"`);
+    });
+
+    it('avoids broken prefixer output for non-collapsible flex/grid multi-keyword forms', () => {
+      const preprocessorWithPrefixer = createStylisPreprocessor({
+        filename: baseOptions.filename,
+      });
+      const compileRuleWithPrefixer = (rule: string) =>
+        preprocessorWithPrefixer('.foo', rule);
+
+      const flexListItem = compileRuleWithPrefixer(
+        'display: flex list-item; left: 0;'
+      );
+      expect(flexListItem).not.toContain('display:-webkit-boxdisplay');
+      expect(flexListItem).toMatchInlineSnapshot(
+        `".foo{display:list-item flex;left:0;}"`
+      );
+
+      const gridListItem = compileRuleWithPrefixer(
+        'display: grid list-item; left: 0;'
+      );
+      expect(gridListItem).toMatchInlineSnapshot(
+        `".foo{display:list-item grid;left:0;}"`
+      );
+    });
+
+    it('preserves "!important" for canonicalized values', () => {
+      const preprocessorWithPrefixer = createStylisPreprocessor({
+        filename: baseOptions.filename,
+      });
+      const compileRuleWithPrefixer = (rule: string) =>
+        preprocessorWithPrefixer('.foo', rule);
+
+      expect(
+        compileRuleWithPrefixer(
+          'display: flex inline !important; align-items: center;'
+        )
+      ).toMatchInlineSnapshot(
+        `".foo{display:-webkit-inline-box!important;display:-webkit-inline-flex!important;display:-ms-inline-flexbox!important;display:inline-flex!important;-webkit-align-items:center;-webkit-box-align:center;-ms-flex-align:center;align-items:center;}"`
+      );
+    });
+
+    it('does not normalize display when prefixer is disabled', () => {
+      const preprocessorWithPrefixerDisabled = createStylisPreprocessor({
+        filename: baseOptions.filename,
+        prefixer: false,
+      });
+      const compileRuleWithPrefixerDisabled = (rule: string) =>
+        preprocessorWithPrefixerDisabled('.foo', rule);
+
+      expect(
+        compileRuleWithPrefixerDisabled(
+          'display: flex inline; align-items: center;'
+        )
+      ).toMatchInlineSnapshot(
+        `".foo{display:flex inline;align-items:center;}"`
+      );
+
+      expect(
+        compileRuleWithPrefixerDisabled(
+          'display: block flex; align-items: center;'
+        )
+      ).toMatchInlineSnapshot(`".foo{display:block flex;align-items:center;}"`);
+    });
+  });
+
   it('should understand namespace ref', () => {
     expect(compileRule('&:not(.bar) { color: red }')).toMatchInlineSnapshot(
       `".foo:not(.bar){color:red;}"`

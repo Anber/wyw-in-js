@@ -3,9 +3,6 @@ import { execSync } from 'node:child_process';
 import { tmpdir } from 'os';
 import { join, relative, isAbsolute } from 'path';
 
-import { install } from '@pnpm/core';
-import { createOrConnectStoreController } from '@pnpm/store-connection-manager';
-import { finishWorkers } from '@pnpm/worker';
 import { Command } from 'commander';
 import { globSync } from 'glob';
 import packageJSON from 'package-json';
@@ -13,7 +10,6 @@ import * as prettier from 'prettier';
 import semver from 'semver';
 
 import { configs } from './helpers/generators-configs.mjs';
-import { readPackage } from './helpers/readPackage.mjs';
 
 const program = new Command();
 
@@ -75,17 +71,6 @@ program
     );
 
     const tempDir = mkdtempSync(join(tmpdir(), 'fixtures-'));
-    const storeDir = join(tempDir, 'store');
-
-    const controller = await createOrConnectStoreController({
-      rawConfig: {},
-      dir: tempDir,
-      pkgRoot: tempDir,
-      pnpmHomeDir: tempDir,
-      cacheDir: join(tempDir, 'cache'),
-      lockfileDir: tempDir,
-      storeDir: storeDir,
-    });
 
     const inputFixtures = globSync(`${fixturesFolder}/*.input.*`);
 
@@ -99,16 +84,6 @@ program
         .split('\n')
         .map((line, idx) => `\t${(idx + 1).toString().padStart(2)}\t${line}`)
         .join('\n');
-
-    const installOptions = {
-      confirmModulesPurge: false,
-      dir: tempDir,
-      hooks: { readPackage },
-      lockfileDir: tempDir,
-      pkgRoot: tempDir,
-      storeController: controller.ctrl,
-      storeDir: storeDir,
-    };
 
     console.log(`Total environments: ${environments.length}`);
 
@@ -146,27 +121,31 @@ program
         }, {});
 
         try {
-          await install(
-            {
-              ...manifest,
-              devDependencies: {
-                ...manifest.devDependencies,
-                ...depsObject,
+          writeFileSync(
+            join(tempDir, 'package.json'),
+            JSON.stringify(
+              {
+                ...manifest,
+                devDependencies: {
+                  ...manifest.devDependencies,
+                  ...depsObject,
+                },
               },
-            },
-            installOptions
+              null,
+              2
+            )
           );
-        } catch (e) {
-          if (e.code === 'ERR_PNPM_PEER_DEP_ISSUES') {
-            console.log(
-              'ERR_PNPM_PEER_DEP_ISSUES',
-              JSON.stringify(e.issuesByProjects['.'], null, 2)
-            );
-            process.exit(1);
-          } else {
-            console.error(e);
-          }
 
+          execSync('bun install', {
+            cwd: tempDir,
+            stdio: 'inherit',
+            env: {
+              ...process.env,
+              BROWSERSLIST_IGNORE_OLD_DATA: '1',
+            },
+          });
+        } catch (error) {
+          console.error(error);
           continue;
         }
 
@@ -199,7 +178,8 @@ program
               {
                 cwd: tempDir,
                 env: {
-                  BROWSERSLIST_IGNORE_OLD_DATA: 1,
+                  ...process.env,
+                  BROWSERSLIST_IGNORE_OLD_DATA: '1',
                 },
               }
             );
@@ -246,8 +226,6 @@ program
     }
 
     await rmSync(tempDir, { recursive: true });
-
-    await finishWorkers();
   });
 
 program.parse();

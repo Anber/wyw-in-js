@@ -1,5 +1,23 @@
+import { shaker } from '../../shaker';
 import { isAborted } from '../actions/AbortError';
+import { analyzeBarrelFile } from '../barrelManifest';
 import type { IProcessEntrypointAction, SyncScenarioForAction } from '../types';
+
+const shouldSkipExplodeReexports = (
+  action: IProcessEntrypointAction
+): boolean => {
+  const { loadedAndParsed, only } = action.entrypoint;
+  if (only.length === 1 && only[0] === '__wywPreval') {
+    return true;
+  }
+
+  if (loadedAndParsed.evaluator !== shaker || !loadedAndParsed.ast) {
+    return false;
+  }
+
+  const barrelAnalysis = analyzeBarrelFile(loadedAndParsed.ast);
+  return barrelAnalysis.kind === 'barrel' && barrelAnalysis.complete;
+};
 
 /**
  * The first stage of processing an entrypoint.
@@ -14,10 +32,16 @@ export function* processEntrypoint(
   const { only, log } = this.entrypoint;
   log('start processing (only: %o)', only);
 
+  this.entrypoint.beginProcessing();
+
   try {
     using abortSignal = this.createAbortSignal();
 
-    yield ['explodeReexports', this.entrypoint, undefined, abortSignal];
+    if (shouldSkipExplodeReexports(this)) {
+      log('skip explodeReexports for pure barrel');
+    } else {
+      yield ['explodeReexports', this.entrypoint, undefined, abortSignal];
+    }
     const result = yield* this.getNext(
       'transform',
       this.entrypoint,
@@ -28,6 +52,13 @@ export function* processEntrypoint(
     this.entrypoint.assertNotSuperseded();
 
     this.entrypoint.setTransformResult(result);
+
+    const supersededWith = this.entrypoint.applyDeferredSupersede();
+    if (supersededWith) {
+      log('processing finished, deferred only detected; schedule next attempt');
+      yield* this.getNext('processEntrypoint', supersededWith, undefined, null);
+      return;
+    }
 
     log('entrypoint processing finished');
   } catch (e) {
@@ -45,5 +76,7 @@ export function* processEntrypoint(
 
     log(`Unhandled error: %O`, e);
     throw e;
+  } finally {
+    this.entrypoint.endProcessing();
   }
 }

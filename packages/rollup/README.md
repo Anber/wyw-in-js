@@ -12,6 +12,8 @@ npm i -D @wyw-in-js/rollup
 yarn add --dev @wyw-in-js/rollup
 # pnpm
 pnpm add -D @wyw-in-js/rollup
+# bun
+bun add -d @wyw-in-js/rollup
 ```
 
 ## Usage
@@ -28,6 +30,28 @@ export default {
     }),
   ],
 };
+```
+
+### Concurrency (tsdown/rolldown)
+
+Some Rollup-compatible bundlers may execute plugin hooks concurrently (e.g. tsdown/rolldown). To keep evaluation deterministic, `@wyw-in-js/rollup` serializes `transform()` calls by default.
+
+To opt out, pass:
+
+```js
+wyw({
+  serializeTransform: false,
+});
+```
+
+## Disabling vendor prefixing
+
+Stylis adds vendor-prefixed CSS by default. To disable it (and reduce CSS size), pass `prefixer: false`:
+
+```js
+wyw({
+  prefixer: false,
+});
 ```
 
 To get details about supported options by the plugin, please check [documentation](https://wyw-in-js.dev/bundlers/rollup).
