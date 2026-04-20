@@ -1,3 +1,4 @@
+import { EventEmitter } from 'events';
 import path from 'path';
 
 const transformMock = jest.fn();
@@ -191,5 +192,35 @@ describe('vite HMR', () => {
 
     expect(getModuleById).toHaveBeenCalledWith(expectedCssFilename);
     expect(reloadModule).toHaveBeenCalledTimes(1);
+  });
+
+  it('disposes eval brokers when the dev server closes', async () => {
+    const { default: wywInJS } = await import('../index');
+    const { disposeEvalBroker } = await import('@wyw-in-js/transform');
+    const disposeEvalBrokerMock = disposeEvalBroker as jest.Mock;
+    const httpServer = new EventEmitter();
+
+    disposeEvalBrokerMock.mockReset();
+
+    const plugin = wywInJS();
+    plugin.configResolved?.({
+      root: process.cwd(),
+      mode: 'development',
+      command: 'serve',
+      base: '/',
+      createResolver: () => jest.fn().mockResolvedValue(undefined),
+    } as any);
+
+    const configureResult = plugin.configureServer?.({
+      moduleGraph: { getModuleById: jest.fn() },
+      middlewares: { use: jest.fn() },
+      httpServer,
+    } as any);
+
+    expect(configureResult).toBeUndefined();
+
+    httpServer.emit('close');
+
+    expect(disposeEvalBrokerMock).toHaveBeenCalledTimes(2);
   });
 });

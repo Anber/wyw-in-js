@@ -1,3 +1,7 @@
+import { existsSync } from 'fs';
+import { createRequire } from 'module';
+import path from 'path';
+
 import { cosmiconfigSync } from 'cosmiconfig';
 
 import type {
@@ -15,19 +19,26 @@ const searchPlaces = [
   `.wyw-in-jsrc.json`,
   `.wyw-in-jsrc.yaml`,
   `.wyw-in-jsrc.yml`,
+  `.wyw-in-jsrc.mjs`,
   `.wyw-in-jsrc.js`,
   `.wyw-in-jsrc.cjs`,
   `.config/wyw-in-jsrc`,
   `.config/wyw-in-jsrc.json`,
   `.config/wyw-in-jsrc.yaml`,
   `.config/wyw-in-jsrc.yml`,
+  `.config/wyw-in-jsrc.mjs`,
   `.config/wyw-in-jsrc.js`,
   `.config/wyw-in-jsrc.cjs`,
+  `wyw-in-js.config.mjs`,
   `wyw-in-js.config.js`,
   `wyw-in-js.config.cjs`,
 ];
 
-const explorerSync = cosmiconfigSync('wyw-in-js', { searchPlaces });
+const explorerSync = cosmiconfigSync('wyw-in-js', {
+  searchPlaces: searchPlaces.filter(
+    (searchPlace) => !searchPlace.endsWith('.mjs')
+  ),
+});
 
 export type PartialOptions = Partial<Omit<PluginOptions, 'features'>> & {
   features?: Partial<FeatureFlags>;
@@ -39,6 +50,57 @@ const nodeModulesRegExp = /[\\/]node_modules[\\/]/;
 const defaultImportLoaders: ImportLoaders = {
   raw: 'raw',
   url: 'url',
+};
+const resolveConfigFilePath = (configFile: string): string =>
+  path.isAbsolute(configFile)
+    ? configFile
+    : path.resolve(process.cwd(), configFile);
+
+const normalizeLoadedConfig = (loadedConfig: unknown): Partial<StrictOptions> =>
+  (loadedConfig && typeof loadedConfig === 'object' && 'default' in loadedConfig
+    ? (loadedConfig as { default: unknown }).default
+    : loadedConfig) as Partial<StrictOptions>;
+
+const loadMjsConfig = (configFile: string): Partial<StrictOptions> => {
+  const resolvedConfigFile = resolveConfigFilePath(configFile);
+  const configRequire = createRequire(resolvedConfigFile);
+
+  try {
+    const cacheKey = configRequire.resolve(resolvedConfigFile);
+    delete configRequire.cache[cacheKey];
+  } catch {
+    // Ignore cache cleanup failures and let the require call surface the real error.
+  }
+
+  return normalizeLoadedConfig(configRequire(resolvedConfigFile));
+};
+
+const loadConfigFromFile = (configFile: string): Partial<StrictOptions> => {
+  const resolvedConfigFile = resolveConfigFilePath(configFile);
+  if (path.extname(resolvedConfigFile) === '.mjs') {
+    return loadMjsConfig(resolvedConfigFile);
+  }
+
+  return (explorerSync.load(resolvedConfigFile)?.config ??
+    {}) as Partial<StrictOptions>;
+};
+
+const searchConfig = (): Partial<StrictOptions> => {
+  let currentDir: string | null = process.cwd();
+
+  while (currentDir) {
+    for (const searchPlace of searchPlaces) {
+      const candidate = path.join(currentDir, searchPlace);
+      if (existsSync(candidate)) {
+        return loadConfigFromFile(candidate);
+      }
+    }
+
+    const parentDir = path.dirname(currentDir);
+    currentDir = parentDir === currentDir ? null : parentDir;
+  }
+
+  return {};
 };
 
 export function loadWywOptions(
@@ -57,14 +119,6 @@ export function loadWywOptions(
     ...rest
   } = overrides;
 
-  const result =
-    // eslint-disable-next-line no-nested-ternary
-    configFile === false
-      ? undefined
-      : configFile !== undefined
-      ? explorerSync.load(configFile)
-      : explorerSync.search();
-
   const defaultFeatures: FeatureFlags = {
     dangerousCodeRemover: true,
     globalCache: true,
@@ -79,7 +133,17 @@ export function loadWywOptions(
     resolver: 'bundler',
   };
 
-  const config = (result?.config ?? {}) as Partial<StrictOptions>;
+  const config = (() => {
+    if (configFile === false) {
+      return {};
+    }
+
+    if (configFile !== undefined) {
+      return loadConfigFromFile(configFile);
+    }
+
+    return searchConfig();
+  })();
   const configImportLoaders = config.importLoaders;
   const configFeatures = config.features;
   const configEval = config.eval;

@@ -1,8 +1,4 @@
-import {
-  mkdtempSync,
-  rmSync,
-  writeFileSync,
-} from 'fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'fs';
 import path from 'path';
 import { tmpdir } from 'os';
 
@@ -45,12 +41,12 @@ describe('babelTransformPlugin sync runner', () => {
   it('loads function-valued config file options inside the sync runner', () => {
     const root = mkdtempSync(path.join(tmpdir(), 'wyw-babel-transform-'));
     const entryFile = path.join(root, 'entry.js');
-    const configFile = path.join(root, 'wyw-in-js.config.cjs');
+    const configFile = path.join(root, 'wyw-in-js.config.mjs');
 
     writeFileSync(
       configFile,
       [
-        'module.exports = {',
+        'export default {',
         '  tagResolver(source, tag) {',
         `    if (source === 'test-css-processor' && tag === 'css') return ${JSON.stringify(
           processorPath

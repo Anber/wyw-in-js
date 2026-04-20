@@ -6,7 +6,7 @@ WyW-in-JS can be customized using a JavaScript, JSON or YAML file. This can be i
 - `wyw-in-js.config.cjs` CommonJS compatibility config using `module.exports` (legacy mode).
 - `wyw-in-js` property in a `package.json` file.
 - `.wyw-in-jsrc` file with JSON or YAML syntax.
-- `.wyw-in-jsrc.json`, `.wyw-in-jsrc.yaml`, `.wyw-in-jsrc.yml`, or `.wyw-in-jsrc.js` file.
+- `.wyw-in-jsrc.json`, `.wyw-in-jsrc.yaml`, `.wyw-in-jsrc.yml`, `.wyw-in-jsrc.mjs`, `.wyw-in-jsrc.js`, or `.wyw-in-jsrc.cjs` file.
 
 Example `wyw-in-js.config.mjs`:
 
@@ -520,7 +520,7 @@ Example:
   "presets": [
     "@babel/preset-env",
     "@babel/preset-react",
-    ["@wyw-in-js", { "configFile": "./wyw-in-js.config.cjs" }]
+    ["@wyw-in-js", { "configFile": "./wyw-in-js.config.mjs" }]
   ]
 }
 ```

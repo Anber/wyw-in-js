@@ -276,10 +276,7 @@ export default function wywInJS({
   } | null = null;
   const buildOverrideContext =
     (getEnv: () => Record<string, unknown> | undefined): OverrideContext =>
-    (
-      context: OverrideContextArgs[0],
-      filename: OverrideContextArgs[1]
-    ) => {
+    (context: OverrideContextArgs[0], filename: OverrideContextArgs[1]) => {
       const env = getEnv();
       const withEnv = env
         ? { ...context, __wyw_import_meta_env: env }
@@ -602,6 +599,7 @@ export default function wywInJS({
     },
     configureServer(_server) {
       devServer = _server;
+      devServer.httpServer?.once('close', disposeEvalBrokers);
 
       if (ssrDevCssEnabled && config.command === 'serve') {
         devServer.middlewares.use(
@@ -634,10 +632,6 @@ export default function wywInJS({
           }
         );
       }
-
-      return () => {
-        disposeEvalBrokers();
-      };
     },
     transformIndexHtml(html) {
       if (!ssrDevCssEnabled || config.command !== 'serve') return undefined;
