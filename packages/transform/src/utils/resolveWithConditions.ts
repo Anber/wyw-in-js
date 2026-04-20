@@ -72,14 +72,16 @@ const resolveWithNodeProcess = (
     throw result.error;
   }
 
-  let parsed: {
+  type ResolveResultPayload = {
     error?: { code?: string; message: string };
     resolved?: string;
-  } | null = null;
+  };
+
+  let parsed: ResolveResultPayload | null = null;
   const stdout = result.stdout.trim();
   if (stdout) {
     try {
-      parsed = JSON.parse(stdout) as typeof parsed;
+      parsed = JSON.parse(stdout) as ResolveResultPayload;
     } catch {
       throw new Error(
         [

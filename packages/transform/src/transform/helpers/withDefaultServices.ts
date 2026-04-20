@@ -18,6 +18,7 @@ export const withDefaultServices = ({
   loadAndParseFn = loadAndParse,
   log = rootLog,
   options,
+  asyncResolveKey,
 }: PartialServices): Services => ({
   babel,
   cache,
@@ -26,4 +27,5 @@ export const withDefaultServices = ({
   loadAndParseFn,
   log,
   options,
+  asyncResolveKey,
 });
