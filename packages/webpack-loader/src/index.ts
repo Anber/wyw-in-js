@@ -9,11 +9,15 @@ import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 
 import type { RawSourceMap } from 'source-map';
-import type { RawLoaderDefinitionFunction } from 'webpack';
+import type { Compiler, RawLoaderDefinitionFunction, Stats } from 'webpack';
 
 import { logger } from '@wyw-in-js/shared';
 import type { PluginOptions, Preprocessor, Result } from '@wyw-in-js/transform';
-import { transform, TransformCacheCollection } from '@wyw-in-js/transform';
+import {
+  disposeEvalBroker,
+  transform,
+  TransformCacheCollection,
+} from '@wyw-in-js/transform';
 
 import { sharedState } from './WYWinJSDebugPlugin';
 import type { ICache } from './cache';
@@ -51,73 +55,165 @@ export type LoaderOptions = {
 } & Partial<PluginOptions>;
 type Loader = RawLoaderDefinitionFunction<LoaderOptions>;
 
-const cache = new TransformCacheCollection();
-
 type Resolver = (
   what: string,
   importer: string,
-  stack: string[]
+  stack?: string[]
 ) => Promise<string>;
 
-const resolvers: Record<string, Resolver[]> = {};
+type DoneHook = {
+  tap: (name: string, handler: (stats: Stats) => void) => void;
+};
+
+type VoidHook = {
+  tap: (name: string, handler: () => void) => void;
+};
+
+type FailedHook = {
+  tap: (name: string, handler: (error: Error) => void) => void;
+};
+
+type CompilerHooks = {
+  done?: DoneHook;
+  failed?: FailedHook;
+  shutdown?: VoidHook;
+  watchClose?: VoidHook;
+};
+
+type CompilerLike = Compiler & {
+  hooks: CompilerHooks;
+};
+
+type LoaderContextWithCompiler = {
+  _compiler?: CompilerLike;
+};
+
+type ResolverScope = {
+  asyncResolve: Resolver;
+  cache: TransformCacheCollection;
+  dispose: () => void;
+  key: string;
+  replaceResolver: (resourcePath: string, resolver: Resolver) => void;
+};
+
+type CompilerState = ResolverScope & {
+  clearResolvers: () => void;
+  hooksInstalled: boolean;
+};
+
+const COMPILER_SCOPE_NAME = 'WYWinJSResolverScope';
+let compilerScopeId = 0;
+const compilerStates = new WeakMap<CompilerLike, CompilerState>();
 
 const getResolverKey = (importer: string, stack: string[]): string => {
   const root = stack.length ? stack[stack.length - 1] : importer;
   return stripQueryAndHash(root);
 };
 
-const getActiveResolvers = (key: string): Resolver[] => {
-  const entries = resolvers[key];
-  return entries?.length ? entries : [];
-};
+const createResolverScope = (): ResolverScope => {
+  const resolvers = new Map<string, Resolver>();
+  compilerScopeId += 1;
+  const key = `webpack:${compilerScopeId}`;
 
-const createAsyncResolve = (resourcePath: string) => {
-  const currentResolverKey = stripQueryAndHash(resourcePath);
+  return {
+    asyncResolve: (
+      what: string,
+      importer: string,
+      stack: string[] = [importer]
+    ): Promise<string> => {
+      const resolverKeys = [
+        getResolverKey(importer, stack),
+        stripQueryAndHash(importer),
+      ].filter((candidate, idx, all) => all.indexOf(candidate) === idx);
 
-  return (
-    what: string,
-    importer: string,
-    stack: string[] = [importer]
-  ): Promise<string> => {
-    const rootResolverKey = getResolverKey(importer, stack);
-    const rootResolvers = getActiveResolvers(rootResolverKey);
-    const resolver =
-      rootResolvers.length > 0
-        ? rootResolvers
-        : getActiveResolvers(currentResolverKey);
+      const selectedResolvers = resolverKeys
+        .map((resolverKey) => resolvers.get(resolverKey))
+        .filter((resolver): resolver is Resolver => Boolean(resolver));
 
-    if (resolver.length === 0) {
-      throw new Error('No resolver found');
-    }
+      if (selectedResolvers.length === 0) {
+        throw new Error('No resolver found');
+      }
 
-    // Every resolver should return the same result, but we need to call all of them
-    // to ensure that all side effects are executed (e.g. adding dependencies)
-    return Promise.all(resolver.map((r) => r(what, importer, stack))).then(
-      (results) => {
+      // Root and importer resolver side effects both matter for dependency
+      // tracking, so keep them aligned and verify they agree on the answer.
+      return Promise.all(
+        selectedResolvers.map((resolver) => resolver(what, importer, stack))
+      ).then((results) => {
         const firstResult = results[0];
-        if (results.some((r) => r !== firstResult)) {
+        if (results.some((result) => result !== firstResult)) {
           throw new Error('Resolvers returned different results');
         }
 
         return firstResult;
-      }
-    );
+      });
+    },
+    cache: new TransformCacheCollection(),
+    dispose: () => {
+      resolvers.clear();
+    },
+    key,
+    replaceResolver: (resourcePath: string, resolver: Resolver) => {
+      resolvers.set(stripQueryAndHash(resourcePath), resolver);
+    },
   };
 };
 
-function addResolver(resourcePath: string, resolver: Resolver) {
-  if (!resolvers[resourcePath]) {
-    resolvers[resourcePath] = [];
+const disposeCompilerState = (state: CompilerState) => {
+  state.clearResolvers();
+  disposeEvalBroker(state.cache);
+};
+
+const getCompilerState = (compiler: CompilerLike): CompilerState => {
+  const cached = compilerStates.get(compiler);
+  if (cached) {
+    return cached;
   }
 
-  resolvers[resourcePath].push(resolver);
-
-  return () => {
-    resolvers[resourcePath] = resolvers[resourcePath].filter(
-      (r) => r !== resolver
-    );
+  // Resolver identity must stay stable across files within one compiler or we
+  // churn both the shared transform cache salt and the eval broker/runner.
+  const scope = createResolverScope();
+  const state: CompilerState = {
+    ...scope,
+    clearResolvers: scope.dispose,
+    dispose: () => disposeCompilerState(state),
+    hooksInstalled: false,
   };
-}
+
+  const installHooks = () => {
+    if (state.hooksInstalled) return;
+    state.hooksInstalled = true;
+
+    compiler.hooks.done?.tap(COMPILER_SCOPE_NAME, () => {
+      state.clearResolvers();
+    });
+    compiler.hooks.failed?.tap(COMPILER_SCOPE_NAME, () => {
+      state.clearResolvers();
+    });
+    compiler.hooks.watchClose?.tap(COMPILER_SCOPE_NAME, () => {
+      state.dispose();
+      compilerStates.delete(compiler);
+    });
+    compiler.hooks.shutdown?.tap(COMPILER_SCOPE_NAME, () => {
+      state.dispose();
+      compilerStates.delete(compiler);
+    });
+  };
+
+  installHooks();
+  compilerStates.set(compiler, state);
+  return state;
+};
+
+const createInvocationScope = (): ResolverScope => {
+  const scope = createResolverScope();
+  return {
+    ...scope,
+    dispose: () => {
+      scope.dispose();
+      disposeEvalBroker(scope.cache);
+    },
+  };
+};
 
 const webpack5Loader: Loader = function webpack5LoaderPlugin(
   content,
@@ -188,7 +284,12 @@ const webpack5Loader: Loader = function webpack5LoaderPlugin(
       }
     });
 
-  const removeResolver = addResolver(this.resourcePath, (what, importer) => {
+  const { _compiler: compiler } = this as LoaderContextWithCompiler;
+  const compilerState = compiler
+    ? getCompilerState(compiler)
+    : createInvocationScope();
+
+  compilerState.replaceResolver(this.resourcePath, (what, importer) => {
     const importerPath = stripQueryAndHash(importer);
     const context = path.isAbsolute(importerPath)
       ? path.dirname(importerPath)
@@ -203,7 +304,11 @@ const webpack5Loader: Loader = function webpack5LoaderPlugin(
       return result;
     });
   });
-  const asyncResolve = createAsyncResolve(this.resourcePath);
+  const {
+    asyncResolve,
+    cache: transformCache,
+    key: asyncResolveKey,
+  } = compilerState;
 
   logger('loader %s', this.resourcePath);
 
@@ -230,7 +335,8 @@ const webpack5Loader: Loader = function webpack5LoaderPlugin(
       preprocessor,
       root: process.cwd(),
     },
-    cache,
+    asyncResolveKey,
+    cache: transformCache,
     emitWarning: (message: string) => this.emitWarning(new Error(message)),
     eventEmitter: sharedState.emitter,
   };
@@ -312,7 +418,11 @@ const webpack5Loader: Loader = function webpack5LoaderPlugin(
       }
     )
     .catch((err: Error) => this.callback(err))
-    .finally(removeResolver);
+    .finally(() => {
+      if (!compiler) {
+        compilerState.dispose();
+      }
+    });
 };
 
 export default webpack5Loader;

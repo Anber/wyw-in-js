@@ -34,6 +34,7 @@ export type Services = {
     importer: string,
     stack: string[]
   ) => Promise<string | null>;
+  asyncResolveKey?: string;
   evalBroker?: EvalBroker;
 };
 
