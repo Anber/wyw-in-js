@@ -87,6 +87,14 @@ const sharedAsyncResolve = (
     resolver = getActiveResolvers(stripQueryAndHash(importer));
   }
 
+  // Last resort: use any active resolver. All webpack resolvers are
+  // equivalent — they use `importer` for context, not the registration key.
+  // This handles transitive deps whose stack entries are stale (loader
+  // already finished and removed its resolver).
+  if (resolver.length === 0) {
+    resolver = getAnyActiveResolver();
+  }
+
   if (resolver.length === 0) {
     throw new Error(`No resolver found for ${what} from ${importer}`);
   }
@@ -118,6 +126,18 @@ const getResolverKey = (importer: string, stack: string[]): string => {
 const getActiveResolvers = (key: string): Resolver[] => {
   const entries = resolvers[key];
   return entries?.length ? entries : [];
+};
+
+// Return any active resolver — all webpack resolvers are equivalent
+// (they use the importer arg for context, not the registration key).
+// Used as last-resort fallback when stack/importer resolvers are stale.
+const getAnyActiveResolver = (): Resolver[] => {
+  for (const key in resolvers) {
+    if (resolvers[key]?.length) {
+      return resolvers[key];
+    }
+  }
+  return [];
 };
 
 const createAsyncResolve = (resourcePath: string) => {
