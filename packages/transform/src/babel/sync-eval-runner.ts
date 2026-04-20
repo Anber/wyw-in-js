@@ -11,6 +11,7 @@ import { disposeEvalBroker } from '../eval/broker';
 import { transform } from '../transform';
 import type { ICollectAction, SyncScenarioForAction } from '../transform/types';
 import { decodeGlobals, serializeValue } from '../eval/serialize';
+import { writeToStream } from '../eval/writeQueue';
 
 type SyncEvalPayload = {
   filename: string;
@@ -49,8 +50,14 @@ try {
   );
 }
 
-const { filename, root, code, inputSourceMap, pluginOptions, inlineEvalGlobals } =
-  payload;
+const {
+  filename,
+  root,
+  code,
+  inputSourceMap,
+  pluginOptions,
+  inlineEvalGlobals,
+} = payload;
 const normalizedInputSourceMap = inputSourceMap as RawSourceMap | undefined;
 const pluginOptionsForTransform: Partial<PluginOptions> = { ...pluginOptions };
 
@@ -123,4 +130,8 @@ const serializedValues = (() => {
   return Object.fromEntries(entries);
 })();
 
-process.stdout.write(JSON.stringify({ values: serializedValues }));
+await writeToStream(
+  process.stdout,
+  JSON.stringify({ values: serializedValues }),
+  'babel sync runner stdout'
+);

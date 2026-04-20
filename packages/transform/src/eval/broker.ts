@@ -49,6 +49,7 @@ import {
   serializeValue,
   type SerializedValue,
 } from './serialize';
+import { createWriteQueue, type WriteQueue, writeToStream } from './writeQueue';
 
 type HiddenModuleMembers = {
   _extensions: Record<string, () => void>;
@@ -444,11 +445,16 @@ const isTypeOnlyImport = (statement: Program['body'][number]): boolean => {
 };
 
 const isTypeOnlyExport = (
-  statement: Extract<Program['body'][number], { type: 'ExportNamedDeclaration' }>
+  statement: Extract<
+    Program['body'][number],
+    { type: 'ExportNamedDeclaration' }
+  >
 ): boolean => statement.exportKind === 'type';
 
 const getModuleExportName = (
-  node: { type: 'Identifier'; name: string } | { type: 'StringLiteral'; value: string }
+  node:
+    | { type: 'Identifier'; name: string }
+    | { type: 'StringLiteral'; value: string }
 ): string => (node.type === 'Identifier' ? node.name : node.value);
 
 const getImportSpecifierName = (
@@ -579,7 +585,10 @@ const buildDirectBarrelProxy = (
       }
 
       for (const specifier of statement.specifiers) {
-        if (specifier.type !== 'ExportSpecifier' || specifier.exportKind === 'type') {
+        if (
+          specifier.type !== 'ExportSpecifier' ||
+          specifier.exportKind === 'type'
+        ) {
           return null;
         }
 
@@ -651,7 +660,9 @@ const buildDirectBarrelProxy = (
       }
 
       const local = `__wyw_ns_${namespaceIdx++}`;
-      lines.push(`import * as ${local} from ${JSON.stringify(binding.source)};`);
+      lines.push(
+        `import * as ${local} from ${JSON.stringify(binding.source)};`
+      );
       lines.push(`export { ${local} as ${exported} };`);
       addImport(binding.source, '*');
       continue;
@@ -674,8 +685,8 @@ const buildDirectBarrelProxy = (
       exported === 'default'
         ? `${imported} as default`
         : imported === exported
-          ? imported
-          : `${imported} as ${exported}`;
+        ? imported
+        : `${imported} as ${exported}`;
 
     lines.push(
       `export { ${exportClause} } from ${JSON.stringify(binding.source)};`
@@ -739,6 +750,8 @@ const toSerializedError = (error: unknown) => {
 
 export class EvalBroker {
   private runner: ChildProcessWithoutNullStreams | null = null;
+
+  private runnerInputQueue: WriteQueue | null = null;
 
   private runnerReady: Promise<void> | null = null;
 
@@ -891,6 +904,7 @@ export class EvalBroker {
       this.runner.kill();
       this.runner = null;
       this.runnerReady = null;
+      this.runnerInputQueue = null;
     }
     this.lastInitKey = null;
     this.lastHappyDomEnabled = false;
@@ -936,6 +950,7 @@ export class EvalBroker {
       })`;
       this.rejectAllPending(new Error(reason));
       this.runner = null;
+      this.runnerInputQueue = null;
       this.runnerReady = null;
       this.lastInitKey = null;
       this.lastHappyDomEnabled = false;
@@ -949,6 +964,10 @@ export class EvalBroker {
     }
 
     this.runner = this.createRunnerProcess();
+    this.runnerInputQueue = createWriteQueue(
+      this.runner.stdin,
+      'eval runner stdin'
+    );
     this.attachRunnerListeners(this.runner);
     this.runnerReady = Promise.resolve();
     await this.runnerReady;
@@ -981,7 +1000,9 @@ export class EvalBroker {
         resolve(value);
       };
 
-      const finalizeReject = (value: Error | { message: string; stack?: string }) => {
+      const finalizeReject = (
+        value: Error | { message: string; stack?: string }
+      ) => {
         if (settled) {
           return;
         }
@@ -1059,7 +1080,16 @@ export class EvalBroker {
         id: requestId,
         payload,
       };
-      runner.stdin.write(`${JSON.stringify(message)}\n`);
+      writeToStream(
+        runner.stdin,
+        `${JSON.stringify(message)}\n`,
+        'eval runner stdin'
+      ).catch((error) => {
+        runner.kill();
+        finalizeReject(
+          error instanceof Error ? error : new Error(String(error))
+        );
+      });
     });
   }
 
@@ -1070,6 +1100,10 @@ export class EvalBroker {
     }
 
     this.runner = nextRunner;
+    this.runnerInputQueue = createWriteQueue(
+      nextRunner.stdin,
+      'eval runner stdin'
+    );
     this.attachRunnerListeners(nextRunner);
     this.runnerReady = Promise.resolve();
   }
@@ -1235,26 +1269,26 @@ export class EvalBroker {
         return;
       case 'RESOLVE':
         this.handleResolve(message.id, message.payload).catch((error) => {
-          this.sendMessage({
+          void this.sendMessage({
             type: 'RESOLVE_RESULT',
             id: message.id,
             payload: {
               resolvedId: null,
               error: toSerializedError(error),
             },
-          });
+          }).catch((sendError) => this.handleSendMessageError(sendError));
         });
         return;
       case 'LOAD':
         this.handleLoad(message.id, message.payload).catch((error) => {
-          this.sendMessage({
+          void this.sendMessage({
             type: 'LOAD_RESULT',
             id: message.id,
             payload: {
               id: message.payload.id,
               error: toSerializedError(error),
             },
-          });
+          }).catch((sendError) => this.handleSendMessageError(sendError));
         });
         return;
       case 'WARN':
@@ -1274,7 +1308,7 @@ export class EvalBroker {
 
   private async handleResolve(id: string, payload: ResolveRequestPayload) {
     const result = await this.resolveImport(payload);
-    this.sendMessage({
+    await this.sendMessage({
       type: 'RESOLVE_RESULT',
       id,
       payload: {
@@ -1906,7 +1940,7 @@ export class EvalBroker {
 
   private async handleLoad(id: string, payload: LoadRequestPayload) {
     const prepared = await this.loadModule(payload);
-    this.sendLoadResult(id, {
+    await this.sendLoadResult(id, {
       id: payload.id,
       code: prepared.code,
       map: null,
@@ -2140,12 +2174,12 @@ export class EvalBroker {
     }
   }
 
-  private sendLoadResult(
+  private async sendLoadResult(
     id: string,
     payload: Omit<LoadResultPayload, 'chunkIndex' | 'chunkCount' | 'codeChunk'>
   ) {
     if (!payload.code) {
-      this.sendMessage({
+      await this.sendMessage({
         type: 'LOAD_RESULT',
         id,
         payload,
@@ -2160,7 +2194,7 @@ export class EvalBroker {
     };
     const serialized = JSON.stringify(message);
     if (serialized.length < MAX_MESSAGE_SIZE) {
-      this.sendMessage(message);
+      await this.sendMessage(message);
       return;
     }
 
@@ -2185,7 +2219,7 @@ export class EvalBroker {
         chunkPayload.error = payload.error;
       }
 
-      this.sendMessage({
+      await this.sendMessage({
         type: 'LOAD_RESULT',
         id,
         payload: chunkPayload,
@@ -2193,11 +2227,28 @@ export class EvalBroker {
     }
   }
 
-  private sendMessage(message: MainToRunnerMessage) {
+  private sendMessage(message: MainToRunnerMessage): Promise<void> {
     const payload = `${JSON.stringify(message)}\n`;
     invariant(payload.length < MAX_MESSAGE_SIZE, 'Message too large');
 
-    this.runner?.stdin.write(payload);
+    if (!this.runnerInputQueue) {
+      return Promise.reject(new Error('Eval runner is not ready'));
+    }
+
+    return this.runnerInputQueue.write(payload);
+  }
+
+  private handleSendMessageError(error: unknown, id?: string) {
+    const serialized =
+      error instanceof Error
+        ? { message: error.message, stack: error.stack }
+        : { message: String(error) };
+
+    if (id) {
+      this.rejectPending(id, serialized);
+    }
+
+    this.runner?.kill();
   }
 
   private request<TPayload>(
@@ -2230,7 +2281,9 @@ export class EvalBroker {
         timeout,
       });
 
-      this.sendMessage(message);
+      this.sendMessage(message).catch((error) =>
+        this.handleSendMessageError(error, id)
+      );
     });
   }
 

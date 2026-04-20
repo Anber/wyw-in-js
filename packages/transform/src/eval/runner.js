@@ -343,7 +343,11 @@ const serializeValueAtPath = (
       return { kind: 'function' };
     }
 
-    throwUnsupportedIpcValue(rootLabel, pathSegments, 'an unsupported function');
+    throwUnsupportedIpcValue(
+      rootLabel,
+      pathSegments,
+      'an unsupported function'
+    );
   }
   if (typeof value === 'symbol') {
     if (allowSymbols) {
@@ -898,6 +902,11 @@ const resolveInFlight = new Map();
 const pending = new Map();
 const loadResultChunks = new Map();
 let nextId = 0;
+const stdoutWriteQueue = [];
+let stdoutWriteInFlight = false;
+let stdoutWriteFailed = null;
+let shutdownRequested = false;
+let shutdownFinished = false;
 
 const resetModuleState = () => {
   moduleCache.clear();
@@ -922,18 +931,137 @@ const resetEvaluationState = () => {
   resetModuleState();
 };
 
+const normalizeWriteError = (label, error) => {
+  if (error instanceof Error) {
+    return error;
+  }
+
+  return new Error(`[wyw-in-js] Failed to write to ${label}: ${String(error)}`);
+};
+
+const finishShutdown = (exitCode = 0) => {
+  if (shutdownFinished) {
+    return;
+  }
+
+  shutdownFinished = true;
+  clearInterval(keepAlive);
+  if (state.teardown) {
+    state.teardown();
+  }
+  process.exit(exitCode);
+};
+
+const flushStdoutWriteQueue = () => {
+  if (stdoutWriteInFlight || stdoutWriteFailed) {
+    return;
+  }
+
+  const next = stdoutWriteQueue.shift();
+  if (!next) {
+    if (shutdownRequested) {
+      finishShutdown(0);
+    }
+    return;
+  }
+
+  stdoutWriteInFlight = true;
+  let settled = false;
+  let writeCompleted = false;
+  let drainCompleted = true;
+
+  const cleanup = () => {
+    process.stdout.off('close', onClose);
+    process.stdout.off('drain', onDrain);
+    process.stdout.off('error', onError);
+  };
+
+  const finish = (error) => {
+    if (settled) {
+      return;
+    }
+
+    if (error) {
+      settled = true;
+      stdoutWriteInFlight = false;
+      cleanup();
+      stdoutWriteFailed = normalizeWriteError('eval runner stdout', error);
+      next.reject(stdoutWriteFailed);
+      while (stdoutWriteQueue.length > 0) {
+        stdoutWriteQueue.shift().reject(stdoutWriteFailed);
+      }
+      process.stderr.write(`[wyw-eval-runner] ${stdoutWriteFailed.message}\n`);
+      finishShutdown(1);
+      return;
+    }
+
+    if (!writeCompleted || !drainCompleted) {
+      return;
+    }
+
+    settled = true;
+    stdoutWriteInFlight = false;
+    cleanup();
+    next.resolve();
+    flushStdoutWriteQueue();
+  };
+
+  const onClose = () => {
+    finish(
+      new Error('eval runner stdout closed before pending write completed')
+    );
+  };
+
+  const onDrain = () => {
+    drainCompleted = true;
+    finish();
+  };
+
+  const onError = (error) => {
+    finish(error);
+  };
+
+  process.stdout.once('close', onClose);
+  process.stdout.once('error', onError);
+
+  const needsDrain = !process.stdout.write(next.chunk, (error) => {
+    writeCompleted = true;
+    if (error) {
+      finish(error);
+      return;
+    }
+
+    finish();
+  });
+
+  if (needsDrain) {
+    drainCompleted = false;
+    process.stdout.once('drain', onDrain);
+  }
+};
+
+const queueStdoutWrite = (chunk) =>
+  new Promise((resolve, reject) => {
+    if (stdoutWriteFailed) {
+      reject(stdoutWriteFailed);
+      return;
+    }
+
+    stdoutWriteQueue.push({ chunk, resolve, reject });
+    flushStdoutWriteQueue();
+  });
+
 const sendMessage = (message) => {
-  process.stdout.write(`${JSON.stringify(message)}\n`);
+  queueStdoutWrite(`${JSON.stringify(message)}\n`).catch(() => {});
 };
 
 const keepAlive = setInterval(() => {}, 60_000);
 
 const shutdown = () => {
-  clearInterval(keepAlive);
-  if (state.teardown) {
-    state.teardown();
+  shutdownRequested = true;
+  if (!stdoutWriteInFlight && stdoutWriteQueue.length === 0) {
+    finishShutdown(0);
   }
-  process.exit(0);
 };
 
 const sendWarn = (warning) => {
