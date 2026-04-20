@@ -237,6 +237,48 @@ describe('vite HMR', () => {
     expect(emitFile).not.toHaveBeenCalled();
   });
 
+  it('clears stale metadata sidecars between rebuilds when a file disappears from the graph', async () => {
+    const root = process.cwd();
+    const entryId = path.join(root, 'src', 'entry.tsx');
+    const emitFile = jest.fn();
+
+    const plugin = wywInJS({ outputMetadata: true });
+    plugin.configResolved?.({ root } as any);
+
+    plugin.buildStart?.call({} as any);
+
+    transformMock.mockResolvedValueOnce({
+      code: 'export const x = 1;',
+      cssText: '.a{color:red;}',
+      cssSourceMapText: null,
+      dependencies: [],
+      metadata: {
+        dependencies: [],
+        processors: [],
+        replacements: [],
+        rules: {},
+      },
+      sourceMap: null,
+    });
+
+    await plugin.transform?.call(
+      { resolve: jest.fn() } as any,
+      'console.log("test")',
+      entryId
+    );
+
+    plugin.generateBundle?.call({ emitFile } as any, {} as any, {} as any);
+
+    expect(emitFile).toHaveBeenCalledTimes(1);
+
+    emitFile.mockClear();
+
+    plugin.buildStart?.call({} as any);
+    plugin.generateBundle?.call({ emitFile } as any, {} as any, {} as any);
+
+    expect(emitFile).not.toHaveBeenCalled();
+  });
+
   it('uses safe metadata asset paths for sources outside Vite root', async () => {
     const root = path.join(path.sep, 'repo', 'app');
     const entryId = path.join(

@@ -145,6 +145,11 @@ export default function wywInJS({
   return {
     name: 'wyw-in-js',
     enforce: 'post',
+    buildStart() {
+      Object.keys(metadataLookup).forEach((key) => {
+        delete metadataLookup[key];
+      });
+    },
     buildEnd() {
       onDone(process.cwd());
     },
