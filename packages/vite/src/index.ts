@@ -22,13 +22,42 @@ import type {
   IFileReporterOptions,
   PluginOptions,
   Preprocessor,
+  Result as TransformResult,
+  TransformCacheCollection as TransformCacheCollectionType,
 } from '@wyw-in-js/transform';
-import {
+import * as transformPkg from '@wyw-in-js/transform';
+
+const {
+  createTransformManifest,
   createFileReporter,
   getFileIdx,
+  stringifyTransformManifest,
   transform,
   TransformCacheCollection,
-} from '@wyw-in-js/transform';
+} = transformPkg;
+
+type MetadataManifest = NonNullable<TransformResult['metadata']> & {
+  cssFile?: string;
+  source: string;
+  version: 1;
+};
+
+const createMetadataManifest = (
+  metadata: NonNullable<TransformResult['metadata']>,
+  context: Pick<MetadataManifest, 'cssFile' | 'source'>
+): MetadataManifest =>
+  typeof createTransformManifest === 'function'
+    ? createTransformManifest(metadata, context)
+    : {
+        ...metadata,
+        ...context,
+        version: 1,
+      };
+
+const stringifyMetadataManifest = (manifest: MetadataManifest): string =>
+  typeof stringifyTransformManifest === 'function'
+    ? stringifyTransformManifest(manifest)
+    : `${JSON.stringify(manifest, null, 2)}\n`;
 
 type VitePluginOptions = {
   debug?: IFileReporterOptions | false | null | undefined;
@@ -458,9 +487,20 @@ export default function wywInJS({
   transformLibraries,
   ...rest
 }: VitePluginOptions = {}): Plugin {
+  const supportedModuleExtensions = new Set([
+    '.cjs',
+    '.cts',
+    '.js',
+    '.jsx',
+    '.mjs',
+    '.mts',
+    '.ts',
+    '.tsx',
+  ]);
   const filter = createFilter(include, exclude);
   const cssLookup: { [key: string]: string } = {};
   const cssFileLookup: { [key: string]: string } = {};
+  const metadataLookup: { [key: string]: string } = {};
   const cssFilesByModuleId = new Map<string, string>();
   const pendingCssReloads = new WeakMap<
     CssReloadTarget,
@@ -503,6 +543,50 @@ export default function wywInJS({
 
   const { emitter, onDone } = createFileReporter(debug ?? false);
 
+  const isSafeAssetPath = (fileName: string) =>
+    fileName !== '' &&
+    fileName !== '..' &&
+    !fileName.startsWith(`..${path.posix.sep}`) &&
+    !path.posix.isAbsolute(fileName) &&
+    !isWindowsAbsolutePath(fileName);
+
+  const replaceModuleExtension = (filename: string, nextExtension: string) => {
+    const extension = path.extname(filename);
+    return supportedModuleExtensions.has(extension)
+      ? `${filename.slice(0, -extension.length)}${nextExtension}`
+      : `${filename}${nextExtension}`;
+  };
+
+  const toBundleRelativePath = (filename: string) => {
+    const relativePath = normalizeToPosix(path.relative(config.root, filename));
+
+    if (isSafeAssetPath(relativePath)) {
+      return relativePath;
+    }
+
+    if (
+      !path.isAbsolute(relativePath) &&
+      !isWindowsAbsolutePath(relativePath)
+    ) {
+      return path.posix.join(
+        '_wyw-in-js',
+        'external',
+        ...relativePath
+          .split(path.posix.sep)
+          .filter(Boolean)
+          .map((segment) => (segment === '..' ? '__up__' : segment))
+      );
+    }
+
+    return path.posix.join(
+      '_wyw-in-js',
+      'external',
+      ...normalizeToPosix(path.resolve(filename))
+        .split(path.posix.sep)
+        .filter(Boolean)
+        .map((segment) => segment.replace(/:$/, ''))
+    );
+  };
   const scheduleCssReload = (
     reloadTarget: CssReloadTarget,
     cssFilename: string
@@ -533,9 +617,9 @@ export default function wywInJS({
   const targets: { dependencies: string[]; id: string }[] = [];
   const clientCache = new TransformCacheCollection();
   const ssrCache = new TransformCacheCollection();
-  const caches = new Set<TransformCacheCollection>([clientCache, ssrCache]);
+  const caches = new Set<TransformCacheCollectionType>([clientCache, ssrCache]);
 
-  const getCache = (isSsr: boolean): TransformCacheCollection =>
+  const getCache = (isSsr: boolean): TransformCacheCollectionType =>
     isSsr ? ssrCache : clientCache;
 
   type DepInfoLike = { file: string; processing?: Promise<void> };
@@ -707,6 +791,11 @@ export default function wywInJS({
   return {
     name: 'wyw-in-js',
     enforce: 'post',
+    buildStart() {
+      Object.keys(metadataLookup).forEach((key) => {
+        delete metadataLookup[key];
+      });
+    },
     buildEnd() {
       onDone(process.cwd());
     },
@@ -849,6 +938,14 @@ export default function wywInJS({
         .filter((m): m is ModuleNode => !!m);
     },
     generateBundle(outputOptions, bundle) {
+      Object.entries(metadataLookup).forEach(([fileName, source]) => {
+        this.emitFile({
+          fileName,
+          source,
+          type: 'asset',
+        });
+      });
+
       if (config.command !== 'build') return;
       if (!outputOptions.preserveModules) return;
       if (config.build.cssCodeSplit === false) return;
@@ -954,7 +1051,46 @@ export default function wywInJS({
 
       const asyncResolve = isSsr ? asyncResolveSsr : asyncResolveClient;
 
-      const result = await transform(transformServices, code, asyncResolve);
+      const result: TransformResult = await transform(
+        transformServices,
+        code,
+        asyncResolve
+      );
+
+      result.diagnostics?.forEach((diagnostic) => {
+        this.warn({
+          id: diagnostic.filename,
+          loc: diagnostic.start
+            ? {
+                column: diagnostic.start.column,
+                file: diagnostic.filename,
+                line: diagnostic.start.line,
+              }
+            : undefined,
+          message: `[wyw-in-js] ${diagnostic.severity} [${diagnostic.category}] ${diagnostic.message}`,
+          pluginCode: diagnostic.category,
+        });
+      });
+
+      const relativeId = normalizeToPosix(path.relative(config.root, id));
+      const metadataFilename = replaceModuleExtension(id, '.wyw-in-js.json');
+      const metadataRelativePath = toBundleRelativePath(metadataFilename);
+
+      delete metadataLookup[metadataRelativePath];
+
+      if (result.metadata) {
+        const cssFile =
+          typeof result.cssText === 'string' && result.cssText !== ''
+            ? replaceModuleExtension(relativeId, '.wyw-in-js.css')
+            : undefined;
+
+        metadataLookup[metadataRelativePath] = stringifyMetadataManifest(
+          createMetadataManifest(result.metadata, {
+            cssFile,
+            source: relativeId,
+          })
+        );
+      }
 
       let { cssText, dependencies } = result;
 
@@ -979,14 +1115,14 @@ export default function wywInJS({
 
       dependencies ??= [];
 
-      const cssFilename = path
-        .normalize(`${id.replace(/\.[jt]sx?$/, '')}.wyw-in-js.css`)
-        .replace(/\\/g, path.posix.sep);
+      const cssFilename = normalizeToPosix(
+        replaceModuleExtension(id, '.wyw-in-js.css')
+      );
       cssFilesByModuleId.set(id, cssFilename);
 
-      const cssRelativePath = path
-        .relative(config.root, cssFilename)
-        .replace(/\\/g, path.posix.sep);
+      const cssRelativePath = normalizeToPosix(
+        path.relative(config.root, cssFilename)
+      );
 
       const cssId = `/${cssRelativePath}`;
 

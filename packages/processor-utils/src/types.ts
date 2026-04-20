@@ -37,6 +37,16 @@ export interface IInterpolation {
   unit: string;
 }
 
+export type ProcessorDiagnosticSeverity = 'error' | 'warning';
+
+export type ProcessorDiagnostic = {
+  category: string;
+  end?: Location | null;
+  message: string;
+  severity: ProcessorDiagnosticSeverity;
+  start?: Location | null;
+};
+
 export type Rules = Record<string, ICSSRule>;
 
 export type CalleeParam = readonly ['callee', Identifier | MemberExpression];

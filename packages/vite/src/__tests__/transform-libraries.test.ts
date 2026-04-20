@@ -1,6 +1,8 @@
 const transformMock = jest.fn();
 const filterMock = jest.fn();
 
+const loadWywInJS = () => import('../index?transform-libraries-test');
+
 const createLogger = () => {
   const log = (() => undefined) as unknown as ((...args: unknown[]) => void) & {
     extend: (...args: unknown[]) => unknown;
@@ -49,7 +51,7 @@ describe('vite transformLibraries', () => {
   });
 
   it('skips node_modules by default even when filter matches', async () => {
-    const { default: wywInJS } = await import('../index');
+    const { default: wywInJS } = await loadWywInJS();
     const plugin = wywInJS();
     plugin.configResolved?.({
       root: process.cwd(),
@@ -69,7 +71,7 @@ describe('vite transformLibraries', () => {
   });
 
   it('allows transforming node_modules when transformLibraries is true', async () => {
-    const { default: wywInJS } = await import('../index');
+    const { default: wywInJS } = await loadWywInJS();
     const plugin = wywInJS({ transformLibraries: true });
     plugin.configResolved?.({
       root: process.cwd(),
@@ -91,7 +93,7 @@ describe('vite transformLibraries', () => {
   it('still respects include/exclude filter', async () => {
     filterMock.mockReturnValue(() => false);
 
-    const { default: wywInJS } = await import('../index');
+    const { default: wywInJS } = await loadWywInJS();
     const plugin = wywInJS({ transformLibraries: true });
     plugin.configResolved?.({
       root: process.cwd(),

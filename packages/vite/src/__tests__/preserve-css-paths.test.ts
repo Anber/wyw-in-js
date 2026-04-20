@@ -1,5 +1,7 @@
 const transformMock = jest.fn();
 
+const loadWywInJS = () => import('../index?preserve-css-paths-test');
+
 const createLogger = () => {
   const log = (() => undefined) as unknown as ((...args: unknown[]) => void) & {
     extend: (...args: unknown[]) => unknown;
@@ -41,7 +43,7 @@ describe('vite preserveCssPaths', () => {
   });
 
   it('rewrites wyw css assets to preserve directories', async () => {
-    const { default: wywInJS } = await import('../index');
+    const { default: wywInJS } = await loadWywInJS();
 
     const outputOptions = {
       preserveModules: true,
@@ -84,7 +86,7 @@ describe('vite preserveCssPaths', () => {
   });
 
   it('preserves hash-only assetFileNames templates', async () => {
-    const { default: wywInJS } = await import('../index');
+    const { default: wywInJS } = await loadWywInJS();
 
     const outputOptions = {
       preserveModules: true,
@@ -120,7 +122,7 @@ describe('vite preserveCssPaths', () => {
   });
 
   it('keeps fixed assetFileNames values intact', async () => {
-    const { default: wywInJS } = await import('../index');
+    const { default: wywInJS } = await loadWywInJS();
 
     const outputOptions = {
       preserveModules: true,
@@ -149,7 +151,7 @@ describe('vite preserveCssPaths', () => {
   });
 
   it('does not change output naming when preserveCssPaths is disabled', async () => {
-    const { default: wywInJS } = await import('../index');
+    const { default: wywInJS } = await loadWywInJS();
 
     const outputOptions = {
       preserveModules: true,
@@ -171,7 +173,7 @@ describe('vite preserveCssPaths', () => {
   });
 
   it('restores root-level css imports for preserveModules library chunks', async () => {
-    const { default: wywInJS } = await import('../index');
+    const { default: wywInJS } = await loadWywInJS();
 
     const outputOptions = {
       format: 'es',
@@ -233,7 +235,7 @@ describe('vite preserveCssPaths', () => {
   });
 
   it('restores renamed root-level css imports for preserveModules chunks without build.lib', async () => {
-    const { default: wywInJS } = await import('../index');
+    const { default: wywInJS } = await loadWywInJS();
 
     const outputOptions = {
       format: 'es',
@@ -292,7 +294,7 @@ describe('vite preserveCssPaths', () => {
   });
 
   it('does not inject css imports when preserveModules is disabled', async () => {
-    const { default: wywInJS } = await import('../index');
+    const { default: wywInJS } = await loadWywInJS();
 
     const outputOptions = {
       format: 'es',
@@ -353,7 +355,7 @@ describe('vite preserveCssPaths', () => {
   });
 
   it('restores nested css imports for preserveModules library chunks', async () => {
-    const { default: wywInJS } = await import('../index');
+    const { default: wywInJS } = await loadWywInJS();
 
     const outputOptions = {
       format: 'es',
@@ -415,7 +417,7 @@ describe('vite preserveCssPaths', () => {
   });
 
   it('does not inject css imports when no wyw css asset is emitted', async () => {
-    const { default: wywInJS } = await import('../index');
+    const { default: wywInJS } = await loadWywInJS();
 
     const outputOptions = {
       format: 'es',
@@ -471,7 +473,7 @@ describe('vite preserveCssPaths', () => {
   });
 
   it('restores root-level css requires for preserveModules CommonJS chunks', async () => {
-    const { default: wywInJS } = await import('../index');
+    const { default: wywInJS } = await loadWywInJS();
 
     const outputOptions = {
       format: 'cjs',
@@ -533,7 +535,7 @@ describe('vite preserveCssPaths', () => {
   });
 
   it('restores renamed root-level css requires for preserveModules CommonJS chunks without build.lib', async () => {
-    const { default: wywInJS } = await import('../index');
+    const { default: wywInJS } = await loadWywInJS();
 
     const outputOptions = {
       format: 'cjs',
@@ -594,7 +596,7 @@ describe('vite preserveCssPaths', () => {
   });
 
   it('restores nested css requires for preserveModules CommonJS chunks', async () => {
-    const { default: wywInJS } = await import('../index');
+    const { default: wywInJS } = await loadWywInJS();
 
     const outputOptions = {
       format: 'cjs',
@@ -656,7 +658,7 @@ describe('vite preserveCssPaths', () => {
   });
 
   it('does not inject css requires when no wyw css asset is emitted for CommonJS chunks', async () => {
-    const { default: wywInJS } = await import('../index');
+    const { default: wywInJS } = await loadWywInJS();
 
     const outputOptions = {
       format: 'cjs',

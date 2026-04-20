@@ -2,6 +2,9 @@ import type { BabelFileResult } from '@babel/core';
 
 import type { Replacements, Rules } from '@wyw-in-js/shared';
 
+import type { WYWTransformDiagnostic } from '../../utils/TransformDiagnostics';
+import type { WYWTransformResultMetadata } from '../../utils/TransformMetadata';
+
 export interface IExtracted {
   cssSourceMapText: string;
   cssText: string;
@@ -18,4 +21,6 @@ export interface IWorkflowActionLinariaResult
   extends IExtracted,
     IWorkflowActionNonLinariaResult {
   dependencies: string[];
+  diagnostics?: WYWTransformDiagnostic[];
+  metadata?: WYWTransformResultMetadata;
 }

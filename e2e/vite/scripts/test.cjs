@@ -20,6 +20,15 @@ function normalizeLineEndings(value) {
   return value.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
 }
 
+async function exists(filename) {
+  try {
+    await fs.access(filename);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function buildArtefact(outDir, pluginOptions) {
   await build({
     build: {
@@ -34,6 +43,22 @@ async function buildArtefact(outDir, pluginOptions) {
       },
     },
     plugins: [pluginOptions ? wyw.default(pluginOptions) : wyw.default()],
+  });
+}
+
+async function buildArtefactWithPlugin(root, outDir, plugin) {
+  await build({
+    build: {
+      outDir,
+      cssMinify: false,
+      rollupOptions: {
+        input: path.join(root, 'src', 'index.ts'),
+      },
+    },
+    configFile: false,
+    logLevel: 'silent',
+    plugins: [plugin],
+    root,
   });
 }
 
@@ -84,11 +109,66 @@ async function getCSSFromManifest(outDir) {
   });
 }
 
+async function getMetadataManifest(outDir) {
+  const manifestPath = path.resolve(outDir, 'src', 'index.wyw-in-js.json');
+  return JSON.parse(await fs.readFile(manifestPath, 'utf-8'));
+}
+
+async function runReusedPluginMetadataRebuildCase() {
+  const fixtureDir = await fs.mkdtemp(path.join(PKG_DIR, 'rebuild-fixture-'));
+  const srcDir = path.join(fixtureDir, 'src');
+  const outDir = path.join(fixtureDir, 'dist');
+  const entryFilename = path.join(srcDir, 'index.ts');
+  const metadataFilename = path.join(outDir, 'src', 'component.wyw-in-js.json');
+  const plugin = wyw.default({ outputMetadata: true });
+
+  try {
+    await fs.mkdir(srcDir, { recursive: true });
+    await fs.writeFile(
+      entryFilename,
+      `import './component';
+
+export const entry = 1;
+`,
+      'utf8'
+    );
+    await fs.writeFile(
+      path.join(srcDir, 'component.ts'),
+      `import { css } from '@wyw-in-js/template-tag-syntax';
+
+export const className = css\`
+  color: red;
+\`;
+`,
+      'utf8'
+    );
+
+    await buildArtefactWithPlugin(fixtureDir, outDir, plugin);
+
+    if (!(await exists(metadataFilename))) {
+      throw new Error('Expected metadata sidecar after initial build');
+    }
+
+    await fs.writeFile(entryFilename, `export const entry = 2;\n`, 'utf8');
+    await buildArtefactWithPlugin(fixtureDir, outDir, plugin);
+
+    if (await exists(metadataFilename)) {
+      throw new Error(
+        'Expected rebuilds with a reused plugin instance to remove metadata sidecars for modules that left the graph'
+      );
+    }
+  } finally {
+    await fs.rm(fixtureDir, { recursive: true, force: true });
+  }
+}
+
 async function assertFileMatches(filePath, pattern) {
   const contents = normalizeLineEndings(await fs.readFile(filePath, 'utf-8'));
 
   if (!pattern.test(contents)) {
-    throw new Error(`${path.relative(PKG_DIR, filePath)} does not match ${pattern}`);
+    throw new Error(
+      `${path.relative(PKG_DIR, filePath)} does not match ${pattern}`
+    );
   }
 }
 
@@ -96,7 +176,9 @@ async function assertFileDoesNotContain(filePath, text) {
   const contents = normalizeLineEndings(await fs.readFile(filePath, 'utf-8'));
 
   if (contents.includes(text)) {
-    throw new Error(`${path.relative(PKG_DIR, filePath)} unexpectedly contains ${text}`);
+    throw new Error(
+      `${path.relative(PKG_DIR, filePath)} unexpectedly contains ${text}`
+    );
   }
 }
 
@@ -127,7 +209,9 @@ async function findFileMatching(dirPath, predicate) {
     }
   }
 
-  throw new Error(`No matching file found under ${path.relative(PKG_DIR, dirPath)}`);
+  throw new Error(
+    `No matching file found under ${path.relative(PKG_DIR, dirPath)}`
+  );
 }
 
 async function assertCjsModuleLoads(filePath) {
@@ -164,6 +248,11 @@ async function main() {
       fixturePath: path.resolve(PKG_DIR, 'fixture.keep-comments.css'),
       pluginOptions: { keepComments: true },
     },
+    {
+      name: 'outputMetadata',
+      fixturePath: path.resolve(PKG_DIR, 'fixture.css'),
+      pluginOptions: { outputMetadata: true },
+    },
   ];
 
   for (const testCase of testCases) {
@@ -172,9 +261,7 @@ async function main() {
 
     await buildArtefact(outDir, testCase.pluginOptions);
 
-    const cssOutput = normalizeLineEndings(
-      await getCSSFromManifest(outDir)
-    );
+    const cssOutput = normalizeLineEndings(await getCSSFromManifest(outDir));
     const cssFixture = normalizeLineEndings(
       await fs.readFile(testCase.fixturePath, 'utf-8')
     );
@@ -187,7 +274,46 @@ async function main() {
 
       throw new Error(`[${testCase.name}] CSS output does not match fixture`);
     }
+
+    if (testCase.name === 'outputMetadata') {
+      const metadataOutput = await getMetadataManifest(outDir);
+
+      if (metadataOutput.version !== 1) {
+        throw new Error('Expected metadata manifest version 1');
+      }
+
+      if (metadataOutput.source !== 'src/index.ts') {
+        throw new Error(
+          `Expected metadata source to be src/index.ts, got ${metadataOutput.source}`
+        );
+      }
+
+      if (metadataOutput.cssFile !== 'src/index.wyw-in-js.css') {
+        throw new Error(
+          `Expected metadata cssFile to be src/index.wyw-in-js.css, got ${metadataOutput.cssFile}`
+        );
+      }
+
+      if (!Array.isArray(metadataOutput.processors)) {
+        throw new Error('Expected metadata processors array');
+      }
+
+      if (metadataOutput.processors.length !== 1) {
+        throw new Error('Expected exactly one metadata processor');
+      }
+
+      if (typeof metadataOutput.processors[0].className !== 'string') {
+        throw new Error('Expected metadata processor className');
+      }
+
+      if (!metadataOutput.rules) {
+        throw new Error('Expected metadata rules');
+      }
+    }
   }
+
+  console.log(colors.blue('Running case:'), 'rebuildOutputMetadata');
+  await runReusedPluginMetadataRebuildCase();
 
   const preserveModulesCases = [
     {
@@ -195,14 +321,16 @@ async function main() {
       name: 'preserveModules-es',
       outDir: path.resolve(PKG_DIR, 'dist-preserve-modules'),
       cssEdgePattern: /import ["']\.\/index\.wyw-in-js\.css["'];/,
-      nestedCssEdgePattern: /import ["']\.\/(?:nested\/)+button\.wyw-in-js\.css["'];/,
+      nestedCssEdgePattern:
+        /import ["']\.\/(?:nested\/)+button\.wyw-in-js\.css["'];/,
     },
     {
       format: 'cjs',
       name: 'preserveModules-cjs',
       outDir: path.resolve(PKG_DIR, 'dist-preserve-modules-cjs'),
       cssEdgePattern: /require\(["']\.\/index\.wyw-in-js\.css["']\);/,
-      nestedCssEdgePattern: /require\(["']\.\/(?:nested\/)+button\.wyw-in-js\.css["']\);/,
+      nestedCssEdgePattern:
+        /require\(["']\.\/(?:nested\/)+button\.wyw-in-js\.css["']\);/,
     },
   ];
 
@@ -236,24 +364,17 @@ async function main() {
         !contents.includes('.css')
     );
 
-    await assertFileMatches(
-      rootModulePath,
-      preserveModulesCase.cssEdgePattern
-    );
+    await assertFileMatches(rootModulePath, preserveModulesCase.cssEdgePattern);
     await assertFileMatches(
       nestedModulePath,
       preserveModulesCase.nestedCssEdgePattern
     );
-    await assertFileDoesNotContain(
-      plainModulePath,
-      '.css'
-    );
+    await assertFileDoesNotContain(plainModulePath, '.css');
     await fs.access(
       path.resolve(preserveModulesCase.outDir, 'index.wyw-in-js.css')
     );
-    await findFileMatching(
-      preserveModulesCase.outDir,
-      (filePath) => filePath.endsWith('button.wyw-in-js.css')
+    await findFileMatching(preserveModulesCase.outDir, (filePath) =>
+      filePath.endsWith('button.wyw-in-js.css')
     );
 
     if (preserveModulesCase.format === 'cjs') {

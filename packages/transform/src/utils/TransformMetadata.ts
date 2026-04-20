@@ -1,10 +1,37 @@
-import type { Artifact, Replacement, Rules } from '@wyw-in-js/shared';
+import type { BaseProcessor } from '@wyw-in-js/processor-utils';
+import { isProcessorDiagnosticArtifact } from '@wyw-in-js/processor-utils';
+import type { Artifact, Location, Replacement, Rules } from '@wyw-in-js/shared';
+
+type TransformMetadataProcessor = Pick<
+  BaseProcessor,
+  'artifacts' | 'className' | 'displayName' | 'location'
+>;
 
 export type WYWTransformMetadata = {
   dependencies: string[];
-  processors: { artifacts: Artifact[] }[];
+  processors: TransformMetadataProcessor[];
   replacements: Replacement[];
   rules: Rules;
+};
+
+export type WYWTransformProcessorMetadata = {
+  artifacts: Artifact[];
+  className: string;
+  displayName: string;
+  start: Location | null | undefined;
+};
+
+export type WYWTransformResultMetadata = Omit<
+  WYWTransformMetadata,
+  'processors'
+> & {
+  processors: WYWTransformProcessorMetadata[];
+};
+
+export type WYWTransformManifest = WYWTransformResultMetadata & {
+  cssFile?: string;
+  source: string;
+  version: 1;
 };
 
 export const withTransformMetadata = (
@@ -26,3 +53,33 @@ export const getTransformMetadata = (
 
   return undefined;
 };
+
+export const toTransformResultMetadata = (
+  metadata: WYWTransformMetadata,
+  dependencies: string[]
+): WYWTransformResultMetadata => ({
+  dependencies,
+  processors: metadata.processors.map((processor) => ({
+    artifacts: processor.artifacts
+      .filter((artifact) => !isProcessorDiagnosticArtifact(artifact))
+      .map(([type, data]) => [type, data] as Artifact),
+    className: processor.className,
+    displayName: processor.displayName,
+    start: processor.location?.start ?? null,
+  })),
+  replacements: [...metadata.replacements],
+  rules: { ...metadata.rules },
+});
+
+export const createTransformManifest = (
+  metadata: WYWTransformResultMetadata,
+  context: Pick<WYWTransformManifest, 'cssFile' | 'source'>
+): WYWTransformManifest => ({
+  ...metadata,
+  ...context,
+  version: 1,
+});
+
+export const stringifyTransformManifest = (
+  manifest: WYWTransformManifest
+): string => `${JSON.stringify(manifest, null, 2)}\n`;

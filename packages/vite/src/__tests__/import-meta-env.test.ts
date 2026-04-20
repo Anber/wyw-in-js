@@ -1,6 +1,8 @@
 const loadEnvMock = jest.fn(() => ({ VITE_COLOR: 'red' }));
 const transformMock = jest.fn();
 
+const loadWywInJS = () => import('../index?import-meta-env-test');
+
 jest.mock('vite', () =>
   require('./viteMock').createViteMock({
     loadEnv: (...args: unknown[]) => loadEnvMock(...args),
@@ -31,7 +33,7 @@ describe('vite import.meta.env injection', () => {
   });
 
   it('injects Vite env values into VM context (client/SSR)', async () => {
-    const { default: wywInJS } = await import('../index');
+    const { default: wywInJS } = await loadWywInJS();
 
     const plugin = wywInJS();
     plugin.configResolved?.({

@@ -5,10 +5,20 @@ export type { IFileReporterOptions } from './debug/fileReporter';
 export { default as babelTransformPlugin } from './plugins/babel-transform';
 export { default as preeval } from './plugins/preeval';
 export {
+  createTransformManifest,
   getTransformMetadata,
+  stringifyTransformManifest,
+  toTransformResultMetadata,
   withTransformMetadata,
 } from './utils/TransformMetadata';
-export type { WYWTransformMetadata } from './utils/TransformMetadata';
+export type {
+  WYWTransformManifest,
+  WYWTransformMetadata,
+  WYWTransformProcessorMetadata,
+  WYWTransformResultMetadata,
+} from './utils/TransformMetadata';
+export { collectTransformDiagnostics } from './utils/TransformDiagnostics';
+export type { WYWTransformDiagnostic } from './utils/TransformDiagnostics';
 export { Module, DefaultModuleImplementation } from './module';
 export { default as shaker } from './shaker';
 export { transform } from './transform';

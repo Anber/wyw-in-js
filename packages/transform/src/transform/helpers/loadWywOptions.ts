@@ -81,6 +81,7 @@ export function loadWywOptions(
     displayName: false,
     evaluate: true,
     extensions: ['.cjs', '.cts', '.js', '.jsx', '.mjs', '.mts', '.ts', '.tsx'],
+    outputMetadata: false,
     rules: rules ?? [
       {
         action: shaker,
