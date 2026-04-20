@@ -91,7 +91,7 @@ export function* workflow(
 
   const metadata = options.pluginOptions.outputMetadata
     ? toTransformResultMetadata(collectStageResult.metadata, dependencies)
-    : undefined;
+    : null;
 
   // *** 4th stage
 
@@ -108,7 +108,7 @@ export function* workflow(
     ...extractStageResult,
     code: collectStageResult.code ?? '',
     dependencies,
-    metadata,
+    ...(metadata ? { metadata } : {}),
     replacements: [
       ...extractStageResult.replacements,
       ...collectStageResult.metadata.replacements,

@@ -88,9 +88,7 @@ describe('workflow metadata output', () => {
       rules: {},
     });
     expectIteratorReturnResult(finalResult);
-    expect(
-      'metadata' in finalResult.value ? finalResult.value.metadata : undefined
-    ).toBeUndefined();
+    expect('metadata' in finalResult.value).toBe(false);
   });
 
   it('returns normalized metadata when outputMetadata is enabled', () => {

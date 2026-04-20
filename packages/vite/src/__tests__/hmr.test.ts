@@ -189,4 +189,148 @@ describe('vite HMR', () => {
       type: 'asset',
     });
   });
+
+  it('clears stale metadata sidecars when a file stops producing metadata', async () => {
+    const root = process.cwd();
+    const entryId = path.join(root, 'src', 'entry.tsx');
+    const emitFile = jest.fn();
+
+    const plugin = wywInJS({ outputMetadata: true });
+    plugin.configResolved?.({ root } as any);
+
+    transformMock.mockResolvedValueOnce({
+      code: 'export const x = 1;',
+      cssText: '.a{color:red;}',
+      cssSourceMapText: null,
+      dependencies: [],
+      metadata: {
+        dependencies: [],
+        processors: [],
+        replacements: [],
+        rules: {},
+      },
+      sourceMap: null,
+    });
+
+    await plugin.transform?.call(
+      { resolve: jest.fn() } as any,
+      'console.log("test")',
+      entryId
+    );
+
+    transformMock.mockResolvedValueOnce({
+      code: 'export const x = 2;',
+      cssText: undefined,
+      cssSourceMapText: null,
+      dependencies: [],
+      sourceMap: null,
+    });
+
+    await plugin.transform?.call(
+      { resolve: jest.fn() } as any,
+      'console.log("test")',
+      entryId
+    );
+
+    plugin.generateBundle?.call({ emitFile } as any, {} as any, {} as any);
+
+    expect(emitFile).not.toHaveBeenCalled();
+  });
+
+  it('uses safe metadata asset paths for sources outside Vite root', async () => {
+    const root = path.join(path.sep, 'repo', 'app');
+    const entryId = path.join(
+      path.sep,
+      'repo',
+      'packages',
+      'ui',
+      'src',
+      'entry.tsx'
+    );
+    const emitFile = jest.fn();
+
+    transformMock.mockResolvedValue({
+      code: 'export const x = 1;',
+      cssText: '.a{color:red;}',
+      cssSourceMapText: null,
+      dependencies: [],
+      metadata: {
+        dependencies: [],
+        processors: [],
+        replacements: [],
+        rules: {},
+      },
+      sourceMap: null,
+    });
+
+    const plugin = wywInJS({ outputMetadata: true });
+    plugin.configResolved?.({ root } as any);
+
+    await plugin.transform?.call(
+      { resolve: jest.fn() } as any,
+      'console.log("test")',
+      entryId
+    );
+
+    plugin.generateBundle?.call({ emitFile } as any, {} as any, {} as any);
+
+    expect(emitFile).toHaveBeenCalledWith({
+      fileName:
+        '_wyw-in-js/external/__up__/packages/ui/src/entry.wyw-in-js.json',
+      source: expect.stringContaining(
+        '"source": "../packages/ui/src/entry.tsx"'
+      ),
+      type: 'asset',
+    });
+    expect(emitFile).toHaveBeenCalledWith({
+      fileName:
+        '_wyw-in-js/external/__up__/packages/ui/src/entry.wyw-in-js.json',
+      source: expect.stringContaining(
+        '"cssFile": "../packages/ui/src/entry.wyw-in-js.css"'
+      ),
+      type: 'asset',
+    });
+  });
+
+  it('normalizes metadata filenames for supported module extensions', async () => {
+    const root = process.cwd();
+    const entryId = path.join(root, 'src', 'entry.mts');
+    const emitFile = jest.fn();
+
+    transformMock.mockResolvedValue({
+      code: 'export const x = 1;',
+      cssText: '.a{color:red;}',
+      cssSourceMapText: null,
+      dependencies: [],
+      metadata: {
+        dependencies: [],
+        processors: [],
+        replacements: [],
+        rules: {},
+      },
+      sourceMap: null,
+    });
+
+    const plugin = wywInJS({ outputMetadata: true });
+    plugin.configResolved?.({ root } as any);
+
+    await plugin.transform?.call(
+      { resolve: jest.fn() } as any,
+      'console.log("test")',
+      entryId
+    );
+
+    plugin.generateBundle?.call({ emitFile } as any, {} as any, {} as any);
+
+    expect(emitFile).toHaveBeenCalledWith({
+      fileName: 'src/entry.wyw-in-js.json',
+      source: expect.stringContaining('"source": "src/entry.mts"'),
+      type: 'asset',
+    });
+    expect(emitFile).toHaveBeenCalledWith({
+      fileName: 'src/entry.wyw-in-js.json',
+      source: expect.stringContaining('"cssFile": "src/entry.wyw-in-js.css"'),
+      type: 'asset',
+    });
+  });
 });

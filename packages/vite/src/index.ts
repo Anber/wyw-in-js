@@ -53,6 +53,16 @@ export default function wywInJS({
   preprocessor,
   ...rest
 }: VitePluginOptions = {}): Plugin {
+  const supportedModuleExtensions = new Set([
+    '.cjs',
+    '.cts',
+    '.js',
+    '.jsx',
+    '.mjs',
+    '.mts',
+    '.ts',
+    '.tsx',
+  ]);
   const filter = createFilter(include, exclude);
   const cssLookup: { [key: string]: string } = {};
   const cssFileLookup: { [key: string]: string } = {};
@@ -63,6 +73,52 @@ export default function wywInJS({
   let devServer: ViteDevServer;
 
   const { emitter, onDone } = createFileReporter(debug ?? false);
+
+  const normalizePathname = (value: string) =>
+    value.replace(/\\/g, path.posix.sep);
+
+  const isSafeAssetPath = (fileName: string) =>
+    fileName !== '' &&
+    fileName !== '..' &&
+    !fileName.startsWith(`..${path.posix.sep}`) &&
+    !path.isAbsolute(fileName);
+
+  const replaceModuleExtension = (filename: string, nextExtension: string) => {
+    const extension = path.extname(filename);
+    return supportedModuleExtensions.has(extension)
+      ? `${filename.slice(0, -extension.length)}${nextExtension}`
+      : `${filename}${nextExtension}`;
+  };
+
+  const toBundleRelativePath = (filename: string) => {
+    const relativePath = normalizePathname(
+      path.relative(config.root, filename)
+    );
+
+    if (isSafeAssetPath(relativePath)) {
+      return relativePath;
+    }
+
+    if (!path.isAbsolute(relativePath)) {
+      return path.posix.join(
+        '_wyw-in-js',
+        'external',
+        ...relativePath
+          .split(path.posix.sep)
+          .filter(Boolean)
+          .map((segment) => (segment === '..' ? '__up__' : segment))
+      );
+    }
+
+    return path.posix.join(
+      '_wyw-in-js',
+      'external',
+      ...normalizePathname(path.resolve(filename))
+        .split(path.posix.sep)
+        .filter(Boolean)
+        .map((segment) => segment.replace(/:$/, ''))
+    );
+  };
 
   const scheduleCssReload = (cssFilename: string) => {
     if (!devServer?.moduleGraph) return;
@@ -284,20 +340,16 @@ export default function wywInJS({
       };
 
       const result = await transform(transformServices, code, asyncResolve);
-      const relativeId = path
-        .relative(config.root, id)
-        .replace(/\\/g, path.posix.sep);
+      const relativeId = normalizePathname(path.relative(config.root, id));
+      const metadataFilename = replaceModuleExtension(id, '.wyw-in-js.json');
+      const metadataRelativePath = toBundleRelativePath(metadataFilename);
+
+      delete metadataLookup[metadataRelativePath];
 
       if (result.metadata) {
-        const metadataFilename = path
-          .normalize(`${id.replace(/\.[jt]sx?$/, '')}.wyw-in-js.json`)
-          .replace(/\\/g, path.posix.sep);
-        const metadataRelativePath = path
-          .relative(config.root, metadataFilename)
-          .replace(/\\/g, path.posix.sep);
         const cssFile =
           typeof result.cssText === 'string' && result.cssText !== ''
-            ? relativeId.replace(/\.[jt]sx?$/, '.wyw-in-js.css')
+            ? replaceModuleExtension(relativeId, '.wyw-in-js.css')
             : undefined;
 
         metadataLookup[metadataRelativePath] = stringifyTransformManifest(
@@ -329,13 +381,13 @@ export default function wywInJS({
 
       dependencies ??= [];
 
-      const cssFilename = path
-        .normalize(`${id.replace(/\.[jt]sx?$/, '')}.wyw-in-js.css`)
-        .replace(/\\/g, path.posix.sep);
+      const cssFilename = normalizePathname(
+        replaceModuleExtension(id, '.wyw-in-js.css')
+      );
 
-      const cssRelativePath = path
-        .relative(config.root, cssFilename)
-        .replace(/\\/g, path.posix.sep);
+      const cssRelativePath = normalizePathname(
+        path.relative(config.root, cssFilename)
+      );
 
       const cssId = `/${cssRelativePath}`;
 

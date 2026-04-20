@@ -1,10 +1,11 @@
 ---
 '@wyw-in-js/cli': minor
+'@wyw-in-js/shared': minor
 '@wyw-in-js/transform': minor
 '@wyw-in-js/vite': minor
 ---
 
-Add opt-in metadata manifest plumbing across `@wyw-in-js/transform`, `@wyw-in-js/vite`, and `@wyw-in-js/cli`.
+Add opt-in metadata manifest plumbing across `@wyw-in-js/shared`, `@wyw-in-js/transform`, `@wyw-in-js/vite`, and `@wyw-in-js/cli`.
 
 When `outputMetadata` is enabled:
 
