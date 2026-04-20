@@ -1,5 +1,35 @@
 # @wyw-in-js/transform
 
+## 1.1.0
+
+### Minor Changes
+
+- 69004e7: Add a supported processor diagnostics seam that lets library-owned processors emit structured non-fatal warnings through WyW.
+
+  This adds:
+
+  - `BaseProcessor.addDiagnostic()` and typed diagnostics helpers in `@wyw-in-js/processor-utils`
+  - normalized `diagnostics` output from `@wyw-in-js/transform`
+  - diagnostics reporting in `@wyw-in-js/vite` and `@wyw-in-js/cli`
+
+  Existing hard failures and metadata sidecar behavior stay intact.
+
+- 69004e7: Add opt-in metadata manifest plumbing across `@wyw-in-js/shared`, `@wyw-in-js/transform`, `@wyw-in-js/vite`, and `@wyw-in-js/cli`.
+
+  When `outputMetadata` is enabled:
+
+  - `@wyw-in-js/transform` now returns normalized, public metadata alongside the existing transform result.
+  - `@wyw-in-js/vite` emits `.wyw-in-js.json` sidecar assets during build.
+  - `@wyw-in-js/cli` writes matching `.wyw-in-js.json` sidecar files and supports an `--output-metadata` flag.
+
+  This keeps default JS/CSS output unchanged while exposing a stable manifest path for library-owned tooling.
+
+### Patch Changes
+
+- Updated dependencies
+  - @wyw-in-js/processor-utils@1.1.0
+  - @wyw-in-js/shared@1.1.0
+
 ## 1.0.8
 
 ### Patch Changes

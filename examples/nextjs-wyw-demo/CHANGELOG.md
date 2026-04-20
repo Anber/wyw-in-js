@@ -1,5 +1,16 @@
 # nextjs-wyw-demo
 
+## 1.1.0
+
+### Minor Changes
+
+- Bump versions
+
+### Patch Changes
+
+- Updated dependencies
+  - @wyw-in-js/nextjs@1.1.0
+
 ## 1.0.9
 
 ### Patch Changes

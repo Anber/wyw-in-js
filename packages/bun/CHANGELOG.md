@@ -1,5 +1,17 @@
 # @wyw-in-js/bun
 
+## 1.1.0
+
+### Minor Changes
+
+- Bump versions
+
+### Patch Changes
+
+- Updated dependencies
+  - @wyw-in-js/shared@1.1.0
+  - @wyw-in-js/transform@1.1.0
+
 ## 1.0.8
 
 ### Patch Changes
