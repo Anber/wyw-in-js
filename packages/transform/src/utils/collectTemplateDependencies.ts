@@ -162,6 +162,39 @@ function hoistIdentifier(idPath: NodePath<Identifier>): void {
   throw unsupported(idPath);
 }
 
+function collectImportedFrom(
+  identifiers: NodePath<Identifier | JSXIdentifier>[],
+  imports: IImport[]
+): string[] {
+  if (imports.length === 0) {
+    return [];
+  }
+
+  const importSources = new Map<Identifier, string>();
+  imports.forEach((item) => {
+    if (item.local.isIdentifier()) {
+      importSources.set(item.local.node, item.source);
+    }
+  });
+
+  const importedFrom: string[] = [];
+  identifiers.forEach((idPath) => {
+    if (!idPath.node || idPath.removed || !idPath.isIdentifier()) {
+      return;
+    }
+
+    const bindingIdentifier = idPath.scope.getBinding(idPath.node.name)?.identifier;
+    const source =
+      bindingIdentifier && importSources.get(bindingIdentifier as Identifier);
+
+    if (source) {
+      importedFrom.push(source);
+    }
+  });
+
+  return importedFrom;
+}
+
 /**
  * Only an expression that can be evaluated in the root scope can be
  * used in a WYW template. This function tries to hoist the expression.
@@ -199,27 +232,38 @@ export function extractExpression(
   const expUid = rootScope.generateUid('exp');
 
   const evaluated = staticEval(ex, evaluate);
+  let referencedIdentifiers: NodePath<Identifier | JSXIdentifier>[] | undefined;
 
   if (!evaluated) {
     // If expression is not statically evaluable,
     // we need to hoist all its referenced identifiers
 
     // Collect all referenced identifiers
-    findIdentifiers([ex], 'reference').forEach((id) => {
+    referencedIdentifiers = findIdentifiers([ex], 'reference');
+    referencedIdentifiers.forEach((id) => {
       if (!id.isIdentifier()) return;
 
-      // Try to evaluate and inline them…
-      const evaluatedId = staticEval(id, evaluate);
-      if (evaluatedId) {
-        mutate(id, (p) => {
-          p.replaceWith(valueToLiteral(evaluatedId[0], ex));
-        });
-      } else {
-        // … or hoist them to the root scope
-        hoistIdentifier(id);
+      if (evaluate) {
+        // Try to evaluate and inline them…
+        const evaluatedId = staticEval(id, true);
+        if (evaluatedId) {
+          mutate(id, (p) => {
+            p.replaceWith(valueToLiteral(evaluatedId[0], ex));
+          });
+          return;
+        }
       }
+
+      // … or hoist them to the root scope
+      hoistIdentifier(id);
     });
   }
+
+  const importedFrom = collectImportedFrom(
+    referencedIdentifiers ??
+      (ex.isIdentifier() ? [ex] : findIdentifiers([ex], 'reference')),
+    imports
+  );
 
   const kind = isFunction ? ValueType.FUNCTION : ValueType.LAZY;
 
@@ -235,25 +279,6 @@ export function extractExpression(
   const [inserted] = statementInRoot.insertBefore(declaration);
   referenceAll(inserted);
   rootScope.registerDeclaration(inserted);
-
-  const importedFrom: string[] = [];
-  function findImportSourceOfIdentifier(idPath: NodePath<Identifier>) {
-    const exBindingIdentifier = idPath.scope.getBinding(idPath.node.name)
-      ?.identifier;
-    const exImport =
-      imports.find((i) => i.local.node === exBindingIdentifier) ?? null;
-    if (exImport) {
-      importedFrom.push(exImport.source);
-    }
-  }
-
-  if (ex.isIdentifier()) {
-    findImportSourceOfIdentifier(ex);
-  } else {
-    ex.traverse({
-      Identifier: findImportSourceOfIdentifier,
-    });
-  }
 
   // Replace the expression with the _expN() call
   mutate(ex, (p) => {

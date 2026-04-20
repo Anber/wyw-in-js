@@ -207,6 +207,35 @@ module.exports = {
 This is a trade‑off: `noShake` can be faster for “reprocessed many times” barrels, but it also makes the eval bundle for
 that dependency larger.
 
+## Pitfall 4: “Stale” values from `eval.globals` in watch mode
+
+### Typical symptoms
+
+- You changed `eval.globals.FOO` from `1` to `2`, but extracted result still looks like `1`.
+- You removed a key from `eval.globals`, but evaluated code still behaves as if it exists.
+- Behavior differs between a fresh build and a long-running watch/dev session.
+
+### Current contract in v2
+
+- Changing `eval.globals` values between runs is supported.
+- Removing keys from `eval.globals` between runs is supported.
+- WyW re-initializes eval runner/cache when serialized globals payload changes.
+
+### Practical checks/workarounds
+
+1) Make sure the value really changes in config input used by WyW:
+
+- If your config is generated dynamically, verify the computed value in logs.
+- Prefer deterministic values where possible.
+
+2) Avoid using runtime mutation of globals as your state mechanism:
+
+- Runtime writes inside evaluated modules are not durable across runs.
+- Treat `eval.globals` config as the source of truth for each transform.
+
+3) If your toolchain caches config aggressively and changes still do not apply, restart dev/watch process once to
+invalidate external caches.
+
 ## When to file an issue
 
 If none of the above helps, please open an issue with:

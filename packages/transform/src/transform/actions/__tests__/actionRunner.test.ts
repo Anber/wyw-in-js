@@ -12,8 +12,8 @@ import type {
   SyncScenarioForAction,
   IResolveImportsAction,
   IWorkflowAction,
+  ITransformAction,
   YieldArg,
-  IExplodeReexportsAction,
 } from '../../types';
 import type { BaseAction } from '../BaseAction';
 import { asyncActionRunner, syncActionRunner } from '../actionRunner';
@@ -265,15 +265,19 @@ describe('actionRunner', () => {
     const fooBarDefault = createEntrypoint(services, '/foo/bar.js', [
       'default',
     ]);
+    let supersedeCount = 0;
 
     const handlers = getHandlers<'sync'>({
-      explodeReexports: function* explodeReexports(
-        this: IExplodeReexportsAction
-      ): SyncScenarioForAction<IExplodeReexportsAction> {
-        createEntrypoint(services, '/foo/bar.js', ['named']);
-        createEntrypoint(services, '/foo/bar.js', ['default', 'bar']);
+      transform: function* transform(
+        this: ITransformAction
+      ): SyncScenarioForAction<ITransformAction> {
+        if (supersedeCount === 0) {
+          supersedeCount += 1;
+          createEntrypoint(services, '/foo/bar.js', ['named']);
+          createEntrypoint(services, '/foo/bar.js', ['default', 'bar']);
+        }
 
-        yield ['getExports', this.entrypoint, undefined, null];
+        return { code: '', metadata: null };
       },
       processEntrypoint,
     });

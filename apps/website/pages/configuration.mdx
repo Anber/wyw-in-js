@@ -2,12 +2,24 @@
 
 WyW-in-JS can be customized using a JavaScript, JSON or YAML file. This can be in form of:
 
-- `wyw-in-js.config.js` JS file exporting the object (recommended).
+- `wyw-in-js.config.mjs` ESM config file using `export default` (recommended for synchronous ESM config).
+- `wyw-in-js.config.cjs` CommonJS compatibility config using `module.exports` (legacy mode).
 - `wyw-in-js` property in a `package.json` file.
 - `.wyw-in-jsrc` file with JSON or YAML syntax.
-- `.wyw-in-jsrc.json`, `.wyw-in-jsrc.yaml`, `.wyw-in-jsrc.yml`, or `.wyw-in-jsrc.js` file.
+- `.wyw-in-jsrc.json`, `.wyw-in-jsrc.yaml`, `.wyw-in-jsrc.yml`, `.wyw-in-jsrc.mjs`, `.wyw-in-jsrc.js`, or `.wyw-in-jsrc.cjs` file.
 
-Example `wyw-in-js.config.js`:
+Example `wyw-in-js.config.mjs`:
+
+```js
+export default {
+  evaluate: true,
+  displayName: false,
+};
+```
+
+`.mjs` config files are loaded synchronously. Keep them free of top-level `await` and async-only ESM dependency chains.
+
+Legacy/CommonJS compatibility (`wyw-in-js.config.cjs`):
 
 ```js
 module.exports = {
@@ -21,6 +33,35 @@ module.exports = {
 - `evaluate: boolean` (default: `true`):
 
   Controls static evaluation of template expressions during dependency collection. It does **not** disable module evaluation. If there is nothing to evaluate, WyW-in-JS skips evaluation regardless of this flag. The old behavior of `evaluate: false` (throwing on unsupported interpolation) is deprecated and kept only for legacy configs.
+
+- `eval: EvalOptionsV2`:
+
+  Controls v2 evaluator behavior (`resolver`, `require`, `mode`, `globals`, `onWarn`, and custom resolver/loader hooks).
+
+  For `eval.globals`:
+
+  - Values are injected into the eval VM context for each transform run.
+  - Changing a global value between runs is supported.
+  - Removing a global key between runs is supported.
+  - WyW invalidates eval cache/re-init state when the serialized `eval.globals` payload changes (not just keys, but values too).
+  - Runtime mutations inside evaluated modules are not persisted as source of truth; the next run starts from `eval.globals` in config.
+  - Supported value shapes are JSON-like primitives/arrays/plain objects plus functions and symbols; non-plain objects (for example `Date`, `Map`, `Set`, class instances) are rejected to avoid silent prototype/state loss.
+
+  Keep `eval.globals` deterministic when possible (avoid `Date.now()`/`Math.random()` style values if you want stable cache behavior).
+
+  Example:
+
+  ```js
+  export default {
+    eval: {
+      require: 'warn-and-run',
+      globals: {
+        BUILD_TARGET: 'web',
+        FEATURE_FLAGS: { newNav: true },
+      },
+    },
+  };
+  ```
 
 - `displayName: boolean` (default: `false`):
 
@@ -141,9 +182,9 @@ module.exports = {
   are useful when you want to generate your own hash:
 
   ```js
-  const sha1 = require('sha1');
+  import sha1 from 'sha1';
 
-  module.exports = {
+  export default {
     classNameSlug: (hash, title, args) => sha1(`${args.name}-${title}`),
   };
   ```
@@ -191,7 +232,7 @@ module.exports = {
   A custom function to override the context used to evaluate modules. This can be used to add custom globals or override the default ones.
 
   ```js
-  module.exports = {
+  export default {
     overrideContext: (context, filename) => ({
       ...context,
       HighLevelAPI: () => "I'm a high level API",
@@ -222,7 +263,7 @@ module.exports = {
   Example:
 
   ```js
-  module.exports = {
+  export default {
     importOverrides: {
       './src/i18n/messages/en.json': { unknown: 'allow' },
       react: { mock: './src/__mocks__/react.ts' },
@@ -258,7 +299,7 @@ module.exports = {
   Example (stub a problematic side-effect import during evaluation):
 
   ```js
-  module.exports = {
+  export default {
     importOverrides: {
       '@radix-ui/react-tooltip': { mock: './src/__mocks__/radix-tooltip.ts' },
     },
@@ -268,7 +309,7 @@ module.exports = {
   Example (speed up evaluation by mocking a heavy runtime-only dependency):
 
   ```js
-  module.exports = {
+  export default {
     importOverrides: {
       '@uiw/react-codemirror': {
         mock: './src/__mocks__/uiw-react-codemirror.ts',
@@ -280,7 +321,7 @@ module.exports = {
   Example (mock a whole group of query imports, e.g. SVGR `?react`):
 
   ```js
-  module.exports = {
+  export default {
     importOverrides: {
       '@/icons/svg/*.svg\\?react': { mock: './src/__mocks__/svg-react.ts' },
     },
@@ -325,7 +366,7 @@ module.exports = {
   Example:
 
   ```js
-  module.exports = {
+  export default {
     importLoaders: {
       // Disable defaults if you don't want them
       // raw: false,
@@ -395,10 +436,16 @@ module.exports = {
   For example, we can use this to map `@linaria/core` , `@linaria/react` or `@linaria/atomic` where we re-export the module.
 
   ```js
-  {
+  import { createRequire } from 'node:module';
+  import { dirname, join } from 'node:path';
+  import { fileURLToPath } from 'node:url';
+
+  const require = createRequire(import.meta.url);
+  const __filename = fileURLToPath(import.meta.url);
+  const __dirname = dirname(__filename);
+
+  export default {
     tagResolver: (source, tag, { sourceFile, resolvedSource }) => {
-      const { createRequire } = require('module');
-      const { join } = require('path');
       const pathToLocalFile = join(__dirname, './my-local-folder/linaria.js');
       const resolved =
         resolvedSource ??
@@ -415,8 +462,8 @@ module.exports = {
       }
 
       return null;
-    };
-  }
+    },
+  };
   ```
 
   We can then re-export and use linaria API's from `./my-local-folder`:
@@ -484,4 +531,32 @@ To use this preset, add `@wyw-in-js/babel-preset` to your Babel configuration at
 }
 ```
 
-The babel preset can accept the same options supported by the configuration file, however it's recommended to use the configuration file directly.
+The preset understands the same option names as the configuration file, but not every option should be passed inline:
+
+- Inline Babel preset options are forwarded to a separate Node process, so they must be JSON-serializable.
+- Function-valued WyW options such as `tagResolver`, `eval.customResolver`, `eval.onWarn`, or custom `importLoaders` should live in a WyW config file instead.
+- When you need those function-valued options, pass only `configFile` inline and let the preset load the rest from that file. That config file may be `.mjs`, but it still must be synchronous.
+
+Example:
+
+```json
+{
+  "presets": [
+    "@babel/preset-env",
+    "@babel/preset-react",
+    ["@wyw-in-js", { "configFile": "./wyw-in-js.config.mjs" }]
+  ]
+}
+```
+
+If you only need simple inline options, keep them JSON-serializable:
+
+```json
+{
+  "presets": [
+    "@babel/preset-env",
+    "@babel/preset-react",
+    ["@wyw-in-js", { "displayName": true }]
+  ]
+}
+```

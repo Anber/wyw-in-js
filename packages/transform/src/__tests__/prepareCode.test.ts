@@ -1,7 +1,16 @@
-import { existsSync, readFileSync, readdirSync, statSync } from 'fs';
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  statSync,
+  writeFileSync,
+} from 'fs';
+import { tmpdir } from 'os';
 import { join } from 'path';
 
 import * as babel from '@babel/core';
+import dedent from 'dedent';
 
 import { loadWywOptions } from '../transform/helpers/loadWywOptions';
 import { shaker } from '../shaker';
@@ -9,6 +18,7 @@ import { Entrypoint } from '../transform/Entrypoint';
 import { parseFile } from '../transform/Entrypoint.helpers';
 import { prepareCode } from '../transform/generators/transform';
 import { withDefaultServices } from '../transform/helpers/withDefaultServices';
+import { EventEmitter } from '../utils/EventEmitter';
 
 const testCasesDir = join(__dirname, '__fixtures__', 'prepare-code-test-cases');
 
@@ -84,5 +94,196 @@ describe('prepareCode', () => {
       expect(imports).toMatchSnapshot('imports');
       expect(metadata).toMatchSnapshot('metadata');
     });
+  });
+
+  test('reuses preeval stage after superseding only for the same source', () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-prepare-code-'));
+    const inputFilePath = join(root, 'input.ts');
+    const processorFile = join(
+      __dirname,
+      '__fixtures__',
+      'test-css-processor.js'
+    );
+
+    const sourceCode = dedent`
+      import { css } from 'test-css-processor';
+
+      export const className = css\`
+        color: red;
+      \`;
+
+      export const usage = [className];
+    `;
+
+    writeFileSync(inputFilePath, sourceCode);
+
+    let preevalCount = 0;
+    const eventEmitter = new EventEmitter(
+      (labels, type) => {
+        if (type === 'start' && labels.method === 'transform:preeval') {
+          preevalCount += 1;
+        }
+      },
+      () => 0,
+      () => {}
+    );
+
+    const services = withDefaultServices({
+      babel,
+      eventEmitter,
+      options: {
+        root,
+        filename: inputFilePath,
+        pluginOptions: loadWywOptions({
+          configFile: false,
+          rules,
+          tagResolver: (source, tag) => {
+            if (source === 'test-css-processor' && tag === 'css') {
+              return processorFile;
+            }
+
+            return null;
+          },
+          babelOptions: {
+            babelrc: false,
+            configFile: false,
+            presets: [
+              ['@babel/preset-env', { loose: true }],
+              '@babel/preset-react',
+              '@babel/preset-typescript',
+            ],
+          },
+        }),
+      },
+    });
+
+    const firstEntrypoint = Entrypoint.createRoot(
+      services,
+      inputFilePath,
+      ['__wywPreval'],
+      sourceCode
+    );
+
+    if (firstEntrypoint.ignored) {
+      throw new Error('Ignored');
+    }
+
+    prepareCode(services, firstEntrypoint, firstEntrypoint.loadedAndParsed.ast);
+
+    const widenedEntrypoint = Entrypoint.createRoot(
+      services,
+      inputFilePath,
+      ['__wywPreval', 'className'],
+      sourceCode
+    );
+
+    if (widenedEntrypoint.ignored) {
+      throw new Error('Ignored');
+    }
+
+    expect(firstEntrypoint.supersededWith).toBe(widenedEntrypoint);
+
+    prepareCode(
+      services,
+      widenedEntrypoint,
+      widenedEntrypoint.loadedAndParsed.ast
+    );
+
+    expect(preevalCount).toBe(1);
+  });
+
+  test('reuses preeval stage from evaluated cache when only widens later', () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-prepare-code-'));
+    const inputFilePath = join(root, 'input.ts');
+    const processorFile = join(
+      __dirname,
+      '__fixtures__',
+      'test-css-processor.js'
+    );
+
+    const sourceCode = dedent`
+      import { css } from 'test-css-processor';
+
+      export const className = css\`
+        color: red;
+      \`;
+
+      export const usage = [className];
+    `;
+
+    writeFileSync(inputFilePath, sourceCode);
+
+    let preevalCount = 0;
+    const eventEmitter = new EventEmitter(
+      (labels, type) => {
+        if (type === 'start' && labels.method === 'transform:preeval') {
+          preevalCount += 1;
+        }
+      },
+      () => 0,
+      () => {}
+    );
+
+    const services = withDefaultServices({
+      babel,
+      eventEmitter,
+      options: {
+        root,
+        filename: inputFilePath,
+        pluginOptions: loadWywOptions({
+          configFile: false,
+          rules,
+          tagResolver: (source, tag) => {
+            if (source === 'test-css-processor' && tag === 'css') {
+              return processorFile;
+            }
+
+            return null;
+          },
+          babelOptions: {
+            babelrc: false,
+            configFile: false,
+            presets: [
+              ['@babel/preset-env', { loose: true }],
+              '@babel/preset-react',
+              '@babel/preset-typescript',
+            ],
+          },
+        }),
+      },
+    });
+
+    const firstEntrypoint = Entrypoint.createRoot(
+      services,
+      inputFilePath,
+      ['__wywPreval'],
+      sourceCode
+    );
+
+    if (firstEntrypoint.ignored) {
+      throw new Error('Ignored');
+    }
+
+    prepareCode(services, firstEntrypoint, firstEntrypoint.loadedAndParsed.ast);
+    services.cache.add('entrypoints', inputFilePath, firstEntrypoint.createEvaluated());
+
+    const widenedEntrypoint = Entrypoint.createRoot(
+      services,
+      inputFilePath,
+      ['className'],
+      sourceCode
+    );
+
+    if (widenedEntrypoint.ignored) {
+      throw new Error('Ignored');
+    }
+
+    prepareCode(
+      services,
+      widenedEntrypoint,
+      widenedEntrypoint.loadedAndParsed.ast
+    );
+
+    expect(preevalCount).toBe(1);
   });
 });

@@ -3,6 +3,8 @@ const commonJSTargets = {
   node: '12',
 };
 
+const addRelativeExtensions = require('./add-relative-extensions');
+
 const config = {
   env: {
     legacy: {
@@ -67,7 +69,7 @@ const config = {
       test: /[\\/](__tests__|__fixtures__|packages[\\/]teskit[\\/]src)[\\/]/,
     },
   ],
-  plugins: ['@babel/plugin-proposal-explicit-resource-management'],
+  plugins: ['@babel/plugin-proposal-explicit-resource-management', addRelativeExtensions],
   presets: ['@babel/preset-typescript'],
 };
 

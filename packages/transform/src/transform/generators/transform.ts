@@ -1,21 +1,15 @@
-import type {
-  BabelFileResult,
-  PluginItem,
-  TransformOptions,
-} from '@babel/core';
 import type { File } from '@babel/types';
 
-import type { EvaluatorConfig, StrictOptions } from '@wyw-in-js/shared';
-
-import type { Core } from '../../babel';
-import { buildOptions } from '../../options/buildOptions';
-import dynamicImportPlugin from '../../plugins/dynamic-import';
-import preevalPlugin from '../../plugins/preeval';
+import type { EvaluatorConfig } from '@wyw-in-js/shared';
 import { emitCommonJS, shakeToESM, shaker } from '../../shaker';
-import type { EventEmitter } from '../../utils/EventEmitter';
 import type { WYWTransformMetadata } from '../../utils/TransformMetadata';
 import { getTransformMetadata } from '../../utils/TransformMetadata';
-import { getPluginKey } from '../../utils/getPluginKey';
+import {
+  collectExportsAndImports,
+  explicitImport,
+  sideEffectImport,
+} from '../../utils/collectExportsAndImports';
+import { runPreevalStage } from '../preevalStage';
 import type { Entrypoint } from '../Entrypoint';
 import type { IEntrypointDependency } from '../Entrypoint.types';
 import type {
@@ -23,57 +17,46 @@ import type {
   Services,
   SyncScenarioForAction,
 } from '../types';
+
 import { rewriteOptimizedBarrelImports } from './rewriteBarrelImports';
 
 const EMPTY_FILE = '=== empty file ===';
 
-const hasKeyInList = (plugin: PluginItem, list: string[]): boolean => {
-  const pluginKey = getPluginKey(plugin);
-  return pluginKey ? list.some((i) => pluginKey.includes(i)) : false;
-};
+const collectImportsFromAst = (
+  services: Services,
+  ast: File
+): Map<string, string[]> => {
+  const imports = new Map<string, string[]>();
+  const addImport = (source: string, imported: string) => {
+    if (!imports.has(source)) {
+      imports.set(source, []);
+    }
 
-function runPreevalStage(
-  babel: Core,
-  evalConfig: TransformOptions,
-  pluginOptions: StrictOptions,
-  code: string,
-  originalAst: File,
-  eventEmitter: EventEmitter
-): BabelFileResult {
-  const preShakePlugins =
-    evalConfig.plugins?.filter((i) =>
-      hasKeyInList(i, pluginOptions.highPriorityPlugins)
-    ) ?? [];
+    const bucket = imports.get(source)!;
+    if (!bucket.includes(imported)) {
+      bucket.push(imported);
+    }
+  };
 
-  const plugins = [
-    ...preShakePlugins,
-    [
-      preevalPlugin,
-      {
-        ...pluginOptions,
-        eventEmitter,
-      },
-    ],
-    dynamicImportPlugin,
-    ...(evalConfig.plugins ?? []).filter(
-      (i) => !hasKeyInList(i, pluginOptions.highPriorityPlugins)
-    ),
-  ];
+  services.babel.traverse(ast, {
+    Program(path) {
+      const collected = collectExportsAndImports(path, 'disabled');
+      collected.imports.forEach((item) => {
+        if (sideEffectImport(item)) {
+          addImport(item.source, 'side-effect');
+          return;
+        }
 
-  const transformConfig = buildOptions({
-    ...evalConfig,
-    envName: 'wyw-in-js',
-    plugins,
+        if (explicitImport(item)) {
+          addImport(item.source, item.imported);
+        }
+      });
+      path.stop();
+    },
   });
 
-  const result = babel.transformFromAstSync(originalAst, code, transformConfig);
-
-  if (!result || !result.ast?.program) {
-    throw new Error('Babel transform failed');
-  }
-
-  return result;
-}
+  return imports;
+};
 
 type PrepareCodeFn = (
   services: Services,
@@ -90,14 +73,24 @@ type PreparedEvaluatorInput =
       kind: 'continue';
       ast: File;
       code: string;
-      evalConfig: TransformOptions;
+      evalConfig: ReturnType<PrepareCodeFn> extends [any, any, any]
+        ? Entrypoint['loadedAndParsed'] extends infer T
+          ? T extends { evalConfig: infer U }
+            ? U
+            : never
+          : never
+        : never;
       evaluatorConfig: EvaluatorConfig;
       metadata: WYWTransformMetadata | null;
     }
   | {
-      kind: 'short-circuit';
       code: string;
+      kind: 'short-circuit';
     };
+
+type PrepareEvaluatorInputOptions = {
+  shortCircuitOnMissingMetadata?: boolean;
+};
 
 const isPrevalOnly = (only: string[]) =>
   only.length === 1 && only[0] === '__wywPreval';
@@ -105,7 +98,8 @@ const isPrevalOnly = (only: string[]) =>
 const prepareEvaluatorInput = (
   services: Services,
   item: Entrypoint,
-  originalAst: File
+  originalAst: File,
+  prepareOptions: PrepareEvaluatorInputOptions = {}
 ): PreparedEvaluatorInput => {
   const { only, loadedAndParsed, log } = item;
   if (loadedAndParsed.evaluator === 'ignored') {
@@ -116,32 +110,47 @@ const prepareEvaluatorInput = (
   const { options, babel, eventEmitter } = services;
   const { pluginOptions } = options;
 
-  const preevalStageResult = eventEmitter.perf('transform:preeval', () =>
-    runPreevalStage(
-      babel,
-      evalConfig,
-      pluginOptions,
-      code,
-      originalAst,
-      eventEmitter
-    )
-  );
+  let preevalStageResult = item.getPreevalResult();
+  if (!preevalStageResult) {
+    preevalStageResult = eventEmitter.perf('transform:preeval', () => {
+      const result = runPreevalStage(
+        babel,
+        evalConfig,
+        pluginOptions,
+        code,
+        originalAst,
+        eventEmitter
+      );
 
-  const transformMetadata = getTransformMetadata(preevalStageResult.metadata);
-  if (isPrevalOnly(only) && !transformMetadata) {
+      return {
+        ast: result.ast!,
+        code: result.code ?? '',
+        metadata: getTransformMetadata(result.metadata) ?? null,
+      };
+    });
+
+    item.setPreevalResult(preevalStageResult);
+  }
+
+  const transformMetadata = preevalStageResult.metadata;
+  if (
+    isPrevalOnly(only) &&
+    !transformMetadata &&
+    prepareOptions.shortCircuitOnMissingMetadata !== false
+  ) {
     log('[evaluator:end] no metadata');
+
     return {
+      code: preevalStageResult.code,
       kind: 'short-circuit',
-      code: preevalStageResult.code!,
     };
   }
 
   log('[preeval] metadata %O', transformMetadata);
 
   return {
-    kind: 'continue',
-    ast: preevalStageResult.ast!,
-    code: preevalStageResult.code!,
+    ast: preevalStageResult.ast,
+    code: preevalStageResult.code,
     evalConfig,
     evaluatorConfig: {
       onlyExports: only,
@@ -150,14 +159,20 @@ const prepareEvaluatorInput = (
       importOverrides: pluginOptions.importOverrides,
       root: options.root,
     },
+    kind: 'continue',
     metadata: transformMetadata ?? null,
   };
 };
 
-export const prepareCode = (
+type PrepareCodeOptions = {
+  shortCircuitOnMissingMetadata?: boolean;
+};
+
+const prepareCodeImpl = (
   services: Services,
   item: Entrypoint,
-  originalAst: File
+  originalAst: File,
+  options: PrepareCodeOptions = {}
 ): ReturnType<PrepareCodeFn> => {
   const { log, loadedAndParsed } = item;
   if (loadedAndParsed.evaluator === 'ignored') {
@@ -167,9 +182,9 @@ export const prepareCode = (
 
   const { evaluator } = loadedAndParsed;
   const { babel, eventEmitter } = services;
-  const prepared = prepareEvaluatorInput(services, item, originalAst);
+  const prepared = prepareEvaluatorInput(services, item, originalAst, options);
   if (prepared.kind === 'short-circuit') {
-    return [prepared.code, null, null];
+    return [prepared.code, collectImportsFromAst(services, originalAst), null];
   }
 
   log('[evaluator:start] using %s', evaluator.name);
@@ -191,6 +206,21 @@ export const prepareCode = (
 
   return [transformedCode, imports, prepared.metadata];
 };
+
+export const prepareCode = (
+  services: Services,
+  item: Entrypoint,
+  originalAst: File
+): ReturnType<PrepareCodeFn> => prepareCodeImpl(services, item, originalAst);
+
+export const prepareCodeForEvalRuntime = (
+  services: Services,
+  item: Entrypoint,
+  originalAst: File
+): ReturnType<PrepareCodeFn> =>
+  prepareCodeImpl(services, item, originalAst, {
+    shortCircuitOnMissingMetadata: item.loadedAndParsed.evaluator !== shaker,
+  });
 
 export function* internalTransform(
   this: ITransformAction,
@@ -228,6 +258,14 @@ export function* internalTransform(
     };
   }
 
+  if (metadata === null && isPrevalOnly(only)) {
+    log('skip resolving imports for __wywPreval-only entrypoint without metadata');
+    return {
+      code: preparedCode,
+      metadata: null,
+    };
+  }
+
   if (imports !== null && imports.size > 0) {
     const resolvedImports = yield* this.getNext(
       'resolveImports',
@@ -254,10 +292,6 @@ export function* internalTransform(
   };
 }
 
-/**
- * Prepares the code for evaluation. This includes removing dead and potentially unsafe code.
- * Emits resolveImports and processImports events.
- */
 export function* transform(
   this: ITransformAction
 ): SyncScenarioForAction<ITransformAction> {
@@ -344,11 +378,13 @@ export function* transform(
 
       nextAst = rewritten.ast;
       nextCode = rewritten.code;
+
       if (rewritten.optimizedCount > 0) {
         const fullyRewrittenSources = new Set(rewritten.fullyRewrittenSources);
         const partialFallbackSources = new Set(
           rewritten.partialFallbackSources
         );
+
         for (const dependency of resolvedImports) {
           if (
             dependency.resolved &&
@@ -360,6 +396,7 @@ export function* transform(
             } else {
               this.entrypoint.addInvalidationDependency(dependency);
             }
+
             this.entrypoint.markInvalidateOnDependencyChange(
               dependency.resolved
             );

@@ -18,6 +18,7 @@ jest.mock('@wyw-in-js/transform', () => ({
   getFileIdx: () => '1',
   TransformCacheCollection: class TransformCacheCollection {},
   transform: (...args: unknown[]) => transformMock(...args),
+  disposeEvalBroker: jest.fn(),
 }));
 
 describe('vite import.meta.env injection', () => {

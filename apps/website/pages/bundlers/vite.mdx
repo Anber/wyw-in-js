@@ -15,6 +15,9 @@ pnpm add -D @wyw-in-js/vite
 bun add -d @wyw-in-js/vite
 ```
 
+> Note: WyW packages are ESM-only and require Node.js `>=22`. Use an ESM config file
+> (for example `vite.config.mjs`) or dynamic `import()` if your project is still CommonJS.
+
 ### Configuration
 
 ```js
@@ -26,6 +29,9 @@ export default defineConfig(() => ({
   plugins: [wyw()],
 }));
 ```
+
+`eval.require` defaults to `warn-and-run` in v2. If eval-time `require()` happens, WyW will warn and execute it at
+runtime; use `importOverrides` or `eval.require: 'error'` to make it explicit.
 
 ### Transforming libraries in `node_modules`
 

@@ -6,7 +6,28 @@ import dedent from 'dedent';
 
 import { preeval } from '../plugins/preeval';
 
-const run = (code: TemplateStringsArray) => {
+type RunOverrides = Parameters<typeof preeval>[1];
+
+const defaultPluginOptions: RunOverrides = {
+  codeRemover: {
+    componentTypes: {
+      react: ['...'],
+      'some-other-lib': ['Cmp'],
+    },
+    hocs: {
+      redux: ['connect'],
+    },
+  },
+  evaluate: true,
+  features: {
+    dangerousCodeRemover: true,
+  },
+};
+
+const run = (
+  code: TemplateStringsArray | string,
+  pluginOptions?: Partial<RunOverrides>
+) => {
   const filename = join(__dirname, 'source.tsx');
   const formattedCode = dedent(code);
 
@@ -24,19 +45,8 @@ const run = (code: TemplateStringsArray) => {
       [
         preeval,
         {
-          codeRemover: {
-            componentTypes: {
-              react: ['...'],
-              'some-other-lib': ['Cmp'],
-            },
-            hocs: {
-              redux: ['connect'],
-            },
-          },
-          evaluate: true,
-          features: {
-            dangerousCodeRemover: true,
-          },
+          ...defaultPluginOptions,
+          ...pluginOptions,
         },
       ],
     ],
@@ -89,6 +99,19 @@ describe('preeval', () => {
     `;
 
     expect(code).toMatchSnapshot();
+  });
+
+  it('should remove queued globals when matching window members appear later', () => {
+    const { code } = run`
+      const first = fetch;
+      const second = fetch;
+      const third = window.fetch;
+    `;
+
+    expect(code).not.toContain('fetch');
+    expect(code).not.toContain('first');
+    expect(code).not.toContain('second');
+    expect(code).not.toContain('third');
   });
 
   it('should remove local vite react-refresh helpers ($RefreshReg$/$RefreshSig$)', () => {
@@ -211,6 +234,28 @@ describe('preeval', () => {
     `;
 
     expect(code).toMatchSnapshot();
+  });
+
+  it('should keep connect calls when no HOC rules are configured', () => {
+    const { code } = run(
+      `
+        import { connect } from "redux";
+        import { MyComponent } from "ui-kit";
+
+        const mapStateToProps = (state) => ({ todos: state.todos })
+        const Component = connect(mapStateToProps)(MyComponent);
+      `,
+      {
+        codeRemover: {
+          componentTypes: {
+            react: ['...'],
+            'some-other-lib': ['Cmp'],
+          },
+        },
+      }
+    );
+
+    expect(code).toMatch(/connect\(mapStateToProps\)\(MyComponent\)/);
   });
 
   it('should remove promise callbacks that rely on forbidden globals', () => {

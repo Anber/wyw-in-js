@@ -81,7 +81,7 @@ describe('applyProcessors', () => {
   it('(0, objectSyntax.makeStyles)()', () => {
     const result = run(
       dedent`
-        const objectSyntax = require("@wyw-in-js/object-syntax");
+        import * as objectSyntax from "@wyw-in-js/object-syntax";
 
         export const Square = (0, objectSyntax.makeStyles)({});
       `
@@ -111,21 +111,11 @@ describe('applyProcessors', () => {
     });
   });
 
-  it('require and access with prop', () => {
+  it('namespace and destructuring', () => {
     const result = run(
       dedent`
-        const renamed = require('@wyw-in-js/object-syntax').makeStyles;
-        export const Square = renamed({});
-      `
-    );
-
-    expect(tagToString(result)).toBe('renamed(…)');
-  });
-
-  it('require and destructing', () => {
-    const result = run(
-      dedent`
-        const { makeStyles } = require('@wyw-in-js/object-syntax');
+        import * as objectSyntax from '@wyw-in-js/object-syntax';
+        const { makeStyles } = objectSyntax;
         export const Square = makeStyles({});
       `
     );

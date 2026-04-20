@@ -1,7 +1,6 @@
-import fs from 'fs';
-import path from 'path';
 import { createRequire } from 'module';
 
+import type { LoaderOptions as WywTurbopackLoaderOptions } from '@wyw-in-js/turbopack-loader';
 import type { LoaderOptions as WywWebpackLoaderOptions } from '@wyw-in-js/webpack-loader';
 import type { NextConfig } from 'next';
 import type { Configuration, RuleSetRule, RuleSetUseItem } from 'webpack';
@@ -18,18 +17,10 @@ const DEFAULT_REACT_IMPORT_OVERRIDES = {
 
 const nodeRequire = createRequire(import.meta.url);
 
-const PLACEHOLDER_EXTENSIONS = new Set(['.js', '.jsx', '.ts', '.tsx']);
-const PLACEHOLDER_IGNORED_DIRS = new Set([
-  '.git',
-  '.next',
-  '.turbo',
-  'node_modules',
-]);
-
 export type WywNextPluginOptions = {
   loaderOptions?: Omit<WywWebpackLoaderOptions, 'extension' | 'sourceMap'> &
     Partial<Pick<WywWebpackLoaderOptions, 'extension' | 'sourceMap'>>;
-  turbopackLoaderOptions?: Record<string, unknown>;
+  turbopackLoaderOptions?: Partial<WywTurbopackLoaderOptions>;
 };
 
 type NextWebpackConfigFn = NonNullable<NextConfig['webpack']>;
@@ -130,7 +121,7 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return proto === Object.prototype || proto === null;
 }
 
-function assertNoFunctions(value: unknown, name: string) {
+function assertJsonSerializable(value: unknown, name: string) {
   const queue: Array<{ path: string; value: unknown }> = [
     { path: name, value },
   ];
@@ -139,14 +130,24 @@ function assertNoFunctions(value: unknown, name: string) {
   while (queue.length) {
     const current = queue.shift()!;
 
-    if (typeof current.value === 'function') {
-      throw new Error(
-        `${current.path} must be JSON-serializable (functions are not supported in Turbopack loader options). Use "configFile" to pass non-JSON config.`
-      );
-    }
-
     if (current.value === null) {
       // skip
+    } else if (typeof current.value === 'undefined') {
+      // skip
+    } else if (
+      typeof current.value === 'string' ||
+      typeof current.value === 'number' ||
+      typeof current.value === 'boolean'
+    ) {
+      // primitives are ok
+    } else if (
+      typeof current.value === 'function' ||
+      typeof current.value === 'symbol' ||
+      typeof current.value === 'bigint'
+    ) {
+      throw new Error(
+        `${current.path} must be JSON-serializable (functions, symbols and bigint are not supported in Turbopack loader options). Use "configFile" to pass non-JSON config.`
+      );
     } else if (Array.isArray(current.value)) {
       if (!seen.has(current.value)) {
         seen.add(current.value);
@@ -161,6 +162,10 @@ function assertNoFunctions(value: unknown, name: string) {
           queue.push({ path: `${current.path}.${key}`, value: item })
         );
       }
+    } else {
+      throw new Error(
+        `${current.path} must be JSON-serializable (only plain objects, arrays, and primitives are supported in Turbopack loader options). Use "configFile" to pass non-JSON config.`
+      );
     }
   }
 }
@@ -330,56 +335,6 @@ function injectWywLoader(
   ensureWywCssModuleRules(config, extension);
 }
 
-function ensureTurbopackCssPlaceholders(projectRoot: string) {
-  const queue: string[] = [projectRoot];
-
-  while (queue.length) {
-    const dir = queue.pop()!;
-    let entries: fs.Dirent[];
-
-    try {
-      entries = fs.readdirSync(dir, { withFileTypes: true });
-    } catch {
-      entries = [];
-    }
-
-    for (const entry of entries) {
-      if (entry.name !== '.' && entry.name !== '..') {
-        const entryPath = path.join(dir, entry.name);
-
-        if (entry.isDirectory()) {
-          if (!PLACEHOLDER_IGNORED_DIRS.has(entry.name)) {
-            queue.push(entryPath);
-          }
-        } else if (entry.isFile()) {
-          const shouldIgnore =
-            entry.name.startsWith('middleware.') ||
-            entry.name.endsWith('.d.ts');
-
-          if (!shouldIgnore) {
-            const ext = path.extname(entry.name);
-            if (PLACEHOLDER_EXTENSIONS.has(ext)) {
-              const baseName = path.basename(entry.name, ext);
-              const cssFilePath = path.join(
-                path.dirname(entryPath),
-                `${baseName}${DEFAULT_EXTENSION}`
-              );
-
-              try {
-                fs.writeFileSync(cssFilePath, '', { flag: 'wx' });
-              } catch (err) {
-                if ((err as NodeJS.ErrnoException).code !== 'EEXIST') {
-                  throw err;
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-  }
-}
-
 function shouldUseTurbopackConfig(nextConfig: NextConfig) {
   const explicit = (nextConfig as unknown as Record<string, unknown>).turbopack;
   if (typeof explicit !== 'undefined') {
@@ -410,7 +365,7 @@ function injectWywTurbopackRules(
 
   const userOptions = wywNext.turbopackLoaderOptions ?? {};
 
-  assertNoFunctions(userOptions, 'turbopackLoaderOptions');
+  assertJsonSerializable(userOptions, 'turbopackLoaderOptions');
 
   const userImportOverrides = isPlainObject(userOptions.importOverrides)
     ? (userOptions.importOverrides as Record<string, unknown>)
@@ -426,18 +381,6 @@ function injectWywTurbopackRules(
   };
 
   const useTurbopackConfig = shouldUseTurbopackConfig(nextConfig);
-
-  const isNextBuild = process.argv.includes('build');
-  const isWebpackBuild = process.argv.includes('--webpack');
-
-  if (
-    useTurbopackConfig &&
-    process.env.NODE_ENV === 'production' &&
-    isNextBuild &&
-    !isWebpackBuild
-  ) {
-    ensureTurbopackCssPlaceholders(process.cwd());
-  }
 
   const ruleValue = useTurbopackConfig
     ? {

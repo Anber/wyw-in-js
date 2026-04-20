@@ -30,6 +30,7 @@ import * as transformPkg from '@wyw-in-js/transform';
 const {
   createTransformManifest,
   createFileReporter,
+  disposeEvalBroker,
   getFileIdx,
   stringifyTransformManifest,
   transform,
@@ -74,8 +75,9 @@ type VitePluginOptions = {
 } & Partial<PluginOptions>;
 
 type OverrideContext = NonNullable<PluginOptions['overrideContext']>;
+type OverrideContextArgs = Parameters<OverrideContext>;
 
-export { Plugin };
+export type { Plugin };
 
 type AssetInfoLike = { name?: unknown };
 type AssetFileNames = string | ((assetInfo: AssetInfoLike) => string);
@@ -513,6 +515,24 @@ export default function wywInJS({
     client: Record<string, unknown>;
     ssr: Record<string, unknown>;
   } | null = null;
+  const buildOverrideContext =
+    (getEnv: () => Record<string, unknown> | undefined): OverrideContext =>
+    (context: OverrideContextArgs[0], filename: OverrideContextArgs[1]) => {
+      const env = getEnv();
+      const withEnv = env
+        ? { ...context, __wyw_import_meta_env: env }
+        : context;
+
+      return rest.overrideContext
+        ? rest.overrideContext(withEnv, filename)
+        : withEnv;
+    };
+  const overrideContextClient: OverrideContext = buildOverrideContext(
+    () => importMetaEnvForEval?.client
+  );
+  const overrideContextSsr: OverrideContext = buildOverrideContext(
+    () => importMetaEnvForEval?.ssr
+  );
 
   const ssrDevCssEnabled = Boolean(ssrDevCss);
   const [ssrDevCssPathname, ssrDevCssQuery] = (
@@ -618,6 +638,15 @@ export default function wywInJS({
   const clientCache = new TransformCacheCollection();
   const ssrCache = new TransformCacheCollection();
   const caches = new Set<TransformCacheCollectionType>([clientCache, ssrCache]);
+  let evalBrokersDisposed = false;
+
+  const disposeEvalBrokers = () => {
+    if (evalBrokersDisposed) return;
+    evalBrokersDisposed = true;
+    for (const cache of caches) {
+      disposeEvalBroker(cache);
+    }
+  };
 
   const getCache = (isSsr: boolean): TransformCacheCollectionType =>
     isSsr ? ssrCache : clientCache;
@@ -782,7 +811,10 @@ export default function wywInJS({
 
       throw new Error(`Could not resolve ${what}`);
     },
-    (what, importer) => [what, importer]
+    (what: Parameters<ResolveFn>[0], importer: Parameters<ResolveFn>[1]) => [
+      what,
+      importer,
+    ]
   );
 
   const asyncResolveClient = createAsyncResolver(resolveClient);
@@ -798,6 +830,9 @@ export default function wywInJS({
     },
     buildEnd() {
       onDone(process.cwd());
+      if (config.command === 'build') {
+        disposeEvalBrokers();
+      }
     },
     configResolved(resolvedConfig: ResolvedConfig) {
       config = resolvedConfig;
@@ -854,38 +889,39 @@ export default function wywInJS({
     },
     configureServer(_server) {
       devServer = _server;
+      devServer.httpServer?.once('close', disposeEvalBrokers);
 
-      if (!ssrDevCssEnabled || config.command !== 'serve') return;
+      if (ssrDevCssEnabled && config.command === 'serve') {
+        devServer.middlewares.use(
+          (req: IncomingMessage, res: ServerResponse, next: () => void) => {
+            const { url } = req;
+            if (!url) {
+              next();
+              return;
+            }
 
-      devServer.middlewares.use(
-        (req: IncomingMessage, res: ServerResponse, next: () => void) => {
-          const { url } = req;
-          if (!url) {
-            next();
-            return;
+            const [pathname] = url.split('?', 1);
+            if (pathname !== ssrDevCssRoute) {
+              next();
+              return;
+            }
+
+            const etag = `W/"${ssrDevCssVersion}"`;
+            const ifNoneMatch = req.headers['if-none-match'];
+            if (ifNoneMatch === etag) {
+              res.statusCode = 304;
+              res.end();
+              return;
+            }
+
+            res.statusCode = 200;
+            res.setHeader('Content-Type', 'text/css; charset=utf-8');
+            res.setHeader('Cache-Control', 'no-cache');
+            res.setHeader('ETag', etag);
+            res.end(getSsrDevCssContents());
           }
-
-          const [pathname] = url.split('?', 1);
-          if (pathname !== ssrDevCssRoute) {
-            next();
-            return;
-          }
-
-          const etag = `W/"${ssrDevCssVersion}"`;
-          const ifNoneMatch = req.headers['if-none-match'];
-          if (ifNoneMatch === etag) {
-            res.statusCode = 304;
-            res.end();
-            return;
-          }
-
-          res.statusCode = 200;
-          res.setHeader('Content-Type', 'text/css; charset=utf-8');
-          res.setHeader('Cache-Control', 'no-cache');
-          res.setHeader('ETag', etag);
-          res.end(getSsrDevCssContents());
-        }
-      );
+        );
+      }
     },
     transformIndexHtml(html) {
       if (!ssrDevCssEnabled || config.command !== 'serve') return undefined;
@@ -1021,16 +1057,9 @@ export default function wywInJS({
           ? transformOptions
           : Boolean(transformOptions?.ssr);
 
-      const overrideContext: OverrideContext = (context, filename) => {
-        const env = importMetaEnvForEval?.[isSsr ? 'ssr' : 'client'];
-        const withEnv = env
-          ? { ...context, __wyw_import_meta_env: env }
-          : context;
-
-        return rest.overrideContext
-          ? rest.overrideContext(withEnv, filename)
-          : withEnv;
-      };
+      const overrideContext = isSsr
+        ? overrideContextSsr
+        : overrideContextClient;
 
       const transformServices = {
         options: {

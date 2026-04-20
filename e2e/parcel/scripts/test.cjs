@@ -65,6 +65,7 @@ async function runBuild() {
       '--dist-dir',
       outDir,
       '--no-autoinstall',
+      '--no-cache',
       '--no-optimize',
     ],
     {

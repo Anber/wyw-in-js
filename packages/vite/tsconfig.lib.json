@@ -1,7 +1,10 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": {
-    "outDir": "./types"
+    "outDir": "./types",
+    "paths": {
+      "@wyw-in-js/transform": ["packages/transform/types/index.d.ts"]
+    }
   },
   "exclude": ["**/__tests__/*"],
   "include": ["./src/**/*.ts"]

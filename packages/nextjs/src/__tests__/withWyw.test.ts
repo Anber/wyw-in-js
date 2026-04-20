@@ -209,4 +209,30 @@ describe('withWyw', () => {
       )
     ).toBe('hashed_foo');
   });
+
+  it('rejects non-JSON turbopack loader options', () => {
+    expect(() =>
+      withWyw(
+        {},
+        {
+          turbopackLoaderOptions: {
+            eval: {
+              customResolver: () => null,
+            },
+          },
+        }
+      )
+    ).toThrow(/JSON-serializable/);
+
+    expect(() =>
+      withWyw(
+        {},
+        {
+          turbopackLoaderOptions: {
+            ignore: /node_modules/,
+          },
+        }
+      )
+    ).toThrow(/JSON-serializable/);
+  });
 });

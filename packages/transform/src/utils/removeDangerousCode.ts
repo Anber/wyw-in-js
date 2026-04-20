@@ -11,11 +11,16 @@ import type {
 
 import type { CodeRemoverOptions } from '@wyw-in-js/shared';
 import { nonType } from './findIdentifiers';
-import { isUnnecessaryReactCall } from './isUnnecessaryReactCall';
+import {
+  getReactImportSummary,
+  isUnnecessaryReactCall,
+} from './isUnnecessaryReactCall';
 import { applyAction, removeWithRelated } from './scopeHelpers';
 import { JSXElementsRemover } from './visitors/JSXElementsRemover';
-import type { IImport } from './collectExportsAndImports';
+import type { IImport, ISideEffectImport } from './collectExportsAndImports';
 import { collectExportsAndImports } from './collectExportsAndImports';
+
+type CollectedImport = IImport | ISideEffectImport;
 
 const isGlobal = (id: NodePath<Identifier>): boolean => {
   if (!nonType(id)) {
@@ -52,7 +57,6 @@ const forbiddenGlobals = new Set([
 ]);
 
 const alwaysForbiddenIdentifiers = new Set(['$RefreshReg$', '$RefreshSig$']);
-
 const isBrowserGlobal = (id: NodePath<Identifier>) => {
   const { name } = id.node;
   if (alwaysForbiddenIdentifiers.has(name)) {
@@ -127,16 +131,10 @@ const removeForbiddenGlobal = (path: NodePath) => {
   }
 };
 
-const getImport = (path: NodePath): [string, string] | undefined => {
-  const programPath = path.findParent((p) => p.isProgram()) as
-    | NodePath<Program>
-    | undefined;
-  if (!programPath) {
-    return undefined;
-  }
-
-  const { imports } = collectExportsAndImports(programPath);
-
+const getImport = (
+  path: NodePath,
+  imports: CollectedImport[]
+): [string, string] | undefined => {
   if (path.isIdentifier()) {
     const binding = path.scope.getBinding(path.node.name);
     const matched =
@@ -179,7 +177,10 @@ const getImport = (path: NodePath): [string, string] | undefined => {
   return undefined;
 };
 
-const getTypeImport = (path: NodePath): [string, string] | undefined => {
+const getTypeImport = (
+  path: NodePath,
+  imports: CollectedImport[]
+): [string, string] | undefined => {
   // We are looking for either Identifier or TSQualifiedName in path
   if (path.isIdentifier()) {
     const binding = path.scope.getBinding(path.node.name);
@@ -234,7 +235,8 @@ const getTypeImport = (path: NodePath): [string, string] | undefined => {
 
 const isTypeMatch = (
   id: NodePath<Identifier>,
-  types: Record<string, string[]>
+  types: Record<string, string[]>,
+  imports: CollectedImport[]
 ): boolean => {
   const typeAnnotation = id.get('typeAnnotation');
   if (!typeAnnotation.isTSTypeAnnotation()) {
@@ -247,7 +249,7 @@ const isTypeMatch = (
   }
 
   const typeName = typeReference.get('typeName');
-  const matchedImport = getTypeImport(typeName);
+  const matchedImport = getTypeImport(typeName, imports);
   return (
     matchedImport !== undefined &&
     matchedImport[0] in types &&
@@ -257,14 +259,15 @@ const isTypeMatch = (
 
 const isHOC = (
   path: NodePath<CallExpression>,
-  hocs: Record<string, string[]>
+  hocs: Record<string, string[]>,
+  imports: CollectedImport[]
 ) => {
   let calleePath: NodePath<V8IntrinsicIdentifier | Expression> = path;
   while (calleePath.isCallExpression()) {
     calleePath = calleePath.get('callee');
   }
 
-  const matchedImport = getImport(calleePath);
+  const matchedImport = getImport(calleePath, imports);
   return (
     matchedImport !== undefined &&
     matchedImport[0] in hocs &&
@@ -289,6 +292,7 @@ export const removeDangerousCode = (
   options?: CodeRemoverOptions
 ) => {
   const hocs = options?.hocs ?? {};
+  const hasHocs = Object.keys(hocs).length > 0;
 
   const componentTypes = options?.componentTypes ?? {
     react: [defaultPlaceholder],
@@ -303,17 +307,23 @@ export const removeDangerousCode = (
     componentTypes.react.splice(idx, 1, ...defaultReactComponentTypes);
   }
 
+  const { imports } = collectExportsAndImports(programPath);
+  const reactImportSummary = getReactImportSummary(programPath);
+
   programPath.traverse(
     {
       // JSX can be replaced with a dummy value,
       // but we have to do it after we processed template tags.
       CallExpression: {
         enter(p) {
-          if (isUnnecessaryReactCall(p)) {
+          if (
+            reactImportSummary.hasImports &&
+            isUnnecessaryReactCall(p, reactImportSummary)
+          ) {
             JSXElementsRemover(p);
           }
 
-          if (isHOC(p, hocs)) {
+          if (hasHocs && isHOC(p, hocs, imports)) {
             applyAction([
               'replace',
               p,
@@ -416,7 +426,8 @@ export const removeDangerousCode = (
         const init = p.get('init');
         if (
           id.isIdentifier() &&
-          isTypeMatch(id, componentTypes) &&
+          id.node.typeAnnotation &&
+          isTypeMatch(id, componentTypes, imports) &&
           init.isExpression()
         ) {
           // Variable is typed as a React component. We can replace its value with a null-function.

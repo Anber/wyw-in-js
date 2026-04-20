@@ -2,15 +2,20 @@ import { join } from 'path';
 
 import * as babel from '@babel/core';
 import type { NodePath } from '@babel/core';
-import type { Program } from '@babel/types';
+import type { CallExpression, Program } from '@babel/types';
 import dedent from 'dedent';
 
 import type { MissedBabelCoreTypes } from '../../types';
-import { isUnnecessaryReactCall } from '../../utils/isUnnecessaryReactCall';
+import {
+  getReactImportSummary,
+  isUnnecessaryReactCall,
+} from '../../utils/isUnnecessaryReactCall';
 
 const { File } = babel as typeof babel & MissedBabelCoreTypes;
 
-const check = (rawCode: TemplateStringsArray): boolean => {
+const getExpression = (
+  rawCode: TemplateStringsArray
+): [NodePath<CallExpression>, NodePath<Program>] => {
   const code = dedent(rawCode);
   const filename = join(__dirname, 'source.ts');
   const ast = babel.parse(code, {
@@ -18,6 +23,7 @@ const check = (rawCode: TemplateStringsArray): boolean => {
     configFile: false,
     filename,
     presets: ['@babel/preset-typescript'],
+    sourceType: 'module',
   })!;
 
   const file = new File({ filename }, { code, ast });
@@ -35,23 +41,38 @@ const check = (rawCode: TemplateStringsArray): boolean => {
     throw new Error('Last statement is not a call expression');
   }
 
+  return [expression, program];
+};
+
+const check = (rawCode: TemplateStringsArray): boolean => {
+  const [expression] = getExpression(rawCode);
   return isUnnecessaryReactCall(expression);
+};
+
+const checkWithSummary = (rawCode: TemplateStringsArray): boolean => {
+  const [expression, program] = getExpression(rawCode);
+  return isUnnecessaryReactCall(expression, getReactImportSummary(program));
 };
 
 describe('isUnnecessaryReactCall', () => {
   describe('jsx-runtime', () => {
     it('should process simple usage', () => {
       const result = check`
-        const jsx_runtime_1 = require("react/jsx-runtime").jsx;
+        import { jsx as jsx_runtime_1 } from "react/jsx-runtime";
+        jsx_runtime_1("span", null, "Hello World");
+      `;
+      const summaryResult = checkWithSummary`
+        import { jsx as jsx_runtime_1 } from "react/jsx-runtime";
         jsx_runtime_1("span", null, "Hello World");
       `;
 
       expect(result).toBe(true);
+      expect(summaryResult).toBe(true);
     });
 
     it('should process usage wrapped with SequenceExpression', () => {
       const result = check`
-        const jsx_runtime_1 = require("react/jsx-runtime").jsx;
+        import { jsx as jsx_runtime_1 } from "react/jsx-runtime";
         (0, jsx_runtime_1)("span", null, "Hello World");
       `;
 
@@ -60,7 +81,7 @@ describe('isUnnecessaryReactCall', () => {
 
     it('should process namespaced', () => {
       const result = check`
-        const jsx_runtime_1 = require("react/jsx-runtime");
+        import * as jsx_runtime_1 from "react/jsx-runtime";
         (0, jsx_runtime_1.jsx)("div", null, "Hello World");
         (0, jsx_runtime_1.jsx)("span", null, "Hello World");
         (0, jsx_runtime_1.jsxs)("div", null, "Hello World");
@@ -74,8 +95,8 @@ describe('isUnnecessaryReactCall', () => {
   describe('classic react', () => {
     it('should process createElement', () => {
       const result = check`
-        const react_1 = require("react");
-        (0, react_1.createElement)("div", null, "Hello World");
+        import { createElement } from "react";
+        (0, createElement)("div", null, "Hello World");
       `;
 
       expect(result).toBe(true);
@@ -83,8 +104,8 @@ describe('isUnnecessaryReactCall', () => {
 
     it('should process hooks', () => {
       const result = check`
-        const react_1 = require("react");
-        (0, react_1.useState)(null);
+        import { useState } from "react";
+        (0, useState)(null);
       `;
 
       expect(result).toBe(true);
@@ -92,8 +113,8 @@ describe('isUnnecessaryReactCall', () => {
 
     it('should ignore createContext', () => {
       const result = check`
-        const react_1 = require("react");
-        (0, react_1.createContext)();
+        import { createContext } from "react";
+        (0, createContext)();
       `;
 
       expect(result).toBe(false);

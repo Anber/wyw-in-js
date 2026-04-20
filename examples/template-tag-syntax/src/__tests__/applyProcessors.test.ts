@@ -81,7 +81,7 @@ describe('applyProcessors', () => {
   it('(0, tagSyntax.css)``', () => {
     const result = run(
       dedent`
-        const tagSyntax = require("@wyw-in-js/template-tag-syntax");
+        import * as tagSyntax from "@wyw-in-js/template-tag-syntax";
 
         export const Square = (0, tagSyntax.css)\`\`;
       `
@@ -110,26 +110,15 @@ describe('applyProcessors', () => {
     });
   });
 
-  it('require and access with prop', () => {
+  it('namespace import usage', () => {
     const result = run(
       dedent`
-        const renamedCss = require('@wyw-in-js/template-tag-syntax').css;
-        export const Square = renamedCss\`\`;
+        import * as tagSyntax from "@wyw-in-js/template-tag-syntax";
+        export const Square = tagSyntax.css\`\`;
       `
     );
 
-    expect(tagToString(result)).toBe('renamedCss`…`');
-  });
-
-  it('require and destructing', () => {
-    const result = run(
-      dedent`
-        const { css } = require('@wyw-in-js/template-tag-syntax');
-        export const Square = css\`\`;
-      `
-    );
-
-    expect(tagToString(result)).toBe('css`…`');
+    expect(tagToString(result)).toBe('tagSyntax.css`…`');
   });
 
   describe('invalid usage', () => {

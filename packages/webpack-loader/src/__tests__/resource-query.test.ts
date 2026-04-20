@@ -15,6 +15,7 @@ jest.mock('@wyw-in-js/transform', () => ({
   }),
   TransformCacheCollection: class TransformCacheCollection {},
   transform: (...args: unknown[]) => transformMock(...args),
+  disposeEvalBroker: jest.fn(),
 }));
 
 describe('webpack-loader asyncResolve', () => {

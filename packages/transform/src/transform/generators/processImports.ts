@@ -6,6 +6,8 @@ import type {
 } from '../types';
 
 import { toImportKey } from '../../utils/importOverrides';
+import { stripQueryAndHash } from '../../utils/parseRequest';
+import { isSuperSet } from '../Entrypoint.helpers';
 
 const warnedSlowImportsByServices = new WeakMap<Services, Set<string>>();
 
@@ -32,9 +34,26 @@ function isWarningEnabled(value: string | undefined): boolean {
   return Boolean(value) && value !== '0' && value !== 'false';
 }
 
-/**
- * Creates new entrypoints and emits processEntrypoint for each resolved import
- */
+function hasLoop(
+  name: string,
+  parent: { name: string; parents: { name: string; parents: { name: string }[] }[] },
+  processed: string[] = []
+): boolean {
+  if (parent.name === name || processed.includes(parent.name)) {
+    return true;
+  }
+
+  for (const nextParent of parent.parents) {
+    if (
+      hasLoop(name, nextParent as typeof parent, [...processed, parent.name])
+    ) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 export function* processImports(
   this: IProcessImportsAction
 ): SyncScenarioForAction<IProcessImportsAction> {
@@ -64,6 +83,21 @@ export function* processImports(
 
     this.entrypoint.addDependency(dependency);
 
+    const cached = this.services.cache.get('entrypoints', resolved);
+    if (
+      cached &&
+      (cached.evaluated || ('transformed' in cached && cached.transformed)) &&
+      isSuperSet(cached.only, only) &&
+      !hasLoop(resolved, this.entrypoint) &&
+      !this.services.cache.checkFreshness(resolved, stripQueryAndHash(resolved))
+    ) {
+      if (!cached.parents.map((parent) => parent.name).includes(this.entrypoint.name)) {
+        cached.parents.push(this.entrypoint);
+      }
+
+      continue;
+    }
+
     const nextEntrypoint = this.entrypoint.createChild(resolved, only);
     if (nextEntrypoint === 'loop' || nextEntrypoint.ignored) {
       continue;
@@ -90,20 +124,20 @@ export function* processImports(
           warnedSlowImports.add(dedupeKey);
 
           const warning = [
-            `[wyw-in-js] Slow import during prepare stage`,
-            ``,
+            '[wyw-in-js] Slow import during prepare stage',
+            '',
             `file: ${this.entrypoint.name}`,
             `import: ${dependency.source}`,
             `resolved: ${resolved}`,
             `duration: ${durationMs.toFixed(1)}ms`,
-            ``,
-            `tip: if this import is runtime-only or heavy, mock it during evaluation via importOverrides:`,
-            `  importOverrides: {`,
+            '',
+            'tip: if this import is runtime-only or heavy, mock it during evaluation via importOverrides:',
+            '  importOverrides: {',
             `    '${importKey}': { mock: './path/to/mock' },`,
-            `  }`,
-            ``,
-            `note: importOverrides affects only build-time evaluation (it does not change your bundler runtime behavior)`,
-            ``,
+            '  }',
+            '',
+            'note: importOverrides affects only build-time evaluation (it does not change your bundler runtime behavior)',
+            '',
             `note: configure threshold with WYW_WARN_SLOW_IMPORTS_MS (current: ${slowImportThresholdMs}ms)`,
           ].join('\n');
 

@@ -11,7 +11,10 @@ import { applyProcessors } from '../utils/getTagProcessor';
 import type { Core } from '../babel';
 import type { IPluginState } from '../types';
 import { EventEmitter } from '../utils/EventEmitter';
-import { addIdentifierToWywPreval } from '../utils/addIdentifierToWywPreval';
+import {
+  addIdentifierToWywPreval,
+  getOrAddWywPreval,
+} from '../utils/addIdentifierToWywPreval';
 import { getFileIdx } from '../utils/getFileIdx';
 import { removeDangerousCode } from '../utils/removeDangerousCode';
 import { replaceImportMetaEnv } from '../utils/replaceImportMetaEnv';
@@ -95,19 +98,9 @@ export function preeval(
 
       const wywPreval = file.path.getData('__wywPreval');
       if (!wywPreval) {
-        // Event if there is no dependencies, we still need to add __wywPreval
-        const wywExport = t.expressionStatement(
-          t.assignmentExpression(
-            '=',
-            t.memberExpression(
-              t.identifier('exports'),
-              t.identifier('__wywPreval')
-            ),
-            t.objectExpression([])
-          )
-        );
-
-        file.path.pushContainer('body', wywExport);
+        // Even if there are no dependencies, we still need to add __wywPreval.
+        // Use the shared helper so we emit ESM or CJS based on source type.
+        getOrAddWywPreval(file.path.scope);
       }
 
       log('end', '__wywPreval has been added');

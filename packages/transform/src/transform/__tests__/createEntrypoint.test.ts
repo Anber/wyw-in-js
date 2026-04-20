@@ -141,4 +141,67 @@ describe('createEntrypoint', () => {
     expect(entrypoint2).not.toBe(entrypoint1);
     expect(entrypoint2.only).toEqual(['a', 'b']);
   });
+
+  it('reuses transformed state from evaluated cache when only is unchanged', () => {
+    const loadAndParseFn = jest.fn((s, name, loadedCode) => ({
+      ast: s.babel.parseSync(loadedCode ?? '', {
+        babelrc: false,
+        configFile: false,
+        filename: name,
+      })!,
+      code: loadedCode ?? '',
+      evaluator: jest.fn(),
+      evalConfig: {},
+    }));
+    services.loadAndParseFn = loadAndParseFn;
+
+    const code = 'export const value = 1;';
+    const entrypoint1 = createEntrypoint(
+      services,
+      '/foo/bar.js',
+      ['value'],
+      code
+    );
+    entrypoint1.setTransformResult({ code, metadata: null });
+    const evaluated = entrypoint1.createEvaluated();
+    services.cache.add('entrypoints', '/foo/bar.js', evaluated);
+
+    const entrypoint2 = createEntrypoint(
+      services,
+      '/foo/bar.js',
+      ['value'],
+      code
+    );
+
+    expect(loadAndParseFn).toHaveBeenCalledTimes(1);
+    expect(services.cache.get('entrypoints', '/foo/bar.js')).toBe(evaluated);
+    expect(entrypoint2.transformedCode).toBe(code);
+    expect(entrypoint2.loadedAndParsed.code).toBe(code);
+    expect(entrypoint2.loadedAndParsed).toBe(evaluated.loadedAndParsed);
+  });
+
+  it('reuses evaluated parsed state when only changes', () => {
+    const loadAndParseFn = jest.fn((s, name, loadedCode) => ({
+      ast: s.babel.parseSync(loadedCode ?? '', {
+        babelrc: false,
+        configFile: false,
+        filename: name,
+      })!,
+      code: loadedCode ?? '',
+      evaluator: jest.fn(),
+      evalConfig: {},
+    }));
+    services.loadAndParseFn = loadAndParseFn;
+
+    const code = 'export const a = 1; export const b = 2;';
+    const entrypoint1 = createEntrypoint(services, '/foo/bar.js', ['a'], code);
+    entrypoint1.setTransformResult({ code, metadata: null });
+    const evaluated = entrypoint1.createEvaluated();
+    services.cache.add('entrypoints', '/foo/bar.js', evaluated);
+
+    const entrypoint2 = createEntrypoint(services, '/foo/bar.js', ['b'], code);
+
+    expect(loadAndParseFn).toHaveBeenCalledTimes(1);
+    expect(entrypoint2.loadedAndParsed).toBe(evaluated.loadedAndParsed);
+  });
 });
