@@ -53,6 +53,11 @@ async function getCSSFromManifest(outDir) {
   });
 }
 
+async function getMetadataManifest(outDir) {
+  const manifestPath = path.resolve(outDir, 'src', 'index.wyw-in-js.json');
+  return JSON.parse(await fs.readFile(manifestPath, 'utf-8'));
+}
+
 async function main() {
   console.log(colors.blue('Package directory:'), PKG_DIR);
 
@@ -67,6 +72,11 @@ async function main() {
       fixturePath: path.resolve(PKG_DIR, 'fixture.keep-comments.css'),
       pluginOptions: { keepComments: true },
     },
+    {
+      name: 'outputMetadata',
+      fixturePath: path.resolve(PKG_DIR, 'fixture.css'),
+      pluginOptions: { outputMetadata: true },
+    },
   ];
 
   for (const testCase of testCases) {
@@ -75,9 +85,7 @@ async function main() {
 
     await buildArtefact(outDir, testCase.pluginOptions);
 
-    const cssOutput = normalizeLineEndings(
-      await getCSSFromManifest(outDir)
-    );
+    const cssOutput = normalizeLineEndings(await getCSSFromManifest(outDir));
     const cssFixture = normalizeLineEndings(
       await fs.readFile(testCase.fixturePath, 'utf-8')
     );
@@ -89,6 +97,42 @@ async function main() {
       console.log(cssFixture);
 
       throw new Error(`[${testCase.name}] CSS output does not match fixture`);
+    }
+
+    if (testCase.name === 'outputMetadata') {
+      const metadataOutput = await getMetadataManifest(outDir);
+
+      if (metadataOutput.version !== 1) {
+        throw new Error('Expected metadata manifest version 1');
+      }
+
+      if (metadataOutput.source !== 'src/index.ts') {
+        throw new Error(
+          `Expected metadata source to be src/index.ts, got ${metadataOutput.source}`
+        );
+      }
+
+      if (metadataOutput.cssFile !== 'src/index.wyw-in-js.css') {
+        throw new Error(
+          `Expected metadata cssFile to be src/index.wyw-in-js.css, got ${metadataOutput.cssFile}`
+        );
+      }
+
+      if (!Array.isArray(metadataOutput.processors)) {
+        throw new Error('Expected metadata processors array');
+      }
+
+      if (metadataOutput.processors.length !== 1) {
+        throw new Error('Expected exactly one metadata processor');
+      }
+
+      if (typeof metadataOutput.processors[0].className !== 'string') {
+        throw new Error('Expected metadata processor className');
+      }
+
+      if (!metadataOutput.rules) {
+        throw new Error('Expected metadata rules');
+      }
     }
   }
 }

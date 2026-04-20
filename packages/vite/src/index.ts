@@ -23,8 +23,10 @@ import type {
   Preprocessor,
 } from '@wyw-in-js/transform';
 import {
+  createTransformManifest,
   createFileReporter,
   getFileIdx,
+  stringifyTransformManifest,
   transform,
   TransformCacheCollection,
 } from '@wyw-in-js/transform';
@@ -54,6 +56,7 @@ export default function wywInJS({
   const filter = createFilter(include, exclude);
   const cssLookup: { [key: string]: string } = {};
   const cssFileLookup: { [key: string]: string } = {};
+  const metadataLookup: { [key: string]: string } = {};
   const pendingCssReloads = new Set<string>();
   let pendingCssReloadTimer: ReturnType<typeof setTimeout> | undefined;
   let config: ResolvedConfig;
@@ -88,6 +91,15 @@ export default function wywInJS({
     enforce: 'post',
     buildEnd() {
       onDone(process.cwd());
+    },
+    generateBundle() {
+      Object.entries(metadataLookup).forEach(([fileName, source]) => {
+        this.emitFile({
+          fileName,
+          source,
+          type: 'asset',
+        });
+      });
     },
     configResolved(resolvedConfig: ResolvedConfig) {
       config = resolvedConfig;
@@ -272,6 +284,29 @@ export default function wywInJS({
       };
 
       const result = await transform(transformServices, code, asyncResolve);
+      const relativeId = path
+        .relative(config.root, id)
+        .replace(/\\/g, path.posix.sep);
+
+      if (result.metadata) {
+        const metadataFilename = path
+          .normalize(`${id.replace(/\.[jt]sx?$/, '')}.wyw-in-js.json`)
+          .replace(/\\/g, path.posix.sep);
+        const metadataRelativePath = path
+          .relative(config.root, metadataFilename)
+          .replace(/\\/g, path.posix.sep);
+        const cssFile =
+          typeof result.cssText === 'string' && result.cssText !== ''
+            ? relativeId.replace(/\.[jt]sx?$/, '.wyw-in-js.css')
+            : undefined;
+
+        metadataLookup[metadataRelativePath] = stringifyTransformManifest(
+          createTransformManifest(result.metadata, {
+            cssFile,
+            source: relativeId,
+          })
+        );
+      }
 
       let { cssText, dependencies } = result;
 

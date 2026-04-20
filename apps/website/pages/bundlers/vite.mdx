@@ -41,6 +41,24 @@ export default defineConfig(() => ({
 }));
 ```
 
+### Emitting metadata sidecars
+
+To emit source-linked metadata manifests for library-owned tooling, enable `outputMetadata`:
+
+```js
+import { defineConfig } from 'vite';
+import wyw from '@wyw-in-js/vite';
+
+export default defineConfig(() => ({
+  // ...
+  plugins: [wyw({ outputMetadata: true })],
+}));
+```
+
+During build, the Vite plugin emits `.wyw-in-js.json` sidecar assets alongside the normal output. For example, a source module like `src/button.tsx` will produce a metadata asset like `dist/src/button.wyw-in-js.json`.
+
+This path is opt-in and does not affect the default CSS or JS output when disabled.
+
 If you are using language features that requires a babel transform (such as typescript), ensure the proper babel presets or plugins are passed to wyw.
 
 ```js

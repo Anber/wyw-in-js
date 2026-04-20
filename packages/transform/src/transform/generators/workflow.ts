@@ -1,5 +1,6 @@
 import { isAborted } from '../actions/AbortError';
 import type { IWorkflowAction, SyncScenarioForAction } from '../types';
+import { toTransformResultMetadata } from '../../utils/TransformMetadata';
 
 /**
  * The entry point for file processing. Sequentially calls `processEntrypoint`,
@@ -88,6 +89,10 @@ export function* workflow(
     };
   }
 
+  const metadata = options.pluginOptions.outputMetadata
+    ? toTransformResultMetadata(collectStageResult.metadata, dependencies)
+    : undefined;
+
   // *** 4th stage
 
   const extractStageResult = yield* this.getNext(
@@ -103,6 +108,7 @@ export function* workflow(
     ...extractStageResult,
     code: collectStageResult.code ?? '',
     dependencies,
+    metadata,
     replacements: [
       ...extractStageResult.replacements,
       ...collectStageResult.metadata.replacements,

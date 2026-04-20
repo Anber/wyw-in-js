@@ -28,6 +28,7 @@ const options: StrictOptions = {
     useWeakRefInEval: true,
   },
   highPriorityPlugins: [],
+  outputMetadata: false,
   overrideContext: (context) => ({
     ...context,
     HighLevelAPI: () => "I'm a high level API",

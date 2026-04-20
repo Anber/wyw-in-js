@@ -245,6 +245,26 @@ module.exports = {
   };
   ```
 
+- `outputMetadata: boolean` (default: `false`)
+
+  Enables an opt-in metadata channel for downstream tooling.
+
+  When enabled:
+
+  - `@wyw-in-js/transform` includes normalized metadata in the transform result.
+  - `@wyw-in-js/vite` emits `.wyw-in-js.json` sidecar assets during build.
+  - `@wyw-in-js/cli` can emit matching sidecar files with `--output-metadata`.
+
+  This does not change the default JS or CSS output when disabled.
+
+  Example:
+
+  ```js
+  module.exports = {
+    outputMetadata: true,
+  };
+  ```
+
 - `importLoaders: Record<string, "raw" | "url" | ((context) => unknown) | false>`
 
   Allows handling of import resource queries (e.g. `?raw`, `?url`, `?svgUse`) during evaluation.

@@ -17,6 +17,8 @@ import mkdirp from 'mkdirp';
 import normalize from 'normalize-path';
 import yargs from 'yargs';
 
+import { createMetadataFile } from './metadata';
+
 const modulesOptions = [
   'commonjs',
   'es2015',
@@ -59,6 +61,11 @@ const argv = yargs
     type: 'boolean',
     description: 'Run extraction in parallel',
     default: false,
+  })
+  .option('output-metadata', {
+    type: 'boolean',
+    description:
+      'Emit sidecar .wyw-in-js.json metadata manifests for transformed files',
   })
   .option('source-root', {
     alias: 'r',
@@ -107,6 +114,7 @@ type Options = {
   insertCssRequires?: string;
   modules: (typeof modulesOptions)[number];
   outDir: string;
+  outputMetadata?: boolean;
   parallel?: boolean;
   sourceMaps?: boolean;
   sourceRoot: string;
@@ -169,6 +177,7 @@ async function processFiles(files: (number | string)[], options: Options) {
         outputFilename,
         pluginOptions: {
           configFile: options.configFile,
+          outputMetadata: options.outputMetadata,
         },
         root: options.sourceRoot,
       },
@@ -181,63 +190,86 @@ async function processFiles(files: (number | string)[], options: Options) {
         transformServices,
         fs.readFileSync(filename).toString(),
         asyncResolveFallback
-      ).then(({ code, cssText, sourceMap, cssSourceMapText }): boolean => {
-        if (!cssText) {
-          return false;
-        }
-        mkdirp.sync(path.dirname(outputFilename));
+      ).then(
+        ({ code, cssText, metadata, sourceMap, cssSourceMapText }): boolean => {
+          const shouldWriteCss =
+            typeof cssText === 'string' && cssText.length > 0;
 
-        const cssContent =
-          options.sourceMaps && sourceMap
-            ? `${cssText}\n/*# sourceMappingURL=${outputFilename}.map */`
-            : cssText;
-
-        fs.writeFileSync(outputFilename, cssContent);
-
-        if (
-          options.sourceMaps &&
-          sourceMap &&
-          typeof cssSourceMapText !== 'undefined'
-        ) {
-          fs.writeFileSync(`${outputFilename}.map`, cssSourceMapText);
-        }
-
-        if (options.sourceRoot && options.insertCssRequires) {
-          const inputFilename = path.resolve(
-            options.insertCssRequires,
-            path.relative(options.sourceRoot, filename)
-          );
-
-          const relativePath = normalize(
-            path.relative(path.dirname(inputFilename), outputFilename)
-          );
-
-          const pathForImport = relativePath.startsWith('.')
-            ? relativePath
-            : `./${relativePath}`;
-
-          const statement =
-            options.modules === 'commonjs'
-              ? `\nrequire('${pathForImport}');`
-              : `\nimport "${pathForImport}";`;
-
-          const normalizedInputFilename =
-            resolveRequireInsertionFilename(inputFilename);
-
-          const inputContent = options.transform
-            ? code
-            : fs.readFileSync(normalizedInputFilename, 'utf-8');
-
-          if (!inputContent.trim().endsWith(statement)) {
-            modifiedFiles.push({
-              name: normalizedInputFilename,
-              content: `${inputContent}\n${statement}\n`,
-            });
+          if (!shouldWriteCss && !metadata) {
+            return false;
           }
-        }
 
-        return true;
-      })
+          mkdirp.sync(path.dirname(outputFilename));
+
+          if (metadata) {
+            const metadataFile = createMetadataFile({
+              cssFile: shouldWriteCss ? outputFilename : undefined,
+              metadata,
+              outputRoot: options.outDir,
+              outputFilename,
+              sourceRoot: options.sourceRoot,
+              sourceFilename: filename,
+            });
+
+            fs.writeFileSync(metadataFile.filename, metadataFile.content);
+          }
+
+          if (!shouldWriteCss) {
+            return false;
+          }
+
+          const cssContent =
+            options.sourceMaps && sourceMap
+              ? `${cssText}\n/*# sourceMappingURL=${outputFilename}.map */`
+              : cssText;
+
+          fs.writeFileSync(outputFilename, cssContent);
+
+          if (
+            options.sourceMaps &&
+            sourceMap &&
+            typeof cssSourceMapText !== 'undefined'
+          ) {
+            fs.writeFileSync(`${outputFilename}.map`, cssSourceMapText);
+          }
+
+          if (options.sourceRoot && options.insertCssRequires) {
+            const inputFilename = path.resolve(
+              options.insertCssRequires,
+              path.relative(options.sourceRoot, filename)
+            );
+
+            const relativePath = normalize(
+              path.relative(path.dirname(inputFilename), outputFilename)
+            );
+
+            const pathForImport = relativePath.startsWith('.')
+              ? relativePath
+              : `./${relativePath}`;
+
+            const statement =
+              options.modules === 'commonjs'
+                ? `\nrequire('${pathForImport}');`
+                : `\nimport "${pathForImport}";`;
+
+            const normalizedInputFilename =
+              resolveRequireInsertionFilename(inputFilename);
+
+            const inputContent = options.transform
+              ? code
+              : fs.readFileSync(normalizedInputFilename, 'utf-8');
+
+            if (!inputContent.trim().endsWith(statement)) {
+              modifiedFiles.push({
+                name: normalizedInputFilename,
+                content: `${inputContent}\n${statement}\n`,
+              });
+            }
+          }
+
+          return true;
+        }
+      )
     );
   }
 
@@ -279,6 +311,7 @@ processFiles(argv._, {
   modules: argv.modules,
   parallel: argv.parallel,
   outDir: argv['out-dir'],
+  outputMetadata: argv['output-metadata'],
   sourceMaps: argv['source-maps'],
   sourceRoot: argv['source-root'],
   transform: argv.transform,

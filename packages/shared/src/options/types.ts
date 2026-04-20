@@ -141,6 +141,7 @@ export type StrictOptions = {
   ignore?: RegExp;
   importLoaders?: ImportLoaders;
   importOverrides?: ImportOverrides;
+  outputMetadata: boolean;
   overrideContext?: (
     context: Partial<VmContext>,
     filename: string

@@ -29,11 +29,18 @@ jest.mock('vite', () => ({
 jest.mock('@wyw-in-js/transform', () => {
   return {
     __esModule: true,
+    createTransformManifest: (metadata: unknown, context: unknown) => ({
+      ...metadata,
+      ...context,
+      version: 1,
+    }),
     createFileReporter: () => ({
       emitter: { single: jest.fn() },
       onDone: jest.fn(),
     }),
     getFileIdx: () => '1',
+    stringifyTransformManifest: (manifest: unknown) =>
+      JSON.stringify(manifest, null, 2),
     TransformCacheCollection: class TransformCacheCollection {},
     transform: jest.fn(async (_services, _code, asyncResolve) => {
       const resolved = await asyncResolve(requestedId, requestedImporter, []);

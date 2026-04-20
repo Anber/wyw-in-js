@@ -11,7 +11,10 @@ import type {
   StrictOptions,
 } from '@wyw-in-js/shared';
 
-import type { WYWTransformMetadata } from './utils/TransformMetadata';
+import type {
+  WYWTransformMetadata,
+  WYWTransformResultMetadata,
+} from './utils/TransformMetadata';
 
 export type PluginOptions = StrictOptions & {
   configFile?: string | false;
@@ -50,6 +53,7 @@ export type Result = {
   cssSourceMapText?: string;
   cssText?: string;
   dependencies?: string[];
+  metadata?: WYWTransformResultMetadata;
   replacements?: Replacement[];
   rules?: Rules;
   sourceMap?: RawSourceMap | null;

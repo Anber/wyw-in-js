@@ -370,6 +370,9 @@ importers:
       '@wyw-in-js/eslint-config':
         specifier: workspace:*
         version: link:../../configs/eslint
+      '@wyw-in-js/jest-preset':
+        specifier: workspace:*
+        version: link:../../configs/jest
       '@wyw-in-js/ts-config':
         specifier: workspace:*
         version: link:../../configs/ts
