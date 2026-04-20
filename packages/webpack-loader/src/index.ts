@@ -53,62 +53,14 @@ type Loader = RawLoaderDefinitionFunction<LoaderOptions>;
 
 const cache = new TransformCacheCollection();
 
-// Single shared asyncResolve to ensure stable evalCacheKey across transform()
-// calls. getResolverId() assigns incrementing IDs to function references —
-// a new closure per file means a new ID → new cacheKey → new EvalBroker
-// → new child process per file. Sharing one function avoids this.
-//
-// Fallback resolver lookup: walk the stack from root to leaf looking for
-// any registered resolver. Transitive deps (e.g. color-utils.ts importing
-// culori) don't have their own resolver — we need the resolver from the
-// CSS entrypoint file that started the chain.
-const sharedAsyncResolve = (
-  what: string,
-  importer: string,
-  stack: string[] = [importer]
-): Promise<string> => {
-  const rootResolverKey = getResolverKey(importer, stack);
-  const rootResolvers = getActiveResolvers(rootResolverKey);
-  let resolver = rootResolvers.length > 0 ? rootResolvers : [];
-
-  if (resolver.length === 0) {
-    // Walk stack for any registered resolver (CSS entrypoint → transitive dep)
-    for (let i = stack.length - 1; i >= 0; i--) {
-      const key = stripQueryAndHash(stack[i]);
-      const found = getActiveResolvers(key);
-      if (found.length > 0) {
-        resolver = found;
-        break;
-      }
-    }
-  }
-
-  if (resolver.length === 0) {
-    resolver = getActiveResolvers(stripQueryAndHash(importer));
-  }
-
-  // Last resort: use any active resolver. All webpack resolvers are
-  // equivalent — they use `importer` for context, not the registration key.
-  // This handles transitive deps whose stack entries are stale (loader
-  // already finished and removed its resolver).
-  if (resolver.length === 0) {
-    resolver = getAnyActiveResolver();
-  }
-
-  if (resolver.length === 0) {
-    throw new Error(`No resolver found for ${what} from ${importer}`);
-  }
-
-  return Promise.all(resolver.map((r) => r(what, importer, stack))).then(
-    (results) => {
-      const firstResult = results[0];
-      if (results.some((r) => r !== firstResult)) {
-        throw new Error('Resolvers returned different results');
-      }
-      return firstResult;
-    }
-  );
-};
+// Cached asyncResolve — getResolverId() assigns incrementing IDs to
+// function references. createAsyncResolve per file → new ID → new cacheKey
+// → new EvalBroker per file. Cache the first one and reuse: all webpack
+// resolvers are equivalent (they use the importer arg for context dir).
+// The currentResolverKey fallback inside createAsyncResolve points to the
+// first file, but since resolvers are looked up by stack/importer first,
+// and the actual resolve uses importer context, this is correct.
+let cachedAsyncResolve: ((what: string, importer: string, stack?: string[]) => Promise<string>) | null = null;
 
 type Resolver = (
   what: string,
@@ -126,18 +78,6 @@ const getResolverKey = (importer: string, stack: string[]): string => {
 const getActiveResolvers = (key: string): Resolver[] => {
   const entries = resolvers[key];
   return entries?.length ? entries : [];
-};
-
-// Return any active resolver — all webpack resolvers are equivalent
-// (they use the importer arg for context, not the registration key).
-// Used as last-resort fallback when stack/importer resolvers are stale.
-const getAnyActiveResolver = (): Resolver[] => {
-  for (const key in resolvers) {
-    if (resolvers[key]?.length) {
-      return resolvers[key];
-    }
-  }
-  return [];
 };
 
 const createAsyncResolve = (resourcePath: string) => {
@@ -272,10 +212,11 @@ const webpack5Loader: Loader = function webpack5LoaderPlugin(
       return result;
     });
   });
-  // Use sharedAsyncResolve to keep evalCacheKey stable across files.
-  // createAsyncResolve creates a new closure per file → new function ref
-  // → getResolverId increments → new cacheKey → new EvalBroker per file.
-  const asyncResolve = sharedAsyncResolve;
+  // Cache the first asyncResolve closure for stable evalCacheKey (one broker).
+  if (!cachedAsyncResolve) {
+    cachedAsyncResolve = createAsyncResolve(this.resourcePath);
+  }
+  const asyncResolve = cachedAsyncResolve;
 
   logger('loader %s', this.resourcePath);
 
