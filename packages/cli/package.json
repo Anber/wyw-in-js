@@ -40,7 +40,7 @@
     "build:lib": "cross-env NODE_ENV=legacy babel src --out-dir lib --extensions '.js,.jsx,.ts,.tsx' --source-maps --delete-dir-on-start",
     "build:types": "tsc --project ./tsconfig.lib.json --baseUrl . --rootDir ./src",
     "lint": "eslint --ext .js,.ts .",
-    "test": "bun x jest --config ./jest.config.js"
+    "test": "bun test src"
   },
   "types": "types/wyw-in-js.d.ts"
 }

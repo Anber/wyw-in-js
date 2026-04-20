@@ -36,6 +36,29 @@ const {
   TransformCacheCollection,
 } = transformPkg;
 
+type MetadataManifest = NonNullable<TransformResult['metadata']> & {
+  cssFile?: string;
+  source: string;
+  version: 1;
+};
+
+const createMetadataManifest = (
+  metadata: NonNullable<TransformResult['metadata']>,
+  context: Pick<MetadataManifest, 'cssFile' | 'source'>
+): MetadataManifest =>
+  typeof createTransformManifest === 'function'
+    ? createTransformManifest(metadata, context)
+    : {
+        ...metadata,
+        ...context,
+        version: 1,
+      };
+
+const stringifyMetadataManifest = (manifest: MetadataManifest): string =>
+  typeof stringifyTransformManifest === 'function'
+    ? stringifyTransformManifest(manifest)
+    : `${JSON.stringify(manifest, null, 2)}\n`;
+
 type VitePluginOptions = {
   debug?: IFileReporterOptions | false | null | undefined;
   exclude?: FilterPattern;
@@ -1061,8 +1084,8 @@ export default function wywInJS({
             ? replaceModuleExtension(relativeId, '.wyw-in-js.css')
             : undefined;
 
-        metadataLookup[metadataRelativePath] = stringifyTransformManifest(
-          createTransformManifest(result.metadata, {
+        metadataLookup[metadataRelativePath] = stringifyMetadataManifest(
+          createMetadataManifest(result.metadata, {
             cssFile,
             source: relativeId,
           })
