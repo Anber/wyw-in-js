@@ -55,13 +55,32 @@ type HiddenModuleMembers = {
   _extensions: Record<string, () => void>;
   _resolveFilename: (
     id: string,
-    options: { filename: string; id: string; paths: string[] }
+    options: { filename: string; id: string; paths: string[] },
+    isMain?: boolean,
+    resolveOptions?: { conditions?: Set<string> }
   ) => string;
   _nodeModulePaths(filename: string): string[];
 };
 
 const DefaultModuleImplementation = NativeModule as typeof NativeModule &
   HiddenModuleMembers;
+
+const CJS_DEFAULT_CONDITIONS = ['require', 'node', 'default'] as const;
+
+const expandConditions = (conditionNames: string[]): Set<string> => {
+  const result = new Set<string>();
+
+  conditionNames.forEach((name) => {
+    if (name === '...') {
+      CJS_DEFAULT_CONDITIONS.forEach((condition) => result.add(condition));
+      return;
+    }
+
+    result.add(name);
+  });
+
+  return result;
+};
 
 const NOOP = () => {};
 
@@ -1802,6 +1821,10 @@ export class EvalBroker {
   ): ResolveCacheEntry {
     const extensions = DefaultModuleImplementation._extensions;
     const added: string[] = [];
+    const { conditionNames } = this.services.options.pluginOptions;
+    const conditions = conditionNames?.length
+      ? expandConditions(conditionNames)
+      : undefined;
 
     try {
       this.services.options.pluginOptions.extensions.forEach((ext) => {
@@ -1815,13 +1838,18 @@ export class EvalBroker {
 
       let resolved: string;
       try {
-        resolved = DefaultModuleImplementation._resolveFilename(strippedId, {
-          id: filename,
-          filename,
-          paths: DefaultModuleImplementation._nodeModulePaths(
-            path.dirname(filename)
-          ),
-        });
+        resolved = DefaultModuleImplementation._resolveFilename(
+          strippedId,
+          {
+            id: filename,
+            filename,
+            paths: DefaultModuleImplementation._nodeModulePaths(
+              path.dirname(filename)
+            ),
+          },
+          false,
+          conditions ? { conditions } : undefined
+        );
       } catch (error) {
         throw new Error(
           [

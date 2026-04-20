@@ -2,6 +2,7 @@ import * as babel from '@babel/core';
 import {
   mkdirSync,
   mkdtempSync,
+  realpathSync,
   readFileSync,
   rmSync,
   writeFileSync,
@@ -178,6 +179,60 @@ describe('EvalBroker', () => {
     const [firstResult, secondResult] = await Promise.all([first, second]);
     expect(firstResult.resolvedId).toBe(dep);
     expect(secondResult.resolvedId).toBe(dep);
+
+    broker.dispose();
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('passes conditionNames to node fallback resolution', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
+    const importer = join(root, 'entry.js');
+    const pkgDir = join(root, 'node_modules', '@test', 'helpers');
+    const sourceDep = join(pkgDir, 'src', 'utils.js');
+    const defaultDep = join(pkgDir, 'lib', 'src', 'utils.js');
+
+    mkdirSync(dirname(sourceDep), { recursive: true });
+    mkdirSync(dirname(defaultDep), { recursive: true });
+    writeFileSync(importer, 'module.exports = 1;');
+    writeFileSync(
+      join(pkgDir, 'package.json'),
+      JSON.stringify(
+        {
+          name: '@test/helpers',
+          exports: {
+            './src/*': {
+              '@test/source': './src/*.js',
+              default: './lib/src/*.js',
+            },
+          },
+        },
+        null,
+        2
+      )
+    );
+    writeFileSync(sourceDep, 'module.exports = { value: "source" };');
+    writeFileSync(defaultDep, 'module.exports = { value: "default" };');
+
+    const services = createServices(root, importer, {
+      conditionNames: ['@test/source', '...'],
+    });
+    const broker = new EvalBroker(
+      services,
+      jest.fn(async () => null)
+    );
+    const privateBroker = getPrivateBroker(broker);
+    privateBroker.importsByModule.set(
+      importer,
+      new Map([['@test/helpers/src/utils', ['*']]])
+    );
+
+    const result = await privateBroker.resolveImport({
+      specifier: '@test/helpers/src/utils',
+      importerId: importer,
+      kind: 'require',
+    });
+
+    expect(realpathSync(result.resolvedId)).toBe(realpathSync(sourceDep));
 
     broker.dispose();
     rmSync(root, { recursive: true, force: true });
@@ -1238,6 +1293,58 @@ describe('EvalBroker', () => {
     const result = await broker.evaluate(entrypoint);
 
     expect(result.values?.get('value')).toBe(1);
+
+    broker.dispose();
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('does not corrupt IPC when an external module logs to console', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
+    const entry = join(root, 'entry.js');
+    const nodeModulesDir = join(root, 'node_modules', 'fake');
+    const dep = join(nodeModulesDir, 'index.js');
+
+    mkdirSync(nodeModulesDir, { recursive: true });
+    writeFileSync(
+      dep,
+      [
+        "console.log('hello from external');",
+        'module.exports = { value: 42 };',
+      ].join('\n')
+    );
+    writeFileSync(
+      entry,
+      [
+        "const fake = require('fake');",
+        'export const __wywPreval = {',
+        '  value: () => fake.value,',
+        '};',
+      ].join('\n')
+    );
+
+    const warnings: string[] = [];
+    const services = createServices(root, entry);
+    services.emitWarning = (message) => warnings.push(message);
+
+    const broker = new EvalBroker(
+      services,
+      jest.fn(async () => null)
+    );
+    const entrypoint = Entrypoint.createRoot(
+      services,
+      entry,
+      ['__wywPreval'],
+      readFileSync(entry, 'utf-8')
+    );
+
+    const result = await broker.evaluate(entrypoint);
+
+    expect(result.values?.get('value')).toBe(42);
+    expect(
+      warnings.some((message) =>
+        message.includes('[wyw-eval-runner] Failed to parse message:')
+      )
+    ).toBe(false);
 
     broker.dispose();
     rmSync(root, { recursive: true, force: true });

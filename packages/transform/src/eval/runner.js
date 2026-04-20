@@ -1,6 +1,7 @@
 /* eslint-disable no-underscore-dangle */
 /* global BigInt */
 import fs from 'node:fs';
+import { Console } from 'node:console';
 import vm from 'node:vm';
 import path from 'node:path';
 import NativeModule, { createRequire } from 'node:module';
@@ -40,6 +41,13 @@ class LruCache {
 }
 
 const NOOP = () => {};
+
+// stdout is reserved for the JSON IPC protocol; host-side logs must not share it.
+const runnerConsole = new Console({
+  stdout: process.stderr,
+  stderr: process.stderr,
+});
+global.console = runnerConsole;
 
 const VITE_VIRTUAL_PREFIX = '/@';
 const REACT_REFRESH_VIRTUAL_ID = '/@react-refresh';
