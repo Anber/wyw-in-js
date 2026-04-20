@@ -1,5 +1,7 @@
 const transformMock = jest.fn();
 
+const loadWywInJS = () => import('../index?ssr-dev-css-test');
+
 jest.mock('vite', () => require('./viteMock').createViteMock());
 
 jest.mock('@wyw-in-js/transform', () => ({
@@ -19,7 +21,7 @@ describe('vite SSR dev CSS', () => {
   });
 
   it('injects a stylesheet link when ssrDevCss is enabled (serve)', async () => {
-    const { default: wywInJS } = await import('../index');
+    const { default: wywInJS } = await loadWywInJS();
     const plugin = wywInJS({ ssrDevCss: true });
 
     plugin.configResolved?.({
@@ -44,7 +46,7 @@ describe('vite SSR dev CSS', () => {
   });
 
   it('does not inject in build mode', async () => {
-    const { default: wywInJS } = await import('../index');
+    const { default: wywInJS } = await loadWywInJS();
     const plugin = wywInJS({ ssrDevCss: true });
 
     plugin.configResolved?.({
@@ -59,7 +61,7 @@ describe('vite SSR dev CSS', () => {
   });
 
   it('serves aggregated CSS via middleware', async () => {
-    const { default: wywInJS } = await import('../index');
+    const { default: wywInJS } = await loadWywInJS();
     const plugin = wywInJS({ ssrDevCss: true });
 
     plugin.configResolved?.({

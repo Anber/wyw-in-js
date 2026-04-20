@@ -7,6 +7,8 @@ const createReloadTarget = () => ({
   reloadModule: jest.fn(),
 });
 
+const loadWywInJS = () => import('../index?hmr-test');
+
 jest.mock('vite', () =>
   require('./viteMock').createViteMock({
     optimizeDeps: jest.fn(),
@@ -44,7 +46,7 @@ describe('vite HMR', () => {
   });
 
   it('defers reloadModule for generated CSS until after transform()', async () => {
-    const { default: wywInJS } = await import('../index');
+    const { default: wywInJS } = await loadWywInJS();
     transformMock.mockResolvedValue({
       code: 'export const x = 1;',
       sourceMap: null,
@@ -93,7 +95,7 @@ describe('vite HMR', () => {
   });
 
   it('does not reload CSS when generated CSS is unchanged', async () => {
-    const { default: wywInJS } = await import('../index');
+    const { default: wywInJS } = await loadWywInJS();
     const root = process.cwd();
     const entryId = path.join(root, 'src', 'entry.tsx');
 
@@ -152,7 +154,7 @@ describe('vite HMR', () => {
   });
 
   it('falls back to devServer moduleGraph when transform context has no environment', async () => {
-    const { default: wywInJS } = await import('../index');
+    const { default: wywInJS } = await loadWywInJS();
     transformMock.mockResolvedValue({
       code: 'export const x = 1;',
       sourceMap: null,
@@ -199,7 +201,7 @@ describe('vite HMR', () => {
     expect(reloadModule).toHaveBeenCalledTimes(1);
   });
   it('emits metadata sidecars during build when transform() returns metadata', async () => {
-    const { default: wywInJS } = await import('../index');
+    const { default: wywInJS } = await loadWywInJS();
     const root = process.cwd();
     const entryId = path.join(root, 'src', 'entry.tsx');
     const emitFile = jest.fn();
@@ -263,7 +265,7 @@ describe('vite HMR', () => {
   });
 
   it('reports structured diagnostics returned by transform()', async () => {
-    const { default: wywInJS } = await import('../index');
+    const { default: wywInJS } = await loadWywInJS();
     const root = process.cwd();
     const entryId = path.join(root, 'src', 'entry.tsx');
     const warn = jest.fn();
@@ -316,7 +318,7 @@ describe('vite HMR', () => {
   });
 
   it('clears stale metadata sidecars when a file stops producing metadata', async () => {
-    const { default: wywInJS } = await import('../index');
+    const { default: wywInJS } = await loadWywInJS();
     const root = process.cwd();
     const entryId = path.join(root, 'src', 'entry.tsx');
     const emitFile = jest.fn();
@@ -371,7 +373,7 @@ describe('vite HMR', () => {
   });
 
   it('clears stale metadata sidecars between rebuilds when a file disappears from the graph', async () => {
-    const { default: wywInJS } = await import('../index');
+    const { default: wywInJS } = await loadWywInJS();
     const root = process.cwd();
     const entryId = path.join(root, 'src', 'entry.tsx');
     const emitFile = jest.fn();
@@ -421,7 +423,7 @@ describe('vite HMR', () => {
   });
 
   it('uses safe metadata asset paths for sources outside Vite root', async () => {
-    const { default: wywInJS } = await import('../index');
+    const { default: wywInJS } = await loadWywInJS();
     const root = path.join(path.sep, 'repo', 'app');
     const entryId = path.join(
       path.sep,
@@ -484,7 +486,7 @@ describe('vite HMR', () => {
   });
 
   it('normalizes metadata filenames for supported module extensions', async () => {
-    const { default: wywInJS } = await import('../index');
+    const { default: wywInJS } = await loadWywInJS();
     const root = process.cwd();
     const entryId = path.join(root, 'src', 'entry.mts');
     const emitFile = jest.fn();

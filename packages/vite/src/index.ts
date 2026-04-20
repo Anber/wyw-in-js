@@ -22,15 +22,19 @@ import type {
   IFileReporterOptions,
   PluginOptions,
   Preprocessor,
+  Result as TransformResult,
+  TransformCacheCollection as TransformCacheCollectionType,
 } from '@wyw-in-js/transform';
-import {
+import * as transformPkg from '@wyw-in-js/transform';
+
+const {
   createTransformManifest,
   createFileReporter,
   getFileIdx,
   stringifyTransformManifest,
   transform,
   TransformCacheCollection,
-} from '@wyw-in-js/transform';
+} = transformPkg;
 
 type VitePluginOptions = {
   debug?: IFileReporterOptions | false | null | undefined;
@@ -590,9 +594,9 @@ export default function wywInJS({
   const targets: { dependencies: string[]; id: string }[] = [];
   const clientCache = new TransformCacheCollection();
   const ssrCache = new TransformCacheCollection();
-  const caches = new Set<TransformCacheCollection>([clientCache, ssrCache]);
+  const caches = new Set<TransformCacheCollectionType>([clientCache, ssrCache]);
 
-  const getCache = (isSsr: boolean): TransformCacheCollection =>
+  const getCache = (isSsr: boolean): TransformCacheCollectionType =>
     isSsr ? ssrCache : clientCache;
 
   type DepInfoLike = { file: string; processing?: Promise<void> };
@@ -1024,7 +1028,11 @@ export default function wywInJS({
 
       const asyncResolve = isSsr ? asyncResolveSsr : asyncResolveClient;
 
-      const result = await transform(transformServices, code, asyncResolve);
+      const result: TransformResult = await transform(
+        transformServices,
+        code,
+        asyncResolve
+      );
 
       result.diagnostics?.forEach((diagnostic) => {
         this.warn({

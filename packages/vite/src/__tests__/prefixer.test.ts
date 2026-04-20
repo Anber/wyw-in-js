@@ -36,6 +36,8 @@ const getCssFilename = (id: string) =>
     .normalize(`${id.replace(/\.[jt]sx?$/, '')}.wyw-in-js.css`)
     .replace(/\\/g, path.posix.sep);
 
+const loadWywInJS = () => import('../index?prefixer-test');
+
 describe('vite prefixer option', () => {
   beforeEach(() => {
     transformMock.mockReset();
@@ -58,7 +60,7 @@ describe('vite prefixer option', () => {
       };
     });
 
-    const { default: wywInJS } = await import('../index');
+    const { default: wywInJS } = await loadWywInJS();
     const plugin = wywInJS();
 
     const root = '/project';
@@ -94,7 +96,7 @@ describe('vite prefixer option', () => {
       };
     });
 
-    const { default: wywInJS } = await import('../index');
+    const { default: wywInJS } = await loadWywInJS();
     const plugin = wywInJS({ prefixer: false });
 
     const root = '/project';

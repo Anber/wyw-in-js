@@ -9,6 +9,8 @@ const syncResolveMock = jest.fn();
 let requestedId = '/@react-refresh';
 let requestedImporter = '/entry.tsx';
 
+const loadWywInJS = () => import('../index?async-resolve-test');
+
 const createLogger = () => {
   const log = (() => undefined) as unknown as ((...args: unknown[]) => void) & {
     extend: (...args: unknown[]) => unknown;
@@ -82,7 +84,7 @@ describe('vite asyncResolve', () => {
   });
 
   it('ignores Vite virtual ids like /@react-refresh', async () => {
-    const { default: wywInJS } = await import('../index');
+    const { default: wywInJS } = await loadWywInJS();
     const plugin = wywInJS();
 
     const resolveFn = jest.fn().mockResolvedValue('/@react-refresh');
@@ -105,7 +107,7 @@ describe('vite asyncResolve', () => {
   });
 
   it('falls back to syncResolve when Vite resolves to missing cache entry', async () => {
-    const { default: wywInJS } = await import('../index');
+    const { default: wywInJS } = await loadWywInJS();
     requestedId = 'react';
     const cacheDir = join(__dirname, '.vite-cache');
     const missingCacheEntry = join(cacheDir, 'deps', 'react.js');
@@ -138,7 +140,7 @@ describe('vite asyncResolve', () => {
   });
 
   it('waits for depsOptimizer to finish processing optimized deps files', async () => {
-    const { default: wywInJS } = await import('../index');
+    const { default: wywInJS } = await loadWywInJS();
     requestedId = 'react';
 
     const cacheDir = mkdtempSync(join(tmpdir(), 'wyw-vite-cache-'));
@@ -193,7 +195,7 @@ describe('vite asyncResolve', () => {
   });
 
   it('resolves Vite /@fs ids to real file paths', async () => {
-    const { default: wywInJS } = await import('../index');
+    const { default: wywInJS } = await loadWywInJS();
     const plugin = wywInJS();
 
     const resolveFn = jest.fn().mockImplementation((id: string) => id);
@@ -227,7 +229,7 @@ describe('vite asyncResolve', () => {
   });
 
   it('reuses the same cache and resolver across different plugin contexts', async () => {
-    const { default: wywInJS } = await import('../index');
+    const { default: wywInJS } = await loadWywInJS();
     const plugin = wywInJS();
     const resolveFn = jest.fn().mockResolvedValue('/resolved.ts');
 
@@ -264,7 +266,7 @@ describe('vite asyncResolve', () => {
   });
 
   it('keeps resolver stable across repeated configResolved calls', async () => {
-    const { default: wywInJS } = await import('../index');
+    const { default: wywInJS } = await loadWywInJS();
     const plugin = wywInJS();
 
     const tempDir = mkdtempSync(join(tmpdir(), 'wyw-vite-resolver-'));
