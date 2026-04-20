@@ -72,6 +72,7 @@ export default {
 - Inline preset options are sent to that child process, so they must stay JSON-serializable.
 - If you need function-valued WyW options such as custom resolver/loader hooks, keep them in a WyW config file and pass only `configFile` inline.
 - `configFile` is the escape hatch for non-serializable WyW config. It does not make already-loaded inline values serializable.
+- `.mjs` WyW config files are supported, but they are loaded synchronously, so they must not use top-level `await`.
 
 ### Turbopack loader options
 

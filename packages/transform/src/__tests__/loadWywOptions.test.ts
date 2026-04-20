@@ -76,4 +76,29 @@ describe('loadWywOptions', () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it('throws a clear error for .mjs config files with top-level await', () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'wyw-options-'));
+    const configFile = path.join(root, 'wyw-in-js.config.mjs');
+
+    writeFileSync(
+      configFile,
+      [
+        'await Promise.resolve();',
+        '',
+        'export default {',
+        '  displayName: true,',
+        '};',
+        '',
+      ].join('\n')
+    );
+
+    try {
+      expect(() => loadWywOptions({ configFile })).toThrow(
+        'WyW config loading is synchronous, so .mjs config files must not use top-level await'
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });

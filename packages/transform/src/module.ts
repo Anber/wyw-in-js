@@ -48,6 +48,7 @@ import {
   toImportKey,
 } from './utils/importOverrides';
 import { parseRequest, stripQueryAndHash } from './utils/parseRequest';
+import { resolveFilenameWithConditions } from './utils/resolveWithConditions';
 import { createVmContext } from './vm/createVmContext';
 
 type HiddenModuleMembers = {
@@ -1062,18 +1063,17 @@ export class Module {
     parent: { id: string; filename: string; paths: string[] },
     conditions?: Set<string>
   ): string {
-    const resolveOptions = conditions ? { conditions } : undefined;
     const shouldRetryWithExtensions =
       conditions &&
       path.extname(id) === '' &&
       (id.startsWith('.') || path.isAbsolute(id) || isBarePackageSubpath(id));
 
     try {
-      return this.moduleImpl._resolveFilename(
+      return resolveFilenameWithConditions(
+        this.moduleImpl,
         id,
         parent,
-        false,
-        resolveOptions
+        conditions
       );
     } catch (error) {
       if (
@@ -1083,11 +1083,11 @@ export class Module {
       ) {
         for (const ext of this.extensions) {
           try {
-            return this.moduleImpl._resolveFilename(
+            return resolveFilenameWithConditions(
+              this.moduleImpl,
               `${id}${ext}`,
               parent,
-              false,
-              resolveOptions
+              conditions
             );
           } catch {
             // Try the next supported extension.
@@ -1142,11 +1142,7 @@ export class Module {
         ? expandConditions(conditionNames)
         : undefined;
 
-      let resolved = this.resolveWithConditions(
-        strippedId,
-        parent,
-        conditions
-      );
+      let resolved = this.resolveWithConditions(strippedId, parent, conditions);
 
       const isFileSpecifier =
         strippedId.startsWith('.') || path.isAbsolute(strippedId);

@@ -2,7 +2,7 @@
 
 WyW-in-JS can be customized using a JavaScript, JSON or YAML file. This can be in form of:
 
-- `wyw-in-js.config.mjs` ESM config file using `export default` (recommended).
+- `wyw-in-js.config.mjs` ESM config file using `export default` (recommended for synchronous ESM config).
 - `wyw-in-js.config.cjs` CommonJS compatibility config using `module.exports` (legacy mode).
 - `wyw-in-js` property in a `package.json` file.
 - `.wyw-in-jsrc` file with JSON or YAML syntax.
@@ -16,6 +16,8 @@ export default {
   displayName: false,
 };
 ```
+
+`.mjs` config files are loaded synchronously. Keep them free of top-level `await` and async-only ESM dependency chains.
 
 Legacy/CommonJS compatibility (`wyw-in-js.config.cjs`):
 
@@ -274,7 +276,7 @@ module.exports = {
 
   - When WyW evaluates `__wywPreval`, it tree-shakes the module and removes `import '...';` side-effect imports by default, to avoid executing unrelated runtime code in Node.js (some libraries touch `document`, `window`, etc).
   - If your evaluated modules import browser-only packages (e.g. `msw/browser`), evaluation can still fail in Node.js. In that case, move the browser-only initialization out of evaluated modules, or mock the import via `importOverrides`.
-  - If your evaluated modules contain runtime-only *heavy* dependencies (e.g. code editors, syntax highlighters), build-time evaluation can become much slower even if those dependencies are imported lazily at runtime. In that case, mock the heavy import via `importOverrides` to keep evaluation fast.
+  - If your evaluated modules contain runtime-only _heavy_ dependencies (e.g. code editors, syntax highlighters), build-time evaluation can become much slower even if those dependencies are imported lazily at runtime. In that case, mock the heavy import via `importOverrides` to keep evaluation fast.
   - If a module re-exports many values (e.g. a large “barrel” module like an icons index), WyW may need to re-run prepare for it multiple times as the required export set grows. If it shows up in slow-import warnings even after mocking the heavy leaf imports, add `{ noShake: true }` for the barrel module to force `only=['*']` and avoid incremental reprocessing.
   - If you need a side-effect import to run during evaluation, or you need to stub a problematic side-effect import, add an override for that import:
     - `{ noShake: true }` keeps the import and disables tree-shaking for that dependency.
@@ -309,7 +311,9 @@ module.exports = {
   ```js
   export default {
     importOverrides: {
-      '@uiw/react-codemirror': { mock: './src/__mocks__/uiw-react-codemirror.ts' },
+      '@uiw/react-codemirror': {
+        mock: './src/__mocks__/uiw-react-codemirror.ts',
+      },
     },
   };
   ```
@@ -511,7 +515,7 @@ The preset understands the same option names as the configuration file, but not 
 
 - Inline Babel preset options are forwarded to a separate Node process, so they must be JSON-serializable.
 - Function-valued WyW options such as `tagResolver`, `eval.customResolver`, `eval.onWarn`, or custom `importLoaders` should live in a WyW config file instead.
-- When you need those function-valued options, pass only `configFile` inline and let the preset load the rest from that file.
+- When you need those function-valued options, pass only `configFile` inline and let the preset load the rest from that file. That config file may be `.mjs`, but it still must be synchronous.
 
 Example:
 

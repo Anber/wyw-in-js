@@ -27,6 +27,7 @@ import {
 } from '../utils/importOverrides';
 import { getFileIdx } from '../utils/getFileIdx';
 import { parseRequest, stripQueryAndHash } from '../utils/parseRequest';
+import { resolveFilenameWithConditions } from '../utils/resolveWithConditions';
 import { isSuperSet, mergeOnly } from '../transform/Entrypoint.helpers';
 
 import {
@@ -201,7 +202,9 @@ const REQUEST_TIMEOUT_MS = 30_000;
 const EVAL_TIMEOUT_MS = Number(process.env.WYW_EVAL_TIMEOUT_MS ?? 300_000);
 const INIT_TIMEOUT_MS = 120_000;
 const HAPPYDOM_INIT_TIMEOUT_MS = Number(
-  process.env.WYW_EVAL_HAPPYDOM_INIT_TIMEOUT_MS ?? 15_000
+  process.env.WYW_EVAL_HAPPYDOM_INIT_TIMEOUT_MS ??
+    process.env.WYW_HAPPYDOM_TIMEOUT_MS ??
+    15_000
 );
 
 type ResolveCacheEntry = {
@@ -1838,7 +1841,8 @@ export class EvalBroker {
 
       let resolved: string;
       try {
-        resolved = DefaultModuleImplementation._resolveFilename(
+        resolved = resolveFilenameWithConditions(
+          DefaultModuleImplementation,
           strippedId,
           {
             id: filename,
@@ -1847,8 +1851,7 @@ export class EvalBroker {
               path.dirname(filename)
             ),
           },
-          false,
-          conditions ? { conditions } : undefined
+          conditions
         );
       } catch (error) {
         throw new Error(

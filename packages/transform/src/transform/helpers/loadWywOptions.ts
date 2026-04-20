@@ -72,7 +72,29 @@ const loadMjsConfig = (configFile: string): Partial<StrictOptions> => {
     // Ignore cache cleanup failures and let the require call surface the real error.
   }
 
-  return normalizeLoadedConfig(configRequire(resolvedConfigFile));
+  try {
+    return normalizeLoadedConfig(configRequire(resolvedConfigFile));
+  } catch (error) {
+    const code =
+      error && typeof error === 'object' && 'code' in error
+        ? (error as { code?: string }).code
+        : undefined;
+    const message = error instanceof Error ? error.message : String(error);
+
+    if (
+      code === 'ERR_REQUIRE_ASYNC_MODULE' ||
+      message.includes('require() async module') ||
+      message.includes('top-level await')
+    ) {
+      throw new Error(
+        `[wyw-in-js] Failed to load ${resolvedConfigFile}. ` +
+          'WyW config loading is synchronous, so .mjs config files must not use top-level await ' +
+          'or depend on async ESM modules. Remove top-level await or switch to a synchronous config.'
+      );
+    }
+
+    throw error;
+  }
 };
 
 const loadConfigFromFile = (configFile: string): Partial<StrictOptions> => {

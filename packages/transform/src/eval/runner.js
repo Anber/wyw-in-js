@@ -607,7 +607,9 @@ const createImportMetaEnvProxy = () => {
 };
 
 const HAPPY_DOM_TIMEOUT_MS = Number(
-  process.env.WYW_HAPPYDOM_TIMEOUT_MS || 5000
+  process.env.WYW_EVAL_HAPPYDOM_INIT_TIMEOUT_MS ??
+    process.env.WYW_HAPPYDOM_TIMEOUT_MS ??
+    15000
 );
 
 const withTimeout = (promise, timeoutMs, label) => {
@@ -1441,12 +1443,18 @@ const linkModule = async (module) => {
   const cached = linkPromises.get(module);
   if (cached) return cached;
   if (module.status !== 'unlinked') return module;
-  const linking = module.link((specifier, referencingModule) =>
-    resolveModule(specifier, referencingModule.identifier, 'import')
-  );
+  const linking = (async () => {
+    try {
+      await module.link((specifier, referencingModule) =>
+        resolveModule(specifier, referencingModule.identifier, 'import')
+      );
+      return module;
+    } finally {
+      linkPromises.delete(module);
+    }
+  })();
   linkPromises.set(module, linking);
-  await linking;
-  return module;
+  return linking;
 };
 
 resolveModule = async (specifier, importer, kind) => {

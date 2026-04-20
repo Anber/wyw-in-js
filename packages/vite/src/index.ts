@@ -683,11 +683,6 @@ export default function wywInJS({
         .concat(ctx.modules)
         .filter((m): m is ModuleNode => !!m);
     },
-    closeBundle() {
-      if (config.command === 'build') {
-        disposeEvalBrokers();
-      }
-    },
     async transform(
       code: string,
       url: string,
