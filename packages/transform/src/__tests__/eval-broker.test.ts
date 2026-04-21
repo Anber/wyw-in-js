@@ -1494,4 +1494,279 @@ describe('EvalBroker', () => {
     broker.dispose();
     rmSync(root, { recursive: true, force: true });
   });
+
+  it('does not swallow console output from vm-evaluated code', async () => {
+    // Node.js gives vm contexts a V8 built-in console with no backing
+    // stream — console.log() silently discards output. Without explicit
+    // baseContext.console injection, all debug logging from evaluated
+    // CSS-in-JS code is lost (not to stdout, not to stderr, nowhere).
+    const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-vmlog-'));
+    const entry = join(root, 'entry.js');
+
+    writeFileSync(
+      entry,
+      [
+        'console.log("MUST_NOT_VANISH");',
+        'export const __wywPreval = {',
+        '  value: () => 1,',
+        '};',
+      ].join('\n')
+    );
+
+    const warnings: string[] = [];
+    const asyncResolve = jest.fn(async (what: string, importer: string) => {
+      if (what.startsWith('.')) {
+        return resolve(dirname(importer), what);
+      }
+      return null;
+    });
+    const services = createServices(root, entry);
+    services.emitWarning = (msg: string) => {
+      warnings.push(msg);
+    };
+    const broker = new EvalBroker(services, asyncResolve);
+    const entrypoint = Entrypoint.createRoot(
+      services,
+      entry,
+      ['__wywPreval'],
+      readFileSync(entry, 'utf-8')
+    );
+
+    const result = await broker.evaluate(entrypoint);
+    expect(result.values?.get('value')).toBe(1);
+
+    broker.dispose();
+    rmSync(root, { recursive: true, force: true });
+
+    // console.log output from evaluated code must reach broker stderr,
+    // not vanish into V8's no-op built-in console
+    expect(warnings.join('\n')).toContain('MUST_NOT_VANISH');
+  });
+
+  it('tags vm console output with source filename on stderr', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-vmconsole-'));
+    const entry = join(root, 'entry.js');
+
+    writeFileSync(
+      entry,
+      [
+        'console.log("vm-stdout-marker");',
+        'console.error("vm-stderr-marker");',
+        'export const __wywPreval = {',
+        '  value: () => 1,',
+        '};',
+      ].join('\n')
+    );
+
+    const warnings: string[] = [];
+    const asyncResolve = jest.fn(async (what: string, importer: string) => {
+      if (what.startsWith('.')) {
+        return resolve(dirname(importer), what);
+      }
+      return null;
+    });
+    const services = createServices(root, entry);
+    services.emitWarning = (msg: string) => {
+      warnings.push(msg);
+    };
+    const broker = new EvalBroker(services, asyncResolve);
+    const entrypoint = Entrypoint.createRoot(
+      services,
+      entry,
+      ['__wywPreval'],
+      readFileSync(entry, 'utf-8')
+    );
+
+    const result = await broker.evaluate(entrypoint);
+    expect(result.values?.get('value')).toBe(1);
+
+    broker.dispose();
+    rmSync(root, { recursive: true, force: true });
+
+    const allWarnings = warnings.join('\n');
+
+    // vm console.log must be tagged with [wyw-runner:vm(entry.js) stdout]
+    expect(allWarnings).toContain('[wyw-runner:vm(entry.js) stdout]');
+    expect(allWarnings).toContain('vm-stdout-marker');
+
+    // vm console.error must be tagged with [wyw-runner:vm(entry.js) stderr]
+    expect(allWarnings).toContain('[wyw-runner:vm(entry.js) stderr]');
+    expect(allWarnings).toContain('vm-stderr-marker');
+  });
+
+  it('console.log in evaluated code does not corrupt IPC', async () => {
+    const { spawn } = await import('child_process');
+    const { fileURLToPath } = await import('url');
+
+    const root = mkdtempSync(join(tmpdir(), 'wyw-eval-runner-console-'));
+    const entry = join(root, 'entry.js');
+
+    writeFileSync(
+      entry,
+      [
+        'console.log("hello from eval");',
+        'console.log("multi\\nline");',
+        'console.log(JSON.stringify({ fake: "json" }));',
+        'export const __wywPreval = {',
+        '  value: () => 42,',
+        '};',
+      ].join('\n')
+    );
+
+    const runnerPath = fileURLToPath(
+      new URL('../eval/runner.js', import.meta.url)
+    );
+    const runner = spawn(
+      process.execPath,
+      ['--experimental-vm-modules', runnerPath],
+      { stdio: ['pipe', 'pipe', 'pipe'] }
+    );
+
+    const stdoutLines: string[] = [];
+    const stderrChunks: string[] = [];
+    let stdoutBuf = '';
+
+    runner.stdout.setEncoding('utf8');
+    runner.stderr.setEncoding('utf8');
+    runner.stdout.on('data', (chunk: string) => {
+      stdoutBuf += chunk;
+      const lines = stdoutBuf.split('\n');
+      stdoutBuf = lines.pop() ?? '';
+      stdoutLines.push(...lines.filter((l: string) => l.trim()));
+    });
+    runner.stderr.on('data', (chunk: string) => {
+      stderrChunks.push(chunk);
+    });
+
+    const send = (msg: Record<string, unknown>) => {
+      runner.stdin.write(JSON.stringify(msg) + '\n');
+    };
+
+    const waitForMessage = (
+      type: string,
+      id: string
+    ): Promise<Record<string, unknown>> =>
+      new Promise((res, rej) => {
+        const timeout = setTimeout(
+          () => rej(new Error(`timeout waiting for ${type} id=${id}`)),
+          30000
+        );
+        const check = () => {
+          for (let i = 0; i < stdoutLines.length; i++) {
+            try {
+              const parsed = JSON.parse(stdoutLines[i]);
+              if (parsed.type === type && parsed.id === id) {
+                clearTimeout(timeout);
+                stdoutLines.splice(i, 1);
+                res(parsed);
+                return;
+              }
+            } catch {
+              /* not json yet */
+            }
+          }
+          setTimeout(check, 10);
+        };
+        check();
+      });
+
+    send({
+      type: 'INIT',
+      id: 'init-1',
+      payload: {
+        entrypoint: entry,
+        evalOptions: { globals: {}, mode: 'strict', require: 'warn-and-run' },
+        features: {},
+        reuseModules: true,
+      },
+    });
+    const initAck = await waitForMessage('INIT_ACK', 'init-1');
+    expect(initAck.error).toBeUndefined();
+
+    const handleLoads = () => {
+      for (let i = 0; i < stdoutLines.length; i++) {
+        try {
+          const parsed = JSON.parse(stdoutLines[i]);
+          if (parsed.type === 'LOAD') {
+            stdoutLines.splice(i, 1);
+            i--;
+            const filePath = parsed.payload?.id;
+            let code = '';
+            try {
+              code = readFileSync(filePath, 'utf-8');
+            } catch {
+              /* missing file */
+            }
+            send({
+              type: 'LOAD_RESULT',
+              id: parsed.id,
+              payload: { id: filePath, code, only: ['*'] },
+            });
+          }
+        } catch {
+          /* not json */
+        }
+      }
+    };
+
+    send({
+      type: 'EVAL',
+      id: 'eval-1',
+      payload: { id: entry },
+    });
+
+    const evalResult = await new Promise<Record<string, unknown>>(
+      (res, rej) => {
+        const timeout = setTimeout(
+          () => rej(new Error('timeout waiting for EVAL_RESULT')),
+          30000
+        );
+        const check = () => {
+          handleLoads();
+          for (let i = 0; i < stdoutLines.length; i++) {
+            try {
+              const parsed = JSON.parse(stdoutLines[i]);
+              if (parsed.type === 'EVAL_RESULT' && parsed.id === 'eval-1') {
+                clearTimeout(timeout);
+                stdoutLines.splice(i, 1);
+                res(parsed);
+                return;
+              }
+            } catch {
+              /* not json yet */
+            }
+          }
+          setTimeout(check, 10);
+        };
+        check();
+      }
+    );
+
+    runner.stdin.end();
+    runner.kill();
+
+    // Every stdout line must be valid JSON — no console.log corruption
+    for (const line of stdoutLines) {
+      expect(() => JSON.parse(line)).not.toThrow();
+    }
+
+    // Eval succeeded
+    expect(evalResult.error).toBeUndefined();
+    expect(
+      (
+        evalResult as {
+          payload?: {
+            values?: Record<string, { kind: string; value: unknown }>;
+          };
+        }
+      ).payload?.values?.value?.value
+    ).toBe(42);
+
+    // console.log output went to stderr with vm prefix, not stdout
+    const stderr = stderrChunks.join('');
+    expect(stderr).toContain('[wyw-runner:vm(');
+    expect(stderr).toContain('hello from eval');
+
+    rmSync(root, { recursive: true, force: true });
+  });
 });
