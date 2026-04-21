@@ -38,6 +38,28 @@ export interface IQueueActionEvent {
 
 const workingDir = process.cwd();
 
+function serializeError(err: unknown): Record<string, unknown> {
+  if (!(err instanceof Error)) {
+    return { value: String(err) };
+  }
+
+  const out: Record<string, unknown> = {
+    name: err.name,
+    message: err.message,
+    stack: err.stack,
+  };
+
+  if ('code' in err) {
+    out.code = (err as { code: unknown }).code;
+  }
+
+  if (err.cause !== undefined) {
+    out.cause = serializeError(err.cause);
+  }
+
+  return out;
+}
+
 function replacer(_key: string, value: unknown): unknown {
   if (typeof value === 'string' && path.isAbsolute(value)) {
     return path.relative(workingDir, value);
@@ -192,7 +214,7 @@ export const createFileReporter = (
     const [result, timestamp, id, isAsync, error] = args;
     writeJSONl(actionStream, {
       actionId: id,
-      error,
+      error: error !== undefined ? serializeError(error) : undefined,
       finishedAt: timestamp,
       isAsync,
       result: `${result}ed`,
