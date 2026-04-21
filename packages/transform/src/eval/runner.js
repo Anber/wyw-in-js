@@ -2,6 +2,7 @@
 /* global BigInt */
 import fs from 'node:fs';
 import { Console } from 'node:console';
+import { Writable } from 'node:stream';
 import vm from 'node:vm';
 import path from 'node:path';
 import NativeModule, { createRequire } from 'node:module';
@@ -43,11 +44,20 @@ class LruCache {
 const NOOP = () => {};
 
 // stdout is reserved for the JSON IPC protocol; host-side logs must not share it.
-const runnerConsole = new Console({
-  stdout: process.stderr,
-  stderr: process.stderr,
+const prefixStream = (getPrefix) =>
+  new Writable({
+    write(chunk, _enc, cb) {
+      const p = getPrefix();
+      const s = chunk.toString();
+      process.stderr.write(p + s.replaceAll('\n', '\n' + p), cb);
+    },
+  });
+
+// require'd modules outside vm use host console — must not write to stdout (IPC channel).
+global.console = new Console({
+  stdout: prefixStream(() => '[wyw-runner:host stdout] '),
+  stderr: prefixStream(() => '[wyw-runner:host stderr] '),
 });
-global.console = runnerConsole;
 
 const VITE_VIRTUAL_PREFIX = '/@';
 const REACT_REFRESH_VIRTUAL_ID = '/@react-refresh';
@@ -736,6 +746,12 @@ const createVmContext = async (filename, features, globals) => {
     __filename: filename,
     ...envContext,
     ...globals,
+  });
+  // Evaluated code must never write to stdout — it is the IPC channel.
+  const vmIdent = () => `vm(${path.basename(baseContext.__filename ?? '?')})`;
+  baseContext.console = new Console({
+    stdout: prefixStream(() => `[wyw-runner:${vmIdent()} stdout] `),
+    stderr: prefixStream(() => `[wyw-runner:${vmIdent()} stderr] `),
   });
   const context = vm.createContext(baseContext);
   return {
