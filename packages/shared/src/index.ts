@@ -26,6 +26,7 @@ export type {
   ImportLoaders,
   ImportOverride,
   ImportOverrides,
+  OxcOptions,
   TagResolverMeta,
   StrictOptions,
   EvalRule,

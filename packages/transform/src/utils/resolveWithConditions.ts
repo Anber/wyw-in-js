@@ -15,6 +15,11 @@ type ResolveFilenameModuleImplementation = {
   ) => string;
 };
 
+type NodeConditionalResolveResult = {
+  error?: { code?: string; message: string };
+  resolved?: string;
+};
+
 const NODE_CONDITIONAL_RESOLVE_SCRIPT = String.raw`
 const fs = require('node:fs');
 const Module = require('node:module');
@@ -72,16 +77,11 @@ const resolveWithNodeProcess = (
     throw result.error;
   }
 
-  type ResolveResultPayload = {
-    error?: { code?: string; message: string };
-    resolved?: string;
-  };
-
-  let parsed: ResolveResultPayload | null = null;
+  let parsed: NodeConditionalResolveResult | null = null;
   const stdout = result.stdout.trim();
   if (stdout) {
     try {
-      parsed = JSON.parse(stdout) as ResolveResultPayload;
+      parsed = JSON.parse(stdout) as NodeConditionalResolveResult;
     } catch {
       throw new Error(
         [

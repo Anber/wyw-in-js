@@ -1,4 +1,4 @@
-import type { TransformOptions } from '@babel/core';
+import type { TransformOptions as BabelTransformOptions } from '@babel/core';
 import type { File } from '@babel/types';
 
 import type { IVariableContext } from '../IVariableContext';
@@ -34,7 +34,7 @@ export type EvaluatorConfig = {
 };
 
 export type Evaluator = (
-  evalConfig: TransformOptions,
+  evalConfig: BabelTransformOptions,
   ast: File,
   code: string,
   config: EvaluatorConfig,
@@ -48,7 +48,17 @@ export type Evaluator = (
 
 export type EvalRule = {
   action: Evaluator | 'ignore' | string;
-  babelOptions?: TransformOptions;
+  /**
+   * @deprecated Use `oxcOptions` for the Oxc-first transform path. Babel
+   * options are kept for the current Babel-backed implementation until the
+   * evaluator cutover is complete.
+   */
+  babelOptions?: BabelTransformOptions;
+  /**
+   * Per-rule Oxc options for the Oxc-first transform path. Kept inert until
+   * the evaluator/parser cutover wires Oxc execution in later slices.
+   */
+  oxcOptions?: OxcOptions;
   test?: RegExp | ((path: string, code: string) => boolean);
 };
 
@@ -111,7 +121,7 @@ export type ImportLoader =
 
 export type ImportLoaders = Record<string, ImportLoader | false>;
 
-export type EvalResolverMode = 'bundler' | 'node' | 'custom';
+export type EvalResolverMode = 'bundler' | 'hybrid' | 'node' | 'custom';
 
 export type EvalRequireMode = 'warn-and-run' | 'error' | 'off';
 
@@ -136,7 +146,11 @@ export type EvalWarning = {
 };
 
 export type EvalOptionsV2 = {
-  resolver?: EvalResolverMode; // default: 'bundler'
+  /**
+   * Default is `bundler`. `hybrid` is an opt-in mode whose intended
+   * precedence is customResolver -> safe Oxc subset -> bundler -> node.
+   */
+  resolver?: EvalResolverMode;
   customResolver?: (
     specifier: string,
     importer: string,
@@ -174,8 +188,30 @@ export type CodeRemoverOptions = {
   hocs?: Record<string, string[]>;
 };
 
+export type OxcOptions = {
+  /**
+   * Parser-level Oxc options. The first slice only preserves this contract.
+   */
+  parser?: Record<string, unknown>;
+  /**
+   * Resolver-level Oxc options. Bundler-aware resolution remains authoritative
+   * unless `eval.resolver` explicitly opts into `hybrid`.
+   */
+  resolver?: Record<string, unknown>;
+  /**
+   * Transform-level Oxc options. Babel options remain supported for the
+   * current compatibility path until cutover.
+   */
+  transform?: Record<string, unknown>;
+};
+
 export type StrictOptions = {
-  babelOptions: TransformOptions;
+  /**
+   * @deprecated Use `oxcOptions` for the Oxc-first transform path. Babel
+   * options are kept for the current Babel-backed implementation until the
+   * evaluator cutover is complete.
+   */
+  babelOptions: BabelTransformOptions;
   classNameSlug?: string | ClassNameFn;
   codeRemover?: CodeRemoverOptions;
   conditionNames?: string[];
@@ -193,6 +229,11 @@ export type StrictOptions = {
     context: Partial<VmContext>,
     filename: string
   ) => Partial<VmContext>;
+  /**
+   * Oxc-first transform options. This is preserved beside `babelOptions` in
+   * the foundation slice and becomes authoritative after the Oxc cutover.
+   */
+  oxcOptions: OxcOptions;
   rules: EvalRule[];
   tagResolver?: (
     source: string,

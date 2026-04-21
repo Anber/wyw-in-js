@@ -11,6 +11,42 @@ describe('loadWywOptions', () => {
     process.chdir(initialCwd);
   });
 
+  it('keeps bundler resolution as the default and preserves Oxc options', () => {
+    const oxcOptions = {
+      parser: { sourceType: 'module' },
+      resolver: { conditionNames: ['import', 'default'] },
+      transform: { jsx: 'automatic' },
+    };
+
+    const options = loadWywOptions({
+      configFile: false,
+      oxcOptions,
+      rules: [
+        {
+          action: 'ignore',
+          oxcOptions,
+        },
+      ],
+    });
+
+    expect(options.eval?.resolver).toBe('bundler');
+    expect(options.oxcOptions).toBe(oxcOptions);
+    expect(options.rules[0].oxcOptions).toBe(oxcOptions);
+  });
+
+  it('accepts hybrid resolver mode without changing the default', () => {
+    const defaultOptions = loadWywOptions({ configFile: false });
+    const hybridOptions = loadWywOptions({
+      configFile: false,
+      eval: {
+        resolver: 'hybrid',
+      },
+    });
+
+    expect(defaultOptions.eval?.resolver).toBe('bundler');
+    expect(hybridOptions.eval?.resolver).toBe('hybrid');
+  });
+
   it('autodiscovers wyw-in-js.config.mjs files', () => {
     const root = mkdtempSync(path.join(tmpdir(), 'wyw-options-'));
     const configFile = path.join(root, 'wyw-in-js.config.mjs');
