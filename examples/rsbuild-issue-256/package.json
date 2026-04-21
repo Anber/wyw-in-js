@@ -1,7 +1,7 @@
 {
   "name": "rsbuild-issue-256-repro",
   "private": true,
-  "version": "1.0.1",
+  "version": "1.1.0",
   "type": "module",
   "scripts": {
     "gen": "node ./perf/generate.mjs",
