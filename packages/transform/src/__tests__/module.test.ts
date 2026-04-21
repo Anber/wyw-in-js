@@ -1005,6 +1005,17 @@ describe('definable globals', () => {
 });
 
 describe('conditionNames', () => {
+  // resolveFilenameWithConditions falls back to a Node subprocess under Bun
+  // (isBunRuntime check), bypassing the mocked _resolveFilename. Force the
+  // direct _resolveFilename path so mocks work regardless of test runner.
+  const realExecPath = process.execPath;
+  beforeEach(() => {
+    process.execPath = '/usr/local/bin/node';
+  });
+  afterEach(() => {
+    process.execPath = realExecPath;
+  });
+
   it('passes expanded conditions to _resolveFilename', async () => {
     const code = dedent`
       module.exports = require.resolve('my-pkg');
