@@ -28,7 +28,7 @@ export {
   UnprocessedEntrypointError,
 } from './transform/actions/UnprocessedEntrypointError';
 export * from './types';
-export type { PluginOptions, Preprocessor } from './types';
+export type { PluginOptions, Preprocessor, Result } from './types';
 export { EvaluatedEntrypoint } from './transform/EvaluatedEntrypoint';
 export type { IEvaluatedEntrypoint } from './transform/EvaluatedEntrypoint';
 export { parseFile } from './transform/Entrypoint.helpers';

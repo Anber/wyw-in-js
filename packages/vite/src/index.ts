@@ -24,6 +24,7 @@ import type {
   Preprocessor,
   Result as TransformResult,
   TransformCacheCollection as TransformCacheCollectionType,
+  WYWTransformDiagnostic,
 } from '@wyw-in-js/transform';
 import * as transformPkg from '@wyw-in-js/transform';
 
@@ -1086,7 +1087,7 @@ export default function wywInJS({
         asyncResolve
       );
 
-      result.diagnostics?.forEach((diagnostic) => {
+      result.diagnostics?.forEach((diagnostic: WYWTransformDiagnostic) => {
         this.warn({
           id: diagnostic.filename,
           loc: diagnostic.start
