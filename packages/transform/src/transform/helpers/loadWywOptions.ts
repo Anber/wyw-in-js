@@ -137,6 +137,7 @@ export function loadWywOptions(
     ignore,
     rules,
     babelOptions = {},
+    oxcOptions = {},
     importLoaders: overridesImportLoaders,
     ...rest
   } = overrides;
@@ -199,6 +200,7 @@ export function loadWywOptions(
     ],
     babelOptions,
     highPriorityPlugins: ['module-resolver'],
+    oxcOptions,
     ...config,
     ...rest,
     eval: {
