@@ -79,6 +79,7 @@ const canonicalizeForHash = (value: unknown): unknown => {
 
 const getEvalCacheKey = (
   pluginOptions: ReturnType<typeof loadWywOptions>,
+  asyncResolveKey: string | undefined,
   asyncResolve: (
     what: string,
     importer: string,
@@ -93,7 +94,10 @@ const getEvalCacheKey = (
     globals: canonicalizeForHash(encodeGlobals(evalOptions.globals ?? {})),
     customResolver: getResolverId(evalOptions.customResolver),
     customLoader: getResolverId(evalOptions.customLoader),
-    bundlerResolver: getResolverId(asyncResolve),
+    // Bundlers like webpack can recreate transport resolvers per file. Allow
+    // them to provide a stable scope key so cache/broker reuse tracks resolver
+    // semantics instead of closure identity.
+    bundlerResolver: asyncResolveKey ?? getResolverId(asyncResolve),
     overrideContext: getResolverId(pluginOptions.overrideContext),
     importOverrides: pluginOptions.importOverrides ?? null,
     extensions: pluginOptions.extensions,
@@ -145,7 +149,11 @@ export async function transform(
     services.cache = new TransformCacheCollection();
   }
 
-  const evalCacheKey = getEvalCacheKey(pluginOptions, asyncResolve);
+  const evalCacheKey = getEvalCacheKey(
+    pluginOptions,
+    services.asyncResolveKey,
+    asyncResolve
+  );
   services.cache.setKeySalt(evalCacheKey);
   services.asyncResolve = asyncResolve;
   services.evalBroker = getEvalBroker(services, asyncResolve, evalCacheKey);
