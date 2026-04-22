@@ -1,5 +1,11 @@
 # @wyw-in-js/transform
 
+## 1.1.1
+
+### Patch Changes
+
+- a6bc855: Avoid rereading and rehashing unchanged dependency graphs during entrypoint cache invalidation while preserving stale-dependency detection.
+
 ## 1.1.0
 
 ### Minor Changes
