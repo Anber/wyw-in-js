@@ -1,5 +1,12 @@
 # `@wyw-in-js/turbopack-loader`
 
+## 1.1.1
+
+### Patch Changes
+
+- Updated dependencies
+  - @wyw-in-js/transform@1.1.1
+
 ## 1.1.0
 
 ### Minor Changes
