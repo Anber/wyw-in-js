@@ -200,6 +200,31 @@ function createHappyDOMWindow() {
   };
 }
 
+// --- VM context pooling ---
+// Each vm.createContext() allocates ~4-8 MB of V8 heap.  With 12 000+
+// modules the default one-context-per-module approach needs 50+ GB.
+// We pool up to WYW_POOL_SIZE reusable contexts for non-happyDOM evaluations.
+const WYW_POOL_SIZE = Number(process.env.WYW_POOL_SIZE) || 0;
+const pool: vm.Context[] = [];
+
+function releaseToPool(context: Partial<vm.Context>) {
+  if (pool.length < WYW_POOL_SIZE) {
+    pool.push(context);
+  }
+}
+
+function retainFromPool(baseContext: Partial<vm.Context>): vm.Context | null {
+  const pooled = pool.pop();
+  if (pooled) {
+    const keys = Object.keys(baseContext);
+    for (let i = 0; i < keys.length; i++) {
+      pooled[keys[i]] = baseContext[keys[i]];
+    }
+    return pooled;
+  }
+  return null;
+}
+
 export function createVmContext(
   filename: string,
   features: FeatureFlags<'happyDOM'>,
@@ -208,7 +233,7 @@ export function createVmContext(
 ) {
   const isHappyDOMEnabled = isFeatureEnabled(features, 'happyDOM', filename);
 
-  const { teardown, window } = isHappyDOMEnabled
+  const { teardown: domTeardown, window } = isHappyDOMEnabled
     ? createHappyDOMWindow()
     : createNothing();
   const envContext: Partial<vm.Context> = {
@@ -226,10 +251,17 @@ export function createVmContext(
     )
   );
 
-  const context = vm.createContext(baseContext);
+  const context =
+    (!isHappyDOMEnabled && retainFromPool(baseContext)) ||
+    vm.createContext(baseContext);
 
   return {
     context,
-    teardown,
+    teardown() {
+      domTeardown();
+      if (!isHappyDOMEnabled) {
+        releaseToPool(context);
+      }
+    },
   };
 }
