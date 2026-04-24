@@ -4,12 +4,12 @@ import generate from '@babel/generator';
 import dedent from 'dedent';
 import stripAnsi from 'strip-ansi';
 
-import type { MissedBabelCoreTypes } from '../../types';
+import type { MissedBabelCoreTypes } from '../../__tests__/legacy-babel-reference/legacyBabelTypes';
 import {
   collectExportsAndImports,
   explicitImport,
-} from '../collectExportsAndImports';
-import { extractExpression } from '../collectTemplateDependencies';
+} from '../../__tests__/legacy-babel-reference/utils/collectExportsAndImports';
+import { extractExpression } from '../../__tests__/legacy-babel-reference/utils/collectTemplateDependencies';
 
 const { File } = babel as typeof babel & MissedBabelCoreTypes;
 
@@ -40,7 +40,9 @@ async function extractFirstValue(code: string) {
   }))!;
 
   const file = new File({ filename: __filename }, { code, ast: parsed });
-  const imports = collectExportsAndImports(file.path).imports.filter(explicitImport);
+  const imports = collectExportsAndImports(file.path).imports.filter(
+    explicitImport
+  );
 
   let extracted: ReturnType<typeof extractExpression> | undefined;
   file.path.traverse({

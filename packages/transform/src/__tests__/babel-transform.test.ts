@@ -4,7 +4,7 @@ import { tmpdir } from 'os';
 
 import * as babel from '@babel/core';
 
-import babelTransformPlugin from '../plugins/babel-transform';
+import babelTransformPlugin from './legacy-babel-reference/plugins/babel-transform';
 
 const processorPath = path.resolve(
   __dirname,

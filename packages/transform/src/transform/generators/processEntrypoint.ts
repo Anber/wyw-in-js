@@ -18,6 +18,11 @@ export function* processEntrypoint(
     return;
   }
 
+  if (this.entrypoint.isProcessing) {
+    log('already processing, skip duplicate request');
+    return;
+  }
+
   this.entrypoint.beginProcessing();
 
   try {

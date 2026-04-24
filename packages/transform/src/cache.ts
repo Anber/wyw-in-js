@@ -2,7 +2,7 @@ import { createHash } from 'crypto';
 import fs from 'node:fs';
 import { logger } from '@wyw-in-js/shared';
 
-import type { BarrelManifestCacheEntry } from './transform/barrelManifest';
+import type { BarrelManifestCacheEntry } from './transform/barrelManifest.types';
 import type { Entrypoint } from './transform/Entrypoint';
 import type { IEvaluatedEntrypoint } from './transform/EvaluatedEntrypoint';
 import { getFileIdx } from './utils/getFileIdx';
@@ -168,7 +168,7 @@ export class TransformCacheCollection<
       return;
     }
 
-    if (cacheName === 'barrelManifests') {
+    if (cacheName === 'barrelManifests' || cacheName === 'exports') {
       try {
         const fileContent = fs.readFileSync(stripQueryAndHash(key), 'utf8');
         this.setContentHash(key, 'fs', hashContent(fileContent));
@@ -265,7 +265,8 @@ export class TransformCacheCollection<
     previousVisitedFiles?: Set<string>,
     source: 'fs' | 'loaded' = 'loaded',
     changedFiles = new Set<string>(),
-    dependencyChangeMemo = new Map<string, boolean>()
+    dependencyChangeMemo = new Map<string, boolean>(),
+    forceContentCheck = false
   ) {
     if (changedFiles.has(filename)) {
       return true;
@@ -295,7 +296,10 @@ export class TransformCacheCollection<
             dependencyFilename,
             visitedFiles,
             changedFiles,
-            dependencyChangeMemo
+            dependencyChangeMemo,
+            forceContentCheck ||
+              invalidateOnDependencyChange?.has(dependencyFilename) ||
+              false
           );
 
           if (
@@ -395,7 +399,8 @@ export class TransformCacheCollection<
     dependencyFilename: string,
     visitedFiles: Set<string>,
     changedFiles: Set<string>,
-    dependencyChangeMemo: Map<string, boolean>
+    dependencyChangeMemo: Map<string, boolean>,
+    forceContentCheck = false
   ): boolean {
     if (changedFiles.has(dependencyFilename)) {
       return true;
@@ -436,6 +441,18 @@ export class TransformCacheCollection<
           cachedEntrypoint
         );
 
+        if (
+          forceContentCheck &&
+          this.didFileContentHashChange(
+            dependencyFilename,
+            strippedDependencyFilename,
+            changedFiles
+          )
+        ) {
+          dependencyChangeMemo.set(dependencyFilename, true);
+          return true;
+        }
+
         // A cached file without a cached entrypoint was invalidated earlier.
         if (!cachedEntrypoint && nestedDependencies.size === 0) {
           dependencyChangeMemo.set(dependencyFilename, true);
@@ -457,7 +474,8 @@ export class TransformCacheCollection<
               nestedDependency.resolved,
               nextVisitedFiles,
               changedFiles,
-              dependencyChangeMemo
+              dependencyChangeMemo,
+              forceContentCheck
             )
           ) {
             this.invalidateForFile(dependencyFilename);
@@ -493,11 +511,46 @@ export class TransformCacheCollection<
       visitedFiles,
       'fs',
       changedFiles,
-      dependencyChangeMemo
+      dependencyChangeMemo,
+      forceContentCheck
     );
 
     dependencyChangeMemo.set(dependencyFilename, invalidated);
     return invalidated;
+  }
+
+  private didFileContentHashChange(
+    filename: string,
+    strippedFilename: string,
+    changedFiles: Set<string>
+  ): boolean {
+    const previousHash = this.contentHashes.get(filename)?.fs;
+    if (previousHash === undefined) {
+      return false;
+    }
+
+    let content: string;
+    try {
+      content = fs.readFileSync(strippedFilename, 'utf8');
+    } catch (error) {
+      if (!isMissingFileError(error)) {
+        throw error;
+      }
+
+      this.invalidateForFile(filename);
+      changedFiles.add(filename);
+      return true;
+    }
+
+    const nextHash = hashContent(content);
+    if (previousHash === nextHash) {
+      return false;
+    }
+
+    this.setContentHash(filename, 'fs', nextHash);
+    this.invalidateForFile(filename);
+    changedFiles.add(filename);
+    return true;
   }
 
   public setCacheDependencies(

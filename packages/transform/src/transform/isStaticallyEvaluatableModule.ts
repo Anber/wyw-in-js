@@ -1,286 +1,272 @@
+import { parseSync } from 'oxc-parser';
 import type {
-  Expression,
-  ImportDeclaration,
   ExportNamedDeclaration,
-  File,
-  Statement,
+  ImportDeclaration,
+  Node,
+  Program,
   VariableDeclaration,
   VariableDeclarator,
-} from '@babel/types';
-import {
-  isArrayExpression,
-  isArrowFunctionExpression,
-  isAssignmentExpression,
-  isAwaitExpression,
-  isBinaryExpression,
-  isBigIntLiteral,
-  isBooleanLiteral,
-  isCallExpression,
-  isClassDeclaration,
-  isClassExpression,
-  isConditionalExpression,
-  isEmptyStatement,
-  isExportAllDeclaration,
-  isExportDefaultDeclaration,
-  isExportNamedDeclaration,
-  isExpression,
-  isExpressionStatement,
-  isFunctionDeclaration,
-  isFunctionExpression,
-  isIdentifier,
-  isImportDeclaration,
-  isImportSpecifier,
-  isLogicalExpression,
-  isNewExpression,
-  isNullLiteral,
-  isNumericLiteral,
-  isObjectExpression,
-  isObjectMethod,
-  isObjectProperty,
-  isParenthesizedExpression,
-  isSequenceExpression,
-  isSpreadElement,
-  isStringLiteral,
-  isTaggedTemplateExpression,
-  isTemplateLiteral,
-  isTSAsExpression,
-  isTSInstantiationExpression,
-  isTSNonNullExpression,
-  isTSSatisfiesExpression,
-  isUnaryExpression,
-  isUpdateExpression,
-  isYieldExpression,
-} from '@babel/types';
+} from 'oxc-parser';
 
-function isTypeOnlyImport(statement: ImportDeclaration): boolean {
+const isNode = (value: unknown): value is Node =>
+  !!value &&
+  typeof value === 'object' &&
+  'type' in value &&
+  typeof (value as { type?: unknown }).type === 'string';
+
+const getNodeType = (node: Pick<Node, 'type'>): string => node.type as string;
+
+const parseOxc = (code: string, filename: string): Program => {
+  const parsed = parseSync(filename, code, {
+    astType:
+      filename.endsWith('.ts') || filename.endsWith('.tsx') ? 'ts' : 'js',
+    range: true,
+    sourceType: 'unambiguous',
+  });
+  const fatalError = parsed.errors.find((error) => error.severity === 'Error');
+  if (fatalError) {
+    throw new Error(fatalError.message);
+  }
+
+  return parsed.program as Program;
+};
+
+const isTypeOnlyImport = (statement: ImportDeclaration): boolean => {
   if (statement.importKind === 'type') {
     return true;
   }
 
-  return statement.specifiers.every(
-    (specifier) =>
-      isImportSpecifier(specifier) && specifier.importKind === 'type'
-  );
-}
+  return Array.isArray(statement.specifiers)
+    ? statement.specifiers.every(
+        (specifier) =>
+          isNode(specifier) &&
+          specifier.type === 'ImportSpecifier' &&
+          specifier.importKind === 'type'
+      )
+    : false;
+};
 
-function isTypeOnlyReExport(statement: ExportNamedDeclaration): boolean {
-  if (!statement.source) {
-    return false;
-  }
+const isTypeOnlyReExport = (statement: ExportNamedDeclaration): boolean =>
+  !!statement.source && statement.exportKind === 'type';
 
-  return statement.exportKind === 'type';
-}
-
-function unwrapExpression(expr: Expression): Expression {
-  let current: Expression = expr;
+const unwrapExpression = (expr: Node): Node => {
+  let current = expr;
 
   for (;;) {
-    if (isTSAsExpression(current)) {
+    if (
+      current.type === 'TSAsExpression' ||
+      current.type === 'TSSatisfiesExpression' ||
+      current.type === 'TSNonNullExpression' ||
+      current.type === 'TSInstantiationExpression' ||
+      current.type === 'TSTypeAssertion' ||
+      current.type === 'ParenthesizedExpression'
+    ) {
       current = current.expression;
-      // eslint-disable-next-line no-continue
-      continue;
-    }
-
-    if (isTSSatisfiesExpression(current)) {
-      current = current.expression;
-      // eslint-disable-next-line no-continue
-      continue;
-    }
-
-    if (isTSNonNullExpression(current)) {
-      current = current.expression;
-      // eslint-disable-next-line no-continue
-      continue;
-    }
-
-    if (isTSInstantiationExpression(current)) {
-      current = current.expression;
-      // eslint-disable-next-line no-continue
-      continue;
-    }
-
-    if (isParenthesizedExpression(current)) {
-      current = current.expression;
-      // eslint-disable-next-line no-continue
       continue;
     }
 
     return current;
   }
-}
+};
 
-function isSafeExpression(expr: Expression): boolean {
+const isSafeLiteral = (expr: Node): boolean =>
+  getNodeType(expr) === 'Literal' &&
+  (() => {
+    const value = (expr as Node & { value?: unknown }).value;
+    return (
+      value === null ||
+      typeof value === 'string' ||
+      typeof value === 'number' ||
+      typeof value === 'boolean' ||
+      typeof value === 'bigint'
+    );
+  })();
+
+const isSafeExpression = (expr: Node): boolean => {
   const unwrapped = unwrapExpression(expr);
+  const type = unwrapped.type as string;
 
-  if (
-    isStringLiteral(unwrapped) ||
-    isNumericLiteral(unwrapped) ||
-    isBooleanLiteral(unwrapped) ||
-    isNullLiteral(unwrapped) ||
-    isBigIntLiteral(unwrapped)
-  ) {
+  if (isSafeLiteral(unwrapped)) {
     return true;
   }
 
-  if (isArrowFunctionExpression(unwrapped) || isFunctionExpression(unwrapped)) {
+  if (type === 'ArrowFunctionExpression' || type === 'FunctionExpression') {
     return true;
   }
 
-  if (isIdentifier(unwrapped)) {
+  if (type === 'Identifier') {
+    const identifier = unwrapped as Node & { name: string };
     return (
-      unwrapped.name === 'undefined' ||
-      unwrapped.name === 'NaN' ||
-      unwrapped.name === 'Infinity'
+      identifier.name === 'undefined' ||
+      identifier.name === 'NaN' ||
+      identifier.name === 'Infinity'
     );
   }
 
-  if (isTemplateLiteral(unwrapped)) {
-    return unwrapped.expressions.every(
-      (item) => isExpression(item) && isSafeExpression(item)
+  if (type === 'TemplateLiteral') {
+    return (unwrapped as Node & { expressions: Node[] }).expressions.every((item) =>
+      isSafeExpression(item)
     );
   }
 
-  if (isUnaryExpression(unwrapped)) {
-    return isSafeExpression(unwrapped.argument as Expression);
+  if (type === 'UnaryExpression') {
+    return isSafeExpression((unwrapped as Node & { argument: Node }).argument);
   }
 
-  if (isBinaryExpression(unwrapped) || isLogicalExpression(unwrapped)) {
+  if (type === 'BinaryExpression' || type === 'LogicalExpression') {
+    const binaryLike = unwrapped as Node & { left: Node; right: Node };
     return (
-      isSafeExpression(unwrapped.left as Expression) &&
-      isSafeExpression(unwrapped.right as Expression)
+      isSafeExpression(binaryLike.left) &&
+      isSafeExpression(binaryLike.right)
     );
   }
 
-  if (isConditionalExpression(unwrapped)) {
+  if (type === 'ConditionalExpression') {
+    const conditional = unwrapped as Node & {
+      alternate: Node;
+      consequent: Node;
+      test: Node;
+    };
     return (
-      isSafeExpression(unwrapped.test) &&
-      isSafeExpression(unwrapped.consequent) &&
-      isSafeExpression(unwrapped.alternate)
+      isSafeExpression(conditional.test) &&
+      isSafeExpression(conditional.consequent) &&
+      isSafeExpression(conditional.alternate)
     );
   }
 
-  if (isArrayExpression(unwrapped)) {
-    return unwrapped.elements.every((item) => {
-      if (item === null) return true;
-      if (isSpreadElement(item)) return false;
-      return isSafeExpression(item);
-    });
-  }
+  if (type === 'ArrayExpression') {
+    return (unwrapped as Node & { elements: Array<Node | null> }).elements.every(
+      (item) => {
+        if (!item) {
+          return true;
+        }
 
-  if (isObjectExpression(unwrapped)) {
-    return unwrapped.properties.every((prop) => {
-      if (isSpreadElement(prop)) {
-        return false;
-      }
-
-      if (isObjectMethod(prop)) {
-        return !prop.computed;
-      }
-
-      if (isObjectProperty(prop)) {
-        if (prop.computed) {
+        if (item.type === 'SpreadElement') {
           return false;
         }
 
-        return isExpression(prop.value) && isSafeExpression(prop.value);
+        return isSafeExpression(item);
+      }
+    );
+  }
+
+  if (type === 'ObjectExpression') {
+    return (unwrapped as Node & { properties: Node[] }).properties.every((property) => {
+      if (property.type === 'SpreadElement') {
+        return false;
       }
 
-      return false;
+      const propertyNode = property as Node & {
+        computed?: boolean;
+        method?: boolean;
+        value?: Node;
+      };
+
+      if (propertyNode.computed) {
+        return false;
+      }
+
+      if (propertyNode.method) {
+        return true;
+      }
+
+      return isNode(propertyNode.value) && isSafeExpression(propertyNode.value);
     });
   }
 
   if (
-    isCallExpression(unwrapped) ||
-    isNewExpression(unwrapped) ||
-    isTaggedTemplateExpression(unwrapped) ||
-    isAwaitExpression(unwrapped) ||
-    isYieldExpression(unwrapped) ||
-    isUpdateExpression(unwrapped) ||
-    isAssignmentExpression(unwrapped) ||
-    isSequenceExpression(unwrapped)
+    type === 'CallExpression' ||
+    type === 'NewExpression' ||
+    type === 'TaggedTemplateExpression' ||
+    type === 'AwaitExpression' ||
+    type === 'YieldExpression' ||
+    type === 'UpdateExpression' ||
+    type === 'AssignmentExpression' ||
+    type === 'SequenceExpression' ||
+    type === 'ClassExpression' ||
+    type === 'ClassDeclaration'
   ) {
     return false;
   }
 
   return false;
-}
+};
 
-function isSafeDeclarator(declarator: VariableDeclarator): boolean {
-  if (!declarator.init) {
-    return true;
+const isSafeDeclarator = (declarator: VariableDeclarator): boolean =>
+  !isNode(declarator.init) || isSafeExpression(declarator.init);
+
+const isSafeVariableDeclaration = (statement: VariableDeclaration): boolean =>
+  statement.declarations.every((declarator) => isSafeDeclarator(declarator));
+
+const isSafeStatement = (statement: Node): boolean => {
+  if (statement.type.startsWith('TS') || statement.type.startsWith('JSDoc')) {
+    return statement.type !== 'TSEnumDeclaration';
   }
 
-  return isSafeExpression(declarator.init);
-}
-
-function isSafeVariableDeclaration(decl: VariableDeclaration): boolean {
-  return decl.declarations.every(isSafeDeclarator);
-}
-
-function isSafeStatement(statement: Statement): boolean {
-  if (isImportDeclaration(statement)) {
+  if (statement.type === 'ImportDeclaration') {
     return isTypeOnlyImport(statement);
   }
 
-  if (isExportAllDeclaration(statement)) {
+  if (statement.type === 'ExportAllDeclaration') {
     return false;
   }
 
-  if (isExportNamedDeclaration(statement)) {
-    if (!statement.declaration) {
-      return !statement.source || isTypeOnlyReExport(statement);
+  if (statement.type === 'ExportNamedDeclaration') {
+    if (!isNode(statement.declaration)) {
+      return !isNode(statement.source) || isTypeOnlyReExport(statement);
     }
 
-    if (isFunctionDeclaration(statement.declaration)) {
+    if (statement.declaration.type === 'FunctionDeclaration') {
       return true;
     }
 
-    if (isClassDeclaration(statement.declaration)) {
+    if (statement.declaration.type === 'ClassDeclaration') {
       return false;
     }
 
-    if (statement.declaration.type === 'VariableDeclaration') {
-      return isSafeVariableDeclaration(statement.declaration);
-    }
-
-    return false;
+    return (
+      statement.declaration.type === 'VariableDeclaration' &&
+      isSafeVariableDeclaration(statement.declaration)
+    );
   }
 
-  if (isExportDefaultDeclaration(statement)) {
-    const decl = statement.declaration;
+  if (statement.type === 'ExportDefaultDeclaration') {
+    const declaration = statement.declaration;
+    if (!isNode(declaration)) {
+      return false;
+    }
+
     if (
-      isFunctionDeclaration(decl) ||
-      isFunctionExpression(decl) ||
-      isArrowFunctionExpression(decl) ||
-      isClassExpression(decl) ||
-      isClassDeclaration(decl)
+      declaration.type === 'FunctionDeclaration' ||
+      declaration.type === 'FunctionExpression' ||
+      declaration.type === 'ArrowFunctionExpression' ||
+      declaration.type === 'ClassExpression' ||
+      declaration.type === 'ClassDeclaration'
     ) {
       return false;
     }
 
-    return isSafeExpression(decl as Expression);
+    return isSafeExpression(declaration);
   }
 
   if (statement.type === 'VariableDeclaration') {
     return isSafeVariableDeclaration(statement);
   }
 
-  if (isFunctionDeclaration(statement)) {
+  if (statement.type === 'FunctionDeclaration' || statement.type === 'EmptyStatement') {
     return true;
   }
 
-  if (isEmptyStatement(statement)) {
-    return true;
-  }
-
-  if (isExpressionStatement(statement)) {
-    // Directives (like "use strict") are safe.
-    return isStringLiteral(statement.expression);
+  if (statement.type === 'ExpressionStatement') {
+    return isNode(statement.expression) && isSafeLiteral(statement.expression);
   }
 
   return false;
-}
+};
 
-export function isStaticallyEvaluatableModule(ast: File): boolean {
-  return ast.program.body.every(isSafeStatement);
+export function isStaticallyEvaluatableModule(
+  code: string,
+  filename: string
+): boolean {
+  return parseOxc(code, filename).body.every((statement) => isSafeStatement(statement));
 }

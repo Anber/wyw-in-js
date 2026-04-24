@@ -7,7 +7,7 @@ import type {
 
 import { toImportKey } from '../../utils/importOverrides';
 import { stripQueryAndHash } from '../../utils/parseRequest';
-import { isSuperSet } from '../Entrypoint.helpers';
+import { isSuperSet, mergeOnly } from '../Entrypoint.helpers';
 
 const warnedSlowImportsByServices = new WeakMap<Services, Set<string>>();
 
@@ -36,7 +36,10 @@ function isWarningEnabled(value: string | undefined): boolean {
 
 function hasLoop(
   name: string,
-  parent: { name: string; parents: { name: string; parents: { name: string }[] }[] },
+  parent: {
+    name: string;
+    parents: { name: string; parents: { name: string }[] }[];
+  },
   processed: string[] = []
 ): boolean {
   if (parent.name === name || processed.includes(parent.name)) {
@@ -74,6 +77,11 @@ export function* processImports(
     : null;
 
   const { root } = this.services.options;
+  const prepareStageRequiresEvaluatedDeps =
+    this.entrypoint.only.includes('__wywPreval');
+  const skippedParentDependencySources = new Set(
+    this.data.skipParentDependencyTracking ?? []
+  );
 
   for (const dependency of this.data.resolved) {
     const { resolved, only } = dependency;
@@ -81,24 +89,42 @@ export function* processImports(
       continue;
     }
 
-    this.entrypoint.addDependency(dependency);
+    const requiredOnly = prepareStageRequiresEvaluatedDeps
+      ? mergeOnly(only, ['__wywPreval'])
+      : only;
+
+    if (!skippedParentDependencySources.has(dependency.source)) {
+      this.entrypoint.addDependency({
+        ...dependency,
+        only: requiredOnly,
+      });
+    }
 
     const cached = this.services.cache.get('entrypoints', resolved);
+    const canReuseTransformedDependency =
+      !prepareStageRequiresEvaluatedDeps &&
+      Boolean(cached && !cached.evaluated && cached.transformed);
     if (
       cached &&
-      (cached.evaluated || ('transformed' in cached && cached.transformed)) &&
-      isSuperSet(cached.only, only) &&
+      (cached.evaluated || canReuseTransformedDependency) &&
+      isSuperSet(cached.only, requiredOnly) &&
       !hasLoop(resolved, this.entrypoint) &&
       !this.services.cache.checkFreshness(resolved, stripQueryAndHash(resolved))
     ) {
-      if (!cached.parents.map((parent) => parent.name).includes(this.entrypoint.name)) {
-        cached.parents.push(this.entrypoint);
+      if (Array.isArray(cached.parents)) {
+        if (
+          !cached.parents
+            .map((parent) => parent.name)
+            .includes(this.entrypoint.name)
+        ) {
+          cached.parents.push(this.entrypoint);
+        }
       }
 
       continue;
     }
 
-    const nextEntrypoint = this.entrypoint.createChild(resolved, only);
+    const nextEntrypoint = this.entrypoint.createChild(resolved, requiredOnly);
     if (nextEntrypoint === 'loop' || nextEntrypoint.ignored) {
       continue;
     }

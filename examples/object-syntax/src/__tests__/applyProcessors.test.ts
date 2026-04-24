@@ -1,41 +1,32 @@
 import { join } from 'path';
 
-import { parseSync } from '@babel/core';
-import traverse from '@babel/traverse';
 import dedent from 'dedent';
 
 import type { BaseProcessor } from '@wyw-in-js/processor-utils';
-import { applyProcessors } from '@wyw-in-js/transform';
+import { applyOxcProcessors } from '../../../../packages/transform/src/utils/applyOxcProcessors';
 
 interface IRunOptions {
   ts?: boolean;
 }
 
 const run = (code: string, options: IRunOptions = {}): BaseProcessor | null => {
-  const opts = {
+  const fileContext = {
     filename: join(__dirname, '..', options.ts ? 'test.ts' : 'test.js'),
     root: '.',
-    code: true,
-    ast: true,
-    presets: options.ts ? ['@babel/preset-typescript'] : [],
   };
-  const rootNode = parseSync(code, opts)!;
   let result: BaseProcessor | null = null;
-  traverse(rootNode, {
-    Program(path) {
-      applyProcessors(
-        path,
-        opts,
-        {
-          displayName: true,
-          evaluate: true,
-        },
-        (p) => {
-          result = p;
-        }
-      );
+  applyOxcProcessors(
+    code,
+    fileContext,
+    {
+      displayName: true,
+      evaluate: true,
+      extensions: ['.js', '.ts'],
     },
-  });
+    (p) => {
+      result = p;
+    }
+  );
 
   return result;
 };

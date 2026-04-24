@@ -1,4 +1,5 @@
 import * as childProcess from 'child_process';
+import NativeModule from 'module';
 
 import { resolveFilenameWithConditions } from '../resolveWithConditions';
 
@@ -47,7 +48,37 @@ describe('resolveFilenameWithConditions', () => {
     );
   });
 
-  it('delegates conditioned resolution to Node when running under Bun', () => {
+  it('uses a custom module implementation under Bun', () => {
+    Object.defineProperty(process, 'execPath', {
+      configurable: true,
+      value: '/usr/local/bin/bun',
+    });
+
+    const spawnSyncSpy = jest.spyOn(childProcess, 'spawnSync');
+    const moduleImpl = {
+      _resolveFilename: jest.fn(() => '/tmp/custom-resolved.js'),
+    };
+
+    expect(
+      resolveFilenameWithConditions(
+        moduleImpl,
+        'pkg/file',
+        parent,
+        new Set(['custom', 'node'])
+      )
+    ).toBe('/tmp/custom-resolved.js');
+    expect(moduleImpl._resolveFilename).toHaveBeenCalledWith(
+      'pkg/file',
+      parent,
+      false,
+      {
+        conditions: new Set(['custom', 'node']),
+      }
+    );
+    expect(spawnSyncSpy).not.toHaveBeenCalled();
+  });
+
+  it('delegates conditioned native resolution to Node when running under Bun', () => {
     Object.defineProperty(process, 'execPath', {
       configurable: true,
       value: '/usr/local/bin/bun',
@@ -62,9 +93,7 @@ describe('resolveFilenameWithConditions', () => {
       stderr: '',
       stdout: '{"resolved":"/tmp/resolved.js"}',
     } as never);
-    const moduleImpl = {
-      _resolveFilename: jest.fn(() => '/tmp/unused.js'),
-    };
+    const moduleImpl = NativeModule as never;
 
     expect(
       resolveFilenameWithConditions(
@@ -74,7 +103,6 @@ describe('resolveFilenameWithConditions', () => {
         new Set(['custom', 'node'])
       )
     ).toBe('/tmp/resolved.js');
-    expect(moduleImpl._resolveFilename).not.toHaveBeenCalled();
     expect(spawnSyncSpy).toHaveBeenCalledWith(
       'node',
       ['-e', expect.stringContaining('Module._resolveFilename')],
@@ -122,9 +150,7 @@ describe('resolveFilenameWithConditions', () => {
     let thrown: unknown;
     try {
       resolveFilenameWithConditions(
-        {
-          _resolveFilename: jest.fn(() => '/tmp/unused.js'),
-        },
+        NativeModule as never,
         'pkg/file',
         parent,
         new Set(['custom'])

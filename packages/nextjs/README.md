@@ -36,7 +36,7 @@ By default, the plugin:
 - injects `@wyw-in-js/webpack-loader` into Next's JS/TS pipeline;
 - emits styles as `*.wyw-in-js.module.css` so imports are allowed from any module;
 - keeps generated class names stable under Next CSS Modules (selectors are emitted as `:global(...)`).
-- defaults `babelOptions` to `presets: ['next/babel']` so TS/JSX parsing works out of the box.
+- parses and evaluates JS/TS/JSX/TSX through the Oxc-backed WyW transform.
 
 ## Options
 

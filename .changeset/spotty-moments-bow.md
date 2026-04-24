@@ -18,6 +18,9 @@ WyW-in-JS packages are now ESM-only and require Node.js >= 22.0.0.
 
 Breaking changes in v2:
 - CJS `require()` package entrypoints were removed; migrate configs/tooling to ESM (`import()` / `.mjs`).
+- The transform/evaluator path is Oxc-first; `babelOptions`, `.babelrc` loading, and Babel AST services were removed from the core runtime contract.
+- Package ESM builds now use the shared Oxc build driver instead of Babel CLI.
+- `@wyw-in-js/babel-preset` remains available as a compatibility wrapper for existing Babel pipelines, but bundler integrations no longer use it internally.
 - Eval moved to the async ESM runner-based pipeline (`vm.SourceTextModule` + broker RPC), which is now the default path in v2.
 - Eval IPC and Babel preset config handling are stricter:
   - unsupported values in `__wywPreval` now fail explicitly instead of being silently coerced through JSON

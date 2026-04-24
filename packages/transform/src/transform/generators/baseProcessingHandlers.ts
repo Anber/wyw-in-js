@@ -4,13 +4,10 @@ import type {
   IEvalAction,
   IExplodeReexportsAction,
   IExtractAction,
-  IGetExportsAction,
-  IProcessImportsAction,
   IWorkflowAction,
   ActionQueueItem,
 } from '../types';
 
-import { explodeReexports } from './explodeReexports';
 import { getExports } from './getExports';
 import { processEntrypoint } from './processEntrypoint';
 import { processImports } from './processImports';
@@ -26,9 +23,9 @@ function* emptyHandler<T extends ActionQueueItem>(
 export const baseProcessingHandlers = {
   collect: emptyHandler<ICollectAction>,
   evalFile: emptyHandler<IEvalAction>,
+  explodeReexports: emptyHandler<IExplodeReexportsAction>,
   extract: emptyHandler<IExtractAction>,
   workflow: emptyHandler<IWorkflowAction>,
-  explodeReexports,
   getExports,
   processEntrypoint,
   processImports,

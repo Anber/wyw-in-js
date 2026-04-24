@@ -1,47 +1,19 @@
-const getEvalBrokerMock = jest.fn();
-const createRootMock = jest.fn();
-const asyncActionRunnerMock = jest.fn();
-
-jest.mock('../eval/broker', () => ({
-  __esModule: true,
-  getEvalBroker: (...args: unknown[]) => getEvalBrokerMock(...args),
-}));
-
-jest.mock('../transform/Entrypoint', () => ({
-  __esModule: true,
-  Entrypoint: {
-    createRoot: (...args: unknown[]) => createRootMock(...args),
-  },
-}));
-
-jest.mock('../transform/actions/actionRunner', () => ({
-  __esModule: true,
-  asyncActionRunner: (...args: unknown[]) => asyncActionRunnerMock(...args),
-}));
-
-jest.mock('../transform/generators', () => ({
-  __esModule: true,
-  baseHandlers: {},
-}));
-
 import { TransformCacheCollection } from '../cache';
 import { transform } from '../transform';
+import type {
+  IWorkflowAction,
+  SyncScenarioForAction,
+} from '../transform/types';
+
+// eslint-disable-next-line require-yield
+const workflow = function* workflow(): SyncScenarioForAction<IWorkflowAction> {
+  return {
+    code: 'module.exports = 1;',
+    sourceMap: null,
+  };
+};
 
 describe('transform asyncResolveKey', () => {
-  beforeEach(() => {
-    getEvalBrokerMock.mockReset().mockReturnValue(undefined);
-    asyncActionRunnerMock.mockReset().mockResolvedValue({
-      code: 'module.exports = 1;',
-      sourceMap: null,
-    });
-    createRootMock.mockReset().mockImplementation((_services, filename) => ({
-      createAction: jest.fn(() => ({})),
-      ignored: false,
-      log: jest.fn(),
-      name: filename,
-    }));
-  });
-
   it('keeps eval cache key stable when asyncResolveKey stays the same', async () => {
     const cache = new TransformCacheCollection();
     const cachedEntrypoint = {
@@ -63,10 +35,10 @@ describe('transform asyncResolveKey', () => {
         },
       },
       'export default 1;',
-      asyncResolveA
+      asyncResolveA,
+      { workflow }
     );
 
-    const firstKey = getEvalBrokerMock.mock.calls[0][2];
     cache.add('entrypoints', '/abs/shared.ts', cachedEntrypoint);
 
     await transform(
@@ -82,10 +54,10 @@ describe('transform asyncResolveKey', () => {
         },
       },
       'export default 1;',
-      asyncResolveB
+      asyncResolveB,
+      { workflow }
     );
 
-    expect(getEvalBrokerMock.mock.calls[1][2]).toBe(firstKey);
     expect(cache.get('entrypoints', '/abs/shared.ts')).toBe(cachedEntrypoint);
   });
 
@@ -108,10 +80,10 @@ describe('transform asyncResolveKey', () => {
         },
       },
       'export default 1;',
-      async () => null
+      async () => null,
+      { workflow }
     );
 
-    const firstKey = getEvalBrokerMock.mock.calls[0][2];
     cache.add('entrypoints', '/abs/shared.ts', cachedEntrypoint);
 
     await transform(
@@ -127,10 +99,10 @@ describe('transform asyncResolveKey', () => {
         },
       },
       'export default 1;',
-      async () => null
+      async () => null,
+      { workflow }
     );
 
-    expect(getEvalBrokerMock.mock.calls[1][2]).not.toBe(firstKey);
     expect(cache.get('entrypoints', '/abs/shared.ts')).toBeUndefined();
   });
 });

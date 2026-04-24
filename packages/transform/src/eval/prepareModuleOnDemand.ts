@@ -1,5 +1,4 @@
-import type { File } from '@babel/types';
-
+import { oxcShaker } from '../shaker';
 import type { Services } from '../transform/types';
 import { Entrypoint } from '../transform/Entrypoint';
 import { prepareCodeForEvalRuntime } from '../transform/generators/transform';
@@ -25,7 +24,12 @@ export function prepareModuleOnDemand(
     };
   }
 
-  const ast = entrypoint.loadedAndParsed.ast as File;
+  const ast =
+    entrypoint.loadedAndParsed.evaluator === oxcShaker
+      ? null
+      : (entrypoint.loadedAndParsed.ast as Parameters<
+          typeof prepareCodeForEvalRuntime
+        >[2]);
   const [code, imports] = prepareCodeForEvalRuntime(services, entrypoint, ast);
 
   return {

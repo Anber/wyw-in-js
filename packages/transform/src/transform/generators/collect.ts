@@ -1,8 +1,5 @@
-import type { PluginItem } from '@babel/core';
-
-import { buildOptions } from '../../options/buildOptions';
-import { filename as collectorPlugin } from '../../plugins/collector';
-import { getTransformMetadata } from '../../utils/TransformMetadata';
+import { oxcShaker } from '../../shaker';
+import { collectOxcRuntime } from '../../utils/collectOxcRuntime';
 import type { ICollectAction, SyncScenarioForAction } from '../types';
 
 /**
@@ -13,7 +10,7 @@ import type { ICollectAction, SyncScenarioForAction } from '../types';
 export function* collect(
   this: ICollectAction
 ): SyncScenarioForAction<ICollectAction> {
-  const { babel, options } = this.services;
+  const { options } = this.services;
   const { valueCache } = this.data;
   const { entrypoint } = this;
   const { loadedAndParsed, name } = entrypoint;
@@ -22,49 +19,24 @@ export function* collect(
     throw new Error('entrypoint was ignored');
   }
 
-  const transformPlugins: PluginItem[] = [
-    [
-      collectorPlugin,
-      {
-        ...options.pluginOptions,
-        values: valueCache,
-      },
-    ],
-  ];
-
-  const transformConfig = buildOptions({
-    envName: 'wyw-in-js',
-    plugins: transformPlugins,
-    sourceMaps: true,
-    sourceFileName: name,
-    inputSourceMap: options.inputSourceMap,
-    root: options.root,
-    ast: true,
-    babelrc: false,
-    configFile: false,
-    sourceType: 'unambiguous',
-  });
-
-  const result = babel.transformFromAstSync(
-    loadedAndParsed.ast,
-    loadedAndParsed.code,
-    {
-      ...transformConfig,
-      cwd: options.root,
-      filename: name,
-    }
-  );
-
-  if (!result || !result.ast?.program) {
-    throw new Error('Babel transform failed');
+  if (loadedAndParsed.evaluator !== oxcShaker) {
+    throw new Error(
+      `[wyw-in-js] ${name} matched a legacy evaluator. The Oxc runtime path supports only the default Oxc evaluator.`
+    );
   }
 
-  const transformMetadata = getTransformMetadata(result.metadata);
+  const result = collectOxcRuntime(
+    loadedAndParsed.code,
+    name,
+    options.root ?? process.cwd(),
+    options.pluginOptions,
+    valueCache
+  );
 
   return {
-    ast: result.ast,
+    ast: null,
     code: result.code,
     map: result.map,
-    metadata: transformMetadata ?? null,
+    metadata: result.metadata,
   };
 }

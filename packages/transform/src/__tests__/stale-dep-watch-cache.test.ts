@@ -349,7 +349,11 @@ describe('stale dependency detection in watch mode', () => {
     try {
       readSpy.mockClear();
 
-      const result = parentModule.getEntrypoint(depFile, ['extra', 'val'], logger);
+      const result = parentModule.getEntrypoint(
+        depFile,
+        ['extra', 'val'],
+        logger
+      );
 
       expect(readSpy).not.toHaveBeenCalledWith(depFile, 'utf-8');
       expect(result).not.toBe(depEntrypoint);

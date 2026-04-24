@@ -8,11 +8,8 @@
     "minimatch": "^9.0.3"
   },
   "devDependencies": {
-    "@babel/types": "^7.23.5",
-    "@types/babel__core": "^7.20.5",
     "@types/debug": "^4.1.9",
     "@types/node": "^22.0.0",
-    "@wyw-in-js/babel-config": "workspace:*",
     "@wyw-in-js/eslint-config": "workspace:*",
     "@wyw-in-js/ts-config": "workspace:*",
     "typescript": "^5.2.2"
@@ -37,7 +34,7 @@
     "access": "public"
   },
   "scripts": {
-    "build:esm": "babel src --out-dir esm --extensions '.js,.jsx,.ts,.tsx' --source-maps --delete-dir-on-start",
+    "build:esm": "node ../../scripts/build-esm-oxc.mjs",
     "build:types": "tsc --project ./tsconfig.lib.json --baseUrl . --rootDir ./src",
     "lint": "eslint --ext .js,.ts .",
     "test": "bun test src"

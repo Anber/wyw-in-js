@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 
 import { TransformCacheCollection } from '../cache';
-import type { BarrelManifest } from '../transform/barrelManifest';
+import type { BarrelManifest } from '../transform/barrelManifest.types';
 import type { IEntrypointDependency } from '../transform/Entrypoint.types';
 
 // Mocking the minimal interface needed by the cache
@@ -298,7 +298,11 @@ describe('TransformCacheCollection', () => {
           ['./right.js', { resolved: rightName }],
         ]
       );
-      const { cache } = setupCacheWithEntrypoint(rootName, rootContent, rootDeps);
+      const { cache } = setupCacheWithEntrypoint(
+        rootName,
+        rootContent,
+        rootDeps
+      );
 
       cache.add('entrypoints', leafName, leafEntrypoint as any);
       cache.add('entrypoints', leftName, leftEntrypoint as any);

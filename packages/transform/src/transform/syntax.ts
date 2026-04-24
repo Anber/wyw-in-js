@@ -1,4 +1,4 @@
-export type SyntaxEngine = 'babel' | 'oxc';
+export type SyntaxEngine = 'oxc';
 
 export type SyntaxSourceLocation = {
   column: number;

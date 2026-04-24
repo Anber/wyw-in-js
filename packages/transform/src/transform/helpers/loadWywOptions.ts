@@ -136,7 +136,6 @@ export function loadWywOptions(
     configFile,
     ignore,
     rules,
-    babelOptions = {},
     oxcOptions = {},
     importLoaders: overridesImportLoaders,
     ...rest
@@ -147,7 +146,6 @@ export function loadWywOptions(
     globalCache: true,
     happyDOM: true,
     softErrors: false,
-    useBabelConfigs: true,
     useWeakRefInEval: true,
   };
   const defaultEval: EvalOptionsV2 = {
@@ -198,7 +196,6 @@ export function loadWywOptions(
         action: shaker,
       },
     ],
-    babelOptions,
     highPriorityPlugins: ['module-resolver'],
     oxcOptions,
     ...config,

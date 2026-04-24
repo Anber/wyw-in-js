@@ -14,11 +14,9 @@
     "yargs": "^17.5.0"
   },
   "devDependencies": {
-    "@babel/core": "^7.23.5",
     "@types/mkdirp": "^0.5.2",
     "@types/normalize-path": "^3.0.0",
     "@types/yargs": "^17.0.10",
-    "@wyw-in-js/babel-config": "workspace:*",
     "@wyw-in-js/eslint-config": "workspace:*",
     "@wyw-in-js/ts-config": "workspace:*"
   },
@@ -43,7 +41,7 @@
     "access": "public"
   },
   "scripts": {
-    "build:esm": "babel src --out-dir esm --extensions '.js,.jsx,.ts,.tsx' --source-maps --delete-dir-on-start",
+    "build:esm": "node ../../scripts/build-esm-oxc.mjs",
     "build:types": "tsc --project ./tsconfig.lib.json --baseUrl . --rootDir ./src",
     "lint": "eslint --ext .js,.ts .",
     "test": "bun test src"

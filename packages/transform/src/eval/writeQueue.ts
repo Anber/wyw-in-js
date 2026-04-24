@@ -34,6 +34,9 @@ export const writeToStream = (
     let settled = false;
     let writeCompleted = false;
     let drainCompleted = true;
+    let onClose: () => void;
+    let onDrain: () => void;
+    let onError: (error: unknown) => void;
 
     const cleanup = () => {
       stream.off('close', onClose);
@@ -62,16 +65,16 @@ export const writeToStream = (
       resolve();
     };
 
-    const onClose = () => {
+    onClose = () => {
       finish(new Error(`${label} closed before pending write completed`));
     };
 
-    const onDrain = () => {
+    onDrain = () => {
       drainCompleted = true;
       finish();
     };
 
-    const onError = (error: unknown) => {
+    onError = (error: unknown) => {
       finish(error);
     };
 

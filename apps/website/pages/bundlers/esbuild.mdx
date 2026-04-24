@@ -44,26 +44,25 @@ esbuild
 `eval.require` defaults to `warn-and-run` in v2. If eval-time `require()` happens, WyW will warn and execute it at
 runtime; use `importOverrides` or `eval.require: 'error'` to make it explicit.
 
-### Additional Babel transformations
+### Additional Oxc transformations
 
-esbuild doesn't support chaining multiple `onLoad` transforms for the same file. If your project needs extra Babel plugins
-to run before WyW evaluation (for example, plugins that operate on TS/JSX), enable `babelTransform`:
+esbuild doesn't support chaining multiple `onLoad` transforms for the same file. If your project needs extra Oxc transforms
+to run on the original TS/JSX source before WyW evaluation, enable `oxcTransform`:
 
 ```js
 wyw({
-  babelTransform: true,
-  babelOptions: {
-    plugins: [
-      // your custom Babel plugins
-    ],
+  oxcTransform: true,
+  oxcOptions: {
+    transform: {
+      define: {
+        __DEV__: 'false',
+      },
+    },
   },
 });
 ```
 
-Order: `Babel(source) → esbuild.transform() → WyW transform`.
-
-Note: `babelOptions` are still used by WyW when parsing/evaluating modules. With `babelTransform: true`, the same plugins
-may run both before esbuild and again during WyW's internal Babel stage. Prefer idempotent plugins.
+Order: `Oxc(source) → esbuild.transform() → WyW transform`.
 
 This is opt-in and may impact performance, so keep `filter` narrow when possible.
 

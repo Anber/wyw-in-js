@@ -1,0 +1,111 @@
+/**
+ * This file is a babel preset used to transform files inside evaluators.
+ * It works the same as main `babel/extract` preset, but do not evaluate lazy dependencies.
+ */
+import type { BabelFile, PluginObj } from '@babel/core';
+
+import type { StrictOptions } from '@wyw-in-js/shared';
+import { isFeatureEnabled, logger } from '@wyw-in-js/shared';
+
+import { applyProcessors } from '../utils/getTagProcessor';
+import type { Core } from '../babel';
+import type { IPluginState } from '../legacyBabelTypes';
+import { EventEmitter } from '../utils/EventEmitter';
+import {
+  addIdentifierToWywPreval,
+  getOrAddWywPreval,
+} from '../utils/addIdentifierToWywPreval';
+import { getFileIdx } from '../utils/getFileIdx';
+import { removeDangerousCode } from '../utils/removeDangerousCode';
+import { replaceImportMetaEnv } from '../utils/replaceImportMetaEnv';
+import { invalidateTraversalCache } from '../utils/traversalCache';
+
+export type PreevalOptions = Pick<
+  StrictOptions,
+  | 'classNameSlug'
+  | 'codeRemover'
+  | 'displayName'
+  | 'extensions'
+  | 'evaluate'
+  | 'features'
+  | 'tagResolver'
+> & { eventEmitter?: EventEmitter };
+
+export function preeval(
+  babel: Core,
+  options: PreevalOptions
+): PluginObj<IPluginState & { onFinish: () => void }> {
+  const { types: t } = babel;
+  const eventEmitter = options.eventEmitter ?? EventEmitter.dummy;
+  return {
+    name: '@wyw-in-js/transform/preeval',
+    pre(file: BabelFile) {
+      const filename = file.opts.filename!;
+      const log = logger.extend('preeval').extend(getFileIdx(filename));
+
+      log('start', 'Looking for template literals…');
+
+      const rootScope = file.scope;
+      this.processors = [];
+
+      eventEmitter.perf('transform:preeval:processTemplate', () => {
+        applyProcessors(file.path, file.opts, options, (processor) => {
+          processor.dependencies.forEach((dependency) => {
+            if (dependency.ex.type === 'Identifier') {
+              addIdentifierToWywPreval(rootScope, dependency.ex.name);
+            }
+          });
+
+          processor.doEvaltimeReplacement();
+          this.processors.push(processor);
+        });
+      });
+
+      eventEmitter.perf('transform:preeval:importMetaEnv', () => {
+        replaceImportMetaEnv(file.path, t);
+      });
+
+      if (
+        isFeatureEnabled(options.features, 'dangerousCodeRemover', filename)
+      ) {
+        log('start', 'Strip all JSX and browser related stuff');
+        eventEmitter.perf('transform:preeval:removeDangerousCode', () =>
+          removeDangerousCode(file.path, options.codeRemover)
+        );
+      }
+    },
+    visitor: {},
+    post(file: BabelFile) {
+      const log = logger
+        .extend('preeval')
+        .extend(getFileIdx(file.opts.filename!));
+
+      invalidateTraversalCache(file.path);
+
+      if (this.processors.length === 0) {
+        log('end', "We didn't find any wyw-in-js template literals");
+
+        // We didn't find any wyw-in-js template literals.
+        return;
+      }
+
+      this.file.metadata.wywInJS = {
+        processors: this.processors,
+        replacements: [],
+        rules: {},
+        dependencies: [],
+      };
+
+      const wywPreval = file.path.getData('__wywPreval');
+      if (!wywPreval) {
+        // Even if there are no dependencies, we still need to add __wywPreval.
+        // Use the shared helper so we emit ESM or CJS based on source type.
+        getOrAddWywPreval(file.path.scope);
+      }
+
+      log('end', '__wywPreval has been added');
+    },
+  };
+}
+
+export default preeval;

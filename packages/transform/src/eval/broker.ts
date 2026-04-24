@@ -1,10 +1,10 @@
+/* eslint-disable no-continue, no-plusplus, no-nested-ternary, no-void, no-await-in-loop, @typescript-eslint/no-use-before-define */
 import { createHash } from 'crypto';
 import fs from 'fs';
 import NativeModule from 'module';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process';
-import type { File, Program } from '@babel/types';
 
 import { invariant } from 'ts-invariant';
 
@@ -18,6 +18,7 @@ import type {
 import { isFeatureEnabled } from '@wyw-in-js/shared';
 
 import type { Entrypoint } from '../transform/Entrypoint';
+import { isStaticallyEvaluatableModule } from '../transform/isStaticallyEvaluatableModule';
 import type { Services } from '../transform/types';
 import {
   applyImportOverrideToOnly,
@@ -26,9 +27,12 @@ import {
   toImportKey,
 } from '../utils/importOverrides';
 import { getFileIdx } from '../utils/getFileIdx';
+import { collectOxcExportsAndImports } from '../utils/collectOxcExportsAndImports';
 import { parseRequest, stripQueryAndHash } from '../utils/parseRequest';
 import { resolveFilenameWithConditions } from '../utils/resolveWithConditions';
 import { isSuperSet, mergeOnly } from '../transform/Entrypoint.helpers';
+import { oxcShaker } from '../shaker';
+import { analyzeOxcBarrelFile } from '../transform/oxcBarrelManifest';
 
 import {
   type EvalRunnerInitPayload,
@@ -233,6 +237,34 @@ type DirectBarrelBinding =
       source: string;
     };
 
+type ModuleNameNode =
+  | { type: 'Identifier'; name: string }
+  | { type: 'StringLiteral'; value: string };
+
+type ModuleSpecifierNode = {
+  exportKind?: string | null;
+  exported: ModuleNameNode;
+  imported: ModuleNameNode;
+  importKind?: string | null;
+  local: ModuleNameNode & { name: string };
+  type: string;
+};
+
+type ModuleStatement = {
+  declaration: { name: string; type: string };
+  exportKind?: string | null;
+  importKind?: string | null;
+  source: { value: string };
+  specifiers: ModuleSpecifierNode[];
+  type: string;
+};
+
+type ParsedModuleAst = {
+  program: {
+    body: ModuleStatement[];
+  };
+};
+
 type PendingRequest = {
   resolve: (payload: unknown) => void;
   reject: (error: Error) => void;
@@ -321,7 +353,8 @@ const buildRunnerInitPayload = (
   featuresOverride?: FeatureFlags<'happyDOM'>
 ): EvalRunnerInitPayload => {
   const evalOptions = getEvalOptions(services);
-  const { pluginOptions, root } = services.options;
+  const { pluginOptions } = services.options;
+  const root = services.options.root ?? process.cwd();
   const { overrideContext, importOverrides, extensions } = pluginOptions;
   const features = featuresOverride ?? pluginOptions.features;
   const baseGlobals: Record<string, unknown> = {
@@ -447,7 +480,7 @@ const loadByImportLoaders = (
 const hashContent = (content: string): string =>
   createHash('sha256').update(content).digest('hex');
 
-const isTypeOnlyImport = (statement: Program['body'][number]): boolean => {
+const isTypeOnlyImport = (statement: ModuleStatement): boolean => {
   if (statement.type !== 'ImportDeclaration') {
     return false;
   }
@@ -466,25 +499,14 @@ const isTypeOnlyImport = (statement: Program['body'][number]): boolean => {
   );
 };
 
-const isTypeOnlyExport = (
-  statement: Extract<
-    Program['body'][number],
-    { type: 'ExportNamedDeclaration' }
-  >
-): boolean => statement.exportKind === 'type';
+const isTypeOnlyExport = (statement: ModuleStatement): boolean =>
+  statement.exportKind === 'type';
 
-const getModuleExportName = (
-  node:
-    | { type: 'Identifier'; name: string }
-    | { type: 'StringLiteral'; value: string }
-): string => (node.type === 'Identifier' ? node.name : node.value);
+const getModuleExportName = (node: ModuleNameNode): string =>
+  node.type === 'Identifier' ? node.name : node.value;
 
-const getImportSpecifierName = (
-  specifier: Extract<
-    Program['body'][number],
-    { type: 'ImportDeclaration' }
-  >['specifiers'][number] & { type: 'ImportSpecifier' }
-): string => getModuleExportName(specifier.imported);
+const getImportSpecifierName = (specifier: ModuleSpecifierNode): string =>
+  getModuleExportName(specifier.imported);
 
 const buildDirectBarrelProxy = (
   services: Services,
@@ -510,9 +532,13 @@ const buildDirectBarrelProxy = (
     return null;
   }
 
+  if (loadedAndParsed.evaluator === oxcShaker) {
+    return buildDirectOxcBarrelProxy(id, loadedAndParsed.code, only);
+  }
+
   const importedBindings = new Map<string, DirectBarrelBinding>();
   const exportedBindings = new Map<string, DirectBarrelBinding>();
-  const ast = loadedAndParsed.ast as File;
+  const ast = loadedAndParsed.ast as unknown as ParsedModuleAst;
 
   for (const statement of ast.program.body) {
     if (statement.type === 'ImportDeclaration') {
@@ -727,6 +753,91 @@ const buildDirectBarrelProxy = (
   };
 };
 
+const buildDirectOxcBarrelProxy = (
+  id: string,
+  code: string,
+  only: string[]
+): PreparedModule | null => {
+  const requested = only.filter((key) => !isEvalOnlyKey(key));
+  const analyzed = analyzeOxcBarrelFile(code, id);
+  if (!('reexports' in analyzed)) {
+    return null;
+  }
+
+  const imports = new Map<string, string[]>();
+  const lines: string[] = [];
+  let namespaceIdx = 0;
+
+  const addImport = (source: string, imported: string) => {
+    if (!imports.has(source)) {
+      imports.set(source, []);
+    }
+
+    const bucket = imports.get(source)!;
+    if (!bucket.includes(imported)) {
+      bucket.push(imported);
+    }
+  };
+
+  for (const exported of requested) {
+    const binding = analyzed.reexports.find(
+      (reexport) => reexport.exported === exported
+    );
+    if (!binding) {
+      return null;
+    }
+
+    if (binding.kind === 'namespace') {
+      if (exported === 'default' || !IDENTIFIER_RE.test(exported)) {
+        return null;
+      }
+
+      const local = `__wyw_ns_${namespaceIdx++}`;
+      lines.push(
+        `import * as ${local} from ${JSON.stringify(binding.source)};`
+      );
+      lines.push(`export { ${local} as ${exported} };`);
+      addImport(binding.source, '*');
+      continue;
+    }
+
+    if (
+      binding.imported !== 'default' &&
+      !IDENTIFIER_RE.test(binding.imported)
+    ) {
+      return null;
+    }
+
+    if (exported !== 'default' && !IDENTIFIER_RE.test(exported)) {
+      return null;
+    }
+
+    const imported =
+      binding.imported === 'default' ? 'default' : binding.imported;
+    const exportClause =
+      exported === 'default'
+        ? `${imported} as default`
+        : imported === exported
+        ? imported
+        : `${imported} as ${exported}`;
+
+    lines.push(
+      `export { ${exportClause} } from ${JSON.stringify(binding.source)};`
+    );
+    addImport(binding.source, binding.imported);
+  }
+
+  if (lines.length === 0) {
+    return null;
+  }
+
+  return {
+    code: `${lines.join('\n')}\n`,
+    imports,
+    only,
+  };
+};
+
 const isPlainObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
@@ -809,7 +920,7 @@ export class EvalBroker {
 
   private readonly onlyByModule = new Map<string, string[]>();
 
-  private readonly dependencies = new Set<string>();
+  private readonly runtimeDependenciesByModule = new Map<string, Set<string>>();
 
   private readonly emittedDependencies = new Set<string>();
 
@@ -838,7 +949,7 @@ export class EvalBroker {
     dependencies: string[];
   }> {
     const task = this.evalQueue.then(async () => {
-      this.dependencies.clear();
+      this.runtimeDependenciesByModule.clear();
       this.emittedDependencies.clear();
       this.importsByModule.clear();
       this.onlyByModule.clear();
@@ -908,9 +1019,39 @@ export class EvalBroker {
         exportsProxy[key] = deserializeValue(serialized);
       });
 
+      let knownExports = this.services.cache.get('exports', id) as
+        | string[]
+        | undefined;
+      if (
+        !knownExports &&
+        target.loadedAndParsed &&
+        target.loadedAndParsed.evaluator === oxcShaker
+      ) {
+        const analyzed = collectOxcExportsAndImports(
+          target.loadedAndParsed.code,
+          target.loadedAndParsed.evalConfig.filename ?? id
+        );
+        if (analyzed.reexports.every((reexport) => reexport.exported !== '*')) {
+          knownExports = Array.from(
+            new Set([
+              ...Object.keys(analyzed.exports),
+              ...analyzed.reexports.map((reexport) => reexport.exported),
+            ])
+          );
+          this.services.cache.add('exports', id, knownExports);
+        }
+      }
+      const serializedKeys = Object.keys(serializedExports);
+      const coversAllKnownExports =
+        Array.isArray(knownExports) &&
+        knownExports.filter((key) => !isEvalOnlyKey(key)).length > 0 &&
+        knownExports
+          .filter((key) => !isEvalOnlyKey(key))
+          .every((key) => serializedKeys.includes(key));
+      const coversModule = coversAllKnownExports;
       const merged = mergeOnly(
         existingEvaluatedOnly,
-        Object.keys(serializedExports)
+        coversModule ? ['*'] : serializedKeys
       );
       if (target.evaluatedOnly) {
         target.evaluatedOnly.splice(0, target.evaluatedOnly.length, ...merged);
@@ -1322,8 +1463,8 @@ export class EvalBroker {
   }
 
   private handleWarn(warning: EvalWarning) {
-    if (warning.code === 'require-fallback' && warning.specifier) {
-      this.dependencies.add(warning.specifier);
+    if (warning.importer && warning.specifier) {
+      this.trackRuntimeDependency(warning.importer, warning.specifier);
     }
     emitEvalWarning(this.services, warning);
   }
@@ -1427,7 +1568,10 @@ export class EvalBroker {
     const evalOptions = getEvalOptions(this.services);
     const stack = [importerId];
     const importsOnly = this.importsByModule.get(importerId)?.get(specifier);
-    const only = importsOnly ?? ['*'];
+    const importerOnly = this.onlyByModule.get(importerId) ?? ['*'];
+    const only = importerOnly.includes('__wywPreval')
+      ? mergeOnly(importsOnly ?? ['*'], ['__wywPreval'])
+      : (importsOnly ?? ['*']);
     if (process.env.WYW_DEBUG_EVAL_RESOLVE && !importsOnly) {
       // eslint-disable-next-line no-console
       console.warn('[wyw-eval:resolve:only-miss]', {
@@ -1697,6 +1841,17 @@ export class EvalBroker {
     });
   }
 
+  private trackRuntimeDependency(importerId: string, specifier: string) {
+    if (isBuiltinSpecifier(specifier) || isVirtualSpecifier(specifier)) {
+      return;
+    }
+
+    const dependencies =
+      this.runtimeDependenciesByModule.get(importerId) ?? new Set<string>();
+    dependencies.add(specifier);
+    this.runtimeDependenciesByModule.set(importerId, dependencies);
+  }
+
   private trackImporterDependency(
     importerId: string,
     source: string,
@@ -1736,7 +1891,9 @@ export class EvalBroker {
   }
 
   private collectEntrypointDependencies(entrypointId: string): string[] {
-    const collected = new Set(this.dependencies);
+    const collected = new Set(
+      this.runtimeDependenciesByModule.get(entrypointId) ?? []
+    );
     const cachedEntrypoint = this.services.cache.get(
       'entrypoints',
       entrypointId
@@ -1761,14 +1918,6 @@ export class EvalBroker {
         collected.add(specifier);
       }
     });
-    const imports = this.importsByModule.get(entrypointId);
-    if (imports) {
-      for (const specifier of imports.keys()) {
-        if (!isBuiltinSpecifier(specifier) && !isVirtualSpecifier(specifier)) {
-          collected.add(specifier);
-        }
-      }
-    }
     return Array.from(collected);
   }
 
@@ -2006,7 +2155,7 @@ export class EvalBroker {
       cached = undefined;
     }
 
-    const requiredOnly = this.onlyByModule.get(id) ?? ['*'];
+    let requiredOnly = this.onlyByModule.get(id) ?? ['*'];
     const cachedEntrypoint = this.services.cache.get('entrypoints', id) as
       | {
           evaluated?: boolean;
@@ -2022,6 +2171,7 @@ export class EvalBroker {
       cachedEntrypoint.evaluated &&
       !cachedEntrypoint.ignored &&
       cachedEntrypoint.exports &&
+      !requiredOnly.some(isEvalOnlyKey) &&
       isSuperSet(cachedEntrypoint.evaluatedOnly ?? [], requiredOnly)
     ) {
       const cacheOnly = cachedEntrypoint.evaluatedOnly ?? requiredOnly;
@@ -2145,6 +2295,24 @@ export class EvalBroker {
           ...directBarrelProxy,
           hash: hashContent(directBarrelProxy.code),
         };
+      }
+
+      if (!requiredOnly.includes('*')) {
+        const loadedAndParsed = this.services.loadAndParseFn(
+          this.services,
+          id,
+          undefined,
+          this.services.log
+        );
+
+        if (
+          loadedAndParsed.evaluator !== 'ignored' &&
+          loadedAndParsed.evaluator === oxcShaker &&
+          isStaticallyEvaluatableModule(loadedAndParsed.code, id)
+        ) {
+          requiredOnly = ['*'];
+          this.onlyByModule.set(id, requiredOnly);
+        }
       }
 
       const prepared = prepareModuleOnDemand(

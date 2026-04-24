@@ -1,8 +1,4 @@
-import type { TransformOptions as BabelTransformOptions } from '@babel/core';
-import type { File } from '@babel/types';
-
 import type { IVariableContext } from '../IVariableContext';
-import type { Core } from '../babel';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type VmContext = Record<string, any>; // It's Context from `vm`
@@ -33,14 +29,35 @@ export type EvaluatorConfig = {
   root?: string;
 };
 
+export type EvaluatorOptions = {
+  ast?: boolean | null;
+  configFile?: boolean | null | string;
+  env?: Record<string, EvaluatorOptions | null | undefined> | null;
+  filename?: string | null;
+  inputSourceMap?: object | null;
+  overrides?: EvaluatorOptions[] | null;
+  plugins?: unknown[] | null;
+  presets?: unknown[] | null;
+  root?: string | null;
+  sourceFileName?: string | null;
+  sourceMaps?: boolean | 'both' | 'inline' | null;
+  [key: string]: unknown;
+};
+
+export type TransformEngineOptions = EvaluatorOptions;
+
+export type EvaluatorAst = unknown;
+
+export type EvaluatorRuntime = unknown;
+
 export type Evaluator = (
-  evalConfig: BabelTransformOptions,
-  ast: File,
+  evalConfig: EvaluatorOptions,
+  ast: EvaluatorAst,
   code: string,
   config: EvaluatorConfig,
-  babel: Core
+  runtime: EvaluatorRuntime
 ) => [
-  ast: File,
+  ast: EvaluatorAst,
   code: string,
   imports: Map<string, string[]> | null,
   exports?: string[] | null,
@@ -49,14 +66,7 @@ export type Evaluator = (
 export type EvalRule = {
   action: Evaluator | 'ignore' | string;
   /**
-   * @deprecated Use `oxcOptions` for the Oxc-first transform path. Babel
-   * options are kept for the current Babel-backed implementation until the
-   * evaluator cutover is complete.
-   */
-  babelOptions?: BabelTransformOptions;
-  /**
-   * Per-rule Oxc options for the Oxc-first transform path. Kept inert until
-   * the evaluator/parser cutover wires Oxc execution in later slices.
+   * Per-rule Oxc options for the Oxc-first transform path.
    */
   oxcOptions?: OxcOptions;
   test?: RegExp | ((path: string, code: string) => boolean);
@@ -175,7 +185,6 @@ type AllFeatureFlags = {
   globalCache: FeatureFlag;
   happyDOM: FeatureFlag;
   softErrors: FeatureFlag;
-  useBabelConfigs: FeatureFlag;
   useWeakRefInEval: FeatureFlag;
 };
 
@@ -199,19 +208,12 @@ export type OxcOptions = {
    */
   resolver?: Record<string, unknown>;
   /**
-   * Transform-level Oxc options. Babel options remain supported for the
-   * current compatibility path until cutover.
+   * Transform-level Oxc options.
    */
   transform?: Record<string, unknown>;
 };
 
 export type StrictOptions = {
-  /**
-   * @deprecated Use `oxcOptions` for the Oxc-first transform path. Babel
-   * options are kept for the current Babel-backed implementation until the
-   * evaluator cutover is complete.
-   */
-  babelOptions: BabelTransformOptions;
   classNameSlug?: string | ClassNameFn;
   codeRemover?: CodeRemoverOptions;
   conditionNames?: string[];
@@ -230,8 +232,7 @@ export type StrictOptions = {
     filename: string
   ) => Partial<VmContext>;
   /**
-   * Oxc-first transform options. This is preserved beside `babelOptions` in
-   * the foundation slice and becomes authoritative after the Oxc cutover.
+   * Oxc-first transform options.
    */
   oxcOptions: OxcOptions;
   rules: EvalRule[];

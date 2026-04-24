@@ -36,6 +36,10 @@ class LruCache {
     }
   }
 
+  delete(key) {
+    this.map.delete(key);
+  }
+
   clear() {
     this.map.clear();
   }
@@ -49,7 +53,7 @@ const prefixStream = (getPrefix) =>
     write(chunk, _enc, cb) {
       const p = getPrefix();
       const s = chunk.toString();
-      process.stderr.write(p + s.replaceAll('\n', '\n' + p), cb);
+      process.stderr.write(p + s.replaceAll('\n', `\n${p}`), cb);
     },
   });
 
@@ -181,6 +185,24 @@ const getObjectTypeName = (value) => {
 
   const tag = Object.prototype.toString.call(value);
   return tag.slice(8, -1) || 'Object';
+};
+
+const getBoxedPrimitiveValue = (value) => {
+  const tag = Object.prototype.toString.call(value);
+
+  if (tag === '[object String]') {
+    return { kind: 'string', value: String(value.valueOf()) };
+  }
+
+  if (tag === '[object Number]') {
+    return { kind: 'number', value: Number(value.valueOf()) };
+  }
+
+  if (tag === '[object Boolean]') {
+    return { kind: 'boolean', value: Boolean(value.valueOf()) };
+  }
+
+  return null;
 };
 
 const formatPath = (rootLabel, pathSegments) =>
@@ -374,6 +396,18 @@ const serializeValueAtPath = (
 
     throwUnsupportedIpcValue(rootLabel, pathSegments, 'an unsupported symbol');
   }
+  if (typeof value === 'object' && value !== null) {
+    const boxed = getBoxedPrimitiveValue(value);
+    if (boxed) {
+      if (boxed.kind === 'number') {
+        if (Number.isNaN(boxed.value)) return { kind: 'nan' };
+        if (boxed.value === Infinity) return { kind: 'infinity' };
+        if (boxed.value === -Infinity) return { kind: '-infinity' };
+      }
+
+      return boxed;
+    }
+  }
   if (isLikeError(value)) {
     return {
       kind: 'error',
@@ -511,6 +545,7 @@ const deserializeValue = (value) => {
     case 'function':
       return () => {};
     case 'symbol':
+      // eslint-disable-next-line symbol-description
       return value.description ? Symbol.for(value.description) : Symbol();
     case 'error': {
       const error = new Error(value.error?.message ?? '');
@@ -946,6 +981,16 @@ const resetModuleState = () => {
   resolveCache.clear();
 };
 
+const resetSingleModuleState = (id, cachedModule = moduleCache.get(id)) => {
+  if (cachedModule) {
+    linkPromises.delete(cachedModule);
+  }
+
+  moduleCache.delete(id);
+  moduleHashes.delete(id);
+  moduleData.delete(id);
+};
+
 const resetEvaluationState = () => {
   if (state.teardown) {
     state.teardown();
@@ -964,6 +1009,8 @@ const normalizeWriteError = (label, error) => {
 
   return new Error(`[wyw-in-js] Failed to write to ${label}: ${String(error)}`);
 };
+
+const keepAlive = setInterval(() => {}, 60_000);
 
 const finishShutdown = (exitCode = 0) => {
   if (shutdownFinished) {
@@ -995,6 +1042,9 @@ const flushStdoutWriteQueue = () => {
   let settled = false;
   let writeCompleted = false;
   let drainCompleted = true;
+  let onClose;
+  let onDrain;
+  let onError;
 
   const cleanup = () => {
     process.stdout.off('close', onClose);
@@ -1032,18 +1082,18 @@ const flushStdoutWriteQueue = () => {
     flushStdoutWriteQueue();
   };
 
-  const onClose = () => {
+  onClose = () => {
     finish(
       new Error('eval runner stdout closed before pending write completed')
     );
   };
 
-  const onDrain = () => {
+  onDrain = () => {
     drainCompleted = true;
     finish();
   };
 
-  const onError = (error) => {
+  onError = (error) => {
     finish(error);
   };
 
@@ -1080,8 +1130,6 @@ const queueStdoutWrite = (chunk) =>
 const sendMessage = (message) => {
   queueStdoutWrite(`${JSON.stringify(message)}\n`).catch(() => {});
 };
-
-const keepAlive = setInterval(() => {}, 60_000);
 
 const shutdown = () => {
   shutdownRequested = true;
@@ -1465,6 +1513,8 @@ const linkModule = async (module) => {
         resolveModule(specifier, referencingModule.identifier, 'import')
       );
       return module;
+    } catch (error) {
+      throw error;
     } finally {
       linkPromises.delete(module);
     }
@@ -1523,7 +1573,12 @@ resolveModule = async (specifier, importer, kind) => {
         importer,
         state.evalOptions.extensions
       );
-      return loadExternalModule(normalized, importer, specifier);
+      const externalModule = await loadExternalModule(
+        normalized,
+        importer,
+        specifier
+      );
+      return externalModule;
     }
 
     const normalized = normalizeResolvedId(
@@ -1639,6 +1694,9 @@ loadModule = async (id, importer, requestSpec) => {
       if (cached && loaded.hash && moduleHashes.get(id) === loaded.hash) {
         return cached;
       }
+
+      resetSingleModuleState(id, cached);
+
       const exportsValue = {};
       Object.entries(loaded.exports).forEach(([key, serialized]) => {
         exportsValue[key] = deserializeValue(serialized);
@@ -1653,6 +1711,8 @@ loadModule = async (id, importer, requestSpec) => {
     if (cached && loaded.hash && moduleHashes.get(id) === loaded.hash) {
       return cached;
     }
+
+    resetSingleModuleState(id, cached);
 
     const module = new vm.SourceTextModule(
       `${buildPreamble(id)}${loaded.code ?? ''}`,
@@ -1791,11 +1851,13 @@ const collectModuleExports = () => {
       Object.keys(namespace).length;
     const source = hasNamespace ? namespace : data.module.exports;
 
-    const keys = only.includes('*')
-      ? Object.keys(source ?? {}).filter(
-          (key) => key !== '__wywPreval' && key !== 'side-effect'
-        )
-      : only.filter((key) => key !== '__wywPreval' && key !== 'side-effect');
+    const discoveredKeys = Object.keys(source ?? {}).filter(
+      (key) => key !== '__wywPreval' && key !== 'side-effect' && key !== '*'
+    );
+    const requestedKeys = only.filter(
+      (key) => key !== '__wywPreval' && key !== 'side-effect' && key !== '*'
+    );
+    const keys = Array.from(new Set([...requestedKeys, ...discoveredKeys]));
 
     if (keys.length === 0) return;
 

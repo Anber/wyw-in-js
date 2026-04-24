@@ -34,28 +34,27 @@ esbuild
   .catch(() => process.exit(1));
 ```
 
-## Additional Babel transformations
+## Additional Oxc transformations
 
-`@wyw-in-js/esbuild` runs WyW evaluation after an `esbuild.transform()` step, so some Babel plugins may not be able to
-operate on the original TS/JSX source.
+`@wyw-in-js/esbuild` runs WyW evaluation after an `esbuild.transform()` step, so transform options that must run on the
+original TS/JSX source should be configured explicitly.
 
-Enable `babelTransform` to apply `babelOptions` to the original source code before the esbuild/WyW pipeline:
+Enable `oxcTransform` to apply `oxcOptions.transform` to the original source code before the esbuild/WyW pipeline:
 
 ```js
 wyw({
-  babelTransform: true,
-  babelOptions: {
-    plugins: [
-      // your custom Babel plugins
-    ],
+  oxcTransform: true,
+  oxcOptions: {
+    transform: {
+      define: {
+        __DEV__: 'false',
+      },
+    },
   },
 });
 ```
 
-Order: `Babel(source) → esbuild.transform() → WyW transform`.
-
-Note: `babelOptions` are still used by WyW when parsing/evaluating modules. With `babelTransform: true`, the same plugins
-may run both before esbuild and again during WyW's internal Babel stage. Prefer idempotent plugins.
+Order: `Oxc(source) → esbuild.transform() → WyW transform`.
 
 This is an opt-in feature and may increase build times, so it's recommended to keep `filter` narrow.
 

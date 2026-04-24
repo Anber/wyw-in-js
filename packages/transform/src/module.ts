@@ -3,10 +3,10 @@
  * used for resolving values for dependencies interpolated in `css` or `styled`.
  *
  * This serves 2 purposes:
- * - Avoid leakage from evaluated code to module cache in current context, e.g. `babel-register`
+ * - Avoid leakage from evaluated code to module cache in current context
  * - Allow us to invalidate the module cache without affecting other stuff, necessary for rebuilds
  *
- * We also use it to transpile the code with Babel by default.
+ * We also store prepared evaluator code in it.
  * We also store source maps for it to provide correct error stacktraces.
  *
  */

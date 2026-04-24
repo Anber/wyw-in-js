@@ -1,7 +1,7 @@
 import {
   maybeNeedsDynamicImportPlugin,
   maybeNeedsRequireFallbackPlugin,
-} from '../preevalStage';
+} from '../../__tests__/legacy-babel-reference/transform/preevalStage';
 
 describe('preevalStage plugin guards', () => {
   it('detects dynamic import with whitespace', () => {
@@ -25,22 +25,22 @@ describe('preevalStage plugin guards', () => {
   });
 
   it('detects require calls with whitespace', () => {
-    expect(maybeNeedsRequireFallbackPlugin("const dep = require ('./dep');")).toBe(
-      true
-    );
+    expect(
+      maybeNeedsRequireFallbackPlugin("const dep = require ('./dep');")
+    ).toBe(true);
   });
 
   it('detects require calls with an inline block comment', () => {
     expect(
-      maybeNeedsRequireFallbackPlugin(
-        "const dep = require/* keep */('./dep');"
-      )
+      maybeNeedsRequireFallbackPlugin("const dep = require/* keep */('./dep');")
     ).toBe(true);
   });
 
   it('does not match identifiers that only contain require in their name', () => {
     expect(
-      maybeNeedsRequireFallbackPlugin('const requireValue = makeRequireValue();')
+      maybeNeedsRequireFallbackPlugin(
+        'const requireValue = makeRequireValue();'
+      )
     ).toBe(false);
   });
 });

@@ -2,8 +2,6 @@ export { slugify } from '@wyw-in-js/shared';
 
 export { createFileReporter } from './debug/fileReporter';
 export type { IFileReporterOptions } from './debug/fileReporter';
-export { default as babelTransformPlugin } from './plugins/babel-transform';
-export { default as preeval } from './plugins/preeval';
 export {
   createTransformManifest,
   getTransformMetadata,
@@ -20,15 +18,28 @@ export type {
 export { collectTransformDiagnostics } from './utils/TransformDiagnostics';
 export type { WYWTransformDiagnostic } from './utils/TransformDiagnostics';
 export { Module, DefaultModuleImplementation } from './module';
-export { default as shaker } from './shaker';
+export { default as shaker, oxcShaker } from './shaker';
 export { transform } from './transform';
 export { disposeEvalBroker } from './eval/broker';
 export {
   isUnprocessedEntrypointError,
   UnprocessedEntrypointError,
 } from './transform/actions/UnprocessedEntrypointError';
-export * from './types';
-export type { PluginOptions, Preprocessor, Result } from './types';
+export type {
+  Dependencies,
+  ITransformFileResult,
+  JSONArray,
+  JSONObject,
+  JSONValue,
+  Options,
+  ParentEntrypoint,
+  PluginOptions,
+  Preprocessor,
+  PreprocessorFn,
+  Result,
+  Serializable,
+  Stage,
+} from './types';
 export { EvaluatedEntrypoint } from './transform/EvaluatedEntrypoint';
 export type { IEvaluatedEntrypoint } from './transform/EvaluatedEntrypoint';
 export { parseFile } from './transform/Entrypoint.helpers';
@@ -53,9 +64,7 @@ export type {
 } from './utils/EventEmitter';
 export { isNode } from './utils/isNode';
 export { getFileIdx } from './utils/getFileIdx';
-export { applyProcessors } from './utils/getTagProcessor';
 export { getVisitorKeys } from './utils/getVisitorKeys';
 export type { VisitorKeys } from './utils/getVisitorKeys';
 export { peek } from './utils/peek';
 export { TransformCacheCollection } from './cache';
-export { findIdentifiers } from './utils/findIdentifiers';

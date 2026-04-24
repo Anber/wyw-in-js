@@ -5,11 +5,11 @@ import type { NodePath } from '@babel/core';
 import type { CallExpression, Program } from '@babel/types';
 import dedent from 'dedent';
 
-import type { MissedBabelCoreTypes } from '../../types';
+import type { MissedBabelCoreTypes } from '../legacy-babel-reference/legacyBabelTypes';
 import {
   getReactImportSummary,
   isUnnecessaryReactCall,
-} from '../../utils/isUnnecessaryReactCall';
+} from '../legacy-babel-reference/utils/isUnnecessaryReactCall';
 
 const { File } = babel as typeof babel & MissedBabelCoreTypes;
 
