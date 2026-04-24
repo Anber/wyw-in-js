@@ -167,6 +167,12 @@ export const getProcessorForImport = (
   options: Pick<StrictOptions, 'tagResolver'>
 ): [ProcessorClass | null, TagSource] => {
   const { tagResolver } = options;
+  const packageLookupCandidate = isPackageLookupCandidate(source);
+
+  if (!tagResolver && !packageLookupCandidate) {
+    return [null, { imported, source }];
+  }
+
   const cacheKey = tagResolver
     ? createTagResolverLookupCacheKey(source, imported, filename)
     : createPackageLookupCacheKey(source, imported);
@@ -178,7 +184,6 @@ export const getProcessorForImport = (
     return [lookupCache.get(cacheKey) ?? null, { imported, source }];
   }
 
-  const packageLookupCandidate = isPackageLookupCandidate(source);
   let customFile: string | null = null;
   if (tagResolver) {
     const tagResolverMeta: TagResolverMeta = {
