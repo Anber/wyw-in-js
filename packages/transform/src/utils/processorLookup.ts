@@ -21,11 +21,16 @@ const tagResolverProcessorLookupCache = new WeakMap<
   Map<string, ProcessorClass | null>
 >();
 
-const createProcessorLookupCacheKey = (
+const createTagResolverLookupCacheKey = (
   source: string,
   imported: string,
   filename: string | null | undefined
 ): string => `${filename ?? ''}\0${source}\0${imported}`;
+
+const createPackageLookupCacheKey = (
+  source: string,
+  imported: string
+): string => `${source}\0${imported}`;
 
 const getTagResolverLookupCache = (
   tagResolver: NonNullable<StrictOptions['tagResolver']>
@@ -135,7 +140,9 @@ export const getProcessorForImport = (
   options: Pick<StrictOptions, 'tagResolver'>
 ): [ProcessorClass | null, TagSource] => {
   const { tagResolver } = options;
-  const cacheKey = createProcessorLookupCacheKey(source, imported, filename);
+  const cacheKey = tagResolver
+    ? createTagResolverLookupCacheKey(source, imported, filename)
+    : createPackageLookupCacheKey(source, imported);
   const lookupCache = tagResolver
     ? getTagResolverLookupCache(tagResolver)
     : packageProcessorLookupCache;
