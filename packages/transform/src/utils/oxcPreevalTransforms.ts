@@ -86,6 +86,19 @@ const defaultReactComponentTypes = [
   'NamedExoticComponent',
 ];
 const generatedProcessorHelperNameRe = /^_exp\d*$/;
+const removableOwnerTypes = new Set([
+  'DoWhileStatement',
+  'ExpressionStatement',
+  'ForInStatement',
+  'ForOfStatement',
+  'ForStatement',
+  'FunctionDeclaration',
+  'IfStatement',
+  'PropertyDefinition',
+  'ReturnStatement',
+  'VariableDeclaration',
+  'WhileStatement',
+]);
 
 const createScope = (parent: Scope | null, key: string): Scope => ({
   bindings: new Map(),
@@ -779,27 +792,44 @@ const isInsideTypeof = (ancestors: Node[]): boolean =>
       ancestor.type === 'UnaryExpression' && ancestor.operator === 'typeof'
   );
 
-const findRemovableOwner = (node: Node, ancestors: Node[]): Node => {
-  const chain = [...ancestors, node].reverse();
-  const owner =
-    chain.find((ancestor) =>
-      [
-        'DoWhileStatement',
-        'ExpressionStatement',
-        'ForInStatement',
-        'ForOfStatement',
-        'ForStatement',
-        'FunctionDeclaration',
-        'IfStatement',
-        'PropertyDefinition',
-        'ReturnStatement',
-        'VariableDeclaration',
-        'WhileStatement',
-      ].includes(ancestor.type)
-    ) ?? node;
+function findLastAncestor<T extends Node>(
+  ancestors: Node[],
+  predicate: (ancestor: Node) => ancestor is T
+): T | null;
+function findLastAncestor(
+  ancestors: Node[],
+  predicate: (ancestor: Node) => boolean
+): Node | null;
+function findLastAncestor(
+  ancestors: Node[],
+  predicate: (ancestor: Node) => boolean
+): Node | null {
+  for (let idx = ancestors.length - 1; idx >= 0; idx -= 1) {
+    const ancestor = ancestors[idx];
+    if (predicate(ancestor)) {
+      return ancestor;
+    }
+  }
 
-  const parentIndex = ancestors.indexOf(owner) - 1;
-  const parent = parentIndex >= 0 ? ancestors[parentIndex] : null;
+  return null;
+}
+
+const findRemovableOwner = (node: Node, ancestors: Node[]): Node => {
+  let owner: Node = node;
+  let ownerAncestorIndex = -1;
+
+  if (!removableOwnerTypes.has(node.type)) {
+    for (let idx = ancestors.length - 1; idx >= 0; idx -= 1) {
+      const ancestor = ancestors[idx];
+      if (removableOwnerTypes.has(ancestor.type)) {
+        owner = ancestor;
+        ownerAncestorIndex = idx;
+        break;
+      }
+    }
+  }
+
+  const parent = ownerAncestorIndex > 0 ? ancestors[ownerAncestorIndex - 1] : null;
   if (
     parent?.type === 'ExportNamedDeclaration' &&
     'declaration' in parent &&
@@ -812,7 +842,8 @@ const findRemovableOwner = (node: Node, ancestors: Node[]): Node => {
 };
 
 const findPromiseCallbackOwner = (ancestors: Node[]): Node | null => {
-  for (const ancestor of [...ancestors].reverse()) {
+  for (let idx = ancestors.length - 1; idx >= 0; idx -= 1) {
+    const ancestor = ancestors[idx];
     if (
       ancestor.type === 'NewExpression' &&
       ancestor.callee.type === 'Identifier' &&
@@ -1172,8 +1203,8 @@ const isFunctionLikeNode = (node: Node): node is OxcFunctionLikeNode =>
   node.type === 'ArrowFunctionExpression';
 
 const findFunctionReplacement = (ancestors: Node[]): Replacement | null => {
-  const reversed = [...ancestors].reverse();
-  const renderMethod = reversed.find(
+  const renderMethod = findLastAncestor(
+    ancestors,
     (ancestor) =>
       ancestor.type === 'MethodDefinition' &&
       ancestor.key.type === 'Identifier' &&
@@ -1181,9 +1212,10 @@ const findFunctionReplacement = (ancestors: Node[]): Replacement | null => {
   );
 
   if (renderMethod) {
-    const classDecl = [...ancestors]
-      .reverse()
-      .find((ancestor) => ancestor.type === 'ClassDeclaration');
+    const classDecl = findLastAncestor(
+      ancestors,
+      (ancestor) => ancestor.type === 'ClassDeclaration'
+    );
     const className = classDecl ? getClassName(classDecl) : null;
     if (classDecl && className) {
       return {
@@ -1194,7 +1226,7 @@ const findFunctionReplacement = (ancestors: Node[]): Replacement | null => {
     }
   }
 
-  const functionNode = reversed.find(isFunctionLikeNode);
+  const functionNode = findLastAncestor(ancestors, isFunctionLikeNode);
 
   if (!functionNode) {
     return null;
@@ -1406,14 +1438,13 @@ export const removeDangerousCodeWithOxc = (
       return;
     }
 
-    const generatedHelperDeclarator = [...ancestors]
-      .reverse()
-      .find(
-        (ancestor) =>
-          ancestor.type === 'VariableDeclarator' &&
-          ancestor.id.type === 'Identifier' &&
-          generatedProcessorHelperNameRe.test(ancestor.id.name)
-      );
+    const generatedHelperDeclarator = findLastAncestor(
+      ancestors,
+      (ancestor) =>
+        ancestor.type === 'VariableDeclarator' &&
+        ancestor.id.type === 'Identifier' &&
+        generatedProcessorHelperNameRe.test(ancestor.id.name)
+    );
     if (generatedHelperDeclarator) {
       return;
     }

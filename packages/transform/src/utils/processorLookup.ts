@@ -32,6 +32,33 @@ const createPackageLookupCacheKey = (
   imported: string
 ): string => `${source}\0${imported}`;
 
+const URL_SCHEME_RE = /^[A-Za-z][A-Za-z\d+.-]*:/;
+
+const isPackageLookupCandidate = (source: string): boolean => {
+  if (
+    !source ||
+    source.startsWith('.') ||
+    source.startsWith('/') ||
+    source.startsWith('\\') ||
+    source.startsWith('\0') ||
+    source.startsWith('@/') ||
+    source.startsWith('~/') ||
+    source.startsWith('#') ||
+    source.includes('?') ||
+    source.includes('#') ||
+    URL_SCHEME_RE.test(source)
+  ) {
+    return false;
+  }
+
+  if (source.startsWith('@')) {
+    const [scope, pkg] = source.split('/', 2);
+    return scope.length > 1 && !!pkg;
+  }
+
+  return true;
+};
+
 const getTagResolverLookupCache = (
   tagResolver: NonNullable<StrictOptions['tagResolver']>
 ): Map<string, ProcessorClass | null> => {
@@ -151,6 +178,7 @@ export const getProcessorForImport = (
     return [lookupCache.get(cacheKey) ?? null, { imported, source }];
   }
 
+  const packageLookupCandidate = isPackageLookupCandidate(source);
   let customFile: string | null = null;
   if (tagResolver) {
     const tagResolverMeta: TagResolverMeta = {
@@ -162,7 +190,9 @@ export const getProcessorForImport = (
   }
   const processor = customFile
     ? getProcessorFromFile(customFile)
-    : getProcessorFromPackage(source, imported, filename);
+    : packageLookupCandidate
+      ? getProcessorFromPackage(source, imported, filename)
+      : null;
   lookupCache.set(cacheKey, processor);
   return [processor, { imported, source }];
 };
