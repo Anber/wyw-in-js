@@ -12,7 +12,6 @@ import type {
 } from '@wyw-in-js/processor-utils';
 import type { ExpressionValue, StrictOptions } from '@wyw-in-js/shared';
 import { ValueType } from '@wyw-in-js/shared';
-import { parseSync } from 'oxc-parser';
 import type {
   CallExpression,
   Expression,
@@ -22,10 +21,12 @@ import type {
   TaggedTemplateExpression,
 } from 'oxc-parser';
 
-import { collectOxcExportsAndImports } from './collectOxcExportsAndImports';
+import { collectOxcProcessorImportsFromProgram } from './collectOxcExportsAndImports';
+import { EventEmitter } from './EventEmitter';
 import { collectOxcExpressionDependencies } from './collectOxcTemplateDependencies';
 import { isNotNull } from './isNotNull';
 import { createOxcAstService } from './oxcAstService';
+import { parseOxcProgramCached } from './parseOxc';
 import { getProcessorForImport, type ProcessorClass } from './processorLookup';
 
 type DefinedProcessor = [ProcessorClass, { imported: string; source: string }];
@@ -146,18 +147,7 @@ const getChildren = (node: Node): Node[] => {
 };
 
 const parseOxc = (code: string, filename: string): Program => {
-  const parsed = parseSync(filename, code, {
-    astType:
-      filename.endsWith('.ts') || filename.endsWith('.tsx') ? 'ts' : 'js',
-    range: true,
-    sourceType: 'module',
-  });
-  const fatalError = parsed.errors.find((error) => error.severity === 'Error');
-  if (fatalError) {
-    throw new Error(fatalError.message);
-  }
-
-  return parsed.program as Program;
+  return parseOxcProgramCached(filename, code, 'module');
 };
 
 const visit = (
@@ -487,12 +477,15 @@ const collectTopLevelStatementInfos = (program: Program): TopLevelStatementInfo[
     references: collectReferencedNames(statement),
   }));
 
-const collectRemovableNames = (
-  program: Program,
+const collectTopLevelBindingsFromStatements = (
+  statements: TopLevelStatementInfo[]
+): Set<string> => new Set(statements.flatMap((statement) => [...statement.bindings]));
+
+const collectRemovableNamesFromStatements = (
+  statements: TopLevelStatementInfo[],
   initialNames: Set<string>
 ): Set<string> => {
   const removable = new Set(initialNames);
-  const statements = collectTopLevelStatementInfos(program);
   const bindingToStatement = new Map<string, TopLevelStatementInfo>();
 
   statements.forEach((statement) => {
@@ -842,13 +835,11 @@ const collectScopedRemovableBindingIds = (
   return removable;
 };
 
-const removeUnusedScopedDeclarationsAfterReplacement = (
+const collectUnusedScopedDeclarationRemovals = (
   code: string,
-  filename: string,
+  bindings: Map<string, ScopedBindingInfo>,
   initialRemovableNames: Set<string>
-): string => {
-  const program = parseOxc(code, filename);
-  const bindings = collectScopedBindingInfos(program);
+): Replacement[] => {
   const removableBindingIds = collectScopedRemovableBindingIds(
     bindings,
     initialRemovableNames
@@ -898,9 +889,7 @@ const removeUnusedScopedDeclarationsAfterReplacement = (
     removals.set(`${range.start}:${range.end}`, range);
   });
 
-  return removals.size > 0
-    ? applyReplacements(code, [...removals.values()])
-    : code;
+  return [...removals.values()];
 };
 
 const expandImportRemovalRange = (
@@ -1027,13 +1016,12 @@ const mergeEmptyRemovalRanges = (removals: Replacement[]): Replacement[] => {
   return merged;
 };
 
-const removeUnusedImportsAfterReplacement = (
+const collectUnusedImportRemovals = (
   code: string,
-  filename: string,
+  program: Program,
+  referencedNames: Set<string>,
   removableNames: Set<string>
-): string => {
-  const program = parseOxc(code, filename);
-  const referencedNames = collectReferencedNames(program);
+): Replacement[] => {
   const removals: Replacement[] = [];
 
   program.body.forEach((statement) => {
@@ -1083,18 +1071,15 @@ const removeUnusedImportsAfterReplacement = (
     });
   });
 
-  return removals.length > 0
-    ? applyReplacements(code, mergeEmptyRemovalRanges(removals))
-    : code;
+  return removals;
 };
 
-const removeUnusedTopLevelDeclarationsAfterReplacement = (
+const collectUnusedTopLevelDeclarationRemovals = (
   code: string,
-  filename: string,
+  program: Program,
+  referencedNames: Set<string>,
   removableNames: Set<string>
-): string => {
-  const program = parseOxc(code, filename);
-  const referencedNames = collectReferencedNames(program);
+): Replacement[] => {
   const removals: Replacement[] = [];
 
   program.body.forEach((statement) => {
@@ -1115,15 +1100,14 @@ const removeUnusedTopLevelDeclarationsAfterReplacement = (
     }
   });
 
-  return removals.length > 0 ? applyReplacements(code, removals) : code;
+  return removals;
 };
 
-const removeUnusedGeneratedHelperDeclarationsAfterReplacement = (
+const collectUnusedGeneratedHelperDeclarationRemovals = (
   code: string,
-  filename: string
-): string => {
-  const program = parseOxc(code, filename);
-  const referencedNames = collectReferencedNames(program);
+  program: Program,
+  referencedNames: Set<string>
+): Replacement[] => {
   const removals: Replacement[] = [];
 
   program.body.forEach((statement) => {
@@ -1143,19 +1127,15 @@ const removeUnusedGeneratedHelperDeclarationsAfterReplacement = (
     }
   });
 
-  return removals.length > 0 ? applyReplacements(code, removals) : code;
+  return removals;
 };
 
-const removeTopLevelExpressionStatementsAfterReplacement = (
+const collectTopLevelExpressionStatementRemovals = (
   code: string,
-  filename: string,
+  statements: TopLevelStatementInfo[],
+  topLevelBindings: Set<string>,
   removableExpressionRefs: Set<string>
-): string => {
-  const program = parseOxc(code, filename);
-  const statements = collectTopLevelStatementInfos(program);
-  const topLevelBindings = new Set(
-    statements.flatMap((statement) => [...statement.bindings])
-  );
+): Replacement[] => {
   const removals: Replacement[] = [];
 
   statements.forEach((statement) => {
@@ -1195,14 +1175,13 @@ const removeTopLevelExpressionStatementsAfterReplacement = (
     }
   });
 
-  return removals.length > 0 ? applyReplacements(code, removals) : code;
+  return removals;
 };
 
-const removeEmptyTopLevelBlocksAfterReplacement = (
+const collectEmptyTopLevelBlockRemovals = (
   code: string,
-  filename: string
-): string => {
-  const program = parseOxc(code, filename);
+  program: Program
+): Replacement[] => {
   const removals: Replacement[] = [];
 
   program.body.forEach((statement) => {
@@ -1213,7 +1192,7 @@ const removeEmptyTopLevelBlocksAfterReplacement = (
     removals.push(expandImportRemovalRange(code, statement.start, statement.end));
   });
 
-  return removals.length > 0 ? applyReplacements(code, removals) : code;
+  return removals;
 };
 
 const removeUnusedAfterReplacement = (
@@ -1235,45 +1214,51 @@ const removeUnusedAfterReplacement = (
 
   for (let idx = 0; idx < 5; idx += 1) {
     const previous = current;
-    const removableNames = collectRemovableNames(
-      parseOxc(current, filename),
+    const program = parseOxc(current, filename);
+    const statements = collectTopLevelStatementInfos(program);
+    const removableNames = collectRemovableNamesFromStatements(
+      statements,
       cumulativeRemovableNames
     );
     removableNames.forEach((name) => cumulativeRemovableNames.add(name));
-    current = applyIfParsable(
-      removeUnusedScopedDeclarationsAfterReplacement(
+    const referencedNames = collectReferencedNames(program);
+    const topLevelBindings = collectTopLevelBindingsFromStatements(statements);
+    const scopedBindings = collectScopedBindingInfos(program);
+    const removals = mergeEmptyRemovalRanges([
+      ...collectUnusedScopedDeclarationRemovals(
         current,
-        filename,
+        scopedBindings,
         cumulativeRemovableNames
-      )
-    );
-    current = applyIfParsable(
-      removeUnusedTopLevelDeclarationsAfterReplacement(
+      ),
+      ...collectUnusedTopLevelDeclarationRemovals(
         current,
-        filename,
+        program,
+        referencedNames,
         cumulativeRemovableNames
-      )
-    );
-    current = applyIfParsable(
-      removeUnusedGeneratedHelperDeclarationsAfterReplacement(current, filename)
-    );
-    current = applyIfParsable(
-      removeUnusedImportsAfterReplacement(
+      ),
+      ...collectUnusedGeneratedHelperDeclarationRemovals(
         current,
-        filename,
+        program,
+        referencedNames
+      ),
+      ...collectUnusedImportRemovals(
+        current,
+        program,
+        referencedNames,
         cumulativeRemovableNames
-      )
-    );
-    current = applyIfParsable(
-      removeTopLevelExpressionStatementsAfterReplacement(
+      ),
+      ...collectTopLevelExpressionStatementRemovals(
         current,
-        filename,
+        statements,
+        topLevelBindings,
         removableExpressionRefs
-      )
-    );
-    current = applyIfParsable(
-      removeEmptyTopLevelBlocksAfterReplacement(current, filename)
-    );
+      ),
+      ...collectEmptyTopLevelBlockRemovals(current, program),
+    ]);
+    current =
+      removals.length > 0
+        ? applyIfParsable(applyReplacements(current, removals))
+        : current;
 
     if (current === previous) {
       return current;
@@ -2045,54 +2030,82 @@ export const applyOxcProcessors = (
   options: Pick<
     StrictOptions,
     'classNameSlug' | 'displayName' | 'extensions' | 'evaluate' | 'tagResolver'
-  >,
+  > & { eventEmitter?: EventEmitter },
   callback: (processor: BaseProcessor) => void,
   cleanupUnused = false
 ): ApplyOxcProcessorsResult => {
   const filename = fileContext.filename ?? 'unknown.js';
+  const eventEmitter = options.eventEmitter ?? EventEmitter.dummy;
   let workingCode = code;
   let program = parseOxc(workingCode, filename);
   const definedProcessors = new Map<string, DefinedProcessor>();
   const removableImportLocals = new Set<string>();
   const removableExpressionRefs = new Set<string>();
 
-  collectOxcExportsAndImports(workingCode, filename).imports.forEach((item) => {
-    const localName = item.local.name ?? item.local.code;
-    if (item.imported === 'side-effect' || !localName) {
-      return;
-    }
-
-    const [processor, tagSource] = getProcessorForImport(
-      {
-        imported: item.imported,
-        source: item.source,
-      },
-      filename,
-      options
+  eventEmitter.perf('transform:preeval:processTemplate:imports', () => {
+    const imports = eventEmitter.perf(
+      'transform:preeval:processTemplate:imports:analysis',
+      () => collectOxcProcessorImportsFromProgram(program, workingCode)
     );
 
-    if (processor) {
-      definedProcessors.set(localName, [processor, tagSource]);
-      removableImportLocals.add(localName);
-      const rootLocalName = localName.split('.')[0];
-      if (rootLocalName) {
-        removableImportLocals.add(rootLocalName);
-      }
-    }
+    eventEmitter.perf('transform:preeval:processTemplate:imports:lookup', () => {
+      imports.forEach((item) => {
+        const localName = item.local.name ?? item.local.code;
+        if (item.imported === 'side-effect' || !localName) {
+          return;
+        }
+
+        const [processor, tagSource] = getProcessorForImport(
+          {
+            imported: item.imported,
+            source: item.source,
+          },
+          filename,
+          options
+        );
+
+        if (processor) {
+          definedProcessors.set(localName, [processor, tagSource]);
+          removableImportLocals.add(localName);
+          const rootLocalName = localName.split('.')[0];
+          if (rootLocalName) {
+            removableImportLocals.add(rootLocalName);
+          }
+        }
+      });
+    });
   });
 
-  const targetExpressionSpans = collectProcessorUsages(
-    program,
-    definedProcessors
-  ).flatMap(collectUsageExpressionSpans);
+  if (definedProcessors.size === 0) {
+    return {
+      code: workingCode,
+      processors: [],
+    };
+  }
+
+  let processorUsages = eventEmitter.perf(
+    'transform:preeval:processTemplate:usages',
+    () => collectProcessorUsages(program, definedProcessors)
+  );
+  if (processorUsages.length === 0) {
+    return {
+      code: workingCode,
+      processors: [],
+    };
+  }
+
+  const targetExpressionSpans =
+    processorUsages.flatMap(collectUsageExpressionSpans);
 
   const extracted =
     targetExpressionSpans.length > 0
-      ? collectOxcExpressionDependencies(
-          workingCode,
-          filename,
-          options.evaluate,
-          targetExpressionSpans
+      ? eventEmitter.perf('transform:preeval:processTemplate:deps', () =>
+          collectOxcExpressionDependencies(
+            workingCode,
+            filename,
+            options.evaluate,
+            targetExpressionSpans
+          )
         )
       : {
           code: workingCode,
@@ -2102,7 +2115,14 @@ export const applyOxcProcessors = (
 
   if (extracted.code !== workingCode) {
     workingCode = extracted.code;
-    program = parseOxc(workingCode, filename);
+    program = eventEmitter.perf(
+      'transform:preeval:processTemplate:reparse',
+      () => parseOxc(workingCode, filename)
+    );
+    processorUsages = eventEmitter.perf(
+      'transform:preeval:processTemplate:usages',
+      () => collectProcessorUsages(program, definedProcessors)
+    );
   }
 
   const templateExpressionValues = extracted.expressionValues.map(
@@ -2114,78 +2134,85 @@ export const applyOxcProcessors = (
       }) as ExpressionValue
   );
   const loc = createLocationLookup(workingCode);
-  const usedNames = collectUsedNames(program);
+  const usedNames = eventEmitter.perf(
+    'transform:preeval:processTemplate:usedNames',
+    () => collectUsedNames(program)
+  );
   const replacements: Replacement[] = [];
   const processors: BaseProcessor[] = [];
   extracted.dependencyNames.forEach((name: string) =>
     removableImportLocals.add(name)
   );
 
-  collectProcessorUsages(program, definedProcessors).forEach((usage, idx) => {
-    const definedProcessor = findDefinedProcessor(
-      usage.callee,
-      definedProcessors
-    );
-    if (!definedProcessor) {
-      return;
-    }
-
-    const params = buildParams(
-      usage,
-      workingCode,
-      loc,
-      filename,
-      templateExpressionValues,
-      shouldCollapseQualifiedCallee(usage.callee, definedProcessors)
-    );
-    if (!params) {
-      return;
-    }
-
-    const processor = createProcessor(
-      definedProcessor,
-      params,
-      usage.target,
-      usage.replacementTarget,
-      usage.ancestors,
-      fileContext,
-      options,
-      workingCode,
-      loc,
-      idx,
-      isTagReferenced(program, usage.ancestors),
-      usedNames,
-      replacements
-    );
-
-    if (!processor) {
-      return;
-    }
-
-    const owner = getTagOwner(usage.ancestors);
-    if (owner?.type === 'VariableDeclarator') {
-      const id = owner.id;
-      if (isNode(id) && id.type === 'Identifier') {
-        removableExpressionRefs.add(id.name);
+  eventEmitter.perf('transform:preeval:processTemplate:processors', () => {
+    processorUsages.forEach((usage, idx) => {
+      const definedProcessor = findDefinedProcessor(
+        usage.callee,
+        definedProcessors
+      );
+      if (!definedProcessor) {
+        return;
       }
-    }
 
-    processors.push(processor);
-    callback(processor);
+      const params = buildParams(
+        usage,
+        workingCode,
+        loc,
+        filename,
+        templateExpressionValues,
+        shouldCollapseQualifiedCallee(usage.callee, definedProcessors)
+      );
+      if (!params) {
+        return;
+      }
+
+      const processor = createProcessor(
+        definedProcessor,
+        params,
+        usage.target,
+        usage.replacementTarget,
+        usage.ancestors,
+        fileContext,
+        options,
+        workingCode,
+        loc,
+        idx,
+        isTagReferenced(program, usage.ancestors),
+        usedNames,
+        replacements
+      );
+
+      if (!processor) {
+        return;
+      }
+
+      const owner = getTagOwner(usage.ancestors);
+      if (owner?.type === 'VariableDeclarator') {
+        const id = owner.id;
+        if (isNode(id) && id.type === 'Identifier') {
+          removableExpressionRefs.add(id.name);
+        }
+      }
+
+      processors.push(processor);
+      callback(processor);
+    });
   });
 
   const replacedCode = applyReplacements(workingCode, replacements);
 
   return {
     code: cleanupUnused
-      ? removeUnusedAfterReplacement(
-          replacedCode,
-          filename,
-          removableImportLocals,
-          new Set([
-            ...removableExpressionRefs,
-            ...extracted.dependencyNames,
-          ])
+      ? eventEmitter.perf('transform:preeval:processTemplate:cleanup', () =>
+          removeUnusedAfterReplacement(
+            replacedCode,
+            filename,
+            removableImportLocals,
+            new Set([
+              ...removableExpressionRefs,
+              ...extracted.dependencyNames,
+            ])
+          )
         )
       : replacedCode,
     processors,

@@ -15,6 +15,30 @@ export type ProcessorClass = new (
 
 const definedTagsCache = new Map<string, Record<string, string> | undefined>();
 const resolvedTagResolverSourceCache = new Map<string, string | undefined>();
+const packageProcessorLookupCache = new Map<string, ProcessorClass | null>();
+const tagResolverProcessorLookupCache = new WeakMap<
+  NonNullable<StrictOptions['tagResolver']>,
+  Map<string, ProcessorClass | null>
+>();
+
+const createProcessorLookupCacheKey = (
+  source: string,
+  imported: string,
+  filename: string | null | undefined
+): string => `${filename ?? ''}\0${source}\0${imported}`;
+
+const getTagResolverLookupCache = (
+  tagResolver: NonNullable<StrictOptions['tagResolver']>
+): Map<string, ProcessorClass | null> => {
+  const existing = tagResolverProcessorLookupCache.get(tagResolver);
+  if (existing) {
+    return existing;
+  }
+
+  const created = new Map<string, ProcessorClass | null>();
+  tagResolverProcessorLookupCache.set(tagResolver, created);
+  return created;
+};
 
 const getResolvedTagResolverSource = (
   source: string,
@@ -111,6 +135,14 @@ export const getProcessorForImport = (
   options: Pick<StrictOptions, 'tagResolver'>
 ): [ProcessorClass | null, TagSource] => {
   const { tagResolver } = options;
+  const cacheKey = createProcessorLookupCacheKey(source, imported, filename);
+  const lookupCache = tagResolver
+    ? getTagResolverLookupCache(tagResolver)
+    : packageProcessorLookupCache;
+
+  if (lookupCache.has(cacheKey)) {
+    return [lookupCache.get(cacheKey) ?? null, { imported, source }];
+  }
 
   let customFile: string | null = null;
   if (tagResolver) {
@@ -124,5 +156,6 @@ export const getProcessorForImport = (
   const processor = customFile
     ? getProcessorFromFile(customFile)
     : getProcessorFromPackage(source, imported, filename);
+  lookupCache.set(cacheKey, processor);
   return [processor, { imported, source }];
 };

@@ -89,7 +89,10 @@ const prepareOxcCodeImpl = (
           filename,
           root,
         },
-        pluginOptions
+        {
+          ...pluginOptions,
+          eventEmitter,
+        }
       );
 
       return {

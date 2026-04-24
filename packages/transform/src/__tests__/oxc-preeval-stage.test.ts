@@ -3,6 +3,7 @@ import path from 'path';
 
 import type { StrictOptions } from '@wyw-in-js/shared';
 
+import { EventEmitter } from '../utils/EventEmitter';
 import { runOxcPreevalStage } from '../utils/oxcPreevalStage';
 import { shakeOxcToESM } from '../utils/oxcShaker';
 
@@ -131,6 +132,55 @@ describe('runOxcPreevalStage', () => {
     expect(result.code).toContain('__wyw_import_meta_env.MODE');
     expect(result.code).toContain('__wyw_dynamic_import(dep)');
     expect(result.code).toContain('require(dep, true)');
+  });
+
+  it('emits perf sublabels for the Oxc preeval substeps', () => {
+    const methods: string[] = [];
+    const eventEmitter = new EventEmitter(
+      (labels, type) => {
+        if (type === 'start' && typeof labels.method === 'string') {
+          methods.push(labels.method);
+        }
+      },
+      () => 0,
+      () => {}
+    );
+
+    runOxcPreevalStage(
+      `
+        import { css } from 'test-package';
+        const href = window.location.href;
+        const mode = import.meta.env.MODE;
+        const dep = './dep';
+        export const a = css\`
+          color: ${'${mode}'};
+        \`;
+        import(dep);
+        require(dep);
+      `,
+      fileContext,
+      {
+        ...options,
+        eventEmitter,
+      }
+    );
+
+    expect(methods).toEqual(
+      expect.arrayContaining([
+        'transform:preeval:processTemplate',
+        'transform:preeval:processTemplate:imports',
+        'transform:preeval:processTemplate:imports:analysis',
+        'transform:preeval:processTemplate:imports:lookup',
+        'transform:preeval:processTemplate:usages',
+        'transform:preeval:processTemplate:deps',
+        'transform:preeval:processTemplate:usedNames',
+        'transform:preeval:processTemplate:processors',
+        'transform:preeval:importMetaEnv',
+        'transform:preeval:removeDangerousCode',
+        'transform:preeval:dynamicImport',
+        'transform:preeval:requireFallback',
+      ])
+    );
   });
 
   it('feeds Oxc shaker with __wywPreval-only prepared code', () => {

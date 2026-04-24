@@ -4,13 +4,13 @@ import type { IFileContext } from '@wyw-in-js/processor-utils';
 import type { StrictOptions } from '@wyw-in-js/shared';
 import { isFeatureEnabled } from '@wyw-in-js/shared';
 
+import { EventEmitter } from './EventEmitter';
 import type { WYWTransformMetadata } from './TransformMetadata';
 import { applyOxcProcessors } from './applyOxcProcessors';
 import {
-  addRequireFallbackWithOxc,
   removeDangerousCodeWithOxc,
   replaceImportMetaEnvWithOxc,
-  rewriteDynamicImportsWithOxc,
+  rewriteDynamicImportsAndAddRequireFallbackWithOxc,
 } from './oxcPreevalTransforms';
 
 type OxcPreevalOptions = Pick<
@@ -22,7 +22,7 @@ type OxcPreevalOptions = Pick<
   | 'extensions'
   | 'features'
   | 'tagResolver'
->;
+> & { eventEmitter?: EventEmitter };
 
 type OxcPreevalResult = {
   code: string;
@@ -73,12 +73,10 @@ export const runOxcPreevalStage = (
 ): OxcPreevalResult => {
   const filename = fileContext.filename ?? 'unknown.js';
   const dependencyNames: string[] = [];
+  const eventEmitter = options.eventEmitter ?? EventEmitter.dummy;
 
-  const processed = applyOxcProcessors(
-    code,
-    fileContext,
-    options,
-    (processor) => {
+  const processed = eventEmitter.perf('transform:preeval:processTemplate', () =>
+    applyOxcProcessors(code, fileContext, options, (processor) => {
       processor.dependencies.forEach((dependency) => {
         if (dependency.ex.type === 'Identifier') {
           dependencyNames.push(dependency.ex.name);
@@ -86,25 +84,27 @@ export const runOxcPreevalStage = (
       });
 
       processor.doEvaltimeReplacement();
-    }
+    })
   );
 
-  let nextCode = replaceImportMetaEnvWithOxc(processed.code, filename);
+  let nextCode = eventEmitter.perf('transform:preeval:importMetaEnv', () =>
+    replaceImportMetaEnvWithOxc(processed.code, filename)
+  );
 
   if (isFeatureEnabled(options.features, 'dangerousCodeRemover', filename)) {
-    nextCode = removeDangerousCodeWithOxc(
-      nextCode,
-      filename,
-      options.codeRemover
+    nextCode = eventEmitter.perf('transform:preeval:removeDangerousCode', () =>
+      removeDangerousCodeWithOxc(nextCode, filename, options.codeRemover)
     );
   }
 
-  if (DYNAMIC_IMPORT_RE.test(nextCode)) {
-    nextCode = rewriteDynamicImportsWithOxc(nextCode, filename);
-  }
-
-  if (REQUIRE_CALL_RE.test(nextCode)) {
-    nextCode = addRequireFallbackWithOxc(nextCode, filename);
+  const shouldRewriteDynamicImports = DYNAMIC_IMPORT_RE.test(nextCode);
+  const shouldAddRequireFallback = REQUIRE_CALL_RE.test(nextCode);
+  if (shouldRewriteDynamicImports || shouldAddRequireFallback) {
+    nextCode = rewriteDynamicImportsAndAddRequireFallbackWithOxc(nextCode, filename, {
+      addRequireFallback: shouldAddRequireFallback,
+      eventEmitter,
+      rewriteDynamicImports: shouldRewriteDynamicImports,
+    });
   }
 
   if (processed.processors.length === 0) {

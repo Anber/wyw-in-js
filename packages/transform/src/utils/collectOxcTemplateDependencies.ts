@@ -1,6 +1,5 @@
 /* eslint-disable no-restricted-syntax,no-continue,@typescript-eslint/no-use-before-define */
 
-import { parseSync } from 'oxc-parser';
 import type { ExpressionValue, Location } from '@wyw-in-js/shared';
 import { ValueType } from '@wyw-in-js/shared';
 import type {
@@ -13,6 +12,8 @@ import type {
   VariableDeclaration,
   VariableDeclarator,
 } from 'oxc-parser';
+
+import { parseOxcProgramCached } from './parseOxc';
 
 type AnyNode = Node & Record<string, unknown>;
 type OxcFunctionLikeNode = Node & {
@@ -50,6 +51,8 @@ type SourceLocation = {
   start: Location;
 };
 
+type SpanLookup = Set<string> | null;
+
 type LocationLookup = (offset: number) => Location;
 
 type ExpressionSpan = {
@@ -81,6 +84,7 @@ type TemplateExtractionResult = {
 };
 
 type ExtractionContext = {
+  bindingResolutionCache: Map<string, Map<number, Binding | null>>;
   bindingsByName: Map<string, Binding[]>;
   code: string;
   currentInsertionPoint: number;
@@ -91,6 +95,7 @@ type ExtractionContext = {
   hoistedDeclarations: Map<string, string>;
   hoistedDeclarationsByInsertionPoint: Map<number, string[]>;
   loc: LocationLookup;
+  referencesByNode: WeakMap<Node, ReferenceIdentifier[]>;
   removedDeclarations: Set<VariableDeclaration>;
   replacements: Replacement[];
   rootMutationsByBinding: Map<string, Array<AssignmentExpression | UpdateExpression>>;
@@ -101,6 +106,14 @@ type ExtractedExpression = {
   expressionCode: string;
   importedFrom: string[];
   kind: ValueType.FUNCTION | ValueType.LAZY;
+};
+
+type ProgramAnalysis = {
+  bindingsByName: Map<string, Binding[]>;
+  rootMutationsByBinding: Map<string, Array<AssignmentExpression | UpdateExpression>>;
+  targetExpressions: Expression[];
+  templateLiterals: TemplateLiteral[];
+  usedNames: Set<string>;
 };
 
 const isNode = (value: unknown): value is Node =>
@@ -137,19 +150,23 @@ const getChildren = (node: Node): Node[] => {
 };
 
 const parseOxc = (code: string, filename: string): Program => {
-  const parsed = parseSync(filename, code, {
-    astType:
-      filename.endsWith('.ts') || filename.endsWith('.tsx') ? 'ts' : 'js',
-    range: true,
-    sourceType: 'unambiguous',
-  });
-  const fatalError = parsed.errors.find((error) => error.severity === 'Error');
-  if (fatalError) {
-    throw new Error(fatalError.message);
+  return parseOxcProgramCached(filename, code, 'unambiguous');
+};
+
+const toSpanKey = (start: number, end: number): string => `${start}:${end}`;
+
+const createSpanLookup = (spans?: ExpressionSpan[]): SpanLookup => {
+  if (!spans || spans.length === 0) {
+    return null;
   }
 
-  return parsed.program as Program;
+  return new Set(spans.map((span) => toSpanKey(span.start, span.end)));
 };
+
+const matchesSpanLookup = (
+  node: Pick<Node, 'start' | 'end'>,
+  spanLookup: SpanLookup
+): boolean => !spanLookup || spanLookup.has(toSpanKey(node.start, node.end));
 
 const createLocationLookup = (code: string): LocationLookup => {
   const lineStarts = [0];
@@ -214,6 +231,36 @@ const createScope = (
   root,
   start: node.start,
 });
+
+const normalizeDeclarationKind = (
+  declarationKind: VariableDeclaration['kind']
+): ScopedDeclarationKind => {
+  if (declarationKind === 'var') {
+    return 'var';
+  }
+
+  if (declarationKind === 'let') {
+    return 'let';
+  }
+
+  return 'const';
+};
+
+const getDeclarationScope = (
+  scope: Scope,
+  declarationKind: ScopedDeclarationKind
+): Scope => {
+  if (declarationKind !== 'var') {
+    return scope;
+  }
+
+  let current: Scope | null = scope;
+  while (current && !current.functionBoundary) {
+    current = current.parent;
+  }
+
+  return current ?? scope;
+};
 
 const collectBindingNames = (node: Node): string[] => {
   if (node.type === 'Identifier') {
@@ -312,58 +359,84 @@ const visit = (
   parent: Node | null = null,
   ancestors: Node[] = []
 ): void => {
-  let currentScope: Scope;
-  if (node.type === 'Program') {
-    currentScope = createScope(null, node, true, true);
-  } else if (
-    node.type === 'BlockStatement' ||
-    node.type === 'FunctionDeclaration' ||
-    node.type === 'FunctionExpression' ||
-    node.type === 'ArrowFunctionExpression'
-  ) {
-    currentScope = createScope(
-      scope,
-      node,
-      false,
-      node.type !== 'BlockStatement'
-    );
-  } else if (scope) {
-    currentScope = scope;
-  } else {
-    currentScope = createScope(null, node, false, true);
-  }
+  const visitNode = (
+    currentNode: Node,
+    currentScope: Scope | null,
+    currentParent: Node | null
+  ): void => {
+    let nextScope: Scope;
+    if (currentNode.type === 'Program') {
+      nextScope = createScope(null, currentNode, true, true);
+    } else if (
+      currentNode.type === 'BlockStatement' ||
+      currentNode.type === 'FunctionDeclaration' ||
+      currentNode.type === 'FunctionExpression' ||
+      currentNode.type === 'ArrowFunctionExpression'
+    ) {
+      nextScope = createScope(
+        currentScope,
+        currentNode,
+        false,
+        currentNode.type !== 'BlockStatement'
+      );
+    } else if (currentScope) {
+      nextScope = currentScope;
+    } else {
+      nextScope = createScope(null, currentNode, false, true);
+    }
 
-  if (
-    node.type === 'FunctionDeclaration' ||
-    node.type === 'FunctionExpression' ||
-    node.type === 'ArrowFunctionExpression'
-  ) {
-    node.params.forEach((param) => {
-      collectBindingNames(param).forEach((name) => {
-        currentScope.params.add(name);
-        currentScope.bindings.set(name, {
-          declaredAt: param.start,
-          declaration: null,
-          declarator: null,
-          functionNode: null,
-          isRoot: false,
-          kind: 'param',
-          name,
-          scope: currentScope,
+    if (
+      currentNode.type === 'FunctionDeclaration' ||
+      currentNode.type === 'FunctionExpression' ||
+      currentNode.type === 'ArrowFunctionExpression'
+    ) {
+      currentNode.params.forEach((param) => {
+        collectBindingNames(param).forEach((name) => {
+          nextScope.params.add(name);
+          nextScope.bindings.set(name, {
+            declaredAt: param.start,
+            declaration: null,
+            declarator: null,
+            functionNode: null,
+            isRoot: false,
+            kind: 'param',
+            name,
+            scope: nextScope,
+          });
         });
       });
-    });
-  }
+    }
 
-  enter(node, currentScope, parent, ancestors);
+    enter(currentNode, nextScope, currentParent, ancestors);
 
-  getChildren(node).forEach((child) =>
-    visit(child, currentScope, enter, node, [...ancestors, node])
-  );
+    ancestors.push(currentNode);
+    getChildren(currentNode).forEach((child) =>
+      visitNode(child, nextScope, currentNode)
+    );
+    ancestors.pop();
+  };
+
+  visitNode(node, scope, parent);
 };
 
-const collectBindings = (program: Program): Map<string, Binding[]> => {
+const analyzeProgram = (
+  program: Program,
+  {
+    collectTargetExpressions = false,
+    collectTemplateLiterals = false,
+    expressionSpanLookup = null,
+    templateSpanLookup = null,
+  }: {
+    collectTargetExpressions?: boolean;
+    collectTemplateLiterals?: boolean;
+    expressionSpanLookup?: SpanLookup;
+    templateSpanLookup?: SpanLookup;
+  } = {}
+): ProgramAnalysis => {
   const bindings = new Map<string, Binding[]>();
+  const usedNames = new Set<string>();
+  const templateLiterals: TemplateLiteral[] = [];
+  const targetExpressions: Expression[] = [];
 
   const addBinding = (scope: Scope, binding: Binding): void => {
     scope.bindings.set(binding.name, binding);
@@ -372,38 +445,33 @@ const collectBindings = (program: Program): Map<string, Binding[]> => {
     bindings.set(binding.name, existing);
   };
 
-  const normalizeDeclarationKind = (
-    declarationKind: VariableDeclaration['kind']
-  ): ScopedDeclarationKind => {
-    // `using` declarations are block-scoped like `const` for binding lookup.
-    if (declarationKind === 'var') {
-      return 'var';
+  const collectTargets = (node: Node, ancestors: Node[]): void => {
+    if (
+      collectTemplateLiterals &&
+      node.type === 'TemplateLiteral' &&
+      node.expressions.length > 0 &&
+      !ancestors.some((ancestor) => ancestor.type === 'TemplateLiteral') &&
+      matchesSpanLookup(node, templateSpanLookup)
+    ) {
+      templateLiterals.push(node);
     }
 
-    if (declarationKind === 'let') {
-      return 'let';
+    if (
+      collectTargetExpressions &&
+      expressionSpanLookup &&
+      matchesSpanLookup(node, expressionSpanLookup)
+    ) {
+      targetExpressions.push(node as Expression);
     }
-
-    return 'const';
   };
 
-  const getDeclarationScope = (
-    scope: Scope,
-    declarationKind: ScopedDeclarationKind
-  ): Scope => {
-    if (declarationKind !== 'var') {
-      return scope;
+  visit(program, null, (node, scope, _parent, ancestors) => {
+    collectTargets(node, ancestors);
+
+    if (node.type === 'Identifier') {
+      usedNames.add(node.name);
     }
 
-    let current: Scope | null = scope;
-    while (current && !current.functionBoundary) {
-      current = current.parent;
-    }
-
-    return current ?? scope;
-  };
-
-  visit(program, null, (node, scope) => {
     if (
       node.type === 'FunctionDeclaration' ||
       node.type === 'FunctionExpression' ||
@@ -456,6 +524,7 @@ const collectBindings = (program: Program): Map<string, Binding[]> => {
         };
         addBinding(declarationScope, binding);
       }
+
       return;
     }
 
@@ -479,31 +548,57 @@ const collectBindings = (program: Program): Map<string, Binding[]> => {
     });
   });
 
-  return bindings;
+  return {
+    bindingsByName: bindings,
+    rootMutationsByBinding: collectRootMutations(program),
+    targetExpressions: targetExpressions.sort((a, b) => a.start - b.start),
+    templateLiterals,
+    usedNames,
+  };
 };
 
 const resolveBindingAt = (
-  ctx: Pick<ExtractionContext, 'bindingsByName'>,
+  ctx: Pick<ExtractionContext, 'bindingResolutionCache' | 'bindingsByName'>,
   name: string,
   referenceStart: number
 ): Binding | undefined => {
+  const cachedBindings = ctx.bindingResolutionCache.get(name);
+  if (cachedBindings?.has(referenceStart)) {
+    return cachedBindings.get(referenceStart) ?? undefined;
+  }
+
   const bindings = ctx.bindingsByName.get(name);
+  const bindingCache = cachedBindings ?? new Map<number, Binding | null>();
+  if (!cachedBindings) {
+    ctx.bindingResolutionCache.set(name, bindingCache);
+  }
+
   if (!bindings || bindings.length === 0) {
+    bindingCache.set(referenceStart, null);
     return undefined;
   }
 
-  return [...bindings]
-    .filter(
-      (binding) =>
-        binding.scope.start <= referenceStart && referenceStart < binding.scope.end
-    )
-    .sort((left, right) => {
-      if (left.scope.depth !== right.scope.depth) {
-        return right.scope.depth - left.scope.depth;
-      }
+  let binding: Binding | undefined;
+  bindings.forEach((candidate) => {
+    if (
+      candidate.scope.start > referenceStart ||
+      referenceStart >= candidate.scope.end
+    ) {
+      return;
+    }
 
-      return right.declaredAt - left.declaredAt;
-    })[0];
+    if (
+      !binding ||
+      candidate.scope.depth > binding.scope.depth ||
+      (candidate.scope.depth === binding.scope.depth &&
+        candidate.declaredAt > binding.declaredAt)
+    ) {
+      binding = candidate;
+    }
+  });
+
+  bindingCache.set(referenceStart, binding ?? null);
+  return binding;
 };
 
 const collectRootMutations = (
@@ -582,17 +677,6 @@ const collectRootMutations = (
   return mutations;
 };
 
-const collectUsedNames = (program: Program): Set<string> => {
-  const used = new Set<string>();
-  visit(program, null, (node) => {
-    if (node.type === 'Identifier') {
-      used.add(node.name);
-    }
-  });
-
-  return used;
-};
-
 const hasLocalBinding = (scope: Scope, name: string): boolean => {
   let current: Scope | null = scope;
 
@@ -607,8 +691,37 @@ const hasLocalBinding = (scope: Scope, name: string): boolean => {
   return false;
 };
 
-const findReferences = (node: Node): ReferenceIdentifier[] => {
+const hasLocalBindingCached = (
+  scope: Scope,
+  name: string,
+  cache: WeakMap<Scope, Map<string, boolean>>
+): boolean => {
+  const scopeCache = cache.get(scope);
+  if (scopeCache?.has(name)) {
+    return scopeCache.get(name)!;
+  }
+
+  const result = hasLocalBinding(scope, name);
+  const nextScopeCache = scopeCache ?? new Map<string, boolean>();
+  nextScopeCache.set(name, result);
+  if (!scopeCache) {
+    cache.set(scope, nextScopeCache);
+  }
+
+  return result;
+};
+
+const findReferences = (
+  node: Node,
+  referenceCache?: WeakMap<Node, ReferenceIdentifier[]>
+): ReferenceIdentifier[] => {
+  const cachedReferences = referenceCache?.get(node);
+  if (cachedReferences) {
+    return cachedReferences;
+  }
+
   const refs = new Map<string, ReferenceIdentifier>();
+  const localBindingCache = new WeakMap<Scope, Map<string, boolean>>();
 
   visit(node, null, (current, scope, parent, ancestors) => {
     if (
@@ -617,7 +730,7 @@ const findReferences = (node: Node): ReferenceIdentifier[] => {
       isBindingPosition(current, parent) ||
       isPropertyOnlyIdentifier(current, parent) ||
       isObjectPropertyKey(current, parent) ||
-      hasLocalBinding(scope, current.name)
+      hasLocalBindingCached(scope, current.name, localBindingCache)
     ) {
       return;
     }
@@ -630,7 +743,9 @@ const findReferences = (node: Node): ReferenceIdentifier[] => {
     });
   });
 
-  return [...refs.values()];
+  const resolvedReferences = [...refs.values()];
+  referenceCache?.set(node, resolvedReferences);
+  return resolvedReferences;
 };
 
 const isBindingDeclaredWithin = (binding: Binding, container: Node): boolean =>
@@ -929,8 +1044,9 @@ const replaceIdentifierReferences = (
   code: string
 ): string => {
   const localReplacements: Replacement[] = [];
+  const ancestors: Node[] = [];
 
-  const walk = (current: Node, parent: Node | null, ancestors: Node[]) => {
+  const walk = (current: Node, parent: Node | null) => {
     if (
       current.type === 'Identifier' &&
       replacements.has(current.name) &&
@@ -946,12 +1062,12 @@ const replaceIdentifierReferences = (
       });
     }
 
-    getChildren(current).forEach((child) =>
-      walk(child, current, [...ancestors, current])
-    );
+    ancestors.push(current);
+    getChildren(current).forEach((child) => walk(child, current));
+    ancestors.pop();
   };
 
-  walk(expression, null, []);
+  walk(expression, null);
 
   let result = code.slice(expression.start, expression.end);
   localReplacements
@@ -1057,13 +1173,15 @@ const evaluateStatic = (
     }
 
     let value: unknown | undefined;
-    if (binding.declarator?.init) {
-      if (binding.declarator.id.type !== 'Identifier') {
+    const declarator = binding.declarator;
+    const init = declarator?.init;
+    if (init) {
+      if (declarator.id.type !== 'Identifier') {
         return undefined;
       }
 
       value = evaluateStatic(
-        binding.declarator.init,
+        init,
         ctx,
         env,
         [...stack, binding.name]
@@ -1287,7 +1405,7 @@ const substituteConstants = (
   ctx: ExtractionContext
 ): string => {
   const replacements = new Map<string, string>();
-  findReferences(expression).forEach(({ name, start }) => {
+  findReferences(expression, ctx.referencesByNode).forEach(({ name, start }) => {
     const replacement = getConstantReplacement(
       resolveBindingAt(ctx, name, start),
       ctx
@@ -1354,7 +1472,7 @@ const assertHoistable = (
     return;
   }
 
-  const refs = findReferences(binding.declarator.init);
+  const refs = findReferences(binding.declarator.init, ctx.referencesByNode);
   refs.forEach(({ name, start }) => {
     const nextBinding = resolveBindingAt(ctx, name, start);
     if (!nextBinding) {
@@ -1386,14 +1504,13 @@ const addHoistedDeclaration = (
     return;
   }
 
-  findReferences(binding.declarator.init ?? binding.declarator).forEach(
-    ({ name, start }) => {
+  const hoistSource = binding.declarator.init ?? binding.declarator;
+  findReferences(hoistSource, ctx.referencesByNode).forEach(({ name, start }) => {
       const dependency = resolveBindingAt(ctx, name, start);
       if (dependency) {
         addHoistedDeclaration(dependency, ctx, [...stack, binding.name]);
       }
-    }
-  );
+    });
 
   if (!ctx.hoistedDeclarations.has(binding.name)) {
     addHoistedCode(
@@ -1469,7 +1586,9 @@ const extractExpression = (
     const evaluated = evaluateStatic(expression, ctx);
     const literal = literalCode(evaluated);
     if (literal) {
-      findReferences(expression).forEach(({ name }) => ctx.dependencyNames.add(name));
+      findReferences(expression, ctx.referencesByNode).forEach(({ name }) =>
+        ctx.dependencyNames.add(name)
+      );
       return {
         expressionCode: literal,
         importedFrom: [],
@@ -1481,7 +1600,7 @@ const extractExpression = (
   const substituted = evaluate ? substituteConstants(expression, ctx) : source;
   const importedFrom: string[] = [];
 
-  findReferences(expression).forEach(({ name, start }) => {
+  findReferences(expression, ctx.referencesByNode).forEach(({ name, start }) => {
     const binding = resolveBindingAt(ctx, name, start);
     if (!binding) {
       return;
@@ -1531,32 +1650,45 @@ const getInsertionPoint = (
   return owner.start;
 };
 
-const isTargetTemplate = (
-  template: TemplateLiteral,
-  targetTemplateSpans?: ExpressionSpan[]
-): boolean =>
-  !targetTemplateSpans ||
-  targetTemplateSpans.some(
-    (span) => span.start === template.start && span.end === template.end
-  );
-
-const collectTemplateLiterals = (
+const getInsertionPoints = (
   program: Program,
-  targetTemplateSpans?: ExpressionSpan[]
-): TemplateLiteral[] => {
-  const templates: TemplateLiteral[] = [];
-  visit(program, null, (node, _scope, _parent, ancestors) => {
-    if (
-      node.type === 'TemplateLiteral' &&
-      node.expressions.length > 0 &&
-      !ancestors.some((ancestor) => ancestor.type === 'TemplateLiteral') &&
-      isTargetTemplate(node, targetTemplateSpans)
+  expressions: Expression[]
+): number[] => {
+  if (expressions.length === 0) {
+    return [];
+  }
+
+  if (program.body.length === 0) {
+    return expressions.map(() => 0);
+  }
+
+  const insertionPoints: number[] = [];
+  let ownerIndex = 0;
+
+  expressions.forEach((expression) => {
+    while (
+      ownerIndex < program.body.length - 1 &&
+      program.body[ownerIndex]!.end < expression.start
     ) {
-      templates.push(node);
+      ownerIndex += 1;
     }
+
+    let owner: Program['body'][number] | undefined = program.body[ownerIndex];
+    if (
+      !owner ||
+      owner.start > expression.start ||
+      owner.end < expression.end
+    ) {
+      owner = program.body.find(
+        (statement) =>
+          statement.start <= expression.start && statement.end >= expression.end
+      );
+    }
+
+    insertionPoints.push(owner?.start ?? 0);
   });
 
-  return templates;
+  return insertionPoints;
 };
 
 const applyReplacements = (
@@ -1576,52 +1708,27 @@ const applyReplacements = (
   return result;
 };
 
-const isTargetExpression = (
-  expression: Expression,
-  targetExpressionSpans?: ExpressionSpan[]
-): boolean =>
-  !targetExpressionSpans ||
-  targetExpressionSpans.some(
-    (span) => span.start === expression.start && span.end === expression.end
-  );
-
-const collectTargetExpressions = (
-  program: Program,
-  targetExpressionSpans?: ExpressionSpan[]
-): Expression[] => {
-  if (!targetExpressionSpans || targetExpressionSpans.length === 0) {
-    return [];
-  }
-
-  const expressions: Expression[] = [];
-  visit(program, null, (node) => {
-    if (
-      'start' in node &&
-      'end' in node &&
-      isTargetExpression(node as Expression, targetExpressionSpans)
-    ) {
-      expressions.push(node as Expression);
-    }
-  });
-
-  return expressions.sort((a, b) => a.start - b.start);
-};
-
 const extractExpressions = (
   code: string,
   filename: string,
   evaluate: boolean,
+  program: Program,
+  analysis: Pick<
+    ProgramAnalysis,
+    'bindingsByName' | 'rootMutationsByBinding' | 'usedNames'
+  >,
   expressions: Expression[]
 ): TemplateExtractionResult => {
-  const program = parseOxc(code, filename);
   if (expressions.length === 0) {
     return { code, dependencyNames: [], expressionValues: [] };
   }
 
+  const insertionPoints = getInsertionPoints(program, expressions);
   const ctx: ExtractionContext = {
-    bindingsByName: collectBindings(program),
+    bindingResolutionCache: new Map(),
+    bindingsByName: analysis.bindingsByName,
     code,
-    currentInsertionPoint: getInsertionPoint(program, expressions[0]),
+    currentInsertionPoint: insertionPoints[0] ?? 0,
     currentExpressionStart: expressions[0].start,
     dependencyNames: new Set(),
     expressionValues: [],
@@ -1629,14 +1736,15 @@ const extractExpressions = (
     hoistedDeclarations: new Map(),
     hoistedDeclarationsByInsertionPoint: new Map(),
     loc: createLocationLookup(code),
+    referencesByNode: new WeakMap(),
     replacements: [],
-    rootMutationsByBinding: collectRootMutations(program),
+    rootMutationsByBinding: analysis.rootMutationsByBinding,
     removedDeclarations: new Set(),
-    usedNames: collectUsedNames(program),
+    usedNames: new Set(analysis.usedNames),
   };
 
-  expressions.forEach((expression) => {
-    ctx.currentInsertionPoint = getInsertionPoint(program, expression);
+  expressions.forEach((expression, index) => {
+    ctx.currentInsertionPoint = insertionPoints[index] ?? 0;
     ctx.currentExpressionStart = expression.start;
 
     const literal = literalExpressionValue(expression, ctx);
@@ -1704,8 +1812,19 @@ export const collectOxcExpressionDependencies = (
   targetExpressionSpans?: ExpressionSpan[]
 ): TemplateExtractionResult => {
   const program = parseOxc(code, filename);
-  const expressions = collectTargetExpressions(program, targetExpressionSpans);
-  return extractExpressions(code, filename, evaluate, expressions);
+  const analysis = analyzeProgram(program, {
+    collectTargetExpressions: true,
+    expressionSpanLookup: createSpanLookup(targetExpressionSpans),
+  });
+
+  return extractExpressions(
+    code,
+    filename,
+    evaluate,
+    program,
+    analysis,
+    analysis.targetExpressions
+  );
 };
 
 export const collectOxcTemplateDependencies = (
@@ -1715,7 +1834,13 @@ export const collectOxcTemplateDependencies = (
   targetTemplateSpans?: ExpressionSpan[]
 ): TemplateExtractionResult => {
   const program = parseOxc(code, filename);
-  const templates = collectTemplateLiterals(program, targetTemplateSpans);
-  const expressions = templates.flatMap((template) => template.expressions);
-  return extractExpressions(code, filename, evaluate, expressions);
+  const analysis = analyzeProgram(program, {
+    collectTemplateLiterals: true,
+    templateSpanLookup: createSpanLookup(targetTemplateSpans),
+  });
+  const expressions = analysis.templateLiterals.flatMap(
+    (template) => template.expressions
+  );
+
+  return extractExpressions(code, filename, evaluate, program, analysis, expressions);
 };

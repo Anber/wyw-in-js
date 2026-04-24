@@ -1,6 +1,5 @@
 /* eslint-disable no-restricted-syntax,no-continue */
 
-import { parseSync } from 'oxc-parser';
 import type {
   CallExpression,
   Expression,
@@ -12,6 +11,8 @@ import type {
 import type { CodeRemoverOptions } from '@wyw-in-js/shared';
 
 import { collectOxcExportsAndImports } from './collectOxcExportsAndImports';
+import { EventEmitter } from './EventEmitter';
+import { parseOxcProgramCached } from './parseOxc';
 
 type AnyNode = Node & Record<string, unknown>;
 
@@ -172,18 +173,7 @@ const getChildren = (node: Node): Node[] => {
 };
 
 const parseOxc = (code: string, filename: string): Program => {
-  const parsed = parseSync(filename, code, {
-    astType:
-      filename.endsWith('.ts') || filename.endsWith('.tsx') ? 'ts' : 'js',
-    range: true,
-    sourceType: 'unambiguous',
-  });
-  const fatalError = parsed.errors.find((error) => error.severity === 'Error');
-  if (fatalError) {
-    throw new Error(`${fatalError.message} [${filename}]`);
-  }
-
-  return parsed.program as Program;
+  return parseOxcProgramCached(filename, code, 'unambiguous');
 };
 
 const unwrapExpression = (node: Expression): Expression => {
@@ -591,28 +581,14 @@ export const rewriteDynamicImportsWithOxc = (
   code: string,
   filename: string
 ): string => {
-  const replacements: Replacement[] = [];
-
-  visit(parseOxc(code, filename), createScope(null, 'root'), (node) => {
-    if (node.type !== 'ImportExpression') {
-      return;
+  const replacements = collectDynamicImportAndRequireFallbackReplacements(
+    code,
+    filename,
+    {
+      addRequireFallback: false,
+      rewriteDynamicImports: true,
     }
-
-    const importExpression = node as ImportExpression;
-    const argument = importExpression.source;
-    const nextArgument = isStringLikeExpression(argument)
-      ? unwrapExpression(argument)
-      : argument;
-
-    replacements.push({
-      end: importExpression.end,
-      start: importExpression.start,
-      value: `__wyw_dynamic_import(${dynamicImportArgumentCode(
-        code,
-        nextArgument
-      )})`,
-    });
-  });
+  );
 
   return applyReplacements(code, replacements);
 };
@@ -621,51 +597,134 @@ export const addRequireFallbackWithOxc = (
   code: string,
   filename: string
 ): string => {
-  const replacements: Replacement[] = [];
-
-  visit(parseOxc(code, filename), createScope(null, 'root'), (node, scope) => {
-    if (node.type !== 'CallExpression') {
-      return;
+  const replacements = collectDynamicImportAndRequireFallbackReplacements(
+    code,
+    filename,
+    {
+      addRequireFallback: true,
+      rewriteDynamicImports: false,
     }
+  );
 
-    const call = node as CallExpression;
-    if (
-      call.callee.type !== 'Identifier' ||
-      call.callee.name !== 'require' ||
-      hasBinding(scope, 'require') ||
-      call.arguments.length !== 1
-    ) {
-      return;
-    }
+  return applyReplacements(code, replacements);
+};
 
-    const [firstArg] = call.arguments;
-    if (!firstArg || firstArg.type === 'SpreadElement') {
-      return;
-    }
+type CombinedSyntaxRewriteOptions = {
+  addRequireFallback: boolean;
+  eventEmitter?: EventEmitter;
+  rewriteDynamicImports: boolean;
+};
 
-    if (isLiteralRequireArg(firstArg)) {
-      return;
-    }
+type RequireFallbackCandidate = {
+  call: CallExpression;
+  scope: Scope;
+};
 
-    const staticValue = evaluateStaticValue(firstArg, scope);
-    if (
-      typeof staticValue === 'string' &&
-      isFileLikeRequireSpecifier(staticValue)
-    ) {
-      replacements.push({
-        end: firstArg.end,
-        start: firstArg.start,
-        value: JSON.stringify(staticValue),
+const collectDynamicImportAndRequireFallbackReplacements = (
+  code: string,
+  filename: string,
+  options: CombinedSyntaxRewriteOptions
+): Replacement[] => {
+  const eventEmitter = options.eventEmitter ?? EventEmitter.dummy;
+  const dynamicImportCandidates: ImportExpression[] = [];
+  const requireFallbackCandidates: RequireFallbackCandidate[] = [];
+
+  eventEmitter.perf('transform:preeval:dynamicImportRequireFallback:scan', () => {
+    visit(parseOxc(code, filename), createScope(null, 'root'), (node, scope) => {
+      if (options.rewriteDynamicImports && node.type === 'ImportExpression') {
+        dynamicImportCandidates.push(node as ImportExpression);
+      }
+
+      if (
+        !options.addRequireFallback ||
+        node.type !== 'CallExpression'
+      ) {
+        return;
+      }
+
+      const call = node as CallExpression;
+      if (
+        call.callee.type !== 'Identifier' ||
+        call.callee.name !== 'require' ||
+        hasBinding(scope, 'require') ||
+        call.arguments.length !== 1
+      ) {
+        return;
+      }
+
+      const [firstArg] = call.arguments;
+      if (!firstArg || firstArg.type === 'SpreadElement' || isLiteralRequireArg(firstArg)) {
+        return;
+      }
+
+      requireFallbackCandidates.push({
+        call,
+        scope,
       });
-      return;
-    }
-
-    replacements.push({
-      end: firstArg.end,
-      start: firstArg.end,
-      value: ', true',
     });
   });
+
+  const replacements: Replacement[] = [];
+
+  eventEmitter.perf('transform:preeval:dynamicImport', () => {
+    dynamicImportCandidates.forEach((importExpression) => {
+      const argument = importExpression.source;
+      const nextArgument = isStringLikeExpression(argument)
+        ? unwrapExpression(argument)
+        : argument;
+
+      replacements.push({
+        end: importExpression.end,
+        start: importExpression.start,
+        value: `__wyw_dynamic_import(${dynamicImportArgumentCode(
+          code,
+          nextArgument
+        )})`,
+      });
+    });
+  });
+
+  eventEmitter.perf('transform:preeval:requireFallback', () => {
+    requireFallbackCandidates.forEach(({ call, scope }) => {
+      const [firstArg] = call.arguments;
+      if (!firstArg || firstArg.type === 'SpreadElement') {
+        return;
+      }
+
+      const staticValue = evaluateStaticValue(firstArg, scope);
+      if (
+        typeof staticValue === 'string' &&
+        isFileLikeRequireSpecifier(staticValue)
+      ) {
+        replacements.push({
+          end: firstArg.end,
+          start: firstArg.start,
+          value: JSON.stringify(staticValue),
+        });
+        return;
+      }
+
+      replacements.push({
+        end: firstArg.end,
+        start: firstArg.end,
+        value: ', true',
+      });
+    });
+  });
+
+  return replacements;
+};
+
+export const rewriteDynamicImportsAndAddRequireFallbackWithOxc = (
+  code: string,
+  filename: string,
+  options: CombinedSyntaxRewriteOptions
+): string => {
+  const replacements = collectDynamicImportAndRequireFallbackReplacements(
+    code,
+    filename,
+    options
+  );
 
   return applyReplacements(code, replacements);
 };

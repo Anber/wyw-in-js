@@ -1,6 +1,5 @@
 /* eslint-disable @typescript-eslint/no-use-before-define,no-restricted-syntax,no-continue */
 
-import { parseSync } from 'oxc-parser';
 import type {
   AssignmentExpression,
   BindingPattern,
@@ -24,6 +23,8 @@ import type {
   PropertyKey,
   VariableDeclarator,
 } from 'oxc-parser';
+
+import { parseOxcCached } from './parseOxc';
 
 type ImportKind = 'cjs' | 'dynamic' | 'esm';
 
@@ -60,6 +61,8 @@ export type OxcCollectedState = {
   isEsModule: boolean;
   reexports: OxcCollectedReexport[];
 };
+
+type VisitMode = 'all' | 'importsOnly';
 
 type NamespaceBinding = {
   kind: 'namespace';
@@ -1158,8 +1161,15 @@ const collectFromHelperCall = (
   }
 };
 
-const visit = (node: Node, ctx: VisitContext, state: AnalyzerState): void => {
-  parentContainers.set(node, ctx.parent);
+const visit = (
+  node: Node,
+  ctx: VisitContext,
+  state: AnalyzerState,
+  mode: VisitMode = 'all'
+): void => {
+  if (mode === 'all') {
+    parentContainers.set(node, ctx.parent);
+  }
 
   let { scope } = ctx;
   if (
@@ -1182,29 +1192,29 @@ const visit = (node: Node, ctx: VisitContext, state: AnalyzerState): void => {
 
   if (node.type === 'ImportDeclaration') {
     collectFromImportDeclaration(node, scope, state);
-  } else if (node.type === 'ExportNamedDeclaration') {
+  } else if (mode === 'all' && node.type === 'ExportNamedDeclaration') {
     collectFromExportNamedDeclaration(node, state);
-  } else if (node.type === 'ExportAllDeclaration') {
+  } else if (mode === 'all' && node.type === 'ExportAllDeclaration') {
     collectFromExportAllDeclaration(node, state);
-  } else if (node.type === 'ExportDefaultDeclaration') {
+  } else if (mode === 'all' && node.type === 'ExportDefaultDeclaration') {
     collectFromExportDefaultDeclaration(node, state);
   } else if (node.type === 'VariableDeclarator') {
     if (!collectFromRequireDeclarator(node, scope, state)) {
       declareLocalPattern(scope, node.id);
     }
-  } else if (node.type === 'ImportExpression') {
+  } else if (mode === 'all' && node.type === 'ImportExpression') {
     collectFromImportExpression(node, ctx.parent, state);
-  } else if (node.type === 'CallExpression') {
+  } else if (mode === 'all' && node.type === 'CallExpression') {
     collectFromWywDynamicImport(node, ctx.parent, state);
     collectFromHelperCall(node, { ...ctx, scope }, state);
-  } else if (node.type === 'AssignmentExpression') {
+  } else if (mode === 'all' && node.type === 'AssignmentExpression') {
     collectFromAssignmentExpression(node, { ...ctx, scope }, state);
   } else if (node.type === 'Identifier') {
     collectFromNamespaceReference(node, ctx.parent, { ...ctx, scope }, state);
   }
 
   for (const child of getChildren(node)) {
-    visit(child.node, { key: child.key, parent: node, scope }, state);
+    visit(child.node, { key: child.key, parent: node, scope }, state, mode);
   }
 };
 
@@ -1261,21 +1271,11 @@ const addUnusedNamespaceSideEffects = (state: AnalyzerState): void => {
   });
 };
 
-export function collectOxcExportsAndImports(
+export function collectOxcExportsAndImportsFromProgram(
+  program: Program,
   code: string,
-  filename: string
+  isEsModule: boolean
 ): OxcCollectedState {
-  const parsed = parseSync(filename, code, {
-    astType:
-      filename.endsWith('.ts') || filename.endsWith('.tsx') ? 'ts' : 'js',
-    range: true,
-    sourceType: 'unambiguous',
-  });
-  const fatalError = parsed.errors.find((error) => error.severity === 'Error');
-  if (fatalError) {
-    throw new Error(fatalError.message);
-  }
-
   const rootScope = createScope(null);
   const state: AnalyzerState = {
     code,
@@ -1285,18 +1285,56 @@ export function collectOxcExportsAndImports(
       deadExports: [],
       exports: {},
       imports: [],
-      isEsModule: parsed.module.hasModuleSyntax,
+      isEsModule,
       reexports: [],
     },
   };
 
-  precollectRequireSources(parsed.program as Program, state);
-  visit(
-    parsed.program as Program,
-    { key: 'program', parent: null, scope: rootScope },
-    state
-  );
+  precollectRequireSources(program, state);
+  visit(program, { key: 'program', parent: null, scope: rootScope }, state, 'all');
   addUnusedNamespaceSideEffects(state);
 
   return state.result;
+}
+
+export function collectOxcProcessorImportsFromProgram(
+  program: Program,
+  code: string
+): OxcCollectedImport[] {
+  const rootScope = createScope(null);
+  const state: AnalyzerState = {
+    code,
+    namespaces: [],
+    requireSources: new Map(),
+    result: {
+      deadExports: [],
+      exports: {},
+      imports: [],
+      isEsModule: true,
+      reexports: [],
+    },
+  };
+
+  precollectRequireSources(program, state);
+  visit(
+    program,
+    { key: 'program', parent: null, scope: rootScope },
+    state,
+    'importsOnly'
+  );
+
+  return state.result.imports;
+}
+
+export function collectOxcExportsAndImports(
+  code: string,
+  filename: string
+): OxcCollectedState {
+  const parsed = parseOxcCached(filename, code, 'unambiguous');
+
+  return collectOxcExportsAndImportsFromProgram(
+    parsed.program,
+    code,
+    parsed.module.hasModuleSyntax
+  );
 }

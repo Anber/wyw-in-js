@@ -71,6 +71,60 @@ const options = (
 });
 
 describe('applyOxcProcessors', () => {
+  it('returns the original module when no imports resolve to processors', () => {
+    const source = `
+      import { notCss } from 'test-package';
+      const a = notCss\`
+        color: red;
+      \`;
+      export { a };
+    `;
+
+    const result = applyOxcProcessors(
+      source,
+      fileContext,
+      options(processorPath),
+      () => {}
+    );
+
+    expect(result.code).toBe(source);
+    expect(result.processors).toEqual([]);
+  });
+
+  it('reuses processor lookup results for the same import tuple across runs', () => {
+    let resolverCalls = 0;
+    const cachedOptions: Pick<
+      StrictOptions,
+      'classNameSlug' | 'displayName' | 'extensions' | 'evaluate' | 'tagResolver'
+    > = {
+      displayName: false,
+      evaluate: true,
+      extensions: ['.js'],
+      tagResolver: (source, imported) => {
+        if (source === 'test-package-lookup-cache' && imported === 'css') {
+          resolverCalls += 1;
+          return processorPath;
+        }
+
+        return null;
+      },
+    };
+
+    const source = `
+      import { css } from 'test-package-lookup-cache';
+      export const a = css\`
+        color: red;
+      \`;
+    `;
+
+    const first = applyOxcProcessors(source, fileContext, cachedOptions, () => {});
+    const second = applyOxcProcessors(source, fileContext, cachedOptions, () => {});
+
+    expect(first.processors).toHaveLength(1);
+    expect(second.processors).toHaveLength(1);
+    expect(resolverCalls).toBe(1);
+  });
+
   it('creates tagged-template processors and preserves CSS extraction', () => {
     const cssText: string[] = [];
     const starts: unknown[] = [];
