@@ -53,6 +53,8 @@ type ProcessorUsage =
   | {
       ancestors: Node[];
       callee: Expression;
+      collapseQualifiedCallee: boolean;
+      definedProcessor: DefinedProcessor;
       kind: 'call';
       replacementTarget: Expression;
       target: CallExpression;
@@ -60,6 +62,8 @@ type ProcessorUsage =
   | {
       ancestors: Node[];
       callee: Expression;
+      collapseQualifiedCallee: boolean;
+      definedProcessor: DefinedProcessor;
       kind: 'template';
       replacementTarget: Expression;
       target: TaggedTemplateExpression;
@@ -1340,27 +1344,36 @@ const getQualifiedName = (node: Expression): string | null => {
   return null;
 };
 
-const findDefinedProcessor = (
+const resolveDefinedProcessor = (
   callee: Expression,
   definedProcessors: Map<string, DefinedProcessor>
-): DefinedProcessor | null => {
+): {
+  collapseQualifiedCallee: boolean;
+  definedProcessor: DefinedProcessor;
+} | null => {
   const qualified = getQualifiedName(callee);
-  if (qualified && definedProcessors.has(qualified)) {
-    return definedProcessors.get(qualified)!;
+  if (qualified) {
+    const definedProcessor = definedProcessors.get(qualified);
+    if (definedProcessor) {
+      return {
+        collapseQualifiedCallee: qualified.includes('.'),
+        definedProcessor,
+      };
+    }
   }
 
   const root = getRootIdentifier(callee);
-  return root ? definedProcessors.get(root.name) ?? null : null;
-};
+  if (!root) {
+    return null;
+  }
 
-const shouldCollapseQualifiedCallee = (
-  callee: Expression,
-  definedProcessors: Map<string, DefinedProcessor>
-): boolean => {
-  const qualified = getQualifiedName(callee);
-  return Boolean(
-    qualified && qualified.includes('.') && definedProcessors.has(qualified)
-  );
+  const definedProcessor = definedProcessors.get(root.name);
+  return definedProcessor
+    ? {
+        collapseQualifiedCallee: false,
+        definedProcessor,
+      }
+    : null;
 };
 
 const isCallTagOfTaggedTemplate = (node: Node, parent: Node | null): boolean =>
@@ -1409,10 +1422,16 @@ const collectProcessorUsages = (
   ): void => {
     if (node.type === 'TaggedTemplateExpression') {
       const callee = node.tag as Expression;
-      if (findDefinedProcessor(callee, definedProcessors)) {
+      const resolvedProcessor = resolveDefinedProcessor(
+        callee,
+        definedProcessors
+      );
+      if (resolvedProcessor) {
         usages.push({
           ancestors,
           callee,
+          collapseQualifiedCallee: resolvedProcessor.collapseQualifiedCallee,
+          definedProcessor: resolvedProcessor.definedProcessor,
           kind: 'template',
           replacementTarget: expandReplacementTarget(node, ancestors),
           target: node,
@@ -1423,10 +1442,16 @@ const collectProcessorUsages = (
       !isCallTagOfTaggedTemplate(node, parent)
     ) {
       const { callee } = node as CallExpressionLike;
-      if (findDefinedProcessor(callee, definedProcessors)) {
+      const resolvedProcessor = resolveDefinedProcessor(
+        callee,
+        definedProcessors
+      );
+      if (resolvedProcessor) {
         usages.push({
           ancestors,
           callee,
+          collapseQualifiedCallee: resolvedProcessor.collapseQualifiedCallee,
+          definedProcessor: resolvedProcessor.definedProcessor,
           kind: 'call',
           replacementTarget: expandReplacementTarget(
             node as CallExpression,
@@ -2146,28 +2171,20 @@ export const applyOxcProcessors = (
 
   eventEmitter.perf('transform:preeval:processTemplate:processors', () => {
     processorUsages.forEach((usage, idx) => {
-      const definedProcessor = findDefinedProcessor(
-        usage.callee,
-        definedProcessors
-      );
-      if (!definedProcessor) {
-        return;
-      }
-
       const params = buildParams(
         usage,
         workingCode,
         loc,
         filename,
         templateExpressionValues,
-        shouldCollapseQualifiedCallee(usage.callee, definedProcessors)
+        usage.collapseQualifiedCallee
       );
       if (!params) {
         return;
       }
 
       const processor = createProcessor(
-        definedProcessor,
+        usage.definedProcessor,
         params,
         usage.target,
         usage.replacementTarget,

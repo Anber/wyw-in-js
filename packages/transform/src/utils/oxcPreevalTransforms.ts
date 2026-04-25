@@ -86,6 +86,8 @@ const defaultReactComponentTypes = [
   'NamedExoticComponent',
 ];
 const generatedProcessorHelperNameRe = /^_exp\d*$/;
+const requireCallRe = /\brequire\s*\(/;
+const windowTokenRe = /\bwindow\b/;
 const removableOwnerTypes = new Set([
   'DoWhileStatement',
   'ExpressionStatement',
@@ -99,6 +101,7 @@ const removableOwnerTypes = new Set([
   'VariableDeclaration',
   'WhileStatement',
 ]);
+const importMetaEnvRe = /\bimport\s*\.\s*meta\s*\.\s*env\b/;
 
 const createScope = (parent: Scope | null, key: string): Scope => ({
   bindings: new Map(),
@@ -573,6 +576,10 @@ export const replaceImportMetaEnvWithOxc = (
   code: string,
   filename: string
 ): string => {
+  if (!importMetaEnvRe.test(code)) {
+    return code;
+  }
+
   const replacements: Replacement[] = [];
 
   visit(parseOxc(code, filename), createScope(null, 'root'), (node) => {
@@ -988,6 +995,10 @@ const collectImportBindings = (
     });
   });
 
+  if (!requireCallRe.test(code)) {
+    return [...bindings.values()];
+  }
+
   collectOxcExportsAndImports(code, filename).imports.forEach((item) => {
     if (item.imported === 'side-effect') {
       return;
@@ -1291,7 +1302,9 @@ export const removeDangerousCodeWithOxc = (
   const componentTypes = getComponentTypes(options);
   const hocs = options?.hocs ?? {};
   const hasHocs = Object.keys(hocs).length > 0;
-  const windowScopedNames = collectWindowScopedNames(program);
+  const windowScopedNames = windowTokenRe.test(code)
+    ? collectWindowScopedNames(program)
+    : new Set<string>();
 
   let discoveredNewDerivedBinding = true;
   while (discoveredNewDerivedBinding) {

@@ -3,16 +3,17 @@
 import fs from 'fs';
 import path from 'path';
 
-import { parseSync } from 'oxc-parser';
 import type { Node, Program } from 'oxc-parser';
 
 import { syncResolve, type ImportOverrides } from '@wyw-in-js/shared';
 
 import {
   collectOxcExportsAndImports,
+  collectOxcExportsAndImportsFromProgram,
   type OxcCollectedImport,
 } from './collectOxcExportsAndImports';
 import { getImportOverride, toImportKey } from './importOverrides';
+import { parseOxcCached } from './parseOxc';
 import { stripQueryAndHash } from './parseRequest';
 
 type AnyNode = Node & Record<string, unknown>;
@@ -43,6 +44,11 @@ type StatementInfo = {
 export type OxcShakerResult = {
   code: string;
   imports: Map<string, string[]>;
+};
+type ParsedOxcProgram = ReturnType<typeof parseOxc>;
+type RemoveUnusedImportSpecifiersResult = {
+  code: string;
+  parsed: ParsedOxcProgram;
 };
 
 const warnedDynamicImportFiles = new Set<string>();
@@ -80,28 +86,30 @@ const getChildren = (node: Node): Node[] => {
   return result;
 };
 
-const parseOxc = (code: string, filename: string): Program => {
-  const parsed = parseSync(filename, code, {
-    astType:
-      filename.endsWith('.ts') || filename.endsWith('.tsx') ? 'ts' : 'js',
-    range: true,
-    sourceType: 'unambiguous',
-  });
-  const fatalError = parsed.errors.find((error) => error.severity === 'Error');
-  if (fatalError) {
+const parseOxc = (
+  code: string,
+  filename: string
+): { isEsModule: boolean; program: Program } => {
+  try {
+    const parsed = parseOxcCached(filename, code, 'unambiguous');
+    return {
+      isEsModule: parsed.module.hasModuleSyntax,
+      program: parsed.program,
+    };
+  } catch (error) {
     if (process.env.WYW_DEBUG_SHAKER_DUMP) {
       const dumpFile = path.join(
         '/tmp',
         `wyw-oxc-shaker-${path.basename(filename).replace(/[^a-z0-9_.-]/gi, '_')}-${Date.now()}.js`
       );
       fs.writeFileSync(dumpFile, code);
-      throw new Error(`${fatalError.message} [${filename}] [dump: ${dumpFile}]`);
+      const message =
+        error instanceof Error ? error.message : 'Unknown Oxc shaker parse error';
+      throw new Error(`${message} [${filename}] [dump: ${dumpFile}]`);
     }
 
-    throw new Error(fatalError.message);
+    throw error;
   }
-
-  return parsed.program as Program;
 };
 
 const applyReplacements = (
@@ -592,8 +600,12 @@ const mergeEmptyRemovalRanges = (removals: Replacement[]): Replacement[] => {
   return merged;
 };
 
-const removeUnusedImportSpecifiers = (code: string, filename: string): string => {
-  const program = parseOxc(code, filename);
+const removeUnusedImportSpecifiers = (
+  code: string,
+  filename: string
+): RemoveUnusedImportSpecifiersResult => {
+  const parsed = parseOxc(code, filename);
+  const { program } = parsed;
   const referencedNames = new Set<string>();
 
   program.body.forEach((statement) => {
@@ -643,17 +655,25 @@ const removeUnusedImportSpecifiers = (code: string, filename: string): string =>
   });
 
   if (removals.length === 0) {
-    return code;
+    return {
+      code,
+      parsed,
+    };
   }
 
   const mergedRemovals = mergeEmptyRemovalRanges(removals);
   const nextCode = applyReplacements(code, mergedRemovals);
 
   try {
-    parseOxc(nextCode, filename);
-    return nextCode;
+    return {
+      code: nextCode,
+      parsed: parseOxc(nextCode, filename),
+    };
   } catch {
-    return code;
+    return {
+      code,
+      parsed,
+    };
   }
 };
 
@@ -908,8 +928,13 @@ export const shakeOxcToESM = (
   filename: string,
   options: OxcShakerOptions
 ): OxcShakerResult => {
-  const program = parseOxc(code, filename);
-  const collected = collectOxcExportsAndImports(code, filename);
+  const parsed = parseOxc(code, filename);
+  const { program } = parsed;
+  const collected = collectOxcExportsAndImportsFromProgram(
+    program,
+    code,
+    parsed.isEsModule
+  );
   const statements = buildStatementInfo(program, collected);
   const bindingOwners = new Map<string, StatementInfo>();
   statements.forEach((statement) => {
@@ -1015,11 +1040,16 @@ export const shakeOxcToESM = (
     }
   });
 
-  const nextCode = removeUnusedImportSpecifiers(
+  const cleaned = removeUnusedImportSpecifiers(
     applyReplacements(code, replacements),
     filename
   );
-  const nextCollected = collectOxcExportsAndImports(nextCode, filename);
+  const nextCode = cleaned.code;
+  const nextCollected = collectOxcExportsAndImportsFromProgram(
+    cleaned.parsed.program,
+    nextCode,
+    cleaned.parsed.isEsModule
+  );
   warnDynamicImports(nextCollected.imports, filename, options);
 
   return {
