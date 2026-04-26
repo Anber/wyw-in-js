@@ -111,6 +111,7 @@ const builtins = {
 
 const RESOLVE_CACHE_SIZE = 5000;
 const LOAD_CACHE_SIZE = 1000;
+const MODULE_VARIANT_LIMIT = 8;
 
 const isBuiltinSpecifier = (specifier) => {
   const normalized = specifier.startsWith('node:')
@@ -958,6 +959,8 @@ const moduleCache = new LruCache(LOAD_CACHE_SIZE);
 const moduleHashes = new Map();
 const moduleData = new Map();
 const moduleOnly = new Map();
+const moduleVariants = new Map();
+const moduleLastVariant = new Map();
 const linkPromises = new Map();
 const loadInFlight = new Map();
 const externalInFlight = new Map();
@@ -978,6 +981,8 @@ const resetModuleState = () => {
   moduleHashes.clear();
   moduleData.clear();
   moduleOnly.clear();
+  moduleVariants.clear();
+  moduleLastVariant.clear();
   linkPromises.clear();
   loadInFlight.clear();
   externalInFlight.clear();
@@ -990,9 +995,41 @@ const resetSingleModuleState = (id, cachedModule = moduleCache.get(id)) => {
     linkPromises.delete(cachedModule);
   }
 
+  const variants = moduleVariants.get(id);
+  if (variants) {
+    variants.forEach((variant) => linkPromises.delete(variant));
+  }
+
   moduleCache.delete(id);
   moduleHashes.delete(id);
   moduleData.delete(id);
+  moduleVariants.delete(id);
+  moduleLastVariant.delete(id);
+};
+
+const isFullModuleLoad = (loaded) => !loaded.only || loaded.only.includes('*');
+
+const getModuleVariant = (id, hash) => moduleVariants.get(id)?.get(hash);
+
+const setModuleVariant = (id, hash, module) => {
+  let variants = moduleVariants.get(id);
+  if (!variants) {
+    variants = new Map();
+    moduleVariants.set(id, variants);
+  }
+  variants.set(hash, module);
+  moduleLastVariant.set(id, module);
+
+  if (variants.size > MODULE_VARIANT_LIMIT) {
+    const oldestHash = variants.keys().next().value;
+    if (oldestHash !== undefined) {
+      const oldest = variants.get(oldestHash);
+      if (oldest) {
+        linkPromises.delete(oldest);
+      }
+      variants.delete(oldestHash);
+    }
+  }
 };
 
 const toSourceModuleId = (id) => stripQueryAndHash(String(id));
@@ -1751,11 +1788,21 @@ loadModule = async (id, importer, requestSpec) => {
       return module;
     }
 
-    if (cached && loaded.hash && moduleHashes.get(id) === loaded.hash) {
-      return cached;
+    const usePrimaryCache = isFullModuleLoad(loaded);
+    if (usePrimaryCache) {
+      if (cached && loaded.hash && moduleHashes.get(id) === loaded.hash) {
+        return cached;
+      }
+    } else if (loaded.hash) {
+      const variant = getModuleVariant(id, loaded.hash);
+      if (variant) {
+        return variant;
+      }
     }
 
-    resetSingleModuleState(id, cached);
+    if (usePrimaryCache) {
+      resetSingleModuleState(id, cached);
+    }
 
     const module = new vm.SourceTextModule(
       `${buildPreamble(id)}${loaded.code ?? ''}`,
@@ -1783,9 +1830,13 @@ loadModule = async (id, importer, requestSpec) => {
       }
     );
 
-    moduleCache.set(id, module);
-    if (loaded.hash) {
-      moduleHashes.set(id, loaded.hash);
+    if (usePrimaryCache) {
+      moduleCache.set(id, module);
+      if (loaded.hash) {
+        moduleHashes.set(id, loaded.hash);
+      }
+    } else if (loaded.hash) {
+      setModuleVariant(id, loaded.hash, module);
     }
     return module;
   })();
@@ -1883,7 +1934,7 @@ const collectModuleExports = () => {
   moduleOnly.forEach((only, id) => {
     if (!only || only.length === 0) return;
 
-    const module = moduleCache.get(id);
+    const module = moduleCache.get(id) ?? moduleLastVariant.get(id);
     const data = moduleData.get(id);
     if (!module || !data) return;
 
