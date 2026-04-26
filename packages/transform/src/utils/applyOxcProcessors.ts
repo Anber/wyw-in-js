@@ -23,7 +23,11 @@ import type {
 
 import { collectOxcProcessorImportsFromProgram } from './collectOxcExportsAndImports';
 import { EventEmitter } from './EventEmitter';
-import { collectOxcExpressionDependencies } from './collectOxcTemplateDependencies';
+import {
+  collectOxcExpressionDependencies,
+  type OxcStaticValue,
+  type OxcStaticValueCandidate,
+} from './collectOxcTemplateDependencies';
 import { isNotNull } from './isNotNull';
 import {
   createOxcAstService,
@@ -45,6 +49,8 @@ type Replacement = {
 type ApplyOxcProcessorsResult = {
   code: string;
   processors: BaseProcessor[];
+  staticValueCandidates: OxcStaticValueCandidate[];
+  staticValues: OxcStaticValue[];
 };
 
 type AnyNode = Node & Record<string, unknown>;
@@ -2154,6 +2160,8 @@ export const applyOxcProcessors = (
     return {
       code: workingCode,
       processors: [],
+      staticValueCandidates: [],
+      staticValues: [],
     };
   }
 
@@ -2165,6 +2173,8 @@ export const applyOxcProcessors = (
     return {
       code: workingCode,
       processors: [],
+      staticValueCandidates: [],
+      staticValues: [],
     };
   }
 
@@ -2185,6 +2195,8 @@ export const applyOxcProcessors = (
           code: workingCode,
           dependencyNames: [],
           expressionValues: [],
+          staticValueCandidates: [],
+          staticValues: [],
         };
 
   if (extracted.code !== workingCode) {
@@ -2291,5 +2303,7 @@ export const applyOxcProcessors = (
         )
       : codeWithAddedImports,
     processors,
+    staticValueCandidates: extracted.staticValueCandidates,
+    staticValues: extracted.staticValues,
   };
 };

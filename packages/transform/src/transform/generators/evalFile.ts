@@ -40,8 +40,18 @@ export async function* evalFile(
   }
 
   const valueCache: ValueCache = evaluated.values;
+  const preevalResult = entrypoint.getPreevalResult();
+  preevalResult?.staticValueCache?.forEach((value, key) => {
+    valueCache.set(key, value);
+  });
+  const dependencies = [
+    ...new Set([
+      ...evaluated.dependencies,
+      ...(preevalResult?.staticDependencies ?? []),
+    ]),
+  ];
 
   log(`<< evaluated __wywPreval %O`, valueCache);
 
-  return [valueCache, evaluated.dependencies];
+  return [valueCache, dependencies];
 }

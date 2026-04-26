@@ -13,6 +13,7 @@ import type {
 } from '../types';
 
 import { rewriteOptimizedOxcBarrelImports } from './rewriteOxcBarrelImports';
+import { resolveStaticOxcPreevalValues } from './resolveStaticOxcValues';
 
 const EMPTY_FILE = '=== empty file ===';
 
@@ -97,8 +98,13 @@ const prepareOxcCodeImpl = (
 
       return {
         ast: originalAst,
+        baseCode: result.baseCode,
         code: result.code,
+        dependencyNames: result.dependencyNames,
         metadata: result.metadata,
+        staticDependencies: result.staticDependencies,
+        staticValueCache: result.staticValueCache,
+        staticValueCandidates: result.staticValueCandidates,
       };
     });
 
@@ -218,11 +224,22 @@ export function* internalTransform(
 
   log('>> (%o)', only);
 
-  const [preparedCode, imports, metadata] = prepareFn(
+  let [preparedCode, imports, metadata] = prepareFn(
     this.services,
     this.entrypoint,
     null
   );
+  if (loadedAndParsed.evaluator === oxcShaker) {
+    const didResolveStaticValues =
+      yield* resolveStaticOxcPreevalValues.call(this);
+    if (didResolveStaticValues) {
+      [preparedCode, imports, metadata] = prepareFn(
+        this.services,
+        this.entrypoint,
+        null
+      );
+    }
+  }
   let finalPreparedCode = preparedCode;
 
   if (loadedAndParsed.evaluator === oxcShaker) {

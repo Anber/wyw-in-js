@@ -115,6 +115,24 @@ describe('runOxcPreevalStage', () => {
     expect(result.code).toContain('export const __wywPreval = {};');
   });
 
+  it('keeps statically evaluated local constants out of __wywPreval', () => {
+    const result = runOxcPreevalStage(
+      `
+        import { css } from 'test-package';
+        const color = 'red';
+        export const a = css\`
+          color: ${'${color}'};
+        \`;
+      `,
+      fileContext,
+      options
+    );
+
+    expect(result.staticValueCache.get('_exp')).toBe('red');
+    expect(result.code).toContain('export const __wywPreval = {};');
+    expect(result.code).not.toContain('__wywPreval = { _exp: _exp }');
+  });
+
   it('still applies preeval syntax rewrites when no processors are present', () => {
     const result = runOxcPreevalStage(
       `
@@ -203,7 +221,7 @@ describe('runOxcPreevalStage', () => {
     });
 
     expect(shaken.code).toContain('export const __wywPreval');
-    expect(shaken.code).toContain('const _exp =');
+    expect(shaken.code).not.toContain('const _exp =');
     expect(shaken.code).not.toContain('test-package');
     expect(shaken.code).not.toContain('runtime-only');
     expect(shaken.code).not.toContain('export const className');
@@ -234,7 +252,9 @@ describe('runOxcPreevalStage', () => {
       }
     );
 
-    expect(preeval.code).toContain('export const __wywPreval = { _exp: _exp };');
+    expect(preeval.code).toContain(
+      'export const __wywPreval = { _exp: _exp };'
+    );
     expect(shaken.code).toContain('export const __wywPreval = { _exp: _exp };');
     expect(shaken.code).toContain('const _exp =');
   });

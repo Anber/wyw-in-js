@@ -29,6 +29,36 @@ describe('collectOxcTemplateDependencies', () => {
     expect(result.code).toContain(
       'tag`${_exp()}${_exp2()}${_exp3()}${_exp4()}`'
     );
+    expect(result.staticValues).toEqual(
+      expect.arrayContaining([
+        { name: '_exp', value: 42 },
+        { name: '_exp2', value: 'test' },
+      ])
+    );
+  });
+
+  it('records imported static candidates by generated helper name', () => {
+    const code = dedent`
+      import { color } from './tokens';
+
+      const template = tag\`${'${color}'}\`;
+    `;
+
+    const result = collectOxcTemplateDependencies(code, filename, true);
+
+    expect(result.staticValueCandidates).toEqual([
+      {
+        imports: [
+          {
+            imported: 'color',
+            local: 'color',
+            source: './tokens',
+          },
+        ],
+        name: '_exp',
+        source: 'color',
+      },
+    ]);
   });
 
   it('inserts hoisted expressions after imports and before the owner statement', () => {

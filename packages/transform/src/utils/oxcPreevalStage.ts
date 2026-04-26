@@ -6,6 +6,7 @@ import { isFeatureEnabled } from '@wyw-in-js/shared';
 
 import { EventEmitter } from './EventEmitter';
 import type { WYWTransformMetadata } from './TransformMetadata';
+import type { OxcStaticValueCandidate } from './collectOxcTemplateDependencies';
 import { applyOxcProcessors } from './applyOxcProcessors';
 import {
   removeDangerousCodeWithOxc,
@@ -25,8 +26,13 @@ type OxcPreevalOptions = Pick<
 > & { eventEmitter?: EventEmitter };
 
 type OxcPreevalResult = {
+  baseCode: string;
   code: string;
+  dependencyNames: string[];
   metadata: WYWTransformMetadata | null;
+  staticDependencies: string[];
+  staticValueCache: Map<string, unknown>;
+  staticValueCandidates: OxcStaticValueCandidate[];
 };
 
 const DYNAMIC_IMPORT_RE = /\bimport(?:\s|\/\*[\s\S]*?\*\/)*\(/;
@@ -50,7 +56,7 @@ const parseSourceType = (
   return parsed.program.sourceType === 'script' ? 'script' : 'module';
 };
 
-const appendWywPreval = (
+export const appendOxcWywPreval = (
   code: string,
   filename: string,
   dependencyNames: string[]
@@ -86,6 +92,12 @@ export const runOxcPreevalStage = (
       processor.doEvaltimeReplacement();
     })
   );
+  const staticValueNames = new Set(
+    processed.staticValues.map((item) => item.name)
+  );
+  const evalDependencyNames = dependencyNames.filter(
+    (name) => !staticValueNames.has(name)
+  );
 
   let nextCode = eventEmitter.perf('transform:preeval:importMetaEnv', () =>
     replaceImportMetaEnvWithOxc(processed.code, filename)
@@ -100,27 +112,46 @@ export const runOxcPreevalStage = (
   const shouldRewriteDynamicImports = DYNAMIC_IMPORT_RE.test(nextCode);
   const shouldAddRequireFallback = REQUIRE_CALL_RE.test(nextCode);
   if (shouldRewriteDynamicImports || shouldAddRequireFallback) {
-    nextCode = rewriteDynamicImportsAndAddRequireFallbackWithOxc(nextCode, filename, {
-      addRequireFallback: shouldAddRequireFallback,
-      eventEmitter,
-      rewriteDynamicImports: shouldRewriteDynamicImports,
-    });
+    nextCode = rewriteDynamicImportsAndAddRequireFallbackWithOxc(
+      nextCode,
+      filename,
+      {
+        addRequireFallback: shouldAddRequireFallback,
+        eventEmitter,
+        rewriteDynamicImports: shouldRewriteDynamicImports,
+      }
+    );
   }
 
   if (processed.processors.length === 0) {
     return {
+      baseCode: nextCode,
       code: nextCode,
+      dependencyNames: [],
       metadata: null,
+      staticDependencies: [],
+      staticValueCandidates: [],
+      staticValueCache: new Map(),
     };
   }
 
+  const staticValueCache = new Map<string, unknown>();
+  processed.staticValues.forEach(({ name, value }) => {
+    staticValueCache.set(name, value);
+  });
+
   return {
-    code: appendWywPreval(nextCode, filename, dependencyNames),
+    baseCode: nextCode,
+    code: appendOxcWywPreval(nextCode, filename, evalDependencyNames),
+    dependencyNames: evalDependencyNames,
     metadata: {
       dependencies: [],
       processors: processed.processors,
       replacements: [],
       rules: {},
     },
+    staticDependencies: [],
+    staticValueCandidates: processed.staticValueCandidates,
+    staticValueCache,
   };
 };

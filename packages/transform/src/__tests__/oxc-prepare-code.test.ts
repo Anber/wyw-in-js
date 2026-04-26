@@ -106,7 +106,8 @@ describe('prepareCode with explicit oxcShaker action', () => {
     const [code, imports, metadata] = prepareCode(services, entrypoint, null);
 
     expect(code).toContain('export const __wywPreval =');
-    expect(code).toContain('var _exp =');
+    expect(code).toContain('export const __wywPreval = {};');
+    expect(code).not.toContain('var _exp =');
     expect(code).not.toContain('runtime-only');
     expect(code).not.toContain('test-css-processor');
     expect(imports?.size).toBe(0);
