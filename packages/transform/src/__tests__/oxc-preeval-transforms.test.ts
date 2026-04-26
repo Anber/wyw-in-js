@@ -526,6 +526,30 @@ describe('oxc preeval transforms', () => {
       expect(code).toContain('const keep = 1;');
     });
 
+    it('replaces shorthand object property values referencing forbidden globals with undefined', () => {
+      const code = removeDangerousCodeWithOxc(
+        'export default { fetch, keep: 1 };',
+        filename
+      );
+
+      expect(code).toContain('fetch: undefined');
+      expect(code).toContain('keep: 1');
+      expect(code).not.toMatch(/\{\s*,/);
+      expect(() => stripTypesAndJsxWithOxc(code, filename)).not.toThrow();
+    });
+
+    it('replaces explicit object property values referencing forbidden globals with undefined', () => {
+      const code = removeDangerousCodeWithOxc(
+        'export default { sub: setTimeout, keep: 1 };',
+        filename
+      );
+
+      expect(code).toContain('sub: undefined');
+      expect(code).toContain('keep: 1');
+      expect(code).not.toMatch(/:\s*,/);
+      expect(() => stripTypesAndJsxWithOxc(code, filename)).not.toThrow();
+    });
+
     it('preserves shorthand re-exports of locally-bound helpers transitively touching forbidden globals', () => {
       const code = removeDangerousCodeWithOxc(
         [

@@ -1485,6 +1485,15 @@ export const removeDangerousCodeWithOxc = (
       return;
     }
 
+    if (parent?.type === 'Property' && parent.value === node) {
+      replacements.push({
+        start: node.start,
+        end: node.end,
+        value: parent.shorthand ? `${node.name}: undefined` : 'undefined',
+      });
+      return;
+    }
+
     const grandparent = ancestors[ancestors.length - 2] ?? null;
     if (
       parent?.type === 'MemberExpression' &&
