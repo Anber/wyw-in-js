@@ -1762,7 +1762,7 @@ const extractExpressions = (
 
     addHoistedCode(
       expName,
-      `const ${expName} = () => ${expressionCode};`,
+      `const ${expName} = () => (${expressionCode});`,
       ctx
     );
     ctx.replacements.push({
