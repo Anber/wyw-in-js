@@ -44,7 +44,32 @@ const runTransform = (
   });
 
 describe('@wyw-in-js/babel-preset Oxc compatibility wrapper', () => {
+  it('warns once that the preset is a deprecated compatibility wrapper', () => {
+    const emitWarningSpy = jest
+      .spyOn(process, 'emitWarning')
+      .mockImplementation(() => {});
+
+    try {
+      runTransform('export const answer = 42;', '/tmp/wyw-babel-warning-a.js', {
+        configFile: false,
+      });
+      runTransform('export const answer = 21;', '/tmp/wyw-babel-warning-b.js', {
+        configFile: false,
+      });
+
+      expect(emitWarningSpy).toHaveBeenCalledTimes(1);
+      expect(String(emitWarningSpy.mock.calls[0][0])).toContain(
+        'deprecated compatibility wrapper'
+      );
+    } finally {
+      emitWarningSpy.mockRestore();
+    }
+  });
+
   it('loads function-valued config file options inside the sync runner', () => {
+    const emitWarningSpy = jest
+      .spyOn(process, 'emitWarning')
+      .mockImplementation(() => {});
     const root = mkdtempSync(path.join(tmpdir(), 'wyw-babel-preset-'));
     const entryFile = path.join(root, 'entry.js');
     const configFile = path.join(root, 'wyw-in-js.config.mjs');
@@ -79,10 +104,15 @@ describe('@wyw-in-js/babel-preset Oxc compatibility wrapper', () => {
         configFile,
       });
 
+      expect(emitWarningSpy).toHaveBeenCalledTimes(1);
+      expect(String(emitWarningSpy.mock.calls[0][0])).toContain(
+        'loads .mjs/.mts WyW config files synchronously'
+      );
       expect(extractCssText(result)).toContain('royalblue');
       expect(result?.code).toContain('export const className =');
       expect(result?.code).not.toContain('css`');
     } finally {
+      emitWarningSpy.mockRestore();
       rmSync(root, { recursive: true, force: true });
     }
   });
@@ -104,7 +134,7 @@ describe('@wyw-in-js/babel-preset Oxc compatibility wrapper', () => {
           customResolver: async () => null,
         },
       })
-    ).toThrow('Move it into a config file');
+    ).toThrow('Move it into a WyW config file');
   });
 
   it('supports inline eval.globals through the dedicated payload channel', () => {

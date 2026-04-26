@@ -50,6 +50,48 @@ const nodeBinary =
     : process.env.WYW_NODE_BINARY ||
       (process.execPath.includes('bun') ? 'node' : process.execPath);
 
+const compatibilityWarnings = new Set<string>();
+
+const emitCompatibilityWarning = (key: string, message: string) => {
+  if (compatibilityWarnings.has(key)) {
+    return;
+  }
+
+  compatibilityWarnings.add(key);
+
+  if (typeof process.emitWarning === 'function') {
+    process.emitWarning(message, {
+      code: `WYW_${key}`,
+      type: 'DeprecationWarning',
+    });
+    return;
+  }
+
+  // eslint-disable-next-line no-console
+  console.warn(message);
+};
+
+const warnBabelPresetDeprecation = () => {
+  emitCompatibilityWarning(
+    'BABEL_PRESET_COMPATIBILITY',
+    '[wyw-in-js] @wyw-in-js/babel-preset is a deprecated compatibility wrapper around the Oxc-backed transform. Prefer bundler integrations or the transform() API for new setups.'
+  );
+};
+
+const warnSynchronousModuleConfig = (configFile: unknown) => {
+  if (
+    typeof configFile !== 'string' ||
+    !/\.(?:mjs|mts)$/iu.test(configFile)
+  ) {
+    return;
+  }
+
+  emitCompatibilityWarning(
+    'BABEL_PRESET_SYNC_CONFIG',
+    '[wyw-in-js] @wyw-in-js/babel-preset loads .mjs/.mts WyW config files synchronously. Keep them synchronous and avoid top-level await.'
+  );
+};
+
 function isEnabled(caller?: TransformCaller & { evaluate?: true }) {
   return caller?.name !== 'wyw-in-js' || caller.evaluate === true;
 }
@@ -98,7 +140,8 @@ const throwNonSerializableOption = (
     `[wyw-in-js] Babel preset option ${formatOptionPath(
       path
     )} is not serializable (${reason}). ` +
-      'Move it into a config file or use the async transform() API.'
+      '@wyw-in-js/babel-preset forwards inline options through a separate sync runner. ' +
+      'Move it into a WyW config file or use the async transform() API.'
   );
 };
 
@@ -287,6 +330,9 @@ export default function wywInJS(babel: ConfigAPI, options: PluginOptions) {
   if (!babel.caller(isEnabled)) {
     return {};
   }
+
+  warnBabelPresetDeprecation();
+  warnSynchronousModuleConfig(options.configFile);
 
   return {
     plugins: [[oxcCompatibilityPlugin, options]],

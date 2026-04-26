@@ -529,7 +529,7 @@ module.exports = {
 
 ## `@wyw-in-js/babel-preset`
 
-The preset is a compatibility wrapper for environments that still invoke WyW through Babel. Bundler plugins use the Oxc-first transform path directly and do not depend on this preset internally.
+The preset is a deprecated compatibility wrapper for environments that still invoke WyW through Babel. Bundler plugins use the Oxc-first transform path directly and do not depend on this preset internally.
 
 Use this preset only when a non-bundler tool already runs Babel and you need WyW to participate in that pipeline, for example a legacy server build or a unit-test transform. Add `@wyw-in-js/babel-preset` at the end of the presets list:
 
@@ -547,9 +547,10 @@ Use this preset only when a non-bundler tool already runs Babel and you need WyW
 
 The preset understands the same option names as the configuration file, but not every option should be passed inline:
 
+- The preset emits a compatibility warning once per process so it is harder to miss during migration.
 - Inline preset options are forwarded to a separate Node process, so they must be JSON-serializable.
 - Function-valued WyW options such as `tagResolver`, `eval.customResolver`, `eval.onWarn`, or custom `importLoaders` should live in a WyW config file instead.
-- When you need those function-valued options, pass only `configFile` inline and let the preset load the rest from that file. That config file may be `.mjs`, but it still must be synchronous.
+- When you need those function-valued options, pass only `configFile` inline and let the preset load the rest from that file. That config file may be `.mjs`, but it still must be synchronous and must not use top-level `await`.
 
 Example:
 
