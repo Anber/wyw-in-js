@@ -1,13 +1,24 @@
 /* eslint-disable no-continue */
+
 import type {
   IProcessImportsAction,
   Services,
   SyncScenarioForAction,
 } from '../types';
 
+import {
+  hasCachedWywPrevalExport,
+  type CachedEntrypointLike,
+} from '../../utils/hasCachedWywPrevalExport';
 import { toImportKey } from '../../utils/importOverrides';
 import { stripQueryAndHash } from '../../utils/parseRequest';
 import { isSuperSet, mergeOnly } from '../Entrypoint.helpers';
+
+type ProcessImportsCachedEntrypoint = CachedEntrypointLike & {
+  only: string[];
+  parents?: Array<{ name: string }>;
+  transformed?: boolean;
+};
 
 const warnedSlowImportsByServices = new WeakMap<Services, Set<string>>();
 
@@ -89,7 +100,15 @@ export function* processImports(
       continue;
     }
 
-    const requiredOnly = prepareStageRequiresEvaluatedDeps
+    const cached = this.services.cache.get('entrypoints', resolved) as
+      | ProcessImportsCachedEntrypoint
+      | undefined;
+    const shouldRequireWywPreval =
+      prepareStageRequiresEvaluatedDeps &&
+      (!cached?.evaluated ||
+        cached.ignored ||
+        hasCachedWywPrevalExport(this.services, resolved, cached));
+    const requiredOnly = shouldRequireWywPreval
       ? mergeOnly(only, ['__wywPreval'])
       : only;
 
@@ -100,7 +119,6 @@ export function* processImports(
       });
     }
 
-    const cached = this.services.cache.get('entrypoints', resolved);
     const canReuseTransformedDependency =
       !prepareStageRequiresEvaluatedDeps &&
       Boolean(cached && !cached.evaluated && cached.transformed);

@@ -64,6 +64,10 @@ export class Entrypoint extends BaseEntrypoint {
 
   #preevalResult: IPreevalResult | null = null;
 
+  #processingPromise: Promise<void> | null = null;
+
+  #resolveProcessing: (() => void) | null = null;
+
   #supersededWith: Entrypoint | null = null;
 
   #transformResultCode: string | null = null;
@@ -415,6 +419,11 @@ export class Entrypoint extends BaseEntrypoint {
 
   public beginProcessing() {
     this.#isProcessing = true;
+    if (!this.#processingPromise) {
+      this.#processingPromise = new Promise<void>((resolve) => {
+        this.#resolveProcessing = resolve;
+      });
+    }
   }
 
   public createAction<
@@ -498,6 +507,9 @@ export class Entrypoint extends BaseEntrypoint {
 
   public endProcessing() {
     this.#isProcessing = false;
+    this.#resolveProcessing?.();
+    this.#resolveProcessing = null;
+    this.#processingPromise = null;
   }
 
   public getDependency(name: string): IEntrypointDependency | undefined {
@@ -526,6 +538,10 @@ export class Entrypoint extends BaseEntrypoint {
 
   public hasWywMetadata() {
     return this.#hasWywMetadata;
+  }
+
+  public waitForProcessing(): Promise<void> {
+    return this.#processingPromise ?? Promise.resolve();
   }
 
   public reuseTransformResult(

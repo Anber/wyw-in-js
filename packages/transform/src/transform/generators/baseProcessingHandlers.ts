@@ -9,7 +9,7 @@ import type {
 } from '../types';
 
 import { getExports } from './getExports';
-import { processEntrypoint } from './processEntrypoint';
+import { processEntrypointAsync } from './processEntrypoint';
 import { processImports } from './processImports';
 import { transform } from './transform';
 
@@ -27,7 +27,7 @@ export const baseProcessingHandlers = {
   extract: emptyHandler<IExtractAction>,
   workflow: emptyHandler<IWorkflowAction>,
   getExports,
-  processEntrypoint,
+  processEntrypoint: processEntrypointAsync,
   processImports,
   transform,
 };

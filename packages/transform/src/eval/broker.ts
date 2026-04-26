@@ -30,6 +30,10 @@ import { getFileIdx } from '../utils/getFileIdx';
 import { collectOxcExportsAndImports } from '../utils/collectOxcExportsAndImports';
 import { parseRequest, stripQueryAndHash } from '../utils/parseRequest';
 import { resolveFilenameWithConditions } from '../utils/resolveWithConditions';
+import {
+  hasCachedWywPrevalExport,
+  type CachedEntrypointLike,
+} from '../utils/hasCachedWywPrevalExport';
 import { isSuperSet, mergeOnly } from '../transform/Entrypoint.helpers';
 import { oxcShaker } from '../shaker';
 import { analyzeOxcBarrelFile } from '../transform/oxcBarrelManifest';
@@ -1954,7 +1958,18 @@ export class EvalBroker {
       nextExternal = false;
     }
 
-    const nextOnly = applyImportOverrideToOnly(resolved.only, override);
+    let nextOnly = applyImportOverrideToOnly(resolved.only, override);
+    const cached = this.services.cache.get('entrypoints', nextResolved) as
+      | CachedEntrypointLike
+      | undefined;
+    if (
+      nextOnly.includes('__wywPreval') &&
+      cached?.evaluated &&
+      !cached.ignored &&
+      !hasCachedWywPrevalExport(this.services, nextResolved, cached)
+    ) {
+      nextOnly = nextOnly.filter((item) => item !== '__wywPreval');
+    }
     const storedOnly = this.onlyByModule.get(nextResolved);
     this.onlyByModule.set(
       nextResolved,
