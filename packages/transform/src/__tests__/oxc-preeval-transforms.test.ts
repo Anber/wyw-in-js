@@ -463,5 +463,89 @@ describe('oxc preeval transforms', () => {
 
       expect(code).toBe('function Component() { return null; }');
     });
+
+    it('preserves class methods whose name matches a forbidden global', () => {
+      const code = removeDangerousCodeWithOxc(
+        [
+          'export class Api {',
+          '  fetch() { return 1; }',
+          '  setTimeout() { return 2; }',
+          '  keep() { return 3; }',
+          '}',
+        ].join('\n'),
+        filename
+      );
+
+      expect(code).toContain('fetch() { return 1; }');
+      expect(code).toContain('setTimeout() { return 2; }');
+      expect(code).toContain('keep() { return 3; }');
+      expect(() => stripTypesAndJsxWithOxc(code, filename)).not.toThrow();
+    });
+
+    it('preserves class fields whose name matches a forbidden global', () => {
+      const code = removeDangerousCodeWithOxc(
+        [
+          'export class Api {',
+          '  fetch = 1;',
+          '  setTimeout = 2;',
+          '  keep = 3;',
+          '}',
+        ].join('\n'),
+        filename
+      );
+
+      expect(code).toContain('fetch = 1;');
+      expect(code).toContain('setTimeout = 2;');
+      expect(code).toContain('keep = 3;');
+      expect(() => stripTypesAndJsxWithOxc(code, filename)).not.toThrow();
+    });
+
+    it('preserves object property keys whose name matches a forbidden global', () => {
+      const code = removeDangerousCodeWithOxc(
+        'export default { fetch: 1, setTimeout: 2, keep: 3 };',
+        filename
+      );
+
+      expect(code).toContain('fetch: 1');
+      expect(code).toContain('setTimeout: 2');
+      expect(code).toContain('keep: 3');
+      expect(() => stripTypesAndJsxWithOxc(code, filename)).not.toThrow();
+    });
+
+    it('does not skip computed property keys that reference forbidden globals', () => {
+      const code = removeDangerousCodeWithOxc(
+        [
+          'const dangerous = { [fetch]: 1 };',
+          'const keep = 1;',
+        ].join('\n'),
+        filename
+      );
+
+      expect(code).not.toContain('[fetch]');
+      expect(code).not.toContain('dangerous');
+      expect(code).toContain('const keep = 1;');
+    });
+
+    it('preserves shorthand re-exports of locally-bound helpers transitively touching forbidden globals', () => {
+      const code = removeDangerousCodeWithOxc(
+        [
+          'let initEventListener = () => {',
+          '  window.addEventListener("message", (event) => {',
+          '    setTimeout(() => notify(event.data), 50);',
+          '  });',
+          '  initEventListener = () => {};',
+          '};',
+          'const listeners = new Set();',
+          'const subscribe = (fn) => { initEventListener(); listeners.add(fn); };',
+          'const unsubscribe = (fn) => { listeners.delete(fn); };',
+          'export default { subscribe, unsubscribe };',
+        ].join('\n'),
+        filename
+      );
+
+      expect(code).toContain('export default { subscribe, unsubscribe }');
+      expect(code).not.toMatch(/\{\s*,/);
+      expect(() => stripTypesAndJsxWithOxc(code, filename)).not.toThrow();
+    });
   });
 });

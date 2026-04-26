@@ -781,11 +781,26 @@ const isBindingPosition = (node: Node, parent: Node | null): boolean => {
   return false;
 };
 
-const isPropertyOnlyIdentifier = (node: Node, parent: Node | null): boolean =>
-  !!parent &&
-  parent.type === 'MemberExpression' &&
-  parent.property === node &&
-  !parent.computed;
+const isPropertyOnlyIdentifier = (node: Node, parent: Node | null): boolean => {
+  if (!parent || parent.computed) {
+    return false;
+  }
+
+  if (parent.type === 'MemberExpression' && parent.property === node) {
+    return true;
+  }
+
+  if (
+    (parent.type === 'Property' ||
+      parent.type === 'MethodDefinition' ||
+      parent.type === 'PropertyDefinition') &&
+    parent.key === node
+  ) {
+    return true;
+  }
+
+  return false;
+};
 
 const isTypeContext = (ancestors: Node[]): boolean =>
   ancestors.some(
