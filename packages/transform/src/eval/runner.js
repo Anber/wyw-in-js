@@ -1413,7 +1413,7 @@ const createRequireFn = (importer) => {
   };
 };
 
-function createSyntheticModule(id, exportsValue) {
+function createSyntheticModule(id, exportsValue, cache = true) {
   const exportNames = new Set(Object.keys(exportsValue));
   if (!exportNames.has('default')) {
     exportNames.add('default');
@@ -1431,7 +1431,9 @@ function createSyntheticModule(id, exportsValue) {
     { context: state.context, identifier: id }
   );
 
-  moduleCache.set(id, module);
+  if (cache) {
+    moduleCache.set(id, module);
+  }
   return module;
 }
 
@@ -1725,7 +1727,6 @@ loadModule = async (id, importer, requestSpec) => {
       importer,
       durationMs: Date.now() - loadStart,
     });
-
     if (loaded.error) {
       throw new Error(loaded.error.message);
     }
@@ -1740,16 +1741,13 @@ loadModule = async (id, importer, requestSpec) => {
         return cached;
       }
 
-      resetSingleModuleState(id, cached);
-
       const exportsValue = {};
       Object.entries(loaded.exports).forEach(([key, serialized]) => {
         exportsValue[key] = deserializeValue(serialized);
       });
-      const module = createSyntheticModule(id, exportsValue);
-      if (loaded.hash) {
-        moduleHashes.set(id, loaded.hash);
-      }
+      // Serialized exports can be a narrow slice of a module. Do not let them
+      // replace a cached SourceTextModule that may be needed by another import.
+      const module = createSyntheticModule(id, exportsValue, false);
       return module;
     }
 

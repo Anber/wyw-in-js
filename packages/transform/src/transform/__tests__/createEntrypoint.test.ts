@@ -183,6 +183,14 @@ describe('createEntrypoint', () => {
       ['value'],
       code
     );
+    const preevalResult = {
+      ast: null,
+      code,
+      dependencyNames: [],
+      metadata: null,
+      staticValueCache: new Map([['_exp', 'red']]),
+    };
+    entrypoint1.setPreevalResult(preevalResult);
     entrypoint1.setTransformResult({ code, metadata: null });
     const evaluated = entrypoint1.createEvaluated();
     services.cache.add('entrypoints', '/foo/bar.js', evaluated);
@@ -199,6 +207,7 @@ describe('createEntrypoint', () => {
     expect(entrypoint2.transformedCode).toBe(code);
     expect(entrypoint2.loadedAndParsed.code).toBe(code);
     expect(entrypoint2.loadedAndParsed).toBe(evaluated.loadedAndParsed);
+    expect(entrypoint2.getPreevalResult()).toBe(preevalResult);
   });
 
   it('reuses evaluated parsed state when only changes', () => {

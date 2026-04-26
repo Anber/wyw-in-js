@@ -112,6 +112,51 @@ const isVirtualSpecifier = (specifier: string) =>
 const isEvalOnlyKey = (key: string) =>
   key === '__wywPreval' || key === 'side-effect';
 
+const isPreparedOnlySuperSet = (
+  currentOnly: string[],
+  requestedOnly: string[]
+): boolean => {
+  if (
+    requestedOnly.includes('__wywPreval') &&
+    !currentOnly.includes('__wywPreval')
+  ) {
+    return false;
+  }
+
+  return isSuperSet(currentOnly, requestedOnly);
+};
+
+const hasPreparedExportKeys = (
+  prepared: {
+    exports?: Record<string, SerializedValue>;
+  },
+  requestedOnly: string[]
+): boolean => {
+  if (!prepared.exports) {
+    return true;
+  }
+
+  if (requestedOnly.includes('*')) {
+    return false;
+  }
+
+  return requestedOnly
+    .filter((key) => !isEvalOnlyKey(key) && key !== '*')
+    .every((key) =>
+      Object.prototype.hasOwnProperty.call(prepared.exports, key)
+    );
+};
+
+const isPreparedCacheHit = (
+  prepared: {
+    exports?: Record<string, SerializedValue>;
+    only: string[];
+  },
+  requestedOnly: string[]
+): boolean =>
+  isPreparedOnlySuperSet(prepared.only, requestedOnly) &&
+  hasPreparedExportKeys(prepared, requestedOnly);
+
 const isExportContainer = (
   value: unknown
 ): value is Record<string | symbol, unknown> =>
@@ -2407,26 +2452,35 @@ export class EvalBroker {
       cachedEntrypoint.evaluated &&
       !cachedEntrypoint.ignored &&
       cachedEntrypoint.exports &&
+      !requiredOnly.includes('*') &&
       !requiredOnly.some(isEvalOnlyKey) &&
       isSuperSet(cachedEntrypoint.evaluatedOnly ?? [], requiredOnly)
     ) {
       const cacheOnly = cachedEntrypoint.evaluatedOnly ?? requiredOnly;
+      const serializeOnly = requiredOnly.includes('*')
+        ? cacheOnly
+        : requiredOnly;
       const serialized = serializeCachedExports(
         cachedEntrypoint.exports,
-        cacheOnly
+        serializeOnly
       );
       if (serialized) {
         const hash = hashContent(`exports:${JSON.stringify(serialized)}`);
         return {
           code: '',
           imports: null,
-          only: cacheOnly,
+          only: serializeOnly,
           hash,
           exports: serialized,
         };
       }
     }
-    if (cached && isSuperSet(cached.only, requiredOnly)) {
+    const canReusePreparedLoad = !requiredOnly.includes('__wywPreval');
+    if (
+      canReusePreparedLoad &&
+      cached &&
+      isPreparedCacheHit(cached, requiredOnly)
+    ) {
       this.ensureImportsMapping(id, cached.imports);
       return cached;
     }
@@ -2434,7 +2488,7 @@ export class EvalBroker {
     const inflight = this.loadInFlight.get(id);
     if (inflight) {
       const result = await inflight;
-      if (isSuperSet(result.only, requiredOnly)) {
+      if (canReusePreparedLoad && isPreparedCacheHit(result, requiredOnly)) {
         this.ensureImportsMapping(id, result.imports);
         return result;
       }

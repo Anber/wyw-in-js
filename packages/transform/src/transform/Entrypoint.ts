@@ -282,6 +282,13 @@ export class Entrypoint extends BaseEntrypoint {
         cached.transformResultCode,
         cached.hasWywMetadata
       );
+      if (
+        'preevalResult' in cached &&
+        cached.preevalResult !== null &&
+        cached.preevalResult !== undefined
+      ) {
+        reusedEntrypoint.setPreevalResult(cached.preevalResult);
+      }
 
       return [isLoop ? 'loop' : 'cached', reusedEntrypoint];
     }

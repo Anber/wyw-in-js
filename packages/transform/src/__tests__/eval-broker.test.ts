@@ -579,6 +579,144 @@ describe('EvalBroker', () => {
     rmSync(root, { recursive: true, force: true });
   });
 
+  it('reloads in-flight modules when nested imports request additional exports', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
+    const entry = join(root, 'entry.js');
+    const helper = join(root, 'helper.js');
+    const dep = join(root, 'dep.js');
+
+    writeFileSync(
+      entry,
+      [
+        "import { first } from './dep.js';",
+        "import { second } from './helper.js';",
+        'export const __wywPreval = {',
+        '  value: () => `${first}:${second}`,',
+        '};',
+      ].join('\n')
+    );
+    writeFileSync(
+      helper,
+      ["import { second } from './dep.js';", 'export { second };'].join('\n')
+    );
+    writeFileSync(
+      dep,
+      ["export const first = 'first';", "export const second = 'second';"].join(
+        '\n'
+      )
+    );
+
+    const asyncResolve = jest.fn(async (what: string, importer: string) => {
+      if (what.startsWith('.')) {
+        return resolve(dirname(importer), what);
+      }
+
+      return null;
+    });
+    const services = createServices(root, entry);
+    const loadAndParse = services.loadAndParseFn;
+    let slowedDepLoad = false;
+    services.loadAndParseFn = (nextServices, id, ...rest) => {
+      if (id === dep && !slowedDepLoad) {
+        slowedDepLoad = true;
+        const end = Date.now() + 50;
+        while (Date.now() < end) {
+          // Keep the first dep load in-flight while nested imports resolve.
+        }
+      }
+
+      return loadAndParse(nextServices, id, ...rest);
+    };
+
+    const broker = new EvalBroker(services, asyncResolve);
+    const entrypoint = Entrypoint.createRoot(
+      services,
+      entry,
+      ['__wywPreval'],
+      readFileSync(entry, 'utf-8')
+    );
+
+    const result = await broker.evaluate(entrypoint);
+
+    expect(result.values?.get('value')).toBe('first:second');
+
+    broker.dispose();
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('does not reuse partial prepared export cache for wildcard or __wywPreval loads', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
+    const dep = join(root, 'dep.js');
+
+    writeFileSync(
+      dep,
+      [
+        "export const normal = 'normal';",
+        "export const second = 'second';",
+        'export const __wywPreval = {',
+        "  value: () => 'preval',",
+        '};',
+      ].join('\n')
+    );
+
+    const services = createServices(root, dep);
+    const exportsProxy = Entrypoint.createExports(services.log);
+    exportsProxy.normal = 'cached-normal';
+    services.cache.add('entrypoints', dep, {
+      dependencies: new Map(),
+      evaluated: true,
+      evaluatedOnly: ['*'],
+      exports: exportsProxy,
+      generation: 1,
+      hasTransformResult: false,
+      hasWywMetadata: false,
+      ignored: false,
+      invalidationDependencies: new Map(),
+      invalidateOnDependencyChange: new Set(),
+      log: services.log,
+      name: dep,
+      only: ['*'],
+      parents: [],
+      preevalResult: null,
+      seqId: -1,
+      transformResultCode: null,
+    });
+
+    const broker = new EvalBroker(
+      services,
+      jest.fn(async () => dep)
+    );
+    const privateBroker = getPrivateBroker(broker);
+
+    privateBroker.onlyByModule.set(dep, ['*']);
+    const wildcardPrepared = await privateBroker.loadModule({
+      id: dep,
+      importerId: dep,
+      request: dep,
+    });
+
+    privateBroker.onlyByModule.set(dep, ['second']);
+    const namedPrepared = await privateBroker.loadModule({
+      id: dep,
+      importerId: dep,
+      request: dep,
+    });
+
+    privateBroker.onlyByModule.set(dep, ['__wywPreval']);
+    const prevalPrepared = await privateBroker.loadModule({
+      id: dep,
+      importerId: dep,
+      request: dep,
+    });
+
+    expect(wildcardPrepared.code).toContain('normal');
+    expect(namedPrepared.code).toContain('second');
+    expect(prevalPrepared.code).toContain('__wywPreval');
+
+    broker.dispose();
+    rmSync(root, { recursive: true, force: true });
+  });
+
   it('invalidates all query variants in load cache after file change', async () => {
     const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
     const importer = join(root, 'entry.js');
