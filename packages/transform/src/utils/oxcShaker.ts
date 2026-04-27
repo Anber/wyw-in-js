@@ -277,6 +277,14 @@ const isIdentifierReference = (
   return true;
 };
 
+const TS_EXPRESSION_WRAPPER_TYPES = new Set([
+  'TSAsExpression',
+  'TSSatisfiesExpression',
+  'TSTypeAssertion',
+  'TSNonNullExpression',
+  'TSInstantiationExpression',
+]);
+
 const collectReferences = (node: Node): Set<string> => {
   const references = new Set<string>();
 
@@ -285,6 +293,14 @@ const collectReferences = (node: Node): Set<string> => {
     parent: Node | null = null,
     grandparent: Node | null = null
   ): void => {
+    if (TS_EXPRESSION_WRAPPER_TYPES.has(current.type)) {
+      const expression = (current as AnyNode).expression as Node | undefined;
+      if (expression) {
+        visit(expression, current, parent);
+      }
+      return;
+    }
+
     if (current.type.startsWith('TS') && current.type !== 'TSEnumDeclaration') {
       return;
     }
