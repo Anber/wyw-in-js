@@ -239,6 +239,78 @@ const serializeCachedExports = (
   return serialized;
 };
 
+type CachedExportEntrypointLike = {
+  evaluatedOnly?: string[];
+  exports?: Record<string | symbol, unknown>;
+  loadedAndParsed?: {
+    code?: string;
+    evalConfig?: { filename?: null | string };
+    evaluator?: unknown;
+  };
+};
+
+const collectKnownExportNames = (
+  services: Services,
+  id: string,
+  cachedEntrypoint?: CachedExportEntrypointLike
+): string[] | undefined => {
+  let knownExports = services.cache.get('exports', id) as string[] | undefined;
+  if (knownExports || !cachedEntrypoint) {
+    return knownExports;
+  }
+
+  const { loadedAndParsed } = cachedEntrypoint;
+  if (loadedAndParsed?.evaluator !== oxcShaker || !loadedAndParsed.code) {
+    return undefined;
+  }
+
+  const analyzed = collectOxcExportsAndImports(
+    loadedAndParsed.code,
+    loadedAndParsed.evalConfig?.filename ?? id
+  );
+  if (analyzed.reexports.some((reexport) => reexport.exported === '*')) {
+    return undefined;
+  }
+
+  knownExports = Array.from(
+    new Set([
+      ...Object.keys(analyzed.exports),
+      ...analyzed.reexports.map((reexport) => reexport.exported),
+    ])
+  );
+  services.cache.add('exports', id, knownExports);
+  return knownExports;
+};
+
+const getSerializableStaticImportKeys = (
+  services: Services,
+  id: string,
+  cachedEntrypoint: CachedExportEntrypointLike,
+  requiredOnly: string[],
+  request?: string | null,
+  importerId?: string | null
+): string[] | null => {
+  const isStaticImportLoad = Boolean(request && importerId);
+  const knownExports = collectKnownExportNames(
+    services,
+    id,
+    cachedEntrypoint
+  )?.filter((key) => !isEvalOnlyKey(key) && key !== '*');
+
+  if (knownExports?.length) {
+    return isSuperSet(cachedEntrypoint.evaluatedOnly ?? [], knownExports)
+      ? knownExports
+      : null;
+  }
+
+  if (isStaticImportLoad) {
+    return null;
+  }
+
+  const evaluatedOnly = cachedEntrypoint.evaluatedOnly ?? requiredOnly;
+  return requiredOnly.includes('*') ? evaluatedOnly : requiredOnly;
+};
+
 const DEFAULT_EVAL_OPTIONS: Required<
   Pick<EvalOptionsV2, 'mode' | 'require' | 'resolver'>
 > = {
@@ -1212,28 +1284,7 @@ export class EvalBroker {
         exportsProxy[key] = deserializeValue(serialized);
       });
 
-      let knownExports = this.services.cache.get('exports', id) as
-        | string[]
-        | undefined;
-      if (
-        !knownExports &&
-        target.loadedAndParsed &&
-        target.loadedAndParsed.evaluator === oxcShaker
-      ) {
-        const analyzed = collectOxcExportsAndImports(
-          target.loadedAndParsed.code,
-          target.loadedAndParsed.evalConfig.filename ?? id
-        );
-        if (analyzed.reexports.every((reexport) => reexport.exported !== '*')) {
-          knownExports = Array.from(
-            new Set([
-              ...Object.keys(analyzed.exports),
-              ...analyzed.reexports.map((reexport) => reexport.exported),
-            ])
-          );
-          this.services.cache.add('exports', id, knownExports);
-        }
-      }
+      const knownExports = collectKnownExportNames(this.services, id, target);
       const serializedKeys = Object.keys(serializedExports);
       const coversAllKnownExports =
         Array.isArray(knownExports) &&
@@ -2456,23 +2507,29 @@ export class EvalBroker {
       !requiredOnly.some(isEvalOnlyKey) &&
       isSuperSet(cachedEntrypoint.evaluatedOnly ?? [], requiredOnly)
     ) {
-      const cacheOnly = cachedEntrypoint.evaluatedOnly ?? requiredOnly;
-      const serializeOnly = requiredOnly.includes('*')
-        ? cacheOnly
-        : requiredOnly;
-      const serialized = serializeCachedExports(
-        cachedEntrypoint.exports,
-        serializeOnly
+      const serializeOnly = getSerializableStaticImportKeys(
+        this.services,
+        id,
+        cachedEntrypoint,
+        requiredOnly,
+        request,
+        importerId
       );
-      if (serialized) {
-        const hash = hashContent(`exports:${JSON.stringify(serialized)}`);
-        return {
-          code: '',
-          imports: null,
-          only: serializeOnly,
-          hash,
-          exports: serialized,
-        };
+      if (serializeOnly) {
+        const serialized = serializeCachedExports(
+          cachedEntrypoint.exports,
+          serializeOnly
+        );
+        if (serialized) {
+          const hash = hashContent(`exports:${JSON.stringify(serialized)}`);
+          return {
+            code: '',
+            imports: null,
+            only: serializeOnly,
+            hash,
+            exports: serialized,
+          };
+        }
       }
     }
     const canReusePreparedLoad = !requiredOnly.includes('__wywPreval');
