@@ -317,7 +317,7 @@ function stripExportKeepDeclaration(
     declaration.isClassDeclaration() ||
     declaration.isTSEnumDeclaration()
   ) {
-    exportDeclaration.replaceWith(t.cloneNode(declaration.node, true));
+    exportDeclaration.replaceWith(declaration.node);
     return [path];
   }
 
