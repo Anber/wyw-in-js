@@ -320,6 +320,20 @@ describe('shaker', () => {
     expect(code).not.toContain('exports.fallback');
   });
 
+  it('should keep class declarations local when surviving exports instantiate them', () => {
+    const code = run(['fragment', 'BADGE_COLOR'])`
+      export class TagProcessor {}
+
+      export const fragment = new TagProcessor();
+      export const BADGE_COLOR = '#c00';
+    `;
+
+    expect(code).toContain('class TagProcessor');
+    expect(code).toContain('exports.fragment');
+    expect(code).toContain('exports.BADGE_COLOR');
+    expect(code).not.toContain('exports.TagProcessor');
+  });
+
   it('should keep declaration when a dead export is referenced by a surviving export', () => {
     // Regression: the shaker's outerReferences filter treats the init expression
     // of a dead export as a forDeleting candidate. When isDevMode's init
