@@ -2659,13 +2659,20 @@ export class EvalBroker {
 
   private rejectPending(
     id: string,
-    error: { message: string; stack?: string }
+    error: { message: string; stack?: string; cause?: { message: string; stack?: string } }
   ) {
     const pending = this.pending.get(id);
     if (!pending) return;
     clearTimeout(pending.timeout);
     this.pending.delete(id);
-    const err = new Error(error.message);
+    const cause = error.cause
+      ? Object.assign(new Error(error.cause.message), {
+          stack: error.cause.stack,
+        })
+      : undefined;
+    const err = cause
+      ? new Error(error.message, { cause })
+      : new Error(error.message);
     if (error.stack) {
       err.stack = error.stack;
     }

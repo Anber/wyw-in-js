@@ -2101,4 +2101,76 @@ describe('EvalBroker', () => {
     broker.dispose();
     rmSync(root, { recursive: true, force: true });
   });
+
+  it('link failure against errored module includes root cause in error.cause', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
+
+    // thrower.js — body throws during evaluation
+    writeFileSync(
+      join(root, 'thrower.js'),
+      [
+        'const boom = (() => { throw new Error("kaboom"); })();',
+        'export const value = boom;',
+      ].join('\n')
+    );
+
+    // entry-fail.js — imports thrower → evaluation fails
+    writeFileSync(
+      join(root, 'entry-fail.js'),
+      [
+        "import { value } from './thrower.js';",
+        'export const __wywPreval = { v: () => value };',
+      ].join('\n')
+    );
+
+    // consumer.js — also imports thrower → will link-fail in session 2
+    writeFileSync(
+      join(root, 'consumer.js'),
+      [
+        "import { value } from './thrower.js';",
+        'export const __wywPreval = { v: () => value };',
+      ].join('\n')
+    );
+
+    const asyncResolve = jest.fn(async (what: string, importer: string) => {
+      if (what.startsWith('.')) {
+        return resolve(dirname(importer), what);
+      }
+      return null;
+    });
+    const services = createServices(root, join(root, 'entry-fail.js'));
+    const broker = new EvalBroker(services, asyncResolve);
+
+    // Session 1: thrower.js errors during evaluation
+    const epFail = Entrypoint.createRoot(
+      services,
+      join(root, 'entry-fail.js'),
+      ['__wywPreval'],
+      readFileSync(join(root, 'entry-fail.js'), 'utf-8')
+    );
+    await expect(broker.evaluate(epFail)).rejects.toThrow();
+
+    // Session 2: consumer.js tries to link against the cached errored thrower.js
+    const epConsumer = Entrypoint.createRoot(
+      services,
+      join(root, 'consumer.js'),
+      ['__wywPreval'],
+      readFileSync(join(root, 'consumer.js'), 'utf-8')
+    );
+
+    try {
+      await broker.evaluate(epConsumer);
+      expect.unreachable('should have thrown');
+    } catch (err) {
+      expect(err).toBeInstanceOf(Error);
+      const error = err as Error;
+      expect(error.message).toMatch(/errored module/);
+      expect(error.message).toMatch(/Root cause:.*kaboom/);
+      expect(error.cause).toBeInstanceOf(Error);
+      expect((error.cause as Error).message).toBe('kaboom');
+    }
+
+    broker.dispose();
+    rmSync(root, { recursive: true, force: true });
+  });
 });

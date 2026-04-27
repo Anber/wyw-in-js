@@ -1142,6 +1142,17 @@ const sendWarn = (warning) => {
   sendMessage({ type: 'WARN', payload: warning });
 };
 
+const serializeError = (error) => {
+  const result = {
+    message: error?.message ?? String(error),
+    stack: error?.stack,
+  };
+  if (error?.cause instanceof Error) {
+    result.cause = serializeError(error.cause);
+  }
+  return result;
+};
+
 const request = (type, payload) => {
   nextId += 1;
   const id = `${nextId}`;
@@ -1514,6 +1525,24 @@ const linkModule = async (module) => {
       );
       return module;
     } catch (error) {
+      // ERR_VM_MODULE_LINK_FAILURE means a dependency is in "errored" state.
+      // Node chains .cause through the link failure hierarchy. Walk to the
+      // deepest cause to surface the original evaluation error (e.g. a
+      // TypeError in user code), not intermediate "resolved to errored" hops.
+      if (error?.code === 'ERR_VM_MODULE_LINK_FAILURE') {
+        let rootCause = error;
+        while (rootCause.cause instanceof Error) {
+          rootCause = rootCause.cause;
+        }
+        if (rootCause !== error) {
+          const enhanced = new Error(
+            `${error.message}\n` +
+              `  Root cause: ${rootCause.name ?? 'Error'}: ${rootCause.message}`
+          );
+          enhanced.cause = rootCause;
+          throw enhanced;
+        }
+      }
       throw error;
     } finally {
       linkPromises.delete(module);
@@ -2030,10 +2059,7 @@ const handleMessage = async (message) => {
         sendMessage({
           type: 'INIT_ACK',
           id: message.id,
-          error: {
-            message: error?.message ?? String(error),
-            stack: error?.stack,
-          },
+          error: serializeError(error),
         });
       }
       break;
@@ -2056,10 +2082,7 @@ const handleMessage = async (message) => {
           type: 'EVAL_RESULT',
           id: message.id,
           payload: { values: null },
-          error: {
-            message: error?.message ?? String(error),
-            stack: error?.stack,
-          },
+          error: serializeError(error),
         });
       }
       break;
