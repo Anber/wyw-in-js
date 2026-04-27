@@ -88,9 +88,9 @@ describe('eval IPC serialization', () => {
   it('unwraps boxed primitives to their primitive payloads', () => {
     const roundTripped = deserializeValue(
       serializeValue({
-        bool: new Boolean(false),
-        count: new Number(0.75),
-        label: new String('100%'),
+        bool: Object(false),
+        count: Object(0.75),
+        label: Object('100%'),
       })
     ) as {
       bool: boolean;

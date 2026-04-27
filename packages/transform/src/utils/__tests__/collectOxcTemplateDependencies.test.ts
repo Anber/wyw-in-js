@@ -162,7 +162,9 @@ describe('collectOxcTemplateDependencies', () => {
       ].join('\n'),
     });
     expect(result.code).toContain('const _exp = () => ((props) => {');
-    expect(result.code).toContain('const lines = Math.ceil(props.value.length / 55);');
+    expect(result.code).toContain(
+      'const lines = Math.ceil(props.value.length / 55);'
+    );
     expect(result.code).toContain('return `');
     expect(result.code).toContain('${11 + lines * 24}px');
   });
@@ -273,7 +275,7 @@ describe('collectOxcTemplateDependencies', () => {
     const result = collectOxcTemplateDependencies(code, filename, true);
 
     expect(result.code).toContain(
-      `const _exp = () => (({\"fontSize\":12,\"fontWeight\":\"bold\"}));`
+      'const _exp = () => (({"fontSize":12,"fontWeight":"bold"}));'
     );
   });
 
@@ -304,7 +306,7 @@ describe('collectOxcTemplateDependencies', () => {
     expect(result.code).toContain('const _exp = () => ({ value: dynamic });');
     expect(result.code).not.toContain('const _exp = () => { value: dynamic };');
     expect(() =>
-      // eslint-disable-next-line no-new-func
+      // eslint-disable-next-line no-new-func,@typescript-eslint/no-implied-eval
       new Function(`const dynamic = 1; return (() => ({ value: dynamic }))()`)()
     ).not.toThrow();
   });
@@ -318,7 +320,9 @@ describe('collectOxcTemplateDependencies', () => {
 
     const result = collectOxcTemplateDependencies(code, filename, true);
 
-    expect(result.code).toContain('const _exp = () => ((sideEffect(), value));');
+    expect(result.code).toContain(
+      'const _exp = () => ((sideEffect(), value));'
+    );
   });
 
   it('does not inline tagged-template root objects into selector helpers', () => {

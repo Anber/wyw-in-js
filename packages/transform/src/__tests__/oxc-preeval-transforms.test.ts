@@ -116,9 +116,10 @@ describe('oxc preeval transforms', () => {
           filename
         )
       ).toBe(
-        ['const url = "./__fixtures__/FOO";', 'require("./__fixtures__/foo");'].join(
-          '\n'
-        )
+        [
+          'const url = "./__fixtures__/FOO";',
+          'require("./__fixtures__/foo");',
+        ].join('\n')
       );
     });
 
@@ -540,10 +541,7 @@ describe('oxc preeval transforms', () => {
 
     it('does not skip computed property keys that reference forbidden globals', () => {
       const code = removeDangerousCodeWithOxc(
-        [
-          'const dangerous = { [fetch]: 1 };',
-          'const keep = 1;',
-        ].join('\n'),
+        ['const dangerous = { [fetch]: 1 };', 'const keep = 1;'].join('\n'),
         filename
       );
 
@@ -619,7 +617,9 @@ describe('oxc preeval transforms', () => {
         filename
       );
 
-      expect(code).toContain('export const fetchProxy = (...args) => fetch(...args)');
+      expect(code).toContain(
+        'export const fetchProxy = (...args) => fetch(...args)'
+      );
       expect(() => stripTypesAndJsxWithOxc(code, filename)).not.toThrow();
     });
 
@@ -647,7 +647,9 @@ describe('oxc preeval transforms', () => {
         filename
       );
 
-      expect(code).toContain('const isFlagPresent = (flag) => window.location.search.includes(flag)');
+      expect(code).toContain(
+        'const isFlagPresent = (flag) => window.location.search.includes(flag)'
+      );
       expect(code).toContain('export { isFlagPresent }');
       expect(() => stripTypesAndJsxWithOxc(code, filename)).not.toThrow();
     });
@@ -706,10 +708,7 @@ describe('oxc preeval transforms', () => {
 
     it('does not leave a bare await when removing a top-level forbidden fetch call', () => {
       const code = removeDangerousCodeWithOxc(
-        [
-          'await fetch("/api");',
-          'const keep = 1;',
-        ].join('\n'),
+        ['await fetch("/api");', 'const keep = 1;'].join('\n'),
         filename
       );
 

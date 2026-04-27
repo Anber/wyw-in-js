@@ -121,7 +121,10 @@ type ExtractionContext = {
   loc: LocationLookup;
   referencesByNode: WeakMap<Node, ReferenceIdentifier[]>;
   replacements: Replacement[];
-  rootMutationsByBinding: Map<string, Array<AssignmentExpression | UpdateExpression>>;
+  rootMutationsByBinding: Map<
+    string,
+    Array<AssignmentExpression | UpdateExpression>
+  >;
   staticValueCandidates: OxcStaticValueCandidate[];
   staticValues: OxcStaticValue[];
   usedNames: Set<string>;
@@ -137,7 +140,10 @@ type ExtractedExpression = {
 
 type ProgramAnalysis = {
   bindingsByName: Map<string, Binding[]>;
-  rootMutationsByBinding: Map<string, Array<AssignmentExpression | UpdateExpression>>;
+  rootMutationsByBinding: Map<
+    string,
+    Array<AssignmentExpression | UpdateExpression>
+  >;
   targetExpressions: Expression[];
   templateLiterals: TemplateLiteral[];
   usedNames: Set<string>;
@@ -676,7 +682,10 @@ const resolveBindingAt = (
 const collectRootMutations = (
   program: Program
 ): Map<string, Array<AssignmentExpression | UpdateExpression>> => {
-  const mutations = new Map<string, Array<AssignmentExpression | UpdateExpression>>();
+  const mutations = new Map<
+    string,
+    Array<AssignmentExpression | UpdateExpression>
+  >();
 
   const getRootMutationTarget = (
     node: Node
@@ -697,15 +706,17 @@ const collectRootMutations = (
       return null;
     }
 
-    const key = node.computed
-      ? node.property.type === 'Literal' &&
-        (typeof node.property.value === 'string' ||
-          typeof node.property.value === 'number')
-        ? node.property.value
-        : null
-      : node.property.type === 'Identifier'
-        ? node.property.name
-        : null;
+    let key: string | number | null = null;
+    if (
+      node.computed &&
+      node.property.type === 'Literal' &&
+      (typeof node.property.value === 'string' ||
+        typeof node.property.value === 'number')
+    ) {
+      key = node.property.value;
+    } else if (!node.computed && node.property.type === 'Identifier') {
+      key = node.property.name;
+    }
     if (key === null) {
       return null;
     }
@@ -721,7 +732,7 @@ const collectRootMutations = (
       return;
     }
 
-    const expression = statement.expression;
+    const { expression } = statement;
     if (expression.type === 'AssignmentExpression') {
       const target = getRootMutationTarget(expression.left);
       if (!target || target.path.length === 0) {
@@ -896,7 +907,9 @@ const assignPatternValue = (
   if (pattern.type === 'AssignmentPattern') {
     return assignPatternValue(
       pattern.left,
-      value === undefined ? evaluateStatic(pattern.right, ctx, env, stack) : value,
+      value === undefined
+        ? evaluateStatic(pattern.right, ctx, env, stack)
+        : value,
       ctx,
       env,
       stack
@@ -913,13 +926,14 @@ const assignPatternValue = (
         return false;
       }
 
-      const key = property.computed
-        ? evaluateStatic(property.key as Expression, ctx, env, stack)
-        : property.key.type === 'Identifier'
-          ? property.key.name
-          : property.key.type === 'Literal'
-            ? property.key.value
-            : undefined;
+      let key: unknown;
+      if (property.computed) {
+        key = evaluateStatic(property.key as Expression, ctx, env, stack);
+      } else if (property.key.type === 'Identifier') {
+        key = property.key.name;
+      } else if (property.key.type === 'Literal') {
+        key = property.key.value;
+      }
       if (key === undefined || key === null) {
         return false;
       }
@@ -957,9 +971,7 @@ const applyRootMutation = (
   env: EvalEnv,
   stack: string[]
 ): unknown | undefined => {
-  const resolvePath = (
-    node: Node
-  ): { path: Array<string | number> } | null => {
+  const resolvePath = (node: Node): { path: Array<string | number> } | null => {
     if (node.type === 'Identifier') {
       return node.name === bindingName ? { path: [] } : null;
     }
@@ -973,11 +985,12 @@ const applyRootMutation = (
       return null;
     }
 
-    const key = node.computed
-      ? evaluateStatic(node.property as Expression, ctx, env, stack)
-      : node.property.type === 'Identifier'
-        ? node.property.name
-        : undefined;
+    let key: unknown;
+    if (node.computed) {
+      key = evaluateStatic(node.property as Expression, ctx, env, stack);
+    } else if (node.property.type === 'Identifier') {
+      key = node.property.name;
+    }
     if (
       key === undefined ||
       key === null ||
@@ -1269,19 +1282,14 @@ const evaluateStatic = (
     }
 
     let value: unknown | undefined;
-    const declarator = binding.declarator;
+    const { declarator } = binding;
     const init = declarator?.init;
     if (init) {
       if (declarator.id.type !== 'Identifier') {
         return undefined;
       }
 
-      value = evaluateStatic(
-        init,
-        ctx,
-        env,
-        [...stack, binding.name]
-      );
+      value = evaluateStatic(init, ctx, env, [...stack, binding.name]);
     } else if (binding.functionNode) {
       value = binding.functionNode;
     }
@@ -1335,13 +1343,14 @@ const evaluateStatic = (
         continue;
       }
 
-      const key = property.computed
-        ? evaluateStatic(property.key as Expression, ctx, env, stack)
-        : property.key.type === 'Identifier'
-          ? property.key.name
-          : property.key.type === 'Literal'
-            ? property.key.value
-            : undefined;
+      let key: unknown;
+      if (property.computed) {
+        key = evaluateStatic(property.key as Expression, ctx, env, stack);
+      } else if (property.key.type === 'Identifier') {
+        key = property.key.name;
+      } else if (property.key.type === 'Literal') {
+        key = property.key.value;
+      }
       if (
         key === undefined ||
         key === null ||
@@ -1392,11 +1401,12 @@ const evaluateStatic = (
 
   if (expression.type === 'MemberExpression') {
     const objectValue = evaluateStatic(expression.object, ctx, env, stack);
-    const key = expression.computed
-      ? evaluateStatic(expression.property as Expression, ctx, env, stack)
-      : expression.property.type === 'Identifier'
-        ? expression.property.name
-        : undefined;
+    let key: unknown;
+    if (expression.computed) {
+      key = evaluateStatic(expression.property as Expression, ctx, env, stack);
+    } else if (expression.property.type === 'Identifier') {
+      key = expression.property.name;
+    }
     if (
       objectValue === undefined ||
       key === undefined ||
@@ -1410,7 +1420,10 @@ const evaluateStatic = (
   }
 
   if (expression.type === 'NewExpression') {
-    if (expression.callee.type !== 'Identifier' || expression.arguments.length !== 1) {
+    if (
+      expression.callee.type !== 'Identifier' ||
+      expression.arguments.length !== 1
+    ) {
       return undefined;
     }
 
@@ -1474,23 +1487,31 @@ const evaluateStatic = (
           fn.type === 'FunctionDeclaration' ||
           fn.type === 'FunctionExpression')
       ) {
-        return evaluateFunctionCall(
-          fn,
-          args,
-          ctx,
-          env,
-          [...stack, expression.callee.name]
-        );
+        return evaluateFunctionCall(fn, args, ctx, env, [
+          ...stack,
+          expression.callee.name,
+        ]);
       }
     }
 
     if (expression.callee.type === 'MemberExpression') {
-      const objectValue = evaluateStatic(expression.callee.object, ctx, env, stack);
-      const key = expression.callee.computed
-        ? evaluateStatic(expression.callee.property as Expression, ctx, env, stack)
-        : expression.callee.property.type === 'Identifier'
-          ? expression.callee.property.name
-          : undefined;
+      const objectValue = evaluateStatic(
+        expression.callee.object,
+        ctx,
+        env,
+        stack
+      );
+      let key: unknown;
+      if (expression.callee.computed) {
+        key = evaluateStatic(
+          expression.callee.property as Expression,
+          ctx,
+          env,
+          stack
+        );
+      } else if (expression.callee.property.type === 'Identifier') {
+        key = expression.callee.property.name;
+      }
       if (typeof objectValue === 'string') {
         if (key === 'toLowerCase' && expression.arguments.length === 0) {
           return objectValue.toLowerCase();
@@ -1511,15 +1532,17 @@ const substituteConstants = (
   ctx: ExtractionContext
 ): string => {
   const replacements = new Map<string, string>();
-  findReferences(expression, ctx.referencesByNode).forEach(({ name, start }) => {
-    const replacement = getConstantReplacement(
-      resolveBindingAt(ctx, name, start),
-      ctx
-    );
-    if (replacement) {
-      replacements.set(name, replacement);
+  findReferences(expression, ctx.referencesByNode).forEach(
+    ({ name, start }) => {
+      const replacement = getConstantReplacement(
+        resolveBindingAt(ctx, name, start),
+        ctx
+      );
+      if (replacement) {
+        replacements.set(name, replacement);
+      }
     }
-  });
+  );
 
   return replaceIdentifierReferences(expression, replacements, ctx.code);
 };
@@ -1672,12 +1695,14 @@ const addHoistedDeclaration = (
   }
 
   const hoistSource = binding.declarator.init ?? binding.declarator;
-  findReferences(hoistSource, ctx.referencesByNode).forEach(({ name, start }) => {
+  findReferences(hoistSource, ctx.referencesByNode).forEach(
+    ({ name, start }) => {
       const dependency = resolveBindingAt(ctx, name, start);
       if (dependency) {
         addHoistedDeclaration(dependency, ctx, [...stack, binding.name]);
       }
-    });
+    }
+  );
 
   if (!ctx.hoistedDeclarations.has(binding.name)) {
     addHoistedCode(
@@ -1772,45 +1797,47 @@ const extractExpression = (
   const staticImports: OxcStaticImportReference[] = [];
   let hasNonStaticLocalReference = false;
 
-  findReferences(expression, ctx.referencesByNode).forEach(({ name, start }) => {
-    const binding = resolveBindingAt(ctx, name, start);
-    if (!binding) {
-      return;
-    }
-
-    if (isFunction && isBindingDeclaredWithin(binding, expression)) {
-      return;
-    }
-
-    ctx.dependencyNames.add(name);
-
-    if (binding.importedFrom) {
-      importedFrom.push(binding.importedFrom);
-      if (binding.imported && binding.imported !== '*') {
-        staticImports.push({
-          imported: binding.imported,
-          local: binding.name,
-          source: binding.importedFrom,
-        });
-      } else {
-        hasNonStaticLocalReference = true;
+  findReferences(expression, ctx.referencesByNode).forEach(
+    ({ name, start }) => {
+      const binding = resolveBindingAt(ctx, name, start);
+      if (!binding) {
+        return;
       }
-      return;
-    }
 
-    const replacement = getConstantReplacement(binding, ctx);
-    if (evaluate && replacement) {
-      identifierReplacements.set(name, replacement);
-      return;
-    }
+      if (isFunction && isBindingDeclaredWithin(binding, expression)) {
+        return;
+      }
 
-    hasNonStaticLocalReference = true;
-    assertHoistable(binding, ctx);
-    addHoistedDeclaration(binding, ctx);
-    if (!binding.isRoot && binding.declarator?.id.type === 'Identifier') {
-      identifierReplacements.set(name, getHoistedBindingName(binding, ctx));
+      ctx.dependencyNames.add(name);
+
+      if (binding.importedFrom) {
+        importedFrom.push(binding.importedFrom);
+        if (binding.imported && binding.imported !== '*') {
+          staticImports.push({
+            imported: binding.imported,
+            local: binding.name,
+            source: binding.importedFrom,
+          });
+        } else {
+          hasNonStaticLocalReference = true;
+        }
+        return;
+      }
+
+      const replacement = getConstantReplacement(binding, ctx);
+      if (evaluate && replacement) {
+        identifierReplacements.set(name, replacement);
+        return;
+      }
+
+      hasNonStaticLocalReference = true;
+      assertHoistable(binding, ctx);
+      addHoistedDeclaration(binding, ctx);
+      if (!binding.isRoot && binding.declarator?.id.type === 'Identifier') {
+        identifierReplacements.set(name, getHoistedBindingName(binding, ctx));
+      }
     }
-  });
+  );
 
   return {
     expressionCode:
@@ -1821,23 +1848,6 @@ const extractExpression = (
     kind: isFunction ? ValueType.FUNCTION : ValueType.LAZY,
     staticImports: hasNonStaticLocalReference ? [] : staticImports,
   };
-};
-
-const getInsertionPoint = (
-  program: Program,
-  expression: Expression
-): number => {
-  const owner =
-    program.body.find(
-      (statement) =>
-        statement.start <= expression.start && statement.end >= expression.end
-    ) ?? program.body[0];
-
-  if (!owner) {
-    return 0;
-  }
-
-  return owner.start;
 };
 
 const getInsertionPoints = (

@@ -250,8 +250,16 @@ describe('createEntrypoint', () => {
 
     const code = 'export const a = 1; export const b = 2; export const c = 3;';
     const narrowPreparedCode = 'export const a = 1; export const b = 2;';
-    const entrypoint1 = createEntrypoint(services, '/foo/bar.js', ['a', 'b'], code);
-    entrypoint1.setTransformResult({ code: narrowPreparedCode, metadata: null });
+    const entrypoint1 = createEntrypoint(
+      services,
+      '/foo/bar.js',
+      ['a', 'b'],
+      code
+    );
+    entrypoint1.setTransformResult({
+      code: narrowPreparedCode,
+      metadata: null,
+    });
     const evaluated = entrypoint1.createEvaluated();
 
     (evaluated as unknown as { only: string[] }).only = ['a', 'b', 'c'];

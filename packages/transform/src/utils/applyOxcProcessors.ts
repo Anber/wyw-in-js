@@ -426,14 +426,14 @@ const collectImportLocalNames = (node: Node): string[] => {
     return [];
   }
 
-  const specifiers = (node as AnyNode).specifiers;
+  const { specifiers } = node as AnyNode;
   if (!Array.isArray(specifiers)) {
     return [];
   }
 
   return specifiers
     .map((specifier) => {
-      const local = (specifier as AnyNode).local;
+      const { local } = specifier as AnyNode;
       return isNode(local) && 'name' in local && typeof local.name === 'string'
         ? local.name
         : null;
@@ -442,7 +442,7 @@ const collectImportLocalNames = (node: Node): string[] => {
 };
 
 const getImportSpecifierLocalName = (node: Node): string | null => {
-  const local = (node as AnyNode).local;
+  const { local } = node as AnyNode;
   return isNode(local) && 'name' in local && typeof local.name === 'string'
     ? local.name
     : null;
@@ -491,13 +491,13 @@ const collectTopLevelBindings = (statement: Node): Set<string> => {
   }
 
   if (statement.type === 'VariableDeclaration') {
-    const declarations = (statement as AnyNode).declarations;
+    const { declarations } = statement as AnyNode;
     if (!Array.isArray(declarations)) {
       return bindings;
     }
 
     declarations.forEach((declarator) => {
-      const id = (declarator as AnyNode).id;
+      const { id } = declarator as AnyNode;
       if (isNode(id)) {
         collectDeclaredNames(id).forEach((name) => bindings.add(name));
       }
@@ -511,7 +511,7 @@ const collectTopLevelBindings = (statement: Node): Set<string> => {
       statement.type === 'TSEnumDeclaration') &&
     'id' in statement
   ) {
-    const id = (statement as AnyNode).id;
+    const { id } = statement as AnyNode;
     if (isNode(id) && id.type === 'Identifier') {
       bindings.add(id.name);
     }
@@ -519,14 +519,18 @@ const collectTopLevelBindings = (statement: Node): Set<string> => {
   }
 
   if (statement.type === 'ExportNamedDeclaration') {
-    const declaration = (statement as AnyNode).declaration;
-    return isNode(declaration) ? collectTopLevelBindings(declaration) : bindings;
+    const { declaration } = statement as AnyNode;
+    return isNode(declaration)
+      ? collectTopLevelBindings(declaration)
+      : bindings;
   }
 
   return bindings;
 };
 
-const collectTopLevelStatementInfos = (program: Program): TopLevelStatementInfo[] =>
+const collectTopLevelStatementInfos = (
+  program: Program
+): TopLevelStatementInfo[] =>
   program.body.map((statement) => ({
     bindings: collectTopLevelBindings(statement),
     node: statement,
@@ -535,7 +539,8 @@ const collectTopLevelStatementInfos = (program: Program): TopLevelStatementInfo[
 
 const collectTopLevelBindingsFromStatements = (
   statements: TopLevelStatementInfo[]
-): Set<string> => new Set(statements.flatMap((statement) => [...statement.bindings]));
+): Set<string> =>
+  new Set(statements.flatMap((statement) => [...statement.bindings]));
 
 const collectRemovableNamesFromStatements = (
   statements: TopLevelStatementInfo[],
@@ -554,16 +559,14 @@ const collectRemovableNamesFromStatements = (
   while (queue.length > 0) {
     const name = queue.shift()!;
     const statement = bindingToStatement.get(name);
-    if (!statement) {
-      continue;
+    if (statement) {
+      statement.references.forEach((reference) => {
+        if (bindingToStatement.has(reference) && !removable.has(reference)) {
+          removable.add(reference);
+          queue.push(reference);
+        }
+      });
     }
-
-    statement.references.forEach((reference) => {
-      if (bindingToStatement.has(reference) && !removable.has(reference)) {
-        removable.add(reference);
-        queue.push(reference);
-      }
-    });
   }
 
   return removable;
@@ -656,11 +659,20 @@ const collectScopedBindingInfos = (
     target.externalReferences += 1;
   };
 
-  const walkPatternReferenceSubexpressions = (
+  type ScopedWalk = (
+    node: Node,
+    scope: ScopedCleanupScope,
+    parent?: Node | null,
+    ownerBindingId?: string | null
+  ) => void;
+
+  let walk: ScopedWalk;
+
+  function walkPatternReferenceSubexpressions(
     node: Node,
     scope: ScopedCleanupScope,
     ownerBindingId: string | null
-  ): void => {
+  ): void {
     if (node.type === 'Identifier') {
       return;
     }
@@ -712,19 +724,19 @@ const collectScopedBindingInfos = (
         }
       });
     }
-  };
+  }
 
-  const walk = (
+  walk = (
     node: Node,
     scope: ScopedCleanupScope,
     parent: Node | null = null,
     ownerBindingId: string | null = null
   ): void => {
     if (node.type === 'ImportDeclaration') {
-      const specifiers = (node as AnyNode).specifiers;
+      const { specifiers } = node as AnyNode;
       if (Array.isArray(specifiers)) {
         specifiers.forEach((specifier) => {
-          const local = (specifier as AnyNode).local;
+          const { local } = specifier as AnyNode;
           if (
             isNode(local) &&
             local.type === 'Identifier' &&
@@ -746,7 +758,7 @@ const collectScopedBindingInfos = (
     }
 
     if (node.type === 'ExportDefaultDeclaration') {
-      const declaration = (node as AnyNode).declaration;
+      const { declaration } = node as AnyNode;
       if (isNode(declaration)) {
         walk(declaration, scope, node, ownerBindingId);
         if (
@@ -761,21 +773,21 @@ const collectScopedBindingInfos = (
     }
 
     if (node.type === 'VariableDeclaration') {
-      const declarations = (node as AnyNode).declarations;
+      const { declarations } = node as AnyNode;
       if (!Array.isArray(declarations)) {
         return;
       }
 
       declarations.forEach((declarator) => {
-        const id = (declarator as AnyNode).id;
+        const { id } = declarator as AnyNode;
         if (isNode(id)) {
           addPatternBindings(scope, id, 'variable', node);
         }
       });
 
       declarations.forEach((declarator) => {
-        const id = (declarator as AnyNode).id;
-        const init = (declarator as AnyNode).init;
+        const { id } = declarator as AnyNode;
+        const { init } = declarator as AnyNode;
         if (!isNode(id) || !isNode(init)) {
           return;
         }
@@ -789,16 +801,17 @@ const collectScopedBindingInfos = (
     }
 
     if (node.type === 'FunctionDeclaration' && node.id) {
-      const functionBindingId = addBinding(scope, node.id.name, 'function', node);
+      const functionBindingId = addBinding(
+        scope,
+        node.id.name,
+        'function',
+        node
+      );
       const fnScope = createScopedCleanupScope(scope);
 
       node.params.forEach((param) => {
         addPatternBindings(fnScope, param, 'param', param);
-        walkPatternReferenceSubexpressions(
-          param,
-          fnScope,
-          functionBindingId
-        );
+        walkPatternReferenceSubexpressions(param, fnScope, functionBindingId);
       });
 
       if (node.body) {
@@ -829,7 +842,9 @@ const collectScopedBindingInfos = (
 
     if (node.type === 'BlockStatement') {
       const blockScope = createScopedCleanupScope(scope);
-      getChildren(node).forEach((child) => walk(child, blockScope, node, ownerBindingId));
+      getChildren(node).forEach((child) =>
+        walk(child, blockScope, node, ownerBindingId)
+      );
       return;
     }
 
@@ -841,7 +856,9 @@ const collectScopedBindingInfos = (
       recordReference(scope, node.name, ownerBindingId);
     }
 
-    getChildren(node).forEach((child) => walk(child, scope, node, ownerBindingId));
+    getChildren(node).forEach((child) =>
+      walk(child, scope, node, ownerBindingId)
+    );
   };
 
   walk(program, createScopedCleanupScope(null));
@@ -858,38 +875,74 @@ const collectScopedRemovableBindingIds = (
   while (changed) {
     changed = false;
 
-    bindings.forEach((binding) => {
+    for (const binding of bindings.values()) {
       if (
-        removable.has(binding.id) ||
-        binding.kind === 'import' ||
-        binding.kind === 'param' ||
-        binding.externalReferences > 0
+        !removable.has(binding.id) &&
+        binding.kind !== 'import' &&
+        binding.kind !== 'param' &&
+        binding.externalReferences === 0
       ) {
-        return;
-      }
+        const seededByName =
+          initialNames.has(binding.name) ||
+          (GENERATED_HELPER_NAME_RE.test(binding.name) &&
+            binding.incomingFromBindings.size === 0);
+        const allIncomingRemovable =
+          binding.incomingFromBindings.size > 0 &&
+          [...binding.incomingFromBindings].every((sourceId) =>
+            removable.has(sourceId)
+          );
 
-      const seededByName =
-        initialNames.has(binding.name) ||
-        (GENERATED_HELPER_NAME_RE.test(binding.name) &&
-          binding.incomingFromBindings.size === 0);
-      const allIncomingRemovable =
-        binding.incomingFromBindings.size > 0 &&
-        [...binding.incomingFromBindings].every((sourceId) =>
-          removable.has(sourceId)
-        );
-
-      if (
-        (seededByName && binding.incomingFromBindings.size === 0) ||
-        allIncomingRemovable
-      ) {
-        removable.add(binding.id);
-        changed = true;
+        if (
+          (seededByName && binding.incomingFromBindings.size === 0) ||
+          allIncomingRemovable
+        ) {
+          removable.add(binding.id);
+          changed = true;
+        }
       }
-    });
+    }
   }
 
   return removable;
 };
+
+function expandImportRemovalRange(
+  code: string,
+  start: number,
+  end: number
+): Replacement {
+  let removalStart = start;
+  while (
+    removalStart > 0 &&
+    (code[removalStart - 1] === ' ' || code[removalStart - 1] === '\t')
+  ) {
+    removalStart -= 1;
+  }
+
+  let removalEnd = end;
+  if (code[removalEnd] === ';') {
+    removalEnd += 1;
+  }
+
+  while (
+    removalEnd < code.length &&
+    (code[removalEnd] === ' ' || code[removalEnd] === '\t')
+  ) {
+    removalEnd += 1;
+  }
+
+  if (code[removalEnd] === '\r' && code[removalEnd + 1] === '\n') {
+    removalEnd += 2;
+  } else if (code[removalEnd] === '\n') {
+    removalEnd += 1;
+  }
+
+  return {
+    end: removalEnd,
+    start: removalStart,
+    value: '',
+  };
+}
 
 const collectUnusedScopedDeclarationRemovals = (
   code: string,
@@ -932,7 +985,7 @@ const collectUnusedScopedDeclarationRemovals = (
       return;
     }
 
-    const declarations = (binding.declaration as AnyNode).declarations;
+    const { declarations } = binding.declaration as AnyNode;
     if (!Array.isArray(declarations) || declarations.length !== 1) {
       return;
     }
@@ -946,44 +999,6 @@ const collectUnusedScopedDeclarationRemovals = (
   });
 
   return [...removals.values()];
-};
-
-const expandImportRemovalRange = (
-  code: string,
-  start: number,
-  end: number
-): Replacement => {
-  let removalStart = start;
-  while (
-    removalStart > 0 &&
-    (code[removalStart - 1] === ' ' || code[removalStart - 1] === '\t')
-  ) {
-    removalStart -= 1;
-  }
-
-  let removalEnd = end;
-  if (code[removalEnd] === ';') {
-    removalEnd += 1;
-  }
-
-  while (
-    removalEnd < code.length &&
-    (code[removalEnd] === ' ' || code[removalEnd] === '\t')
-  ) {
-    removalEnd += 1;
-  }
-
-  if (code[removalEnd] === '\r' && code[removalEnd + 1] === '\n') {
-    removalEnd += 2;
-  } else if (code[removalEnd] === '\n') {
-    removalEnd += 1;
-  }
-
-  return {
-    end: removalEnd,
-    start: removalStart,
-    value: '',
-  };
 };
 
 const expandImportSpecifierRemovalRange = (
@@ -1100,7 +1115,7 @@ const collectUnusedImportRemovals = (
       return;
     }
 
-    const specifiers = (statement as AnyNode).specifiers;
+    const { specifiers } = statement as AnyNode;
     if (!Array.isArray(specifiers) || specifiers.length <= 1) {
       return;
     }
@@ -1174,7 +1189,9 @@ const collectUnusedGeneratedHelperDeclarationRemovals = (
     const localNames = [...collectTopLevelBindings(statement)];
     if (
       localNames.length > 0 &&
-      localNames.every((localName) => GENERATED_HELPER_NAME_RE.test(localName)) &&
+      localNames.every((localName) =>
+        GENERATED_HELPER_NAME_RE.test(localName)
+      ) &&
       localNames.every((localName) => !referencedNames.has(localName))
     ) {
       removals.push(
@@ -1199,7 +1216,7 @@ const collectTopLevelExpressionStatementRemovals = (
       return;
     }
 
-    const expression = statement.node.expression;
+    const { expression } = statement.node;
     const isPureExpression =
       expression.type === 'Identifier' ||
       expression.type === 'Literal' ||
@@ -1222,11 +1239,7 @@ const collectTopLevelExpressionStatementRemovals = (
       localReferences.every((name) => removableExpressionRefs.has(name))
     ) {
       removals.push(
-        expandImportRemovalRange(
-          code,
-          statement.node.start,
-          statement.node.end
-        )
+        expandImportRemovalRange(code, statement.node.start, statement.node.end)
       );
     }
   });
@@ -1245,7 +1258,9 @@ const collectEmptyTopLevelBlockRemovals = (
       return;
     }
 
-    removals.push(expandImportRemovalRange(code, statement.start, statement.end));
+    removals.push(
+      expandImportRemovalRange(code, statement.start, statement.end)
+    );
   });
 
   return removals;
@@ -1444,18 +1459,14 @@ const expandReplacementTarget = (
       ancestor.expressions[ancestor.expressions.length - 1] === current
     ) {
       current = ancestor as Expression;
-      continue;
-    }
-
-    if (
+    } else if (
       ancestor.type === 'ParenthesizedExpression' &&
       ancestor.expression === current
     ) {
       current = ancestor as Expression;
-      continue;
+    } else {
+      break;
     }
-
-    break;
   }
 
   return current;
@@ -1648,19 +1659,23 @@ const expressionValue = (
       ? expression.callee.name
       : null;
 
+  let ex: ExpressionValue['ex'];
+  if (expression.type === 'Identifier') {
+    ex = { loc: location, name: expression.name, type: 'Identifier' };
+  } else if (helperCallName) {
+    ex = { loc: location, name: helperCallName, type: 'Identifier' };
+  } else {
+    ex = {
+      loc: location,
+      name: code.slice(expression.start, expression.end),
+      type: 'Identifier',
+    };
+  }
+
   return {
     buildCodeFrameError: (message: string) =>
       buildCodeFrameError(code, location, message),
-    ex:
-      expression.type === 'Identifier'
-        ? { loc: location, name: expression.name, type: 'Identifier' }
-        : helperCallName
-          ? { loc: location, name: helperCallName, type: 'Identifier' }
-        : {
-            loc: location,
-            name: code.slice(expression.start, expression.end),
-            type: 'Identifier',
-          },
+    ex,
     kind:
       expression.type === 'ArrowFunctionExpression' ||
       expression.type === 'FunctionExpression'
@@ -2037,12 +2052,12 @@ const createProcessor = (
         error instanceof Error &&
         error.message.startsWith("Couldn't determine a name for the component")
       ) {
-        const displayNameNode =
-          target.type === 'TaggedTemplateExpression'
-            ? target.tag
-            : target.type === 'CallExpression'
-              ? target.callee
-              : target;
+        let displayNameNode: Node = target;
+        if (target.type === 'TaggedTemplateExpression') {
+          displayNameNode = target.tag;
+        } else if (target.type === 'CallExpression') {
+          displayNameNode = target.callee;
+        }
         const pointerNode =
           displayNameNode.type === 'MemberExpression'
             ? getRootIdentifier(displayNameNode) ?? displayNameNode
@@ -2128,32 +2143,35 @@ export const applyOxcProcessors = (
       () => collectOxcProcessorImportsFromProgram(program, workingCode)
     );
 
-    eventEmitter.perf('transform:preeval:processTemplate:imports:lookup', () => {
-      imports.forEach((item) => {
-        const localName = item.local.name ?? item.local.code;
-        if (item.imported === 'side-effect' || !localName) {
-          return;
-        }
-
-        const [processor, tagSource] = getProcessorForImport(
-          {
-            imported: item.imported,
-            source: item.source,
-          },
-          filename,
-          options
-        );
-
-        if (processor) {
-          definedProcessors.set(localName, [processor, tagSource]);
-          removableImportLocals.add(localName);
-          const rootLocalName = localName.split('.')[0];
-          if (rootLocalName) {
-            removableImportLocals.add(rootLocalName);
+    eventEmitter.perf(
+      'transform:preeval:processTemplate:imports:lookup',
+      () => {
+        imports.forEach((item) => {
+          const localName = item.local.name ?? item.local.code;
+          if (item.imported === 'side-effect' || !localName) {
+            return;
           }
-        }
-      });
-    });
+
+          const [processor, tagSource] = getProcessorForImport(
+            {
+              imported: item.imported,
+              source: item.source,
+            },
+            filename,
+            options
+          );
+
+          if (processor) {
+            definedProcessors.set(localName, [processor, tagSource]);
+            removableImportLocals.add(localName);
+            const rootLocalName = localName.split('.')[0];
+            if (rootLocalName) {
+              removableImportLocals.add(rootLocalName);
+            }
+          }
+        });
+      }
+    );
   });
 
   if (definedProcessors.size === 0) {
@@ -2178,8 +2196,9 @@ export const applyOxcProcessors = (
     };
   }
 
-  const targetExpressionSpans =
-    processorUsages.flatMap(collectUsageExpressionSpans);
+  const targetExpressionSpans = processorUsages.flatMap(
+    collectUsageExpressionSpans
+  );
 
   const extracted =
     targetExpressionSpans.length > 0
@@ -2269,7 +2288,7 @@ export const applyOxcProcessors = (
 
       const owner = getTagOwner(usage.ancestors);
       if (owner?.type === 'VariableDeclarator') {
-        const id = owner.id;
+        const { id } = owner;
         if (isNode(id) && id.type === 'Identifier') {
           removableExpressionRefs.add(id.name);
         }
@@ -2295,10 +2314,7 @@ export const applyOxcProcessors = (
             codeWithAddedImports,
             filename,
             removableImportLocals,
-            new Set([
-              ...removableExpressionRefs,
-              ...extracted.dependencyNames,
-            ])
+            new Set([...removableExpressionRefs, ...extracted.dependencyNames])
           )
         )
       : codeWithAddedImports,

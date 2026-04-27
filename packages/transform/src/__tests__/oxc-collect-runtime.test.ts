@@ -357,14 +357,15 @@ export const whiteColor = '#fff';`);
       (processor) => processor.displayName === 'title'
     );
     const titleCssText =
-      titleProcessor?.artifacts[0]?.[1]?.[0]?.[
-        `.${titleProcessor.className}`
-      ]?.cssText ?? '';
+      titleProcessor?.artifacts[0]?.[1]?.[0]?.[`.${titleProcessor.className}`]
+        ?.cssText ?? '';
 
     expect(processors).toHaveLength(3);
-    expect(
-      processors.map((processor) => processor.displayName)
-    ).toStrictEqual(['small', 'contrast', 'title']);
+    expect(processors.map((processor) => processor.displayName)).toStrictEqual([
+      'small',
+      'contrast',
+      'title',
+    ]);
     expect(titleCssText).toContain('font-size: 24px;');
     expect(titleCssText).toContain('&.CLASS_SMALL');
     expect(titleCssText).toContain('font-size: 15px;');
@@ -544,8 +545,6 @@ export const whiteColor = '#fff';`);
       new Map()
     );
 
-    expect(result.code).toBe(
-      `export function Something() {\n  return 1;\n}`
-    );
+    expect(result.code).toBe(`export function Something() {\n  return 1;\n}`);
   });
 });

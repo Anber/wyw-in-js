@@ -193,11 +193,13 @@ export const getProcessorForImport = (
 
     customFile = tagResolver(source, imported, tagResolverMeta);
   }
-  const processor = customFile
-    ? getProcessorFromFile(customFile)
-    : packageLookupCandidate
-      ? getProcessorFromPackage(source, imported, filename)
-      : null;
+  let processor: ProcessorClass | null = null;
+  if (customFile) {
+    processor = getProcessorFromFile(customFile);
+  } else if (packageLookupCandidate) {
+    processor = getProcessorFromPackage(source, imported, filename);
+  }
+
   lookupCache.set(cacheKey, processor);
   return [processor, { imported, source }];
 };

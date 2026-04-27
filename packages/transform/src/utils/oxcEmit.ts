@@ -64,7 +64,7 @@ const getCommonJsFilename = (): string | null =>
   typeof __filename === 'string' ? __filename : null;
 
 const getCurrentFilenameFromStack = (): string | null => {
-  const stack = new Error().stack;
+  const { stack } = new Error();
   const match = stack?.match(
     /(?:\(|\s)(file:\/\/[^)\s]+\/oxcEmit\.(?:js|ts)|\/[^)\s]+\/oxcEmit\.(?:js|ts)):\d+:\d+/
   );
@@ -173,7 +173,9 @@ const getNativeBindingCandidates = (): string[] => {
 const loadNativeOxcTransform = (
   requireFromHere: NodeRequire
 ): OxcTransformModule => {
-  const requireFromOxc = createRequire(requireFromHere.resolve('oxc-transform'));
+  const requireFromOxc = createRequire(
+    requireFromHere.resolve('oxc-transform')
+  );
   const errors: unknown[] = [];
 
   for (const candidate of [

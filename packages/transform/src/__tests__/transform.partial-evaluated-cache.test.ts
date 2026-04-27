@@ -11,11 +11,7 @@ import { transform } from '../transform';
 import { Entrypoint } from '../transform/Entrypoint';
 import type { IEvaluatedEntrypoint } from '../transform/EvaluatedEntrypoint';
 
-const processorFile = join(
-  __dirname,
-  '__fixtures__',
-  'test-css-processor.js'
-);
+const processorFile = join(__dirname, '__fixtures__', 'test-css-processor.js');
 
 const createResolver =
   (processorPath: string) => async (what: string, importer: string) => {

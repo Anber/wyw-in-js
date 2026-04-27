@@ -89,10 +89,7 @@ const shouldTerminateWithSemicolon = (
   parent: Node | null,
   key: string | null
 ): boolean => {
-  if (
-    node.type === 'VariableDeclaration' &&
-    parent
-  ) {
+  if (node.type === 'VariableDeclaration' && parent) {
     if (
       (parent.type === 'ForStatement' ||
         parent.type === 'ForInStatement' ||
@@ -225,7 +222,10 @@ const printFormattedObjectExpression = (
   return `{\n${lines.join(',\n')}\n${baseIndent}}`;
 };
 
-const formatRuntimeObjectLiterals = (code: string, filename: string): string => {
+const formatRuntimeObjectLiterals = (
+  code: string,
+  filename: string
+): string => {
   const replacements: Replacement[] = [];
 
   const walk = (node: Node, parent: Node | null = null): void => {
@@ -263,33 +263,31 @@ const collapseRuntimeBlankLines = (code: string): string => {
     const line = lines[idx]!;
     if (line.trim() !== '') {
       result.push(line);
-      continue;
-    }
+    } else {
+      let nextIdx = idx;
+      while (nextIdx < lines.length && lines[nextIdx]?.trim() === '') {
+        nextIdx += 1;
+      }
 
-    let nextIdx = idx;
-    while (nextIdx < lines.length && lines[nextIdx]?.trim() === '') {
-      nextIdx += 1;
-    }
+      const previousNonEmpty = [...result]
+        .reverse()
+        .find((entry) => entry.trim() !== '');
+      const nextNonEmpty = lines
+        .slice(nextIdx)
+        .find((entry) => entry.trim() !== '');
 
-    const previousNonEmpty = [...result]
-      .reverse()
-      .find((entry) => entry.trim() !== '');
-    const nextNonEmpty = lines.slice(nextIdx).find((entry) => entry.trim() !== '');
+      if (previousNonEmpty && nextNonEmpty) {
+        const trimmedPrevious = previousNonEmpty.trim();
+        if (
+          trimmedPrevious.startsWith('//') ||
+          trimmedPrevious.endsWith('*/')
+        ) {
+          result.push('');
+        }
+      }
 
-    if (!previousNonEmpty || !nextNonEmpty) {
       idx = nextIdx - 1;
-      continue;
     }
-
-    const trimmedPrevious = previousNonEmpty.trim();
-    if (
-      trimmedPrevious.startsWith('//') ||
-      trimmedPrevious.endsWith('*/')
-    ) {
-      result.push('');
-    }
-
-    idx = nextIdx - 1;
   }
 
   return result.join('\n');

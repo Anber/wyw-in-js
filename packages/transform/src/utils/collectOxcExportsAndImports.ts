@@ -1382,7 +1382,12 @@ export function collectOxcExportsAndImportsFromProgram(
   };
 
   precollectRequireSources(program, state);
-  visit(program, { key: 'program', parent: null, scope: rootScope }, state, 'all');
+  visit(
+    program,
+    { key: 'program', parent: null, scope: rootScope },
+    state,
+    'all'
+  );
   addUnusedNamespaceSideEffects(state);
 
   return state.result;

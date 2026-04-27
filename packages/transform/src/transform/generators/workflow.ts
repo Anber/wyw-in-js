@@ -17,7 +17,6 @@ const isLoadedEntrypointWithoutArtifacts = (
 export function* workflow(
   this: IWorkflowAction
 ): SyncScenarioForAction<IWorkflowAction> {
-  const action = this;
   const { cache, options } = this.services;
   const { entrypoint } = this;
 
@@ -47,12 +46,13 @@ export function* workflow(
 
   const originalCode = entrypoint.loadedAndParsed.code ?? '';
 
-  const restartOnSupersede = function* (
+  function* restartOnSupersede(
+    this: IWorkflowAction,
     error: unknown
   ): SyncScenarioForAction<IWorkflowAction> {
     if (isAborted(error) && entrypoint.supersededWith) {
       entrypoint.log('workflow aborted, schedule the next attempt');
-      return yield* action.getNext(
+      return yield* this.getNext(
         'workflow',
         entrypoint.supersededWith,
         undefined,
@@ -61,7 +61,7 @@ export function* workflow(
     }
 
     throw error;
-  };
+  }
 
   // File is ignored or does not contain any tags. Return original code.
   if (!entrypoint.hasWywMetadata()) {
@@ -153,6 +153,6 @@ export function* workflow(
       sourceMap: collectStageResult.map,
     };
   } catch (error) {
-    return yield* restartOnSupersede(error);
+    return yield* restartOnSupersede.call(this, error);
   }
 }

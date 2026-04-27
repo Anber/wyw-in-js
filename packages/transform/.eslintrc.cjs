@@ -3,6 +3,9 @@ const path = require('node:path');
 module.exports = {
   extends: ['@wyw-in-js/eslint-config/library'],
   ignorePatterns: ['src/__tests__/legacy-babel-reference/**'],
+  rules: {
+    '@typescript-eslint/member-ordering': 'off',
+  },
   overrides: [
     {
       files: [

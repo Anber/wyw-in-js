@@ -1934,8 +1934,7 @@ describe('EvalBroker', () => {
       rmSync(root, { recursive: true, force: true });
     });
 
-
-  it('builds direct proxy modules for requested exports from mixed re-export barrels', async () => {
+    it('builds direct proxy modules for requested exports from mixed re-export barrels', async () => {
       const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
       const entry = join(root, 'entry.js');
       const barrel = join(root, 'barrel.js');
@@ -2020,51 +2019,41 @@ describe('EvalBroker', () => {
       );
       writeFileSync(
         first,
-        [
-          "import { foo } from './dep.js';",
-          'export const value = foo;',
-        ].join('\n')
+        ["import { foo } from './dep.js';", 'export const value = foo;'].join(
+          '\n'
+        )
       );
       writeFileSync(
         second,
-        [
-          "import { bar } from './dep.js';",
-          'export const value = bar;',
-        ].join('\n')
+        ["import { bar } from './dep.js';", 'export const value = bar;'].join(
+          '\n'
+        )
       );
       const services = createServices(root, first);
-      services.cache.add(
-        'entrypoints',
-        first,
-        {
-          dependencies: new Map([
-            [
-              './dep.js',
-              {
-                only: ['foo'],
-                resolved: dep,
-                source: './dep.js',
-              },
-            ],
-          ]),
-        } as any
-      );
-      services.cache.add(
-        'entrypoints',
-        second,
-        {
-          dependencies: new Map([
-            [
-              './dep.js',
-              {
-                only: ['bar'],
-                resolved: dep,
-                source: './dep.js',
-              },
-            ],
-          ]),
-        } as any
-      );
+      services.cache.add('entrypoints', first, {
+        dependencies: new Map([
+          [
+            './dep.js',
+            {
+              only: ['foo'],
+              resolved: dep,
+              source: './dep.js',
+            },
+          ],
+        ]),
+      } as any);
+      services.cache.add('entrypoints', second, {
+        dependencies: new Map([
+          [
+            './dep.js',
+            {
+              only: ['bar'],
+              resolved: dep,
+              source: './dep.js',
+            },
+          ],
+        ]),
+      } as any);
 
       const broker = new EvalBroker(
         services,

@@ -97,7 +97,9 @@ it('keeps root CSS extraction when the entrypoint is superseded during eval', as
       }
     }
 
-    throw new Error(`Unexpected resolve ${JSON.stringify(what)} from ${importer}`);
+    throw new Error(
+      `Unexpected resolve ${JSON.stringify(what)} from ${importer}`
+    );
   };
 
   const run = (filename: string, code: string) =>

@@ -1800,7 +1800,7 @@ export class EvalBroker {
     const importerOnly = this.onlyByModule.get(importerId) ?? ['*'];
     const only = importerOnly.includes('__wywPreval')
       ? mergeOnly(importsOnly ?? ['*'], ['__wywPreval'])
-      : (importsOnly ?? ['*']);
+      : importsOnly ?? ['*'];
     if (process.env.WYW_DEBUG_EVAL_RESOLVE && !importsOnly) {
       // eslint-disable-next-line no-console
       console.warn('[wyw-eval:resolve:only-miss]', {
@@ -2822,7 +2822,7 @@ export class EvalBroker {
 
     let mergedOnly = storedOnly;
     for (const cachedEntrypoint of this.services.cache.entrypoints.values() as Iterable<CachedDependencyOwner>) {
-      const dependencies = cachedEntrypoint.dependencies;
+      const { dependencies } = cachedEntrypoint;
       if (!dependencies) {
         continue;
       }

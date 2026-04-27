@@ -231,7 +231,7 @@ describe('shakeOxcToESM', () => {
       `
     );
 
-    expect(code).toContain("import { foo1");
+    expect(code).toContain('import { foo1');
     expect(code).toContain("from './foo'");
     expect(code).not.toContain('foo2');
     expect(imports.get('./foo')).toEqual(['foo1']);
