@@ -207,6 +207,61 @@ const isWithinAliveExport = (
 ): boolean =>
   [...aliveExports].some((alive) => alive === ref || alive.isAncestor(ref));
 
+const getOnlyPropertyAssignmentStatements = (
+  binding: Binding,
+  aliveExports: Set<NodePath>
+): Set<NodePath> | null => {
+  const statements = new Set<NodePath>();
+  const references = binding.referencePaths.filter((ref) => !isRemoved(ref));
+  const constantViolations = binding.constantViolations.filter(
+    (ref) => !isRemoved(ref)
+  );
+
+  if (references.length === 0 || constantViolations.length > 0) {
+    return null;
+  }
+
+  for (const ref of references) {
+    const statement = getPropertyAssignmentStatement(
+      ref,
+      binding.identifier.name
+    );
+    if (!statement || isWithinAliveExport(statement, aliveExports)) {
+      return null;
+    }
+
+    statements.add(statement);
+  }
+
+  return statements;
+};
+
+function getExportDeclarationBindingNames(path: NodePath): string[] {
+  const exportDeclaration = path.findParent((p) =>
+    p.isExportNamedDeclaration()
+  ) as NodePath<ExportNamedDeclaration> | null;
+  const declaration = exportDeclaration?.get('declaration');
+
+  if (!declaration?.node) {
+    return [];
+  }
+
+  if (declaration.isVariableDeclaration()) {
+    return Object.keys(declaration.getOuterBindingIdentifiers());
+  }
+
+  if (
+    declaration.isFunctionDeclaration() ||
+    declaration.isClassDeclaration() ||
+    declaration.isTSEnumDeclaration()
+  ) {
+    const { id } = declaration.node;
+    return id ? [id.name] : [];
+  }
+
+  return [];
+}
+
 function getExportPathsForVariableDeclaration(
   declaration: NodePath<VariableDeclaration>,
   exports: Exports
@@ -646,6 +701,20 @@ export default function shakerPlugin(
         }
 
         const deleted = new Set<NodePath>();
+        const strippedBindingNames = new Set<string>();
+
+        const collectStrippedBindingNames = (
+          path: NodePath,
+          binding: Binding | undefined
+        ): string[] =>
+          [
+            binding?.identifier.name,
+            ...getExportDeclarationBindingNames(path),
+          ].filter((name): name is string => Boolean(name));
+
+        const rememberStrippedBindings = (names: string[]) => {
+          names.forEach((name) => strippedBindingNames.add(name));
+        };
 
         let dereferenced: NodePath<Identifier>[] = [];
         let changed = true;
@@ -701,6 +770,11 @@ export default function shakerPlugin(
               dereferenced.push(path);
             }
 
+            const strippedBindingCandidates = collectStrippedBindingNames(
+              path,
+              binding
+            );
+
             const strippedEnum =
               !deleted.has(path) && hasRuntimeReferencesToEnum(path)
                 ? stripExportKeepDeclaration(
@@ -712,6 +786,7 @@ export default function shakerPlugin(
                 : null;
 
             if (strippedEnum) {
+              rememberStrippedBindings(strippedBindingCandidates);
               strippedEnum.forEach((stalePath) => {
                 deleted.add(stalePath);
               });
@@ -731,6 +806,7 @@ export default function shakerPlugin(
                 : null;
 
             if (strippedWithBlocking) {
+              rememberStrippedBindings(strippedBindingCandidates);
               strippedWithBlocking.forEach((stalePath) => {
                 deleted.add(stalePath);
               });
@@ -764,6 +840,7 @@ export default function shakerPlugin(
                   : null;
 
               if (strippedWithoutBlocking) {
+                rememberStrippedBindings(strippedBindingCandidates);
                 strippedWithoutBlocking.forEach((stalePath) => {
                   deleted.add(stalePath);
                 });
@@ -855,6 +932,42 @@ export default function shakerPlugin(
             ) {
               if (queueForDeleting(binding.path)) {
                 changed = true;
+              }
+            }
+          }
+
+          for (const name of strippedBindingNames) {
+            const strippedBinding = file.scope.getBinding(name);
+            if (strippedBinding && !isRemoved(strippedBinding.path)) {
+              const statements = getOnlyPropertyAssignmentStatements(
+                strippedBinding,
+                aliveExports
+              );
+
+              if (statements) {
+                for (const statement of statements) {
+                  if (queueForDeleting(statement)) {
+                    changed = true;
+                  }
+                }
+
+                if (strippedBinding.path.isVariableDeclarator()) {
+                  const id = strippedBinding.path.get('id');
+                  if (
+                    !id.isArrayPattern() &&
+                    !id.isObjectPattern() &&
+                    !isRemoved(id) &&
+                    !forDeletingSet.has(id) &&
+                    queueForDeleting(id)
+                  ) {
+                    changed = true;
+                  }
+                } else if (
+                  !forDeletingSet.has(strippedBinding.path) &&
+                  queueForDeleting(strippedBinding.path)
+                ) {
+                  changed = true;
+                }
               }
             }
           }
