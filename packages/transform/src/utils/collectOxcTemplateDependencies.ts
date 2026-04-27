@@ -1055,10 +1055,20 @@ const replaceIdentifierReferences = (
       !isPropertyOnlyIdentifier(current, parent) &&
       !isObjectPropertyKey(current, parent)
     ) {
+      const replacement = replacements.get(current.name)!;
+      // Shorthand property `{ width }` → `{ width: 500 }` when the
+      // identifier is the value side of a shorthand ObjectProperty.
+      const isShorthandValue =
+        !!parent &&
+        parent.type === 'Property' &&
+        (parent as unknown as { shorthand?: boolean }).shorthand &&
+        parent.value === current;
       localReplacements.push({
-        start: current.start,
+        start: isShorthandValue ? parent.start : current.start,
         end: current.end,
-        value: replacements.get(current.name)!,
+        value: isShorthandValue
+          ? `${current.name}: ${replacement}`
+          : replacement,
       });
     }
 

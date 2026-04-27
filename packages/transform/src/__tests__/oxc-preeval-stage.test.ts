@@ -238,4 +238,39 @@ describe('runOxcPreevalStage', () => {
     expect(shaken.code).toContain('export const __wywPreval = { _exp: _exp };');
     expect(shaken.code).toContain('const _exp =');
   });
+
+  it('expands shorthand properties when constant-substituting mixed object literals in css expressions', () => {
+    // Reproduces: `{ width, ...textStyles.regular }` → `{ 500, ...textStyles.regular }`
+    // when `width` is a constant and `textStyles` is an import.
+    // The shorthand `width` must expand to `width: 500` to keep the object valid.
+    const source = [
+      "import { css } from 'test-package';",
+      "import { textStyles } from './design-system';",
+      'const width = 500;',
+      'export const a = css`',
+      '  ${{ width, ...textStyles.regular }}',
+      '`;',
+    ].join('\n');
+
+    const result = runOxcPreevalStage(source, fileContext, options);
+
+    expect(result.code).toContain('width: 500');
+    expect(result.code).not.toMatch(/\{\s*500\s*,/);
+  });
+
+  it('expands shorthand string constants in mixed object literals in css expressions', () => {
+    const source = [
+      "import { css } from 'test-package';",
+      "import { space } from './design-system';",
+      'const display = "flex";',
+      'export const a = css`',
+      '  ${{ display, gap: space.s8 }}',
+      '`;',
+    ].join('\n');
+
+    const result = runOxcPreevalStage(source, fileContext, options);
+
+    expect(result.code).toContain('display: "flex"');
+    expect(result.code).toContain('gap: space.s8');
+  });
 });
