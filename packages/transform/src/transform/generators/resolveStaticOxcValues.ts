@@ -1,5 +1,7 @@
 /* eslint-disable no-restricted-syntax,no-continue,@typescript-eslint/no-use-before-define */
 
+import { isAbsolute, relative } from 'path';
+
 import type {
   ExportNamedDeclaration,
   ExportSpecifier,
@@ -13,14 +15,19 @@ import type {
 } from 'oxc-parser';
 
 import { oxcShaker } from '../../shaker';
+import { collectOxcProcessorImportsFromProgram } from '../../utils/collectOxcExportsAndImports';
 import {
   evaluateOxcStaticExpression,
   evaluateOxcStaticExpressionAt,
   isOxcStaticSerializableValue,
   type OxcStaticValueCandidate,
 } from '../../utils/collectOxcTemplateDependencies';
-import { appendOxcWywPreval } from '../../utils/oxcPreevalStage';
+import {
+  appendOxcWywPreval,
+  runOxcPreevalStage,
+} from '../../utils/oxcPreevalStage';
 import { parseOxcProgramCached } from '../../utils/parseOxc';
+import { getProcessorForImport } from '../../utils/processorLookup';
 import { Entrypoint } from '../Entrypoint';
 import type { IEntrypointDependency } from '../Entrypoint.types';
 import type { ITransformAction, SyncScenarioFor } from '../types';
@@ -47,6 +54,16 @@ type ExportTarget =
 type StaticExportResult = {
   dependencies: string[];
   value: unknown;
+};
+
+const isInsideRoot = (filename: string, root: string): boolean => {
+  const relativePath = relative(root, filename);
+  return (
+    relativePath === '' ||
+    (!!relativePath &&
+      !relativePath.startsWith('..') &&
+      !isAbsolute(relativePath))
+  );
 };
 
 const parseProgram = (code: string, filename: string): Program =>
@@ -255,6 +272,10 @@ const isSafeStaticStatement = (statement: Node): boolean => {
     return true;
   }
 
+  if (statement.type === 'FunctionDeclaration') {
+    return true;
+  }
+
   if (statement.type === 'ImportDeclaration') {
     return (
       isTypeOnlyImport(statement) ||
@@ -285,13 +306,17 @@ const isSafeStaticStatement = (statement: Node): boolean => {
     }
 
     return (
-      statement.declaration.type === 'VariableDeclaration' &&
-      isSafeVariableDeclaration(statement.declaration)
+      statement.declaration.type === 'FunctionDeclaration' ||
+      (statement.declaration.type === 'VariableDeclaration' &&
+        isSafeVariableDeclaration(statement.declaration))
     );
   }
 
   if (statement.type === 'ExportDefaultDeclaration') {
-    return isSafeStaticExpression(statement.declaration);
+    return (
+      statement.declaration.type === 'FunctionDeclaration' ||
+      isSafeStaticExpression(statement.declaration)
+    );
   }
 
   if (statement.type === 'ExpressionStatement') {
@@ -303,6 +328,236 @@ const isSafeStaticStatement = (statement: Node): boolean => {
 
 const isSafeStaticProgram = (program: Program): boolean =>
   program.body.every((statement) => isSafeStaticStatement(statement));
+
+const collectProcessorImportLocals = (
+  action: ITransformAction,
+  program: Program,
+  code: string,
+  filename: string
+): Set<string> => {
+  const result = new Set<string>();
+
+  collectOxcProcessorImportsFromProgram(program, code).forEach((item) => {
+    if (
+      item.type !== 'esm' ||
+      item.imported === '*' ||
+      item.imported === 'side-effect'
+    ) {
+      return;
+    }
+
+    const localName = item.local.name ?? item.local.code;
+    if (!localName) {
+      return;
+    }
+
+    const [processor] = getProcessorForImport(
+      {
+        imported: item.imported,
+        source: item.source,
+      },
+      filename,
+      action.services.options.pluginOptions
+    );
+
+    if (!processor) {
+      return;
+    }
+
+    result.add(localName);
+    const rootLocalName = localName.split('.')[0];
+    if (rootLocalName) {
+      result.add(rootLocalName);
+    }
+  });
+
+  return result;
+};
+
+const isSafeProcessorImport = (
+  statement: ImportDeclaration,
+  processorImportLocals: Set<string>
+): boolean => {
+  if (isTypeOnlyImport(statement)) {
+    return true;
+  }
+
+  return (
+    statement.specifiers.length > 0 &&
+    statement.specifiers.every((specifier) => {
+      if (
+        specifier.type === 'ImportSpecifier' &&
+        (specifier as ImportSpecifier).importKind === 'type'
+      ) {
+        return true;
+      }
+
+      return (
+        specifier.type !== 'ImportNamespaceSpecifier' &&
+        !!specifier.local?.name &&
+        processorImportLocals.has(specifier.local.name)
+      );
+    })
+  );
+};
+
+const expressionRootIdentifierName = (expr: Node): string | null => {
+  const unwrapped = unwrapExpression(expr);
+
+  if (unwrapped.type === 'Identifier') {
+    return unwrapped.name;
+  }
+
+  if (unwrapped.type === 'MemberExpression') {
+    return expressionRootIdentifierName(unwrapped.object);
+  }
+
+  if (unwrapped.type === 'CallExpression') {
+    return expressionRootIdentifierName(unwrapped.callee);
+  }
+
+  if (unwrapped.type === 'TaggedTemplateExpression') {
+    return expressionRootIdentifierName(unwrapped.tag);
+  }
+
+  return null;
+};
+
+const isProcessorUsageExpression = (
+  expr: Node,
+  processorImportLocals: Set<string>
+): boolean => {
+  const unwrapped = unwrapExpression(expr);
+
+  if (
+    unwrapped.type !== 'CallExpression' &&
+    unwrapped.type !== 'TaggedTemplateExpression'
+  ) {
+    return false;
+  }
+
+  const rootName = expressionRootIdentifierName(unwrapped);
+  return !!rootName && processorImportLocals.has(rootName);
+};
+
+const isSafeProcessorMetadataVariableDeclaration = (
+  statement: VariableDeclaration,
+  processorImportLocals: Set<string>
+): boolean =>
+  statement.kind === 'const' &&
+  statement.declarations.every(
+    (declarator) =>
+      declarator.init &&
+      (isSafeStaticExpression(declarator.init) ||
+        isProcessorUsageExpression(declarator.init, processorImportLocals))
+  );
+
+const isSafeProcessorMetadataStatement = (
+  statement: Node,
+  processorImportLocals: Set<string>
+): boolean => {
+  if (statement.type.startsWith('TS') || statement.type.startsWith('JSDoc')) {
+    return statement.type !== 'TSEnumDeclaration';
+  }
+
+  if (statement.type === 'EmptyStatement') {
+    return true;
+  }
+
+  if (statement.type === 'FunctionDeclaration') {
+    return true;
+  }
+
+  if (statement.type === 'ImportDeclaration') {
+    return isSafeProcessorImport(statement, processorImportLocals);
+  }
+
+  if (statement.type === 'VariableDeclaration') {
+    return isSafeProcessorMetadataVariableDeclaration(
+      statement,
+      processorImportLocals
+    );
+  }
+
+  if (statement.type === 'ExportNamedDeclaration') {
+    if (isTypeOnlyExport(statement)) {
+      return true;
+    }
+
+    if (statement.source) {
+      return statement.specifiers.every(
+        (specifier) => specifier.type === 'ExportSpecifier'
+      );
+    }
+
+    if (!statement.declaration) {
+      return true;
+    }
+
+    return (
+      statement.declaration.type === 'FunctionDeclaration' ||
+      (statement.declaration.type === 'VariableDeclaration' &&
+        isSafeProcessorMetadataVariableDeclaration(
+          statement.declaration,
+          processorImportLocals
+        ))
+    );
+  }
+
+  if (statement.type === 'ExportDefaultDeclaration') {
+    return (
+      statement.declaration.type === 'FunctionDeclaration' ||
+      isSafeStaticExpression(statement.declaration) ||
+      isProcessorUsageExpression(statement.declaration, processorImportLocals)
+    );
+  }
+
+  if (statement.type === 'ExpressionStatement') {
+    return isSafeLiteral(statement.expression);
+  }
+
+  return false;
+};
+
+const isSafeProcessorMetadataProgram = (
+  action: ITransformAction,
+  program: Program,
+  code: string,
+  filename: string
+): boolean => {
+  const processorImportLocals = collectProcessorImportLocals(
+    action,
+    program,
+    code,
+    filename
+  );
+
+  if (processorImportLocals.size === 0) {
+    return false;
+  }
+
+  return program.body.every((statement) =>
+    isSafeProcessorMetadataStatement(statement, processorImportLocals)
+  );
+};
+
+const isStaticWYWMetaValue = (value: unknown): boolean => {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+
+  const meta = (value as { __wyw_meta?: unknown }).__wyw_meta;
+  if (typeof meta !== 'object' || meta === null) {
+    return false;
+  }
+
+  const { className, extends: extended } = meta as {
+    className?: unknown;
+    extends?: unknown;
+  };
+
+  return typeof className === 'string' && extended === null;
+};
 
 const collectLocalConstExpressions = (
   program: Program
@@ -511,6 +766,77 @@ function* resolveImportValue(
   };
 }
 
+const resolveProcessorMetadataExport = (
+  action: ITransformAction,
+  filename: string,
+  code: string,
+  program: Program,
+  exportedName: string
+): StaticExportResult | null => {
+  const root = action.services.options.root ?? process.cwd();
+  if (!isInsideRoot(filename, root)) {
+    return null;
+  }
+
+  if (!isSafeProcessorMetadataProgram(action, program, code, filename)) {
+    return null;
+  }
+
+  let preevalResult: ReturnType<typeof runOxcPreevalStage>;
+  try {
+    preevalResult = action.services.eventEmitter.perf(
+      'transform:preeval:staticMetadata',
+      () =>
+        runOxcPreevalStage(
+          code,
+          {
+            filename,
+            root,
+          },
+          {
+            ...action.services.options.pluginOptions,
+            eventEmitter: action.services.eventEmitter,
+          }
+        )
+    );
+  } catch {
+    return null;
+  }
+
+  if (!preevalResult.metadata) {
+    return null;
+  }
+
+  const preevalCode = preevalResult.baseCode;
+  const preevalProgram = parseProgram(preevalCode, filename);
+  const target = findExportTarget(preevalProgram, exportedName);
+  if (!target || target.kind === 'import') {
+    return null;
+  }
+
+  if (!isSafeStaticExpression(target.expression)) {
+    return null;
+  }
+
+  const value = evaluateOxcStaticExpressionAt(
+    preevalCode,
+    filename,
+    {
+      end: target.expression.end,
+      start: target.expression.start,
+    },
+    new Map()
+  );
+  if (!isStaticWYWMetaValue(value) || !isOxcStaticSerializableValue(value)) {
+    return null;
+  }
+
+  return {
+    dependencies: [filename],
+    value,
+  };
+};
+
 function* resolveStaticExport(
   action: ITransformAction,
   filename: string,
@@ -548,9 +874,16 @@ function* resolveStaticExport(
   const { code } = loadedAndParsed;
   const program = parseProgram(code, filename);
   if (!isSafeStaticProgram(program)) {
-    memo.set(memoKey, null);
+    const metadataResult = resolveProcessorMetadataExport(
+      action,
+      filename,
+      code,
+      program,
+      exportedName
+    );
+    memo.set(memoKey, metadataResult);
     stack.delete(memoKey);
-    return null;
+    return metadataResult;
   }
 
   const target = findExportTarget(program, exportedName);
