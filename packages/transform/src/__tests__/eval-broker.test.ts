@@ -76,6 +76,7 @@ const getPrivateBroker = (broker: EvalBroker) =>
     importsByModule: Map<string, Map<string, string[]>>;
     lastHappyDomEnabled: boolean;
     lastInitKey: string | null;
+    activeResolveRootId: string | null;
     loadModule: (payload: {
       id: string;
       importerId?: string | null;
@@ -274,6 +275,40 @@ describe('EvalBroker', () => {
     const [firstResult, secondResult] = await Promise.all([first, second]);
     expect(firstResult.resolvedId).toBe(dep);
     expect(secondResult.resolvedId).toBe(dep);
+
+    broker.dispose();
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('passes active entrypoint as async resolver stack root for transitive imports', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
+    const entry = join(root, 'entry.js');
+    const importer = join(root, 'dep.js');
+    const nested = join(root, 'nested.js');
+    writeFileSync(importer, 'export const value = 1;');
+    writeFileSync(nested, 'export const value = 2;');
+
+    const asyncResolve = jest.fn(async () => nested);
+    const services = createServices(root, entry);
+    const broker = new EvalBroker(services, asyncResolve);
+    const privateBroker = getPrivateBroker(broker);
+    privateBroker.activeResolveRootId = entry;
+    privateBroker.importsByModule.set(
+      importer,
+      new Map([['./nested.js', ['*']]])
+    );
+
+    const result = await privateBroker.resolveImport({
+      specifier: './nested.js',
+      importerId: importer,
+      kind: 'import',
+    });
+
+    expect(result.resolvedId).toBe(nested);
+    expect(asyncResolve).toHaveBeenCalledWith('./nested.js', importer, [
+      importer,
+      entry,
+    ]);
 
     broker.dispose();
     rmSync(root, { recursive: true, force: true });
@@ -692,6 +727,60 @@ describe('EvalBroker', () => {
 
     expect(result.values?.get('value')).toBe(42);
     expect(result.dependencies).toContain('./dep.js');
+
+    broker.dispose();
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('uses root ancestor as async resolver stack root for evaluated child entrypoints', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
+    const entry = join(root, 'entry.js');
+    const dep = join(root, 'dep.js');
+    const nested = join(root, 'nested.js');
+
+    writeFileSync(entry, "import './dep.js';");
+    writeFileSync(nested, 'export const value = 41;');
+    writeFileSync(
+      dep,
+      [
+        "import { value } from './nested.js';",
+        'export const __wywPreval = {',
+        '  value: () => value + 1,',
+        '};',
+      ].join('\n')
+    );
+
+    const asyncResolve = jest.fn(async (what: string, importer: string) => {
+      if (what.startsWith('.')) {
+        return resolve(dirname(importer), what);
+      }
+      return null;
+    });
+    const services = createServices(root, entry);
+    const broker = new EvalBroker(services, asyncResolve);
+    const rootEntrypoint = Entrypoint.createRoot(
+      services,
+      entry,
+      ['__wywPreval'],
+      readFileSync(entry, 'utf-8')
+    );
+    const childEntrypoint = rootEntrypoint.createChild(
+      dep,
+      ['__wywPreval'],
+      readFileSync(dep, 'utf-8')
+    );
+
+    if (childEntrypoint === 'loop') {
+      throw new Error('Unexpected loop in test entrypoint graph');
+    }
+
+    const result = await broker.evaluate(childEntrypoint);
+
+    expect(result.values?.get('value')).toBe(42);
+    expect(asyncResolve).toHaveBeenCalledWith('./nested.js', dep, [
+      dep,
+      entry,
+    ]);
 
     broker.dispose();
     rmSync(root, { recursive: true, force: true });

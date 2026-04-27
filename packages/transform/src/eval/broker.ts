@@ -18,6 +18,7 @@ import type {
 import { isFeatureEnabled } from '@wyw-in-js/shared';
 
 import type { Entrypoint } from '../transform/Entrypoint';
+import type { ParentEntrypoint } from '../types';
 import { isStaticallyEvaluatableModule } from '../transform/isStaticallyEvaluatableModule';
 import type { Services } from '../transform/types';
 import {
@@ -443,6 +444,18 @@ export const stripEntrypointGlobalsFromRunnerContext = (
   }
 
   return nextGlobals;
+};
+
+const getEntrypointResolveRoot = (entrypoint: Entrypoint): string => {
+  let current: { name: string; parents: ParentEntrypoint[] } = entrypoint;
+  const seen = new Set<string>();
+
+  while (current.parents.length > 0 && !seen.has(current.name)) {
+    seen.add(current.name);
+    [current] = current.parents;
+  }
+
+  return current.name;
 };
 
 const buildRunnerInitPayload = (
@@ -1028,6 +1041,8 @@ export class EvalBroker {
 
   private happyDomDisableWarned = false;
 
+  private activeResolveRootId: string | null = null;
+
   constructor(
     private readonly services: Services,
     private readonly asyncResolve: (
@@ -1048,7 +1063,9 @@ export class EvalBroker {
     values: Map<string, unknown> | null;
     dependencies: string[];
   }> {
+    const resolveRootId = getEntrypointResolveRoot(entrypoint);
     const task = this.evalQueue.then(async () => {
+      this.activeResolveRootId = resolveRootId;
       this.runtimeDependenciesByModule.clear();
       this.emittedDependencies.clear();
       this.importsByModule.clear();
@@ -1101,6 +1118,10 @@ export class EvalBroker {
         values,
         dependencies: this.collectEntrypointDependencies(entrypoint.name),
       };
+    }).finally(() => {
+      if (this.activeResolveRootId === resolveRootId) {
+        this.activeResolveRootId = null;
+      }
     });
 
     this.evalQueue = task.then(
@@ -1684,6 +1705,14 @@ export class EvalBroker {
     );
   }
 
+  private getResolveStack(importerId: string): string[] {
+    if (!this.activeResolveRootId || this.activeResolveRootId === importerId) {
+      return [importerId];
+    }
+
+    return [importerId, this.activeResolveRootId];
+  }
+
   private async resolveImportImpl({
     specifier,
     importerId,
@@ -1695,7 +1724,7 @@ export class EvalBroker {
     }
     const key = `${kind}:${importerId}:${specifier}`;
     const evalOptions = getEvalOptions(this.services);
-    const stack = [importerId];
+    const stack = this.getResolveStack(importerId);
     const importsOnly = this.importsByModule.get(importerId)?.get(specifier);
     const importerOnly = this.onlyByModule.get(importerId) ?? ['*'];
     const only = importerOnly.includes('__wywPreval')
