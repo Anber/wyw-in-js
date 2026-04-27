@@ -1,3 +1,4 @@
+---
 '@wyw-in-js/transform': patch
 ---
 
