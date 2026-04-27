@@ -110,6 +110,13 @@ const createScope = (parent: Scope | null, key: string): Scope => ({
   parent,
 });
 
+const createsScope = (node: Node): boolean =>
+  node.type === 'Program' ||
+  node.type === 'BlockStatement' ||
+  node.type === 'FunctionDeclaration' ||
+  node.type === 'FunctionExpression' ||
+  node.type === 'ArrowFunctionExpression';
+
 const hasBinding = (scope: Scope, name: string): boolean => {
   let current: Scope | null = scope;
   while (current) {
@@ -489,6 +496,50 @@ const collectBindingNames = (node: Node): string[] => {
   return [];
 };
 
+const predeclareScopeNames = (node: Node, scope: Scope): void => {
+  if (
+    node.type === 'FunctionDeclaration' ||
+    node.type === 'FunctionExpression' ||
+    node.type === 'ArrowFunctionExpression'
+  ) {
+    if (node.type !== 'ArrowFunctionExpression' && node.id) {
+      scope.names.add(node.id.name);
+    }
+
+    node.params.forEach((param) => {
+      collectBindingNames(param).forEach((name) => {
+        scope.names.add(name);
+      });
+    });
+  }
+
+  const visitScopeDescendants = (child: Node): void => {
+    if (child.type === 'VariableDeclarator') {
+      collectBindingNames(child.id).forEach((name) => {
+        scope.names.add(name);
+      });
+    } else if (child.type === 'FunctionDeclaration' && child.id) {
+      scope.names.add(child.id.name);
+    } else if (child.type === 'ClassDeclaration' && child.id) {
+      scope.names.add(child.id.name);
+    } else if (
+      child.type === 'ImportDefaultSpecifier' ||
+      child.type === 'ImportNamespaceSpecifier' ||
+      child.type === 'ImportSpecifier'
+    ) {
+      scope.names.add(child.local.name);
+    }
+
+    if (createsScope(child)) {
+      return;
+    }
+
+    getChildren(child).forEach(visitScopeDescendants);
+  };
+
+  getChildren(node).forEach(visitScopeDescendants);
+};
+
 const declareBindings = (node: Node, scope: Scope): void => {
   if (node.type === 'VariableDeclarator') {
     const names = collectBindingNames(node.id);
@@ -551,17 +602,12 @@ const visit = (
   ancestors: Node[] = []
 ): void => {
   let currentScope = scope;
-  if (
-    node.type === 'Program' ||
-    node.type === 'BlockStatement' ||
-    node.type === 'FunctionDeclaration' ||
-    node.type === 'FunctionExpression' ||
-    node.type === 'ArrowFunctionExpression'
-  ) {
+  if (createsScope(node)) {
     currentScope = createScope(
       scope,
       `${node.type}:${node.start}:${node.end}`
     );
+    predeclareScopeNames(node, currentScope);
   }
 
   declareBindings(node, currentScope);
@@ -789,11 +835,15 @@ const isBindingPosition = (node: Node, parent: Node | null): boolean => {
 };
 
 const isPropertyOnlyIdentifier = (node: Node, parent: Node | null): boolean => {
-  if (!parent || parent.computed) {
+  if (!parent) {
     return false;
   }
 
-  if (parent.type === 'MemberExpression' && parent.property === node) {
+  if (
+    parent.type === 'MemberExpression' &&
+    !parent.computed &&
+    parent.property === node
+  ) {
     return true;
   }
 
@@ -801,6 +851,7 @@ const isPropertyOnlyIdentifier = (node: Node, parent: Node | null): boolean => {
     (parent.type === 'Property' ||
       parent.type === 'MethodDefinition' ||
       parent.type === 'PropertyDefinition') &&
+    !parent.computed &&
     parent.key === node
   ) {
     return true;

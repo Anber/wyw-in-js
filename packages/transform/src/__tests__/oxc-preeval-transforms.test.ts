@@ -634,6 +634,24 @@ describe('oxc preeval transforms', () => {
       expect(() => stripTypesAndJsxWithOxc(code, filename)).not.toThrow();
     });
 
+    it('treats a same-module function declaration as a local binding for forbidden globals', () => {
+      const code = removeDangerousCodeWithOxc(
+        [
+          'const first = fetch("/api/first");',
+          'function fetch(url) {',
+          '  return url;',
+          '}',
+          'const second = fetch("/api/second");',
+        ].join('\n'),
+        filename
+      );
+
+      expect(code).toContain('const first = fetch("/api/first");');
+      expect(code).toContain('function fetch(url)');
+      expect(code).toContain('const second = fetch("/api/second");');
+      expect(() => stripTypesAndJsxWithOxc(code, filename)).not.toThrow();
+    });
+
     it('preserves a class method body that references forbidden globals', () => {
       const code = removeDangerousCodeWithOxc(
         [
@@ -665,6 +683,21 @@ describe('oxc preeval transforms', () => {
 
       expect(code).not.toContain('document.body.style.overflowY');
       expect(code).toContain('keep');
+      expect(() => stripTypesAndJsxWithOxc(code, filename)).not.toThrow();
+    });
+
+    it('does not leave a bare await when removing a top-level forbidden fetch call', () => {
+      const code = removeDangerousCodeWithOxc(
+        [
+          'await fetch("/api");',
+          'const keep = 1;',
+        ].join('\n'),
+        filename
+      );
+
+      expect(code).not.toContain('await fetch');
+      expect(code).not.toMatch(/\bawait\b(?!\s*\()/);
+      expect(code).toContain('const keep = 1;');
       expect(() => stripTypesAndJsxWithOxc(code, filename)).not.toThrow();
     });
 
