@@ -6,6 +6,7 @@ import dedent from 'dedent';
 
 import { TransformCacheCollection } from '../cache';
 import { transform } from '../transform';
+import type { PluginOptions } from '../types';
 import { EventEmitter } from '../utils/EventEmitter';
 
 const processorFile = join(__dirname, '__fixtures__', 'test-css-processor.js');
@@ -36,7 +37,8 @@ const runTransform = async (
   root: string,
   entryFile: string,
   cache: TransformCacheCollection,
-  eventEmitter?: EventEmitter
+  eventEmitter?: EventEmitter,
+  pluginOptions: Partial<PluginOptions> = {}
 ) =>
   transform(
     {
@@ -47,6 +49,7 @@ const runTransform = async (
         root,
         pluginOptions: {
           configFile: false,
+          ...pluginOptions,
           tagResolver: (source, tag) => {
             if (source === 'test-css-processor' && tag === 'css') {
               return processorFile;
@@ -115,6 +118,47 @@ describe('transform static import value inlining', () => {
       expect(result.code).not.toContain('./tokens.js');
       expect(result.dependencies).toContain(depFile);
       expect(perf.counts.get('transform:evalFile') ?? 0).toBe(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('can disable imported static value inlining with a feature flag', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
+    const entryFile = join(root, 'entry.js');
+    const depFile = join(root, 'tokens.js');
+    const cache = new TransformCacheCollection();
+    const perf = createPerfEventRecorder();
+
+    writeFileSync(depFile, `export const color = 'red';`);
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { css } from 'test-css-processor';
+        import { color } from './tokens.js';
+
+        export const className = css\`
+          color: ${'${color}'};
+        \`;
+      `
+    );
+
+    try {
+      const result = await runTransform(
+        root,
+        entryFile,
+        cache,
+        perf.eventEmitter,
+        {
+          features: {
+            staticImportValues: false,
+          },
+        }
+      );
+
+      expect(result.cssText).toContain('color:red');
+      expect(result.dependencies).toContain('./tokens.js');
+      expect(perf.counts.get('transform:evalFile') ?? 0).toBeGreaterThan(0);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -283,7 +327,7 @@ describe('transform static import value inlining', () => {
     }
   });
 
-  it('falls back to eval when a function module also has unsafe top-level values', async () => {
+  it('inlines safe exports from modules with unrelated unsafe top-level values', async () => {
     const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
     const entryFile = join(root, 'entry.js');
     const depFile = join(root, 'unsafe.js');
@@ -312,6 +356,58 @@ describe('transform static import value inlining', () => {
 
         export const className = css\`
           color: ${'${color}'};
+        \`;
+      `
+    );
+
+    try {
+      const result = await runTransform(
+        root,
+        entryFile,
+        cache,
+        perf.eventEmitter
+      );
+
+      expect(result.cssText).toContain('color:red');
+      expect(result.dependencies).toContain(depFile);
+      expect(result.code).not.toContain('./unsafe.js');
+      expect(perf.counts.get('transform:evalFile') ?? 0).toBe(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('falls back to eval when a fixed object is mutated by top-level code', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
+    const entryFile = join(root, 'entry.js');
+    const depFile = join(root, 'unsafe.js');
+    const cache = new TransformCacheCollection();
+    const perf = createPerfEventRecorder();
+
+    writeFileSync(
+      depFile,
+      dedent`
+        const rules = {
+          color: 'red',
+        };
+
+        function mutate(value) {
+          value.color = 'blue';
+        }
+
+        mutate(rules);
+
+        export { rules };
+      `
+    );
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { css } from 'test-css-processor';
+        import { rules } from './unsafe.js';
+
+        export const className = css\`
+          ${'${rules}'};
         \`;
       `
     );

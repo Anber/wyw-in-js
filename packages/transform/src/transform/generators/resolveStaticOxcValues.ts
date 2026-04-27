@@ -2,6 +2,7 @@
 
 import { isAbsolute, relative } from 'path';
 
+import { isFeatureEnabled, type FeatureFlag } from '@wyw-in-js/shared';
 import type {
   ExportNamedDeclaration,
   ExportSpecifier,
@@ -44,6 +45,7 @@ type ExportTarget =
   | {
       expression: Expression;
       kind: 'expression';
+      localName?: string;
     }
   | {
       imported: 'default' | string;
@@ -56,6 +58,10 @@ type StaticExportResult = {
   value: unknown;
 };
 
+type StaticImportValueFeatures = {
+  staticImportValues?: FeatureFlag;
+};
+
 const isInsideRoot = (filename: string, root: string): boolean => {
   const relativePath = relative(root, filename);
   return (
@@ -63,6 +69,25 @@ const isInsideRoot = (filename: string, root: string): boolean => {
     (!!relativePath &&
       !relativePath.startsWith('..') &&
       !isAbsolute(relativePath))
+  );
+};
+
+const isEnvDisabled = (value: string): boolean =>
+  value === '0' || value === 'false' || value === 'no' || value === 'off';
+
+const isStaticImportValuesEnabled = (
+  action: ITransformAction,
+  filename: string
+): boolean => {
+  const envValue = process.env.WYW_STATIC_IMPORT_VALUES?.trim().toLowerCase();
+  if (envValue) {
+    return !isEnvDisabled(envValue);
+  }
+
+  return isFeatureEnabled(
+    action.services.options.pluginOptions.features as StaticImportValueFeatures,
+    'staticImportValues',
+    filename
   );
 };
 
@@ -92,7 +117,12 @@ const unwrapExpression = (expr: Node): Node => {
   }
 };
 
-const isSafeLiteral = (node: Node): boolean => {
+const isSafeLiteral = (
+  node: Node
+): node is Node & {
+  type: 'Literal';
+  value: boolean | null | number | string;
+} => {
   if (node.type !== 'Literal') {
     return false;
   }
@@ -254,80 +284,8 @@ const collectImportBindings = (
   return result;
 };
 
-const isSafeVariableDeclaration = (statement: VariableDeclaration): boolean =>
-  statement.kind === 'const' &&
-  statement.declarations.every(
-    (declarator) => declarator.init && isSafeStaticExpression(declarator.init)
-  );
-
 const isTypeOnlyExport = (statement: ExportNamedDeclaration): boolean =>
   statement.exportKind === 'type';
-
-const isSafeStaticStatement = (statement: Node): boolean => {
-  if (statement.type.startsWith('TS') || statement.type.startsWith('JSDoc')) {
-    return statement.type !== 'TSEnumDeclaration';
-  }
-
-  if (statement.type === 'EmptyStatement') {
-    return true;
-  }
-
-  if (statement.type === 'FunctionDeclaration') {
-    return true;
-  }
-
-  if (statement.type === 'ImportDeclaration') {
-    return (
-      isTypeOnlyImport(statement) ||
-      (statement.specifiers.length > 0 &&
-        statement.specifiers.every(
-          (specifier) => specifier.type !== 'ImportNamespaceSpecifier'
-        ))
-    );
-  }
-
-  if (statement.type === 'VariableDeclaration') {
-    return isSafeVariableDeclaration(statement);
-  }
-
-  if (statement.type === 'ExportNamedDeclaration') {
-    if (isTypeOnlyExport(statement)) {
-      return true;
-    }
-
-    if (statement.source) {
-      return statement.specifiers.every(
-        (specifier) => specifier.type === 'ExportSpecifier'
-      );
-    }
-
-    if (!statement.declaration) {
-      return true;
-    }
-
-    return (
-      statement.declaration.type === 'FunctionDeclaration' ||
-      (statement.declaration.type === 'VariableDeclaration' &&
-        isSafeVariableDeclaration(statement.declaration))
-    );
-  }
-
-  if (statement.type === 'ExportDefaultDeclaration') {
-    return (
-      statement.declaration.type === 'FunctionDeclaration' ||
-      isSafeStaticExpression(statement.declaration)
-    );
-  }
-
-  if (statement.type === 'ExpressionStatement') {
-    return isSafeLiteral(statement.expression);
-  }
-
-  return false;
-};
-
-const isSafeStaticProgram = (program: Program): boolean =>
-  program.body.every((statement) => isSafeStaticStatement(statement));
 
 const collectProcessorImportLocals = (
   action: ITransformAction,
@@ -593,6 +551,553 @@ const collectLocalConstExpressions = (
   return result;
 };
 
+type StaticExpressionDependencies = {
+  imports: ImportBinding[];
+};
+
+const mutatingMethodNames = new Set([
+  'add',
+  'clear',
+  'copyWithin',
+  'delete',
+  'fill',
+  'pop',
+  'push',
+  'reverse',
+  'set',
+  'shift',
+  'sort',
+  'splice',
+  'unshift',
+]);
+
+const rootIdentifierName = (expr: Node): string | null => {
+  const unwrapped = unwrapExpression(expr);
+
+  if (unwrapped.type === 'Identifier') {
+    return unwrapped.name;
+  }
+
+  if (unwrapped.type === 'MemberExpression') {
+    return rootIdentifierName(unwrapped.object);
+  }
+
+  if (unwrapped.type === 'ChainExpression') {
+    return rootIdentifierName(unwrapped.expression);
+  }
+
+  return null;
+};
+
+const staticMemberName = (expr: Node): string | null => {
+  const unwrapped = unwrapExpression(expr);
+
+  if (unwrapped.type === 'Identifier') {
+    return unwrapped.name;
+  }
+
+  if (isSafeLiteral(unwrapped) && typeof unwrapped.value === 'string') {
+    return unwrapped.value;
+  }
+
+  return null;
+};
+
+const expressionMayProduceMutableValue = (
+  expr: Node,
+  locals: Map<string, Expression>,
+  visiting: Set<string>
+): boolean => {
+  const unwrapped = unwrapExpression(expr);
+
+  if (
+    unwrapped.type === 'ObjectExpression' ||
+    unwrapped.type === 'ArrayExpression'
+  ) {
+    return true;
+  }
+
+  if (unwrapped.type === 'Identifier') {
+    const local = locals.get(unwrapped.name);
+    if (!local || visiting.has(unwrapped.name)) {
+      return true;
+    }
+
+    visiting.add(unwrapped.name);
+    const result = expressionMayProduceMutableValue(local, locals, visiting);
+    visiting.delete(unwrapped.name);
+    return result;
+  }
+
+  if (unwrapped.type === 'ConditionalExpression') {
+    return (
+      expressionMayProduceMutableValue(
+        unwrapped.consequent,
+        locals,
+        visiting
+      ) ||
+      expressionMayProduceMutableValue(unwrapped.alternate, locals, visiting)
+    );
+  }
+
+  if (
+    unwrapped.type === 'LogicalExpression' ||
+    unwrapped.type === 'MemberExpression'
+  ) {
+    return true;
+  }
+
+  return false;
+};
+
+const collectStaticExpressionReferences = (
+  expr: Node,
+  references: Set<string>
+): boolean => {
+  const unwrapped = unwrapExpression(expr);
+
+  if (isSafeLiteral(unwrapped)) {
+    return true;
+  }
+
+  if (unwrapped.type === 'Identifier') {
+    references.add(unwrapped.name);
+    return true;
+  }
+
+  if (unwrapped.type === 'TemplateLiteral') {
+    return unwrapped.expressions.every((item) =>
+      collectStaticExpressionReferences(item, references)
+    );
+  }
+
+  if (unwrapped.type === 'UnaryExpression') {
+    return collectStaticExpressionReferences(unwrapped.argument, references);
+  }
+
+  if (
+    unwrapped.type === 'BinaryExpression' ||
+    unwrapped.type === 'LogicalExpression'
+  ) {
+    return (
+      collectStaticExpressionReferences(unwrapped.left, references) &&
+      collectStaticExpressionReferences(unwrapped.right, references)
+    );
+  }
+
+  if (unwrapped.type === 'ConditionalExpression') {
+    return (
+      collectStaticExpressionReferences(unwrapped.test, references) &&
+      collectStaticExpressionReferences(unwrapped.consequent, references) &&
+      collectStaticExpressionReferences(unwrapped.alternate, references)
+    );
+  }
+
+  if (unwrapped.type === 'MemberExpression') {
+    return (
+      collectStaticExpressionReferences(unwrapped.object, references) &&
+      (!unwrapped.computed ||
+        collectStaticExpressionReferences(unwrapped.property, references))
+    );
+  }
+
+  if (unwrapped.type === 'ArrayExpression') {
+    return unwrapped.elements.every((item) => {
+      if (!item) {
+        return false;
+      }
+
+      return item.type === 'SpreadElement'
+        ? collectStaticExpressionReferences(item.argument, references)
+        : collectStaticExpressionReferences(item, references);
+    });
+  }
+
+  if (unwrapped.type === 'ObjectExpression') {
+    return unwrapped.properties.every((property) => {
+      if (property.type === 'SpreadElement') {
+        return collectStaticExpressionReferences(property.argument, references);
+      }
+
+      const propertyNode = property as AnyNode;
+      if (
+        propertyNode.computed ||
+        !propertyNode.value ||
+        typeof propertyNode.value !== 'object'
+      ) {
+        return false;
+      }
+
+      return collectStaticExpressionReferences(
+        propertyNode.value as Node,
+        references
+      );
+    });
+  }
+
+  return false;
+};
+
+const collectExpressionMutationHints = (
+  expr: Node,
+  mutatedNames: Set<string>,
+  callArgumentNames: Set<string>
+): void => {
+  const unwrapped = unwrapExpression(expr);
+
+  if (unwrapped.type === 'AssignmentExpression') {
+    const rootName = rootIdentifierName(unwrapped.left);
+    if (rootName) {
+      mutatedNames.add(rootName);
+    }
+
+    collectExpressionMutationHints(
+      unwrapped.right,
+      mutatedNames,
+      callArgumentNames
+    );
+    return;
+  }
+
+  if (unwrapped.type === 'UpdateExpression') {
+    const rootName = rootIdentifierName(unwrapped.argument);
+    if (rootName) {
+      mutatedNames.add(rootName);
+    }
+
+    return;
+  }
+
+  if (unwrapped.type === 'UnaryExpression') {
+    if (unwrapped.operator === 'delete') {
+      const rootName = rootIdentifierName(unwrapped.argument);
+      if (rootName) {
+        mutatedNames.add(rootName);
+      }
+    }
+
+    collectExpressionMutationHints(
+      unwrapped.argument,
+      mutatedNames,
+      callArgumentNames
+    );
+    return;
+  }
+
+  if (unwrapped.type === 'CallExpression') {
+    const callee = unwrapExpression(unwrapped.callee);
+    if (callee.type === 'MemberExpression') {
+      const methodName = staticMemberName(callee.property);
+      const rootName = rootIdentifierName(callee.object);
+      if (rootName && methodName && mutatingMethodNames.has(methodName)) {
+        mutatedNames.add(rootName);
+      }
+
+      collectExpressionMutationHints(
+        callee.object,
+        mutatedNames,
+        callArgumentNames
+      );
+      if (callee.computed) {
+        collectExpressionMutationHints(
+          callee.property,
+          mutatedNames,
+          callArgumentNames
+        );
+      }
+    } else {
+      collectExpressionMutationHints(
+        unwrapped.callee,
+        mutatedNames,
+        callArgumentNames
+      );
+    }
+
+    unwrapped.arguments.forEach((argument) => {
+      const argumentNode =
+        argument.type === 'SpreadElement' ? argument.argument : argument;
+      const rootName = rootIdentifierName(argumentNode);
+      if (rootName) {
+        callArgumentNames.add(rootName);
+      }
+
+      collectExpressionMutationHints(
+        argumentNode,
+        mutatedNames,
+        callArgumentNames
+      );
+    });
+    return;
+  }
+
+  if (unwrapped.type === 'TaggedTemplateExpression') {
+    collectExpressionMutationHints(
+      unwrapped.tag,
+      mutatedNames,
+      callArgumentNames
+    );
+    unwrapped.quasi.expressions.forEach((item) =>
+      collectExpressionMutationHints(item, mutatedNames, callArgumentNames)
+    );
+    return;
+  }
+
+  if (unwrapped.type === 'ConditionalExpression') {
+    collectExpressionMutationHints(
+      unwrapped.test,
+      mutatedNames,
+      callArgumentNames
+    );
+    collectExpressionMutationHints(
+      unwrapped.consequent,
+      mutatedNames,
+      callArgumentNames
+    );
+    collectExpressionMutationHints(
+      unwrapped.alternate,
+      mutatedNames,
+      callArgumentNames
+    );
+    return;
+  }
+
+  if (
+    unwrapped.type === 'BinaryExpression' ||
+    unwrapped.type === 'LogicalExpression'
+  ) {
+    collectExpressionMutationHints(
+      unwrapped.left,
+      mutatedNames,
+      callArgumentNames
+    );
+    collectExpressionMutationHints(
+      unwrapped.right,
+      mutatedNames,
+      callArgumentNames
+    );
+    return;
+  }
+
+  if (unwrapped.type === 'MemberExpression') {
+    collectExpressionMutationHints(
+      unwrapped.object,
+      mutatedNames,
+      callArgumentNames
+    );
+    if (unwrapped.computed) {
+      collectExpressionMutationHints(
+        unwrapped.property,
+        mutatedNames,
+        callArgumentNames
+      );
+    }
+    return;
+  }
+
+  if (unwrapped.type === 'ArrayExpression') {
+    unwrapped.elements.forEach((item) => {
+      if (!item) {
+        return;
+      }
+
+      collectExpressionMutationHints(
+        item.type === 'SpreadElement' ? item.argument : item,
+        mutatedNames,
+        callArgumentNames
+      );
+    });
+    return;
+  }
+
+  if (unwrapped.type === 'ObjectExpression') {
+    unwrapped.properties.forEach((property) => {
+      if (property.type === 'SpreadElement') {
+        collectExpressionMutationHints(
+          property.argument,
+          mutatedNames,
+          callArgumentNames
+        );
+        return;
+      }
+
+      const propertyNode = property as AnyNode;
+      if (propertyNode.computed && propertyNode.key) {
+        collectExpressionMutationHints(
+          propertyNode.key as Node,
+          mutatedNames,
+          callArgumentNames
+        );
+      }
+
+      if (propertyNode.value && typeof propertyNode.value === 'object') {
+        collectExpressionMutationHints(
+          propertyNode.value as Node,
+          mutatedNames,
+          callArgumentNames
+        );
+      }
+    });
+  }
+};
+
+const collectTopLevelMutationHints = (
+  program: Program
+): { callArgumentNames: Set<string>; mutatedNames: Set<string> } => {
+  const callArgumentNames = new Set<string>();
+  const mutatedNames = new Set<string>();
+
+  const collectDeclaration = (declaration: VariableDeclaration): void => {
+    declaration.declarations.forEach((declarator) => {
+      if (declarator.init) {
+        collectExpressionMutationHints(
+          declarator.init,
+          mutatedNames,
+          callArgumentNames
+        );
+      }
+    });
+  };
+
+  program.body.forEach((statement) => {
+    if (statement.type === 'VariableDeclaration') {
+      collectDeclaration(statement);
+      return;
+    }
+
+    if (statement.type === 'ExpressionStatement') {
+      collectExpressionMutationHints(
+        statement.expression,
+        mutatedNames,
+        callArgumentNames
+      );
+      return;
+    }
+
+    if (statement.type === 'ExportNamedDeclaration') {
+      if (statement.declaration?.type === 'VariableDeclaration') {
+        collectDeclaration(statement.declaration);
+      }
+
+      return;
+    }
+
+    if (statement.type === 'ExportDefaultDeclaration') {
+      if (
+        statement.declaration.type !== 'FunctionDeclaration' &&
+        statement.declaration.type !== 'ClassDeclaration'
+      ) {
+        collectExpressionMutationHints(
+          statement.declaration,
+          mutatedNames,
+          callArgumentNames
+        );
+      }
+    }
+  });
+
+  return { callArgumentNames, mutatedNames };
+};
+
+const collectStaticExpressionDependencies = (
+  program: Program,
+  target: Extract<ExportTarget, { kind: 'expression' }>
+): StaticExpressionDependencies | null => {
+  const imports = collectImportBindings(program);
+  const locals = collectLocalConstExpressions(program);
+  const collectedImports = new Map<string, ImportBinding>();
+  const referencedNames = new Set<string>();
+  const mutableReferencedNames = new Set<string>();
+  const visitedLocals = new Set<string>();
+  const visitingLocals = new Set<string>();
+
+  const markMutable = (name: string, expression: Node): void => {
+    if (expressionMayProduceMutableValue(expression, locals, new Set())) {
+      mutableReferencedNames.add(name);
+    }
+  };
+
+  const collectLocal = (name: string): boolean => {
+    const expression = locals.get(name);
+    if (!expression || visitingLocals.has(name)) {
+      return false;
+    }
+
+    referencedNames.add(name);
+    markMutable(name, expression);
+
+    if (visitedLocals.has(name)) {
+      return true;
+    }
+
+    visitingLocals.add(name);
+    const result = collectExpression(expression);
+    visitingLocals.delete(name);
+
+    if (result) {
+      visitedLocals.add(name);
+    }
+
+    return result;
+  };
+
+  const collectExpression = (expr: Node): boolean => {
+    if (!isSafeStaticExpression(expr)) {
+      return false;
+    }
+
+    const references = new Set<string>();
+    if (!collectStaticExpressionReferences(expr, references)) {
+      return false;
+    }
+
+    for (const reference of references) {
+      referencedNames.add(reference);
+
+      const importBinding = imports.get(reference);
+      if (importBinding) {
+        collectedImports.set(
+          `${importBinding.source}\0${importBinding.imported}\0${importBinding.local}`,
+          importBinding
+        );
+        mutableReferencedNames.add(reference);
+        continue;
+      }
+
+      if (!collectLocal(reference)) {
+        return false;
+      }
+    }
+
+    return true;
+  };
+
+  if (target.localName) {
+    referencedNames.add(target.localName);
+    markMutable(target.localName, target.expression);
+  }
+
+  if (!collectExpression(target.expression)) {
+    return null;
+  }
+
+  const mutationHints = collectTopLevelMutationHints(program);
+  for (const name of referencedNames) {
+    if (mutationHints.mutatedNames.has(name)) {
+      return null;
+    }
+  }
+
+  for (const name of mutableReferencedNames) {
+    if (mutationHints.callArgumentNames.has(name)) {
+      return null;
+    }
+  }
+
+  return {
+    imports: [...collectedImports.values()],
+  };
+};
+
 const getExportSpecifierNames = (
   specifier: ExportSpecifier
 ): { exported: string; local: string } => ({
@@ -638,6 +1143,7 @@ const findExportTarget = (
             return {
               expression: declarator.init,
               kind: 'expression',
+              localName: declarator.id.name,
             };
           }
         }
@@ -669,6 +1175,7 @@ const findExportTarget = (
           return {
             expression: local,
             kind: 'expression',
+            localName: names.local,
           };
         }
       }
@@ -694,6 +1201,7 @@ const findExportTarget = (
           return {
             expression: local,
             kind: 'expression',
+            localName: declaration.name,
           };
         }
 
@@ -873,19 +1381,6 @@ function* resolveStaticExport(
 
   const { code } = loadedAndParsed;
   const program = parseProgram(code, filename);
-  if (!isSafeStaticProgram(program)) {
-    const metadataResult = resolveProcessorMetadataExport(
-      action,
-      filename,
-      code,
-      program,
-      exportedName
-    );
-    memo.set(memoKey, metadataResult);
-    stack.delete(memoKey);
-    return metadataResult;
-  }
-
   const target = findExportTarget(program, exportedName);
   if (!target) {
     memo.set(memoKey, null);
@@ -906,11 +1401,27 @@ function* resolveStaticExport(
     return resolved;
   }
 
-  const imports = collectImportBindings(program);
+  const staticDependencies = collectStaticExpressionDependencies(
+    program,
+    target
+  );
+  if (!staticDependencies) {
+    const metadataResult = resolveProcessorMetadataExport(
+      action,
+      filename,
+      code,
+      program,
+      exportedName
+    );
+    memo.set(memoKey, metadataResult);
+    stack.delete(memoKey);
+    return metadataResult;
+  }
+
   const env = new Map<string, unknown>();
   const dependencies = new Set<string>([filename]);
 
-  for (const binding of imports.values()) {
+  for (const binding of staticDependencies.imports) {
     const resolved = yield* resolveImportValue(
       action,
       filename,
@@ -1002,6 +1513,10 @@ export function* resolveStaticOxcPreevalValues(
       ? this.entrypoint.name
       : this.entrypoint.loadedAndParsed.evalConfig.filename ??
         this.entrypoint.name;
+  if (!isStaticImportValuesEnabled(this, filename)) {
+    return false;
+  }
+
   const staticValueCache =
     preevalResult.staticValueCache ?? new Map<string, unknown>();
   const staticDependencies = new Set(preevalResult.staticDependencies ?? []);
