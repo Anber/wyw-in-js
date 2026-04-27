@@ -831,10 +831,15 @@ const isBindingPosition = (node: Node, parent: Node | null): boolean => {
   }
 
   if (
-    (parent.type === 'ImportSpecifier' ||
-      parent.type === 'ImportDefaultSpecifier' ||
+    parent.type === 'ImportSpecifier' &&
+    (parent.local === node || parent.imported === node)
+  ) {
+    return true;
+  }
+
+  if (
+    (parent.type === 'ImportDefaultSpecifier' ||
       parent.type === 'ImportNamespaceSpecifier') &&
-    'local' in parent &&
     parent.local === node
   ) {
     return true;

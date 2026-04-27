@@ -200,6 +200,22 @@ describe('oxc preeval transforms', () => {
       expect(code).toContain('export const keep = CommentComponent');
     });
 
+    it('preserves imported names in aliased import specifiers', () => {
+      const code = removeDangerousCodeWithOxc(
+        [
+          'import { jsx as _jsx } from "react/jsx-runtime";',
+          'import { Range as RcRange } from "rc-slider";',
+          'const Range = () => _jsx(RcRange, {});',
+          'export default Range;',
+        ].join('\n'),
+        filename
+      );
+
+      expect(code).toContain('import { Range as RcRange } from "rc-slider";');
+      expect(code).toContain('const Range = () => { return null; };');
+      expect(() => stripTypesAndJsxWithOxc(code, filename)).not.toThrow();
+    });
+
     it('removes exported browser-global declarations without leaving dangling export syntax', () => {
       const code = removeDangerousCodeWithOxc(
         [
