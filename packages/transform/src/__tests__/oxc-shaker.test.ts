@@ -585,4 +585,52 @@ describe('shakeOxcToESM', () => {
     expect(code).toContain("import { config } from './config'");
     expect(code).toContain("import { maybe } from './maybe'");
   });
+
+  it('strips statement-level import type entirely', () => {
+    const { code, imports } = run(
+      ['value'],
+      `
+        import type { Foo } from './types';
+        import { helper } from './utils';
+
+        export const value: Foo = helper();
+      `
+    );
+
+    expect(code).not.toContain('./types');
+    expect(code).toContain("import { helper } from './utils'");
+    expect(imports.has('./types')).toBe(false);
+    expect(imports.get('./utils')).toEqual(['helper']);
+  });
+
+  it('preserves runtime import when using inline type modifier alongside value bindings', () => {
+    const { code, imports } = run(
+      ['value'],
+      `
+        import { type Foo, helper } from './mixed';
+
+        export const value: Foo = helper();
+      `
+    );
+
+    expect(code).toContain("from './mixed'");
+    expect(code).toContain('helper');
+    expect(imports.get('./mixed')).toEqual(['helper']);
+  });
+
+  it('strips import with only inline type bindings (no value bindings)', () => {
+    const { code, imports } = run(
+      ['value'],
+      `
+        import { type Foo, type Bar } from './types';
+        import { helper } from './utils';
+
+        export const value = helper();
+      `
+    );
+
+    expect(code).not.toContain('./types');
+    expect(code).toContain("import { helper } from './utils'");
+    expect(imports.has('./types')).toBe(false);
+  });
 });

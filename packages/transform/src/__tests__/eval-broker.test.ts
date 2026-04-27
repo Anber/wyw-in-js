@@ -1918,4 +1918,187 @@ describe('EvalBroker', () => {
     broker.dispose();
     rmSync(root, { recursive: true, force: true });
   });
+
+  it('collectModuleExports does not crash on TDZ exports from re-prepared modules', async () => {
+    // Reproduces: ReferenceError: Cannot access 'X' before initialization
+    //
+    // Session 1: entry-a imports {space} from barrel. Barrel re-exports from
+    // layout.js AND colors.js. colors.js → filter.js → generator.js → leaf.js.
+    // leaf.js exports `const core = {...}`. The broker prepares leaf.js with
+    // only:["core"]. The runner loads all modules, links, evaluates. leaf.js's
+    // `core` is initialized. moduleOnly accumulates leaf.js.
+    //
+    // Session 2: entry-b imports {theme} from barrel. Barrel → theme.js →
+    // generator.js (already cached). generator.js → leaf.js (already cached,
+    // hash match → reuses SourceTextModule). But if the broker re-prepares
+    // leaf.js with a wider only-set, resetSingleModuleState creates a NEW
+    // SourceTextModule. This new module is linked into the current graph.
+    // When evaluate() runs, all linked modules evaluate, including the new
+    // leaf.js SourceTextModule. So `core` should be initialized.
+    //
+    // The TDZ crash happens when the runner caches a module that was linked but
+    // whose parent's evaluation threw BEFORE the module itself was evaluated.
+    // collectModuleExports then iterates moduleOnly and hits the TDZ binding.
+
+    const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
+
+    // leaf.js — deeply nested module with a const export
+    writeFileSync(join(root, 'leaf.js'), 'export const core = { x: 1 };');
+
+    // generator.js — imports leaf
+    writeFileSync(
+      join(root, 'generator.js'),
+      "import { core } from './leaf.js';\nexport const gen = () => core;"
+    );
+
+    // broken.js — references an export that doesn't exist (link error)
+    writeFileSync(
+      join(root, 'broken.js'),
+      "import { nonExistent } from './leaf.js';\nexport const value = nonExistent;"
+    );
+
+    // entry-a — imports generator (normal, succeeds)
+    writeFileSync(
+      join(root, 'entry-a.js'),
+      [
+        "import { gen } from './generator.js';",
+        'export const __wywPreval = { v: () => gen().x };',
+      ].join('\n')
+    );
+
+    // entry-b — imports broken (throws during eval, leaf.js may be linked but
+    // not evaluated if the error propagates before the VM reaches it)
+    writeFileSync(
+      join(root, 'entry-b.js'),
+      [
+        "import { value } from './broken.js';",
+        'export const __wywPreval = { v: () => value };',
+      ].join('\n')
+    );
+
+    // entry-c — imports generator again (leaf.js cached from session 1,
+    // but moduleOnly still has leaf.js from sessions 1+2)
+    writeFileSync(
+      join(root, 'entry-c.js'),
+      [
+        "import { gen } from './generator.js';",
+        'export const __wywPreval = { v: () => gen().x };',
+      ].join('\n')
+    );
+
+    const asyncResolve = jest.fn(async (what: string, importer: string) => {
+      if (what.startsWith('.')) {
+        return resolve(dirname(importer), what);
+      }
+      return null;
+    });
+    const services = createServices(root, join(root, 'entry-a.js'));
+    const broker = new EvalBroker(services, asyncResolve);
+
+    // Session 1: succeeds
+    const epA = Entrypoint.createRoot(
+      services,
+      join(root, 'entry-a.js'),
+      ['__wywPreval'],
+      readFileSync(join(root, 'entry-a.js'), 'utf-8')
+    );
+    const resultA = await broker.evaluate(epA);
+    expect(resultA.values?.get('v')).toBe(1);
+
+    // Session 2: broken.js throws — leaf.js may be linked but not evaluated
+    const epB = Entrypoint.createRoot(
+      services,
+      join(root, 'entry-b.js'),
+      ['__wywPreval'],
+      readFileSync(join(root, 'entry-b.js'), 'utf-8')
+    );
+    await expect(broker.evaluate(epB)).rejects.toThrow();
+
+    // Session 3: should not crash on TDZ in collectModuleExports
+    const epC = Entrypoint.createRoot(
+      services,
+      join(root, 'entry-c.js'),
+      ['__wywPreval'],
+      readFileSync(join(root, 'entry-c.js'), 'utf-8')
+    );
+    const resultC = await broker.evaluate(epC);
+    expect(resultC.values?.get('v')).toBe(1);
+
+    broker.dispose();
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('collectModuleExports skips errored modules from prior failed eval sessions', async () => {
+    // Reproduces: ReferenceError: Cannot access 'neutralCore' before initialization
+    //
+    // Mechanism: reuseModules=true keeps moduleOnly/moduleCache/moduleData across
+    // eval sessions. If session N evaluates a module whose preamble runs (sets
+    // moduleData) but whose body throws (const binding in TDZ, module "errored"),
+    // the stale entry persists. Session N+1 evaluates a different entrypoint
+    // successfully, then collectModuleExports iterates ALL moduleOnly entries.
+    // Object.keys(namespace) on the "errored" module triggers TDZ.
+    //
+    // Fix: guard with `module.status !== 'evaluated'` in collectModuleExports.
+
+    const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
+
+    // thrower.js — preamble runs (moduleData created), then body throws.
+    // The `core` binding stays in TDZ (never initialized).
+    writeFileSync(
+      join(root, 'thrower.js'),
+      [
+        'const boom = (() => { throw new Error("kaboom"); })();',
+        'export const core = boom;',
+      ].join('\n')
+    );
+
+    // entry-fail.js — imports thrower → evaluation fails
+    writeFileSync(
+      join(root, 'entry-fail.js'),
+      [
+        "import { core } from './thrower.js';",
+        'export const __wywPreval = { v: () => core };',
+      ].join('\n')
+    );
+
+    // entry-ok.js — no relation to thrower, evaluates fine
+    writeFileSync(
+      join(root, 'entry-ok.js'),
+      'export const __wywPreval = { v: () => 42 };'
+    );
+
+    const asyncResolve = jest.fn(async (what: string, importer: string) => {
+      if (what.startsWith('.')) {
+        return resolve(dirname(importer), what);
+      }
+      return null;
+    });
+    const services = createServices(root, join(root, 'entry-fail.js'));
+    const broker = new EvalBroker(services, asyncResolve);
+
+    // Session 1: thrower.js's preamble runs → moduleData set.
+    // thrower.js body throws → module status "errored", `core` in TDZ.
+    // moduleOnly/moduleCache/moduleData all have thrower.js entries.
+    const epFail = Entrypoint.createRoot(
+      services,
+      join(root, 'entry-fail.js'),
+      ['__wywPreval'],
+      readFileSync(join(root, 'entry-fail.js'), 'utf-8')
+    );
+    await expect(broker.evaluate(epFail)).rejects.toThrow();
+
+    // Session 2: different entrypoint succeeds. collectModuleExports must
+    // NOT crash when iterating the stale thrower.js entry.
+    const epOk = Entrypoint.createRoot(
+      services,
+      join(root, 'entry-ok.js'),
+      ['__wywPreval'],
+      readFileSync(join(root, 'entry-ok.js'), 'utf-8')
+    );
+    const result = await broker.evaluate(epOk);
+    expect(result.values?.get('v')).toBe(42);
+
+    broker.dispose();
+    rmSync(root, { recursive: true, force: true });
+  });
 });

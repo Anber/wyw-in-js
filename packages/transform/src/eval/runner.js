@@ -1844,6 +1844,20 @@ const collectModuleExports = () => {
     const data = moduleData.get(id);
     if (!module || !data) return;
 
+    // .namespace is only safe on fully evaluated modules. Modules that
+    // errored or were never evaluated (stale from a prior failed session
+    // with reuseModules) have TDZ bindings that crash Object.keys().
+    if (module.status !== 'evaluated') {
+      sendWarn({
+        code: 'eval-stale-module',
+        message:
+          `[wyw-in-js] Skipping export collection for ${id}: ` +
+          `module status is "${module.status}" (expected "evaluated"). ` +
+          `Cached exports for this module may be stale.`,
+      });
+      return;
+    }
+
     const { namespace } = module;
     const hasNamespace =
       namespace &&
