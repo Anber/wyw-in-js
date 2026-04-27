@@ -2016,6 +2016,18 @@ const handleMessage = async (message) => {
         if (canReuseContext) {
           if (!reuseModules) {
             resetModuleState();
+          } else {
+            // Clear resolution caches between sessions even when reusing modules.
+            // The broker rebuilds onlyByModule from scratch each session (cleared
+            // in evaluate()). If the runner's resolveCache persists, RESOLVE
+            // requests for previously-seen (importer, specifier) pairs are
+            // skipped, preventing the broker from learning what exports are
+            // needed. This can cause a barrel module to be served with a stale
+            // `only` set that's missing exports a consumer actually imports,
+            // leading to "does not provide an export named 'X'" link errors.
+            resolveCache.clear();
+            resolveInFlight.clear();
+            loadInFlight.clear();
           }
           state.evalOptions = nextEvalOptions;
           state.features = nextFeatures;

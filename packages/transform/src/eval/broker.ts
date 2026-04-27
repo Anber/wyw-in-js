@@ -2319,6 +2319,24 @@ export class EvalBroker {
     }
 
     let requiredOnly = this.mergeKnownDependencyOnly(id);
+
+    // Merge the specific exports the importer needs from this module.
+    // The broker's onlyByModule is populated by RESOLVE handlers, but
+    // concurrent message processing can cause a LOAD to arrive before
+    // all pending RESOLVEs are complete. Directly consulting the
+    // importer's imports map ensures we never serve a module with
+    // fewer exports than the requesting importer actually imports.
+    if (importerId && request) {
+      const importerImports = this.importsByModule.get(importerId);
+      if (importerImports) {
+        const specifierOnly = importerImports.get(request);
+        if (specifierOnly && specifierOnly.length > 0) {
+          requiredOnly = requiredOnly.includes('*')
+            ? requiredOnly
+            : mergeOnly(requiredOnly, specifierOnly);
+        }
+      }
+    }
     const cachedEntrypoint = this.services.cache.get('entrypoints', id) as
       | {
           evaluated?: boolean;

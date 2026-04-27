@@ -148,6 +148,97 @@ describe('EvalBroker', () => {
     rmSync(root, { recursive: true, force: true });
   });
 
+  it('loadModule merges importer-specific needs even when onlyByModule is narrow', async () => {
+    // Simulates the intra-session race: onlyByModule has only one importer's
+    // contribution, but the LOAD payload identifies a different importer whose
+    // importsByModule map reveals additional needed exports. The fix in
+    // loadModuleImpl merges these into requiredOnly so the prepared code
+    // includes all exports the importer actually needs.
+    //
+    // The barrel must NOT be statically evaluatable (the broker overrides
+    // simple modules to only:['*']). Using re-exports from sub-modules
+    // makes it non-trivial, matching the real design-system barrel pattern.
+
+    const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
+    const barrel = join(root, 'barrel.js');
+    const typography = join(root, 'typography.js');
+    const layout = join(root, 'layout.js');
+    const consumerA = join(root, 'consumer-a.js');
+    const consumerB = join(root, 'consumer-b.js');
+
+    // Sub-modules with non-trivial logic to avoid static evaluation
+    writeFileSync(
+      typography,
+      [
+        'const base = 16;',
+        'export const fontWeight = base * 25;',
+        'export const lineHeight = base * 1.5;',
+      ].join('\n')
+    );
+    writeFileSync(
+      layout,
+      [
+        'const unit = 8;',
+        'export const iconSize = unit * 3;',
+        'export const spacing = unit * 2;',
+      ].join('\n')
+    );
+    // Barrel re-exports from sub-modules (not statically evaluatable)
+    writeFileSync(
+      barrel,
+      [
+        "export { fontWeight, lineHeight } from './typography.js';",
+        "export { iconSize, spacing } from './layout.js';",
+      ].join('\n')
+    );
+    writeFileSync(
+      consumerA,
+      [
+        "import { fontWeight } from './barrel.js';",
+        'export const a = fontWeight;',
+      ].join('\n')
+    );
+    writeFileSync(
+      consumerB,
+      [
+        "import { iconSize } from './barrel.js';",
+        'export const b = iconSize;',
+      ].join('\n')
+    );
+
+    const services = createServices(root, consumerA);
+    const asyncResolve = jest.fn(async () => null);
+    const broker = new EvalBroker(services, asyncResolve);
+    const privateBroker = getPrivateBroker(broker);
+
+    // Simulate: onlyByModule for barrel was set by consumer-a's RESOLVE only
+    privateBroker.onlyByModule.set(barrel, ['fontWeight']);
+
+    // Simulate: importsByModule for consumer-b shows it imports iconSize
+    privateBroker.importsByModule.set(
+      consumerB,
+      new Map([['./barrel.js', ['iconSize']]])
+    );
+
+    // LOAD from consumer-b's context. Without the fix, requiredOnly would be
+    // ["fontWeight"] (from onlyByModule), missing iconSize. With the fix,
+    // it merges consumer-b's needs: ["fontWeight", "iconSize"].
+    const loaded = await privateBroker.loadModule({
+      id: barrel,
+      importerId: consumerB,
+      request: './barrel.js',
+    });
+
+    expect(loaded.only).toEqual(
+      expect.arrayContaining(['fontWeight', 'iconSize'])
+    );
+    // The prepared code must re-export iconSize from the layout sub-module
+    expect(loaded.code).toContain('iconSize');
+
+    broker.dispose();
+    rmSync(root, { recursive: true, force: true });
+  });
+
   it('dedupes in-flight resolve calls', async () => {
     const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
     const importer = join(root, 'entry.js');
@@ -2169,6 +2260,146 @@ describe('EvalBroker', () => {
       expect(error.cause).toBeInstanceOf(Error);
       expect((error.cause as Error).message).toBe('kaboom');
     }
+
+    broker.dispose();
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('concurrent sibling dependencies importing different exports from same barrel succeed', async () => {
+    // Reproduces: when two dependency modules concurrently link and both import
+    // the same barrel file (for different named exports), the runner's loadInFlight
+    // dedup causes the second importer to piggyback on the first's LOAD request.
+    // If the broker hasn't merged both importers' needs into onlyByModule yet,
+    // the barrel is prepared with a narrow only set → second importer's link fails
+    // with "does not provide an export named 'X'".
+
+    const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
+
+    // barrel.js — re-exports from two conceptual groups
+    writeFileSync(
+      join(root, 'barrel.js'),
+      [
+        'export const fontWeight = 400;',
+        'export const iconSize = 24;',
+      ].join('\n')
+    );
+
+    // consumer-a.js — uses fontWeight from barrel
+    writeFileSync(
+      join(root, 'consumer-a.js'),
+      [
+        "import { fontWeight } from './barrel.js';",
+        'export const a = fontWeight;',
+      ].join('\n')
+    );
+
+    // consumer-b.js — uses iconSize from barrel
+    writeFileSync(
+      join(root, 'consumer-b.js'),
+      [
+        "import { iconSize } from './barrel.js';",
+        'export const b = iconSize;',
+      ].join('\n')
+    );
+
+    // entry.js — imports both consumers, __wywPreval depends on both
+    writeFileSync(
+      join(root, 'entry.js'),
+      [
+        "import { a } from './consumer-a.js';",
+        "import { b } from './consumer-b.js';",
+        'export const __wywPreval = { a: () => a, b: () => b };',
+      ].join('\n')
+    );
+
+    const asyncResolve = jest.fn(async (what: string, importer: string) => {
+      if (what.startsWith('.')) {
+        return resolve(dirname(importer), what);
+      }
+      return null;
+    });
+    const services = createServices(root, join(root, 'entry.js'));
+    const broker = new EvalBroker(services, asyncResolve);
+
+    const ep = Entrypoint.createRoot(
+      services,
+      join(root, 'entry.js'),
+      ['__wywPreval'],
+      readFileSync(join(root, 'entry.js'), 'utf-8')
+    );
+    const result = await broker.evaluate(ep);
+    expect(result.values?.get('a')).toBe(400);
+    expect(result.values?.get('b')).toBe(24);
+
+    broker.dispose();
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('cross-session barrel widening: second session needing different exports re-prepares', async () => {
+    // Reproduces stale-only issue across sessions with reuseModules.
+    // Session 1: barrel prepared with only:["fontWeight"].
+    // Session 2: different entrypoint needs iconSize from the same barrel.
+    // The runner's resolveCache persists across sessions, so the broker may
+    // not receive a fresh RESOLVE for the barrel. The broker must still
+    // detect that the cached barrel is too narrow and re-prepare.
+
+    const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
+
+    // barrel.js — two exports
+    writeFileSync(
+      join(root, 'barrel.js'),
+      [
+        'export const fontWeight = 400;',
+        'export const iconSize = 24;',
+      ].join('\n')
+    );
+
+    // entry-a.js — only needs fontWeight
+    writeFileSync(
+      join(root, 'entry-a.js'),
+      [
+        "import { fontWeight } from './barrel.js';",
+        'export const __wywPreval = { w: () => fontWeight };',
+      ].join('\n')
+    );
+
+    // entry-b.js — needs iconSize (different export from barrel)
+    writeFileSync(
+      join(root, 'entry-b.js'),
+      [
+        "import { iconSize } from './barrel.js';",
+        'export const __wywPreval = { s: () => iconSize };',
+      ].join('\n')
+    );
+
+    const asyncResolve = jest.fn(async (what: string, importer: string) => {
+      if (what.startsWith('.')) {
+        return resolve(dirname(importer), what);
+      }
+      return null;
+    });
+    const services = createServices(root, join(root, 'entry-a.js'));
+    const broker = new EvalBroker(services, asyncResolve);
+
+    // Session 1: barrel gets prepared with only:["fontWeight"]
+    const epA = Entrypoint.createRoot(
+      services,
+      join(root, 'entry-a.js'),
+      ['__wywPreval'],
+      readFileSync(join(root, 'entry-a.js'), 'utf-8')
+    );
+    const resultA = await broker.evaluate(epA);
+    expect(resultA.values?.get('w')).toBe(400);
+
+    // Session 2: different entrypoint needs iconSize from the same barrel
+    const epB = Entrypoint.createRoot(
+      services,
+      join(root, 'entry-b.js'),
+      ['__wywPreval'],
+      readFileSync(join(root, 'entry-b.js'), 'utf-8')
+    );
+    const resultB = await broker.evaluate(epB);
+    expect(resultB.values?.get('s')).toBe(24);
 
     broker.dispose();
     rmSync(root, { recursive: true, force: true });
