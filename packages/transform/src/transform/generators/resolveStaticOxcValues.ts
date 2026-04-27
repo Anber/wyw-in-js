@@ -4,7 +4,6 @@ import { isAbsolute, relative } from 'path';
 
 import { isFeatureEnabled, type FeatureFlag } from '@wyw-in-js/shared';
 import type {
-  ExportNamedDeclaration,
   ExportSpecifier,
   Expression,
   ImportDeclaration,
@@ -18,6 +17,7 @@ import type {
 import { oxcShaker } from '../../shaker';
 import { collectOxcProcessorImportsFromProgram } from '../../utils/collectOxcExportsAndImports';
 import {
+  createOxcStaticCallableValue,
   evaluateOxcStaticExpression,
   evaluateOxcStaticExpressionAt,
   isOxcStaticSerializableValue,
@@ -62,6 +62,10 @@ type StaticImportValueFeatures = {
   staticImportValues?: FeatureFlag;
 };
 
+type StaticExpressionOptions = {
+  allowMetadataCalls?: boolean;
+};
+
 const isInsideRoot = (filename: string, root: string): boolean => {
   const relativePath = relative(root, filename);
   return (
@@ -93,6 +97,35 @@ const isStaticImportValuesEnabled = (
 
 const parseProgram = (code: string, filename: string): Program =>
   parseOxcProgramCached(filename, code, 'unambiguous');
+
+const getChildren = (node: Node): Node[] => {
+  const children: Node[] = [];
+  Object.entries(node as AnyNode).forEach(([key, value]) => {
+    if (
+      key === 'comments' ||
+      key === 'errors' ||
+      key === 'parent' ||
+      key === 'span'
+    ) {
+      return;
+    }
+
+    if (Array.isArray(value)) {
+      value.forEach((item) => {
+        if (item && typeof item === 'object' && 'type' in item) {
+          children.push(item as Node);
+        }
+      });
+      return;
+    }
+
+    if (value && typeof value === 'object' && 'type' in value) {
+      children.push(value as Node);
+    }
+  });
+
+  return children;
+};
 
 const moduleExportName = (node: ModuleExportName): string =>
   node.type === 'Literal' ? String(node.value) : node.name;
@@ -136,7 +169,10 @@ const isSafeLiteral = (
   );
 };
 
-const isSafeStaticExpression = (expr: Node): boolean => {
+const isSafeStaticExpression = (
+  expr: Node,
+  options: StaticExpressionOptions = {}
+): boolean => {
   const unwrapped = unwrapExpression(expr);
 
   if (isSafeLiteral(unwrapped)) {
@@ -148,11 +184,13 @@ const isSafeStaticExpression = (expr: Node): boolean => {
   }
 
   if (unwrapped.type === 'TemplateLiteral') {
-    return unwrapped.expressions.every((item) => isSafeStaticExpression(item));
+    return unwrapped.expressions.every((item) =>
+      isSafeStaticExpression(item, options)
+    );
   }
 
   if (unwrapped.type === 'UnaryExpression') {
-    return isSafeStaticExpression(unwrapped.argument);
+    return isSafeStaticExpression(unwrapped.argument, options);
   }
 
   if (
@@ -160,25 +198,44 @@ const isSafeStaticExpression = (expr: Node): boolean => {
     unwrapped.type === 'LogicalExpression'
   ) {
     return (
-      isSafeStaticExpression(unwrapped.left) &&
-      isSafeStaticExpression(unwrapped.right)
+      isSafeStaticExpression(unwrapped.left, options) &&
+      isSafeStaticExpression(unwrapped.right, options)
     );
   }
 
   if (unwrapped.type === 'ConditionalExpression') {
     return (
-      isSafeStaticExpression(unwrapped.test) &&
-      isSafeStaticExpression(unwrapped.consequent) &&
-      isSafeStaticExpression(unwrapped.alternate)
+      isSafeStaticExpression(unwrapped.test, options) &&
+      isSafeStaticExpression(unwrapped.consequent, options) &&
+      isSafeStaticExpression(unwrapped.alternate, options)
     );
   }
 
   if (unwrapped.type === 'MemberExpression') {
     return (
-      isSafeStaticExpression(unwrapped.object) &&
+      isSafeStaticExpression(unwrapped.object, options) &&
       (unwrapped.computed
-        ? isSafeStaticExpression(unwrapped.property)
+        ? isSafeStaticExpression(unwrapped.property, options)
         : unwrapped.property.type === 'Identifier')
+    );
+  }
+
+  if (options.allowMetadataCalls && unwrapped.type === 'CallExpression') {
+    return (
+      unwrapped.callee.type === 'Identifier' && unwrapped.arguments.length === 0
+    );
+  }
+
+  if (
+    options.allowMetadataCalls &&
+    (unwrapped.type === 'ArrowFunctionExpression' ||
+      unwrapped.type === 'FunctionExpression')
+  ) {
+    return (
+      !unwrapped.async &&
+      unwrapped.params.length === 0 &&
+      !!unwrapped.body &&
+      isSafeFunctionBodyExpression(unwrapped.body, options)
     );
   }
 
@@ -189,8 +246,8 @@ const isSafeStaticExpression = (expr: Node): boolean => {
       }
 
       return item.type === 'SpreadElement'
-        ? isSafeStaticExpression(item.argument)
-        : isSafeStaticExpression(item);
+        ? isSafeStaticExpression(item.argument, options)
+        : isSafeStaticExpression(item, options);
     });
   }
 
@@ -208,7 +265,7 @@ const isSafeStaticExpression = (expr: Node): boolean => {
       return (
         propertyNode.value &&
         typeof propertyNode.value === 'object' &&
-        isSafeStaticExpression(propertyNode.value as Node)
+        isSafeStaticExpression(propertyNode.value as Node, options)
       );
     });
   }
@@ -284,8 +341,231 @@ const collectImportBindings = (
   return result;
 };
 
-const isTypeOnlyExport = (statement: ExportNamedDeclaration): boolean =>
-  statement.exportKind === 'type';
+type Range = {
+  end: number;
+  start: number;
+};
+
+const removeRanges = (code: string, ranges: Range[]): string => {
+  let result = code;
+  ranges
+    .sort((a, b) => b.start - a.start)
+    .forEach((range) => {
+      result = result.slice(0, range.start) + result.slice(range.end);
+    });
+  return result;
+};
+
+const isIdentifierBindingPosition = (
+  node: Node,
+  parent: Node | null
+): boolean => {
+  if (node.type !== 'Identifier' || !parent) {
+    return false;
+  }
+
+  if (
+    (parent.type === 'VariableDeclarator' && parent.id === node) ||
+    (parent.type === 'FunctionDeclaration' && parent.id === node) ||
+    (parent.type === 'FunctionExpression' && parent.id === node) ||
+    (parent.type === 'ClassDeclaration' && parent.id === node) ||
+    (parent.type === 'ClassExpression' && parent.id === node)
+  ) {
+    return true;
+  }
+
+  if (
+    (parent.type === 'ArrowFunctionExpression' ||
+      parent.type === 'FunctionDeclaration' ||
+      parent.type === 'FunctionExpression') &&
+    parent.params.some((param) => param === node)
+  ) {
+    return true;
+  }
+
+  return (
+    (parent.type === 'ImportSpecifier' && parent.local === node) ||
+    (parent.type === 'ImportDefaultSpecifier' && parent.local === node) ||
+    (parent.type === 'ImportNamespaceSpecifier' && parent.local === node)
+  );
+};
+
+const isPropertyKeyOnlyIdentifier = (
+  node: Node,
+  parent: Node | null
+): boolean =>
+  node.type === 'Identifier' &&
+  !!parent &&
+  ((parent.type === 'MemberExpression' &&
+    parent.property === node &&
+    !parent.computed) ||
+    (parent.type === 'Property' &&
+      parent.key === node &&
+      !parent.computed &&
+      !parent.shorthand));
+
+const collectUsedIdentifierNames = (program: Program): Set<string> => {
+  const used = new Set<string>();
+
+  const walk = (node: Node, parent: Node | null): void => {
+    if (node.type === 'ImportDeclaration') {
+      return;
+    }
+
+    if (
+      node.type === 'Identifier' &&
+      !isIdentifierBindingPosition(node, parent) &&
+      !isPropertyKeyOnlyIdentifier(node, parent)
+    ) {
+      used.add(node.name);
+    }
+
+    getChildren(node).forEach((child) => walk(child, node));
+  };
+
+  walk(program, null);
+  return used;
+};
+
+const removableStaticHelperNames = (
+  program: Program,
+  staticValueNames: Set<string>
+): Set<string> => {
+  const used = collectUsedIdentifierNames(program);
+  const result = new Set<string>();
+
+  program.body.forEach((statement) => {
+    if (statement.type !== 'VariableDeclaration') {
+      return;
+    }
+
+    statement.declarations.forEach((declarator) => {
+      if (
+        declarator.id.type === 'Identifier' &&
+        staticValueNames.has(declarator.id.name) &&
+        !used.has(declarator.id.name)
+      ) {
+        result.add(declarator.id.name);
+      }
+    });
+  });
+
+  return result;
+};
+
+const removeStaticHelperDeclarations = (
+  code: string,
+  filename: string,
+  staticValueNames: Set<string>
+): { code: string; removed: Set<string> } => {
+  if (staticValueNames.size === 0) {
+    return { code, removed: new Set() };
+  }
+
+  const program = parseProgram(code, filename);
+  const removableNames = removableStaticHelperNames(program, staticValueNames);
+  const ranges: Range[] = [];
+
+  program.body.forEach((statement) => {
+    if (
+      statement.type !== 'VariableDeclaration' ||
+      statement.declarations.length === 0
+    ) {
+      return;
+    }
+
+    if (
+      statement.declarations.every(
+        (declarator) =>
+          declarator.id.type === 'Identifier' &&
+          removableNames.has(declarator.id.name)
+      )
+    ) {
+      ranges.push({
+        end: statement.end,
+        start: statement.start,
+      });
+    }
+  });
+
+  return {
+    code: removeRanges(code, ranges),
+    removed: removableNames,
+  };
+};
+
+const importSpecifierLocalName = (
+  specifier: ImportDeclaration['specifiers'][number]
+): string | null => specifier.local?.name ?? null;
+
+const removeUnusedStaticImports = (
+  code: string,
+  filename: string,
+  staticImportLocals: Set<string>
+): string => {
+  if (staticImportLocals.size === 0) {
+    return code;
+  }
+
+  const program = parseProgram(code, filename);
+  const used = collectUsedIdentifierNames(program);
+  const ranges: Range[] = [];
+
+  program.body.forEach((statement) => {
+    if (
+      statement.type !== 'ImportDeclaration' ||
+      statement.specifiers.length === 0
+    ) {
+      return;
+    }
+
+    const removableIndexes = statement.specifiers.flatMap(
+      (specifier, index) => {
+        const localName = importSpecifierLocalName(specifier);
+        return localName &&
+          staticImportLocals.has(localName) &&
+          !used.has(localName)
+          ? [index]
+          : [];
+      }
+    );
+
+    if (removableIndexes.length === 0) {
+      return;
+    }
+
+    if (removableIndexes.length === statement.specifiers.length) {
+      ranges.push({
+        end: statement.end,
+        start: statement.start,
+      });
+    }
+  });
+
+  return removeRanges(code, ranges);
+};
+
+const pruneStaticPreevalCode = (
+  code: string,
+  filename: string,
+  staticValueNames: Set<string>,
+  staticImportLocals: Set<string>
+): string => {
+  const helpersRemoved = removeStaticHelperDeclarations(
+    code,
+    filename,
+    staticValueNames
+  );
+  if (helpersRemoved.removed.size === 0) {
+    return code;
+  }
+
+  return removeUnusedStaticImports(
+    helpersRemoved.code,
+    filename,
+    staticImportLocals
+  );
+};
 
 const collectProcessorImportLocals = (
   action: ITransformAction,
@@ -332,177 +612,18 @@ const collectProcessorImportLocals = (
   return result;
 };
 
-const isSafeProcessorImport = (
-  statement: ImportDeclaration,
-  processorImportLocals: Set<string>
+const isStaticWYWMetaValue = (
+  value: unknown,
+  seen: Set<unknown> = new Set()
 ): boolean => {
-  if (isTypeOnlyImport(statement)) {
-    return true;
-  }
-
-  return (
-    statement.specifiers.length > 0 &&
-    statement.specifiers.every((specifier) => {
-      if (
-        specifier.type === 'ImportSpecifier' &&
-        (specifier as ImportSpecifier).importKind === 'type'
-      ) {
-        return true;
-      }
-
-      return (
-        specifier.type !== 'ImportNamespaceSpecifier' &&
-        !!specifier.local?.name &&
-        processorImportLocals.has(specifier.local.name)
-      );
-    })
-  );
-};
-
-const expressionRootIdentifierName = (expr: Node): string | null => {
-  const unwrapped = unwrapExpression(expr);
-
-  if (unwrapped.type === 'Identifier') {
-    return unwrapped.name;
-  }
-
-  if (unwrapped.type === 'MemberExpression') {
-    return expressionRootIdentifierName(unwrapped.object);
-  }
-
-  if (unwrapped.type === 'CallExpression') {
-    return expressionRootIdentifierName(unwrapped.callee);
-  }
-
-  if (unwrapped.type === 'TaggedTemplateExpression') {
-    return expressionRootIdentifierName(unwrapped.tag);
-  }
-
-  return null;
-};
-
-const isProcessorUsageExpression = (
-  expr: Node,
-  processorImportLocals: Set<string>
-): boolean => {
-  const unwrapped = unwrapExpression(expr);
-
-  if (
-    unwrapped.type !== 'CallExpression' &&
-    unwrapped.type !== 'TaggedTemplateExpression'
-  ) {
-    return false;
-  }
-
-  const rootName = expressionRootIdentifierName(unwrapped);
-  return !!rootName && processorImportLocals.has(rootName);
-};
-
-const isSafeProcessorMetadataVariableDeclaration = (
-  statement: VariableDeclaration,
-  processorImportLocals: Set<string>
-): boolean =>
-  statement.kind === 'const' &&
-  statement.declarations.every(
-    (declarator) =>
-      declarator.init &&
-      (isSafeStaticExpression(declarator.init) ||
-        isProcessorUsageExpression(declarator.init, processorImportLocals))
-  );
-
-const isSafeProcessorMetadataStatement = (
-  statement: Node,
-  processorImportLocals: Set<string>
-): boolean => {
-  if (statement.type.startsWith('TS') || statement.type.startsWith('JSDoc')) {
-    return statement.type !== 'TSEnumDeclaration';
-  }
-
-  if (statement.type === 'EmptyStatement') {
-    return true;
-  }
-
-  if (statement.type === 'FunctionDeclaration') {
-    return true;
-  }
-
-  if (statement.type === 'ImportDeclaration') {
-    return isSafeProcessorImport(statement, processorImportLocals);
-  }
-
-  if (statement.type === 'VariableDeclaration') {
-    return isSafeProcessorMetadataVariableDeclaration(
-      statement,
-      processorImportLocals
-    );
-  }
-
-  if (statement.type === 'ExportNamedDeclaration') {
-    if (isTypeOnlyExport(statement)) {
-      return true;
-    }
-
-    if (statement.source) {
-      return statement.specifiers.every(
-        (specifier) => specifier.type === 'ExportSpecifier'
-      );
-    }
-
-    if (!statement.declaration) {
-      return true;
-    }
-
-    return (
-      statement.declaration.type === 'FunctionDeclaration' ||
-      (statement.declaration.type === 'VariableDeclaration' &&
-        isSafeProcessorMetadataVariableDeclaration(
-          statement.declaration,
-          processorImportLocals
-        ))
-    );
-  }
-
-  if (statement.type === 'ExportDefaultDeclaration') {
-    return (
-      statement.declaration.type === 'FunctionDeclaration' ||
-      isSafeStaticExpression(statement.declaration) ||
-      isProcessorUsageExpression(statement.declaration, processorImportLocals)
-    );
-  }
-
-  if (statement.type === 'ExpressionStatement') {
-    return isSafeLiteral(statement.expression);
-  }
-
-  return false;
-};
-
-const isSafeProcessorMetadataProgram = (
-  action: ITransformAction,
-  program: Program,
-  code: string,
-  filename: string
-): boolean => {
-  const processorImportLocals = collectProcessorImportLocals(
-    action,
-    program,
-    code,
-    filename
-  );
-
-  if (processorImportLocals.size === 0) {
-    return false;
-  }
-
-  return program.body.every((statement) =>
-    isSafeProcessorMetadataStatement(statement, processorImportLocals)
-  );
-};
-
-const isStaticWYWMetaValue = (value: unknown): boolean => {
   if (typeof value !== 'object' || value === null) {
     return false;
   }
+
+  if (seen.has(value)) {
+    return false;
+  }
+  seen.add(value);
 
   const meta = (value as { __wyw_meta?: unknown }).__wyw_meta;
   if (typeof meta !== 'object' || meta === null) {
@@ -514,7 +635,115 @@ const isStaticWYWMetaValue = (value: unknown): boolean => {
     extends?: unknown;
   };
 
-  return typeof className === 'string' && extended === null;
+  return (
+    typeof className === 'string' &&
+    (extended === null || isStaticWYWMetaValue(extended, seen))
+  );
+};
+
+type StaticProcessorInstance = {
+  artifacts: unknown[];
+  build: (values: Map<string, unknown>) => void;
+  className: string;
+};
+
+const artifactCssText = (artifact: unknown): string | null => {
+  if (!Array.isArray(artifact) || artifact[0] !== 'css') {
+    return null;
+  }
+
+  const payload = artifact[1];
+  if (Array.isArray(payload)) {
+    const [rules] = payload;
+    if (typeof rules === 'object' && rules !== null) {
+      return Object.values(rules)
+        .map((rule) =>
+          typeof rule === 'object' &&
+          rule !== null &&
+          'cssText' in rule &&
+          typeof (rule as { cssText?: unknown }).cssText === 'string'
+            ? (rule as { cssText: string }).cssText
+            : ''
+        )
+        .join('');
+    }
+  }
+
+  if (
+    typeof payload === 'object' &&
+    payload !== null &&
+    'cssText' in payload &&
+    typeof (payload as { cssText?: unknown }).cssText === 'string'
+  ) {
+    return (payload as { cssText: string }).cssText;
+  }
+
+  return null;
+};
+
+const isEmptyProcessorClassName = (
+  value: string,
+  processors: StaticProcessorInstance[],
+  cache: Map<string, boolean>
+): boolean => {
+  if (cache.has(value)) {
+    return cache.get(value)!;
+  }
+
+  const processor = processors.find((item) => item.className === value);
+  if (!processor) {
+    cache.set(value, false);
+    return false;
+  }
+
+  try {
+    processor.build(new Map());
+  } catch {
+    cache.set(value, false);
+    return false;
+  }
+
+  const result = processor.artifacts.every((artifact) => {
+    const cssText = artifactCssText(artifact);
+    return cssText !== null && cssText.trim() === '';
+  });
+  cache.set(value, result);
+  return result;
+};
+
+const isSelectorOnlyProcessorValue = (
+  value: unknown,
+  processors: StaticProcessorInstance[],
+  cache: Map<string, boolean>,
+  seen: Set<unknown> = new Set()
+): boolean => {
+  if (typeof value === 'string') {
+    return isEmptyProcessorClassName(value, processors, cache);
+  }
+
+  if (Array.isArray(value)) {
+    if (seen.has(value)) {
+      return false;
+    }
+
+    seen.add(value);
+    return value.every((item) =>
+      isSelectorOnlyProcessorValue(item, processors, cache, seen)
+    );
+  }
+
+  if (typeof value === 'object' && value !== null) {
+    if (seen.has(value)) {
+      return false;
+    }
+
+    seen.add(value);
+    return Object.values(value).every((item) =>
+      isSelectorOnlyProcessorValue(item, processors, cache, seen)
+    );
+  }
+
+  return false;
 };
 
 const collectLocalConstExpressions = (
@@ -650,9 +879,73 @@ const expressionMayProduceMutableValue = (
   return false;
 };
 
+const isSafeFunctionBodyExpression = (
+  body: Node,
+  options: StaticExpressionOptions
+): boolean => {
+  if (body.type !== 'BlockStatement') {
+    return isSafeStaticExpression(body, options);
+  }
+
+  return body.body.every((statement) => {
+    if (statement.type === 'VariableDeclaration') {
+      return (
+        statement.kind === 'const' &&
+        statement.declarations.every(
+          (declarator) =>
+            declarator.init &&
+            declarator.id.type === 'Identifier' &&
+            isSafeStaticExpression(declarator.init, options)
+        )
+      );
+    }
+
+    return (
+      statement.type === 'ReturnStatement' &&
+      !!statement.argument &&
+      isSafeStaticExpression(statement.argument, options)
+    );
+  });
+};
+
+const collectStaticFunctionBodyReferences = (
+  body: Node,
+  references: Set<string>,
+  options: StaticExpressionOptions
+): boolean => {
+  if (body.type !== 'BlockStatement') {
+    return collectStaticExpressionReferences(body, references, options);
+  }
+
+  return body.body.every((statement) => {
+    if (statement.type === 'VariableDeclaration') {
+      return (
+        statement.kind === 'const' &&
+        statement.declarations.every(
+          (declarator) =>
+            declarator.init &&
+            declarator.id.type === 'Identifier' &&
+            collectStaticExpressionReferences(
+              declarator.init,
+              references,
+              options
+            )
+        )
+      );
+    }
+
+    return (
+      statement.type === 'ReturnStatement' &&
+      !!statement.argument &&
+      collectStaticExpressionReferences(statement.argument, references, options)
+    );
+  });
+};
+
 const collectStaticExpressionReferences = (
   expr: Node,
-  references: Set<string>
+  references: Set<string>,
+  options: StaticExpressionOptions = {}
 ): boolean => {
   const unwrapped = unwrapExpression(expr);
 
@@ -667,12 +960,16 @@ const collectStaticExpressionReferences = (
 
   if (unwrapped.type === 'TemplateLiteral') {
     return unwrapped.expressions.every((item) =>
-      collectStaticExpressionReferences(item, references)
+      collectStaticExpressionReferences(item, references, options)
     );
   }
 
   if (unwrapped.type === 'UnaryExpression') {
-    return collectStaticExpressionReferences(unwrapped.argument, references);
+    return collectStaticExpressionReferences(
+      unwrapped.argument,
+      references,
+      options
+    );
   }
 
   if (
@@ -680,24 +977,67 @@ const collectStaticExpressionReferences = (
     unwrapped.type === 'LogicalExpression'
   ) {
     return (
-      collectStaticExpressionReferences(unwrapped.left, references) &&
-      collectStaticExpressionReferences(unwrapped.right, references)
+      collectStaticExpressionReferences(unwrapped.left, references, options) &&
+      collectStaticExpressionReferences(unwrapped.right, references, options)
     );
   }
 
   if (unwrapped.type === 'ConditionalExpression') {
     return (
-      collectStaticExpressionReferences(unwrapped.test, references) &&
-      collectStaticExpressionReferences(unwrapped.consequent, references) &&
-      collectStaticExpressionReferences(unwrapped.alternate, references)
+      collectStaticExpressionReferences(unwrapped.test, references, options) &&
+      collectStaticExpressionReferences(
+        unwrapped.consequent,
+        references,
+        options
+      ) &&
+      collectStaticExpressionReferences(
+        unwrapped.alternate,
+        references,
+        options
+      )
     );
   }
 
   if (unwrapped.type === 'MemberExpression') {
     return (
-      collectStaticExpressionReferences(unwrapped.object, references) &&
+      collectStaticExpressionReferences(
+        unwrapped.object,
+        references,
+        options
+      ) &&
       (!unwrapped.computed ||
-        collectStaticExpressionReferences(unwrapped.property, references))
+        collectStaticExpressionReferences(
+          unwrapped.property,
+          references,
+          options
+        ))
+    );
+  }
+
+  if (options.allowMetadataCalls && unwrapped.type === 'CallExpression') {
+    if (
+      unwrapped.callee.type !== 'Identifier' ||
+      unwrapped.arguments.length !== 0
+    ) {
+      return false;
+    }
+
+    references.add(unwrapped.callee.name);
+    return true;
+  }
+
+  if (
+    options.allowMetadataCalls &&
+    (unwrapped.type === 'ArrowFunctionExpression' ||
+      unwrapped.type === 'FunctionExpression')
+  ) {
+    if (unwrapped.async || unwrapped.params.length !== 0) {
+      return false;
+    }
+
+    return (
+      !!unwrapped.body &&
+      collectStaticFunctionBodyReferences(unwrapped.body, references, options)
     );
   }
 
@@ -708,15 +1048,19 @@ const collectStaticExpressionReferences = (
       }
 
       return item.type === 'SpreadElement'
-        ? collectStaticExpressionReferences(item.argument, references)
-        : collectStaticExpressionReferences(item, references);
+        ? collectStaticExpressionReferences(item.argument, references, options)
+        : collectStaticExpressionReferences(item, references, options);
     });
   }
 
   if (unwrapped.type === 'ObjectExpression') {
     return unwrapped.properties.every((property) => {
       if (property.type === 'SpreadElement') {
-        return collectStaticExpressionReferences(property.argument, references);
+        return collectStaticExpressionReferences(
+          property.argument,
+          references,
+          options
+        );
       }
 
       const propertyNode = property as AnyNode;
@@ -730,7 +1074,8 @@ const collectStaticExpressionReferences = (
 
       return collectStaticExpressionReferences(
         propertyNode.value as Node,
-        references
+        references,
+        options
       );
     });
   }
@@ -1000,7 +1345,8 @@ const collectTopLevelMutationHints = (
 
 const collectStaticExpressionDependencies = (
   program: Program,
-  target: Extract<ExportTarget, { kind: 'expression' }>
+  target: Extract<ExportTarget, { kind: 'expression' }>,
+  options: StaticExpressionOptions = {}
 ): StaticExpressionDependencies | null => {
   const imports = collectImportBindings(program);
   const locals = collectLocalConstExpressions(program);
@@ -1041,12 +1387,12 @@ const collectStaticExpressionDependencies = (
   };
 
   const collectExpression = (expr: Node): boolean => {
-    if (!isSafeStaticExpression(expr)) {
+    if (!isSafeStaticExpression(expr, options)) {
       return false;
     }
 
     const references = new Set<string>();
-    if (!collectStaticExpressionReferences(expr, references)) {
+    if (!collectStaticExpressionReferences(expr, references, options)) {
       return false;
     }
 
@@ -1274,19 +1620,23 @@ function* resolveImportValue(
   };
 }
 
-const resolveProcessorMetadataExport = (
+function* resolveProcessorStaticExport(
   action: ITransformAction,
   filename: string,
   code: string,
   program: Program,
-  exportedName: string
-): StaticExportResult | null => {
+  exportedName: string,
+  stack: Set<string>,
+  memo: Map<string, StaticExportResult | null>
+): SyncScenarioFor<StaticExportResult | null> {
   const root = action.services.options.root ?? process.cwd();
   if (!isInsideRoot(filename, root)) {
     return null;
   }
 
-  if (!isSafeProcessorMetadataProgram(action, program, code, filename)) {
+  if (
+    collectProcessorImportLocals(action, program, code, filename).size === 0
+  ) {
     return null;
   }
 
@@ -1322,8 +1672,34 @@ const resolveProcessorMetadataExport = (
     return null;
   }
 
-  if (!isSafeStaticExpression(target.expression)) {
+  const staticDependencies = collectStaticExpressionDependencies(
+    preevalProgram,
+    target,
+    {
+      allowMetadataCalls: true,
+    }
+  );
+  if (!staticDependencies) {
     return null;
+  }
+
+  const env = new Map<string, unknown>();
+  const dependencies = new Set<string>([filename]);
+
+  for (const binding of staticDependencies.imports) {
+    const resolved = yield* resolveImportValue(
+      action,
+      filename,
+      binding,
+      stack,
+      memo
+    );
+    if (!resolved) {
+      return null;
+    }
+
+    env.set(binding.local, createOxcStaticCallableValue(resolved.value));
+    resolved.dependencies.forEach((dependency) => dependencies.add(dependency));
   }
 
   const value = evaluateOxcStaticExpressionAt(
@@ -1333,17 +1709,28 @@ const resolveProcessorMetadataExport = (
       end: target.expression.end,
       start: target.expression.start,
     },
-    new Map()
+    env
   );
-  if (!isStaticWYWMetaValue(value) || !isOxcStaticSerializableValue(value)) {
+  if (!isOxcStaticSerializableValue(value)) {
+    return null;
+  }
+
+  if (
+    !isStaticWYWMetaValue(value) &&
+    !isSelectorOnlyProcessorValue(
+      value,
+      preevalResult.metadata.processors as unknown as StaticProcessorInstance[],
+      new Map()
+    )
+  ) {
     return null;
   }
 
   return {
-    dependencies: [filename],
+    dependencies: [...dependencies],
     value,
   };
-};
+}
 
 function* resolveStaticExport(
   action: ITransformAction,
@@ -1406,12 +1793,14 @@ function* resolveStaticExport(
     target
   );
   if (!staticDependencies) {
-    const metadataResult = resolveProcessorMetadataExport(
+    const metadataResult = yield* resolveProcessorStaticExport(
       action,
       filename,
       code,
       program,
-      exportedName
+      exportedName,
+      stack,
+      memo
     );
     memo.set(memoKey, metadataResult);
     stack.delete(memoKey);
@@ -1520,6 +1909,7 @@ export function* resolveStaticOxcPreevalValues(
   const staticValueCache =
     preevalResult.staticValueCache ?? new Map<string, unknown>();
   const staticDependencies = new Set(preevalResult.staticDependencies ?? []);
+  const staticImportLocals = new Set<string>();
   const memo = new Map<string, StaticExportResult | null>();
   let changed = false;
 
@@ -1539,6 +1929,9 @@ export function* resolveStaticOxcPreevalValues(
     }
 
     staticValueCache.set(candidate.name, resolved.value);
+    candidate.imports.forEach((item) =>
+      staticImportLocals.add(item.importLocal ?? item.local)
+    );
     resolved.dependencies.forEach((dependency) =>
       staticDependencies.add(dependency)
     );
@@ -1555,11 +1948,14 @@ export function* resolveStaticOxcPreevalValues(
   preevalResult.dependencyNames = dependencyNames;
   preevalResult.staticValueCache = staticValueCache;
   preevalResult.staticDependencies = [...staticDependencies];
-  preevalResult.code = appendOxcWywPreval(
+  const baseCode = pruneStaticPreevalCode(
     preevalResult.baseCode ?? preevalResult.code,
     filename,
-    dependencyNames
+    new Set(staticValueCache.keys()),
+    staticImportLocals
   );
+  preevalResult.baseCode = baseCode;
+  preevalResult.code = appendOxcWywPreval(baseCode, filename, dependencyNames);
 
   for (const dependency of staticDependencies) {
     this.entrypoint.addInvalidationDependency({

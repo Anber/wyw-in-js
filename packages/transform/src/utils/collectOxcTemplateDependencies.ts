@@ -7,6 +7,7 @@ import type {
   Expression,
   ImportDeclaration,
   ImportSpecifier,
+  MemberExpression,
   ModuleExportName,
   Node,
   Program,
@@ -83,6 +84,7 @@ type ReferenceIdentifier = {
 
 export type OxcStaticImportReference = {
   imported: 'default' | string;
+  importLocal?: string;
   local: string;
   source: string;
 };
@@ -125,6 +127,7 @@ type ExtractionContext = {
     string,
     Array<AssignmentExpression | UpdateExpression>
   >;
+  staticImportAliases: Map<string, string>;
   staticValueCandidates: OxcStaticValueCandidate[];
   staticValues: OxcStaticValue[];
   usedNames: Set<string>;
@@ -134,6 +137,7 @@ type ExtractedExpression = {
   expressionCode: string;
   importedFrom: string[];
   kind: ValueType.FUNCTION | ValueType.LAZY;
+  staticExpressionCode?: string;
   staticImports: OxcStaticImportReference[];
   staticValue?: unknown;
 };
@@ -892,6 +896,28 @@ const getObjectMember = (
 
 type EvalEnv = Map<string, unknown>;
 
+const oxcStaticCallableValue = Symbol('wyw.oxc.staticCallableValue');
+
+type OxcStaticCallableValue = {
+  [oxcStaticCallableValue]: unknown;
+};
+
+const isOxcStaticCallableValue = (
+  value: unknown
+): value is OxcStaticCallableValue =>
+  typeof value === 'object' &&
+  value !== null &&
+  oxcStaticCallableValue in value;
+
+const unwrapOxcStaticCallableValue = (value: unknown): unknown =>
+  isOxcStaticCallableValue(value) ? value[oxcStaticCallableValue] : value;
+
+export const createOxcStaticCallableValue = (
+  value: unknown
+): OxcStaticCallableValue => ({
+  [oxcStaticCallableValue]: value,
+});
+
 const assignPatternValue = (
   pattern: Node,
   value: unknown,
@@ -1179,6 +1205,121 @@ const replaceIdentifierReferences = (
   return result;
 };
 
+const applyExpressionReplacements = (
+  expression: Expression,
+  replacements: Replacement[],
+  code: string
+): string => {
+  let result = code.slice(expression.start, expression.end);
+  replacements
+    .sort((a, b) => b.start - a.start)
+    .forEach((replacement) => {
+      const start = replacement.start - expression.start;
+      const end = replacement.end - expression.start;
+      result = result.slice(0, start) + replacement.value + result.slice(end);
+    });
+  return result;
+};
+
+const staticImportAliasPart = (value: string): string =>
+  value.replace(/[^A-Za-z0-9_$]/g, '_') || 'value';
+
+const allocateStaticImportAlias = (
+  binding: Binding,
+  imported: string,
+  ctx: ExtractionContext
+): string => {
+  const key = `${binding.importedFrom ?? ''}\0${binding.name}\0${imported}`;
+  const existing = ctx.staticImportAliases.get(key);
+  if (existing) {
+    return existing;
+  }
+
+  const namespacePart = staticImportAliasPart(binding.name);
+  const importedPart = staticImportAliasPart(imported);
+  let alias = `_wyw_static_${namespacePart}_${importedPart}`;
+  let idx = 1;
+  while (ctx.usedNames.has(alias)) {
+    idx += 1;
+    alias = `_wyw_static_${namespacePart}_${importedPart}_${idx}`;
+  }
+
+  ctx.usedNames.add(alias);
+  ctx.staticImportAliases.set(key, alias);
+  return alias;
+};
+
+const staticMemberPropertyName = (
+  expression: MemberExpression
+): string | null => {
+  if (!expression.computed && expression.property.type === 'Identifier') {
+    return expression.property.name;
+  }
+
+  if (
+    expression.computed &&
+    expression.property.type === 'Literal' &&
+    typeof expression.property.value === 'string'
+  ) {
+    return expression.property.value;
+  }
+
+  return null;
+};
+
+const collectStaticNamespaceMemberReferences = (
+  expression: Expression,
+  ctx: ExtractionContext
+): {
+  coveredReferenceStarts: Set<number>;
+  imports: OxcStaticImportReference[];
+  replacements: Replacement[];
+} => {
+  const coveredReferenceStarts = new Set<number>();
+  const imports = new Map<string, OxcStaticImportReference>();
+  const replacements: Replacement[] = [];
+
+  const walk = (node: Node): void => {
+    if (node.type === 'MemberExpression' && node.object.type === 'Identifier') {
+      const binding = resolveBindingAt(
+        ctx,
+        node.object.name,
+        node.object.start
+      );
+      const imported = staticMemberPropertyName(node);
+      if (
+        binding?.importedFrom &&
+        binding.imported === '*' &&
+        imported !== null
+      ) {
+        const alias = allocateStaticImportAlias(binding, imported, ctx);
+        imports.set(`${binding.importedFrom}\0${imported}\0${alias}`, {
+          imported,
+          importLocal: binding.name,
+          local: alias,
+          source: binding.importedFrom,
+        });
+        replacements.push({
+          end: node.end,
+          start: node.start,
+          value: alias,
+        });
+        coveredReferenceStarts.add(node.object.start);
+      }
+    }
+
+    getChildren(node).forEach(walk);
+  };
+
+  walk(expression);
+
+  return {
+    coveredReferenceStarts,
+    imports: [...imports.values()],
+    replacements,
+  };
+};
+
 const evaluateBinary = (
   expression: Expression,
   ctx: ExtractionContext
@@ -1265,7 +1406,7 @@ const evaluateStatic = (
 
   if (expression.type === 'Identifier') {
     if (env.has(expression.name)) {
-      return env.get(expression.name);
+      return unwrapOxcStaticCallableValue(env.get(expression.name));
     }
 
     const binding = resolveBindingAt(ctx, expression.name, expression.start);
@@ -1461,6 +1602,14 @@ const evaluateStatic = (
       );
       if (args.some((value) => value === undefined)) {
         return undefined;
+      }
+
+      const staticCallable = env.get(expression.callee.name);
+      if (
+        isOxcStaticCallableValue(staticCallable) &&
+        expression.arguments.length === 0
+      ) {
+        return unwrapOxcStaticCallableValue(staticCallable);
       }
 
       if (expression.callee.name === 'String' && args.length === 1) {
@@ -1794,7 +1943,13 @@ const extractExpression = (
 
   const identifierReplacements = new Map<string, string>();
   const importedFrom: string[] = [];
-  const staticImports: OxcStaticImportReference[] = [];
+  const namespaceStatic = collectStaticNamespaceMemberReferences(
+    expression,
+    ctx
+  );
+  const staticImports: OxcStaticImportReference[] = [
+    ...namespaceStatic.imports,
+  ];
   let hasNonStaticLocalReference = false;
 
   findReferences(expression, ctx.referencesByNode).forEach(
@@ -1818,6 +1973,12 @@ const extractExpression = (
             local: binding.name,
             source: binding.importedFrom,
           });
+        } else if (
+          binding.imported === '*' &&
+          namespaceStatic.coveredReferenceStarts.has(start)
+        ) {
+          // The static candidate source gets a synthetic named import alias,
+          // while the eval fallback keeps the original namespace expression.
         } else {
           hasNonStaticLocalReference = true;
         }
@@ -1842,10 +2003,22 @@ const extractExpression = (
   return {
     expressionCode:
       identifierReplacements.size > 0
-        ? replaceIdentifierReferences(expression, identifierReplacements, ctx.code)
+        ? replaceIdentifierReferences(
+            expression,
+            identifierReplacements,
+            ctx.code
+          )
         : source,
     importedFrom,
     kind: isFunction ? ValueType.FUNCTION : ValueType.LAZY,
+    staticExpressionCode:
+      namespaceStatic.replacements.length > 0
+        ? applyExpressionReplacements(
+            expression,
+            namespaceStatic.replacements,
+            ctx.code
+          )
+        : undefined,
     staticImports: hasNonStaticLocalReference ? [] : staticImports,
   };
 };
@@ -1946,6 +2119,7 @@ const extractExpressions = (
     referencesByNode: new WeakMap(),
     replacements: [],
     rootMutationsByBinding: analysis.rootMutationsByBinding,
+    staticImportAliases: new Map(),
     staticValueCandidates: [],
     staticValues: [],
     usedNames: new Set(analysis.usedNames),
@@ -1961,8 +2135,14 @@ const extractExpressions = (
       return;
     }
 
-    const { expressionCode, importedFrom, kind, staticImports, staticValue } =
-      extractExpression(expression, ctx, evaluate);
+    const {
+      expressionCode,
+      importedFrom,
+      kind,
+      staticExpressionCode,
+      staticImports,
+      staticValue,
+    } = extractExpression(expression, ctx, evaluate);
     const expName = allocateExpressionName(ctx);
 
     addHoistedCode(
@@ -1979,14 +2159,16 @@ const extractExpressions = (
       const uniqueImports = new Map<string, OxcStaticImportReference>();
       staticImports.forEach((item) => {
         uniqueImports.set(
-          `${item.local}\0${item.source}\0${item.imported}`,
+          `${item.local}\0${item.importLocal ?? ''}\0${item.source}\0${
+            item.imported
+          }`,
           item
         );
       });
       ctx.staticValueCandidates.push({
         imports: [...uniqueImports.values()],
         name: expName,
-        source: expressionCode,
+        source: staticExpressionCode ?? expressionCode,
       });
     }
     ctx.replacements.push({
@@ -2058,6 +2240,7 @@ export const evaluateOxcStaticExpressionAt = (
     referencesByNode: new WeakMap(),
     replacements: [],
     rootMutationsByBinding: analysis.rootMutationsByBinding,
+    staticImportAliases: new Map(),
     staticValueCandidates: [],
     staticValues: [],
     usedNames: new Set(analysis.usedNames),

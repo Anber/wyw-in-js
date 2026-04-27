@@ -428,6 +428,211 @@ describe('transform static import value inlining', () => {
     }
   });
 
+  it('removes statically resolved imports from modules that still need eval', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
+    const entryFile = join(root, 'entry.js');
+    const staticFile = join(root, 'tokens.js');
+    const dynamicFile = join(root, 'dynamic.js');
+    const cache = new TransformCacheCollection();
+    const perf = createPerfEventRecorder();
+
+    writeFileSync(
+      staticFile,
+      dedent`
+        const runtimeOnly = (() => {
+          throw new Error('static dependency should not be imported during eval');
+        })();
+
+        export const color = 'red';
+        export { runtimeOnly };
+      `
+    );
+    writeFileSync(
+      dynamicFile,
+      dedent`
+        export const spacing = Date.now();
+      `
+    );
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { css } from 'test-css-processor';
+        import { color } from './tokens.js';
+        import { spacing } from './dynamic.js';
+
+        export const className = css\`
+          color: ${'${color}'};
+          margin: ${'${spacing}'};
+        \`;
+      `
+    );
+
+    try {
+      const result = await runTransform(
+        root,
+        entryFile,
+        cache,
+        perf.eventEmitter
+      );
+
+      expect(result.cssText).toContain('color:red');
+      expect(result.dependencies).toContain(staticFile);
+      expect(result.dependencies).toContain('./dynamic.js');
+      expect(perf.counts.get('transform:evalFile') ?? 0).toBeGreaterThan(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('inlines imported selector-only processor class names without eval', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
+    const entryFile = join(root, 'entry.js');
+    const classesFile = join(root, 'classes.js');
+    const cache = new TransformCacheCollection();
+    const perf = createPerfEventRecorder();
+
+    writeFileSync(
+      classesFile,
+      dedent`
+        import { css } from 'test-css-processor';
+
+        const runtimeOnly = (() => {
+          throw new Error('selector-only class should not be imported during eval');
+        })();
+
+        export const marker = css\`\`;
+        export { runtimeOnly };
+      `
+    );
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { css } from 'test-css-processor';
+        import { marker } from './classes.js';
+
+        export const className = css\`
+          .${'${marker}'} {
+            color: red;
+          }
+        \`;
+      `
+    );
+
+    try {
+      const result = await runTransform(
+        root,
+        entryFile,
+        cache,
+        perf.eventEmitter
+      );
+
+      expect(result.cssText).toContain('color:red');
+      expect(result.dependencies).toContain(classesFile);
+      expect(result.code).not.toContain('./classes.js');
+      expect(perf.counts.get('transform:evalFile') ?? 0).toBe(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('inlines namespace selector-only processor class names without eval', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
+    const entryFile = join(root, 'entry.js');
+    const classesFile = join(root, 'classes.js');
+    const cache = new TransformCacheCollection();
+    const perf = createPerfEventRecorder();
+
+    writeFileSync(
+      classesFile,
+      dedent`
+        import { css } from 'test-css-processor';
+
+        const runtimeOnly = (() => {
+          throw new Error('namespace class should not be imported during eval');
+        })();
+
+        export const marker = css\`\`;
+        export { runtimeOnly };
+      `
+    );
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { css } from 'test-css-processor';
+        import * as classes from './classes.js';
+
+        export const className = css\`
+          .${'${classes.marker}'} {
+            color: red;
+          }
+        \`;
+      `
+    );
+
+    try {
+      const result = await runTransform(
+        root,
+        entryFile,
+        cache,
+        perf.eventEmitter
+      );
+
+      expect(result.cssText).toContain('color:red');
+      expect(result.dependencies).toContain(classesFile);
+      expect(result.code).not.toContain('./classes.js');
+      expect(perf.counts.get('transform:evalFile') ?? 0).toBe(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps processor class names with CSS rules on the eval path', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
+    const entryFile = join(root, 'entry.js');
+    const classesFile = join(root, 'classes.js');
+    const cache = new TransformCacheCollection();
+    const perf = createPerfEventRecorder();
+
+    writeFileSync(
+      classesFile,
+      dedent`
+        import { css } from 'test-css-processor';
+
+        export const marker = css\`
+          color: blue;
+        \`;
+      `
+    );
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { css } from 'test-css-processor';
+        import { marker } from './classes.js';
+
+        export const className = css\`
+          .${'${marker}'} {
+            color: red;
+          }
+        \`;
+      `
+    );
+
+    try {
+      const result = await runTransform(
+        root,
+        entryFile,
+        cache,
+        perf.eventEmitter
+      );
+
+      expect(result.cssText).toContain('color:red');
+      expect(result.dependencies).toContain('./classes.js');
+      expect(perf.counts.get('transform:evalFile') ?? 0).toBeGreaterThan(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('inlines imported styled primitive metadata without eval', async () => {
     const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
     const entryFile = join(root, 'entry.js');
@@ -471,6 +676,124 @@ describe('transform static import value inlining', () => {
         /\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\s*\{[^}]*font-size:12px;[^}]*\}/s
       );
       expect(result.dependencies).toContain(baseFile);
+      expect(perf.counts.get('transform:evalFile') ?? 0).toBe(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('inlines styled primitive metadata from a mixed module without eval', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
+    const entryFile = join(root, 'entry.js');
+    const baseFile = join(root, 'base.js');
+    const cache = new TransformCacheCollection();
+    const perf = createPerfEventRecorder();
+
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'app' }));
+    writeFileSync(
+      baseFile,
+      dedent`
+        import { styled } from 'test-styled-processor';
+
+        const runtimeOnly = (() => {
+          throw new Error('runtime code should not run while resolving metadata');
+        })();
+
+        export const Base = styled.div\`
+          color: red;
+        \`;
+
+        export { runtimeOnly };
+      `
+    );
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { styled } from 'test-styled-processor';
+        import { Base } from './base.js';
+
+        export const Extended = styled(Base)\`
+          font-size: 12px;
+        \`;
+      `
+    );
+
+    try {
+      const result = await runTransform(
+        root,
+        entryFile,
+        cache,
+        perf.eventEmitter
+      );
+
+      expect(result.cssText).toContain('font-size:12px');
+      expect(result.cssText).toMatch(
+        /\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\s*\{[^}]*font-size:12px;[^}]*\}/s
+      );
+      expect(result.dependencies).toContain(baseFile);
+      expect(perf.counts.get('transform:evalFile') ?? 0).toBe(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('inlines transitive styled metadata chains without eval', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
+    const entryFile = join(root, 'entry.js');
+    const baseFile = join(root, 'base.js');
+    const middleFile = join(root, 'middle.js');
+    const cache = new TransformCacheCollection();
+    const perf = createPerfEventRecorder();
+
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'app' }));
+    writeFileSync(
+      baseFile,
+      dedent`
+        import { styled } from 'test-styled-processor';
+
+        export const Base = styled.div\`
+          color: red;
+        \`;
+      `
+    );
+    writeFileSync(
+      middleFile,
+      dedent`
+        import { styled } from 'test-styled-processor';
+        import { Base } from './base.js';
+
+        export const Middle = styled(Base)\`
+          color: blue;
+        \`;
+      `
+    );
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { styled } from 'test-styled-processor';
+        import { Middle } from './middle.js';
+
+        export const Extended = styled(Middle)\`
+          font-size: 12px;
+        \`;
+      `
+    );
+
+    try {
+      const result = await runTransform(
+        root,
+        entryFile,
+        cache,
+        perf.eventEmitter
+      );
+
+      expect(result.cssText).toContain('font-size:12px');
+      expect(result.cssText).toMatch(
+        /\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\s*\{[^}]*font-size:12px;[^}]*\}/s
+      );
+      expect(result.dependencies).toEqual(
+        expect.arrayContaining([baseFile, middleFile])
+      );
       expect(perf.counts.get('transform:evalFile') ?? 0).toBe(0);
     } finally {
       rmSync(root, { recursive: true, force: true });

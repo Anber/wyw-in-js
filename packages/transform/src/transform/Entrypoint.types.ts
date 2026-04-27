@@ -40,6 +40,7 @@ export interface IPreevalResult {
   staticValueCandidates?: Array<{
     imports: Array<{
       imported: 'default' | string;
+      importLocal?: string;
       local: string;
       source: string;
     }>;
