@@ -14,6 +14,19 @@ export async function* evalFile(
 ): AsyncScenarioForAction<IEvalAction> {
   const { entrypoint } = this;
   const { log } = entrypoint;
+  const preevalResult = entrypoint.getPreevalResult();
+
+  if (preevalResult && (preevalResult.dependencyNames?.length ?? 0) === 0) {
+    const valueCache: ValueCache = new Map();
+    preevalResult.staticValueCache?.forEach((value, key) => {
+      valueCache.set(key, value);
+    });
+
+    const dependencies = [...new Set(preevalResult.staticDependencies ?? [])];
+    log(`<< skipped evaluate __wywPreval %O`, valueCache);
+
+    return [valueCache, dependencies];
+  }
 
   log(`>> evaluate __wywPreval`);
 
@@ -22,7 +35,10 @@ export async function* evalFile(
   while (evaluated === undefined) {
     try {
       // eslint-disable-next-line no-await-in-loop
-      evaluated = await evaluate(this.services, entrypoint);
+      evaluated = await this.services.eventEmitter.perf(
+        'transform:evalFile',
+        () => evaluate(this.services, entrypoint)
+      );
     } catch (e) {
       if (isUnprocessedEntrypointError(e)) {
         entrypoint.log(
@@ -40,7 +56,6 @@ export async function* evalFile(
   }
 
   const valueCache: ValueCache = evaluated.values;
-  const preevalResult = entrypoint.getPreevalResult();
   preevalResult?.staticValueCache?.forEach((value, key) => {
     valueCache.set(key, value);
   });

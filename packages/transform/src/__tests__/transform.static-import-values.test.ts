@@ -6,6 +6,7 @@ import dedent from 'dedent';
 
 import { TransformCacheCollection } from '../cache';
 import { transform } from '../transform';
+import { EventEmitter } from '../utils/EventEmitter';
 
 const processorFile = join(__dirname, '__fixtures__', 'test-css-processor.js');
 
@@ -25,11 +26,13 @@ const createResolver =
 const runTransform = async (
   root: string,
   entryFile: string,
-  cache: TransformCacheCollection
+  cache: TransformCacheCollection,
+  eventEmitter?: EventEmitter
 ) =>
   transform(
     {
       cache,
+      eventEmitter,
       options: {
         filename: entryFile,
         root,
@@ -49,12 +52,30 @@ const runTransform = async (
     createResolver(processorFile)
   );
 
+const createPerfEventRecorder = () => {
+  const counts = new Map<string, number>();
+  const eventEmitter = new EventEmitter(
+    (labels, type) => {
+      if (type !== 'start' || typeof labels.method !== 'string') {
+        return;
+      }
+
+      counts.set(labels.method, (counts.get(labels.method) ?? 0) + 1);
+    },
+    () => 0,
+    () => {}
+  );
+
+  return { counts, eventEmitter };
+};
+
 describe('transform static import value inlining', () => {
   it('inlines a direct imported literal without keeping the runtime import', async () => {
     const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
     const entryFile = join(root, 'entry.js');
     const depFile = join(root, 'tokens.js');
     const cache = new TransformCacheCollection();
+    const perf = createPerfEventRecorder();
 
     writeFileSync(depFile, `export const color = 'red';`);
     writeFileSync(
@@ -70,11 +91,17 @@ describe('transform static import value inlining', () => {
     );
 
     try {
-      const result = await runTransform(root, entryFile, cache);
+      const result = await runTransform(
+        root,
+        entryFile,
+        cache,
+        perf.eventEmitter
+      );
 
       expect(result.cssText).toContain('color:red');
       expect(result.code).not.toContain('./tokens.js');
       expect(result.dependencies).toContain(depFile);
+      expect(perf.counts.get('transform:evalFile') ?? 0).toBe(0);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -157,6 +184,7 @@ describe('transform static import value inlining', () => {
     const entryFile = join(root, 'entry.js');
     const depFile = join(root, 'unsafe.js');
     const cache = new TransformCacheCollection();
+    const perf = createPerfEventRecorder();
 
     writeFileSync(
       depFile,
@@ -178,10 +206,16 @@ describe('transform static import value inlining', () => {
     );
 
     try {
-      const result = await runTransform(root, entryFile, cache);
+      const result = await runTransform(
+        root,
+        entryFile,
+        cache,
+        perf.eventEmitter
+      );
 
       expect(result.cssText).toContain('color:red');
       expect(result.dependencies).toContain('./unsafe.js');
+      expect(perf.counts.get('transform:evalFile') ?? 0).toBeGreaterThan(0);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
