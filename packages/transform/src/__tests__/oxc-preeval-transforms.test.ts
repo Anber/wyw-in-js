@@ -213,7 +213,7 @@ describe('oxc preeval transforms', () => {
       expect(code).toContain('readonly keep = 1;');
     });
 
-    it('removes browser-global aliases without leaving invalid control flow', () => {
+    it('preserves arrow function bodies that reference browser globals (deferred body)', () => {
       const code = removeDangerousCodeWithOxc(
         [
           'export const removeLoader = () => {',
@@ -224,8 +224,9 @@ describe('oxc preeval transforms', () => {
         filename
       );
 
-      expect(code).not.toContain('document.getElementById');
-      expect(code).not.toContain('removeChild(loader)');
+      expect(code).toContain('export const removeLoader = () =>');
+      expect(code).toContain('document.getElementById');
+      expect(code).toContain('removeChild(loader)');
       expect(() => stripTypesAndJsxWithOxc(code, filename)).not.toThrow();
     });
 
@@ -298,7 +299,7 @@ describe('oxc preeval transforms', () => {
       expect(() => stripTypesAndJsxWithOxc(code, '/test.tsx')).not.toThrow();
     });
 
-    it('removes transitive aliases of browser-global values without leaving dangling references', () => {
+    it('preserves function declaration bodies that reference browser globals (deferred body)', () => {
       const code = removeDangerousCodeWithOxc(
         [
           'function read(version) {',
@@ -313,13 +314,14 @@ describe('oxc preeval transforms', () => {
         filename
       );
 
-      expect(code).not.toContain('localStorage');
-      expect(code).not.toContain('parsed.version');
-      expect(code).not.toContain('parsed.value');
+      expect(code).toContain('function read(version)');
+      expect(code).toContain('localStorage.getItem');
+      expect(code).toContain('parsed.version');
+      expect(code).toContain('parsed.value');
       expect(() => stripTypesAndJsxWithOxc(code, filename)).not.toThrow();
     });
 
-    it('removes loops tied to browser globals without leaving invalid for syntax', () => {
+    it('preserves loops inside function bodies that reference browser globals (deferred body)', () => {
       const code = removeDangerousCodeWithOxc(
         [
           'function clear(prefix) {',
@@ -334,13 +336,13 @@ describe('oxc preeval transforms', () => {
         filename
       );
 
-      expect(code).not.toContain('localStorage.length');
-      expect(code).not.toContain('for (;');
-      expect(code).not.toContain('localStorage.removeItem');
+      expect(code).toContain('function clear(prefix)');
+      expect(code).toContain('localStorage.length');
+      expect(code).toContain('localStorage.removeItem');
       expect(() => stripTypesAndJsxWithOxc(code, filename)).not.toThrow();
     });
 
-    it('removes local React refresh helpers and their direct aliases', () => {
+    it('removes top-level React refresh helpers but preserves references inside deferred bodies', () => {
       const code = removeDangerousCodeWithOxc(
         [
           'var _s = $RefreshSig$();',
@@ -352,13 +354,19 @@ describe('oxc preeval transforms', () => {
         filename
       );
 
-      expect(code).not.toContain('$RefreshReg$');
-      expect(code).not.toContain('$RefreshSig$');
-      expect(code).not.toContain('_s(');
+      // top-level $Refresh* declarations and call sites are gone…
+      expect(code).not.toContain('var _s =');
+      expect(code).not.toContain('function $RefreshReg$');
+      expect(code).not.toContain('function $RefreshSig$');
+      expect(code).not.toMatch(/^\$RefreshReg\$\(/m);
+      // …but the callable Component body stays intact, even though it
+      // references the now-removed `_s` helper. Component is never called
+      // during preeval, so the dangling reference is harmless.
       expect(code).toContain('function Component()');
+      expect(code).toContain('_s();');
     });
 
-    it('removes promise callback chains using forbidden globals', () => {
+    it('preserves promise callbacks whose bodies touch forbidden globals (deferred body)', () => {
       const code = removeDangerousCodeWithOxc(
         [
           "const base = Promise.resolve('ok');",
@@ -368,9 +376,9 @@ describe('oxc preeval transforms', () => {
         filename
       );
 
-      expect(code).not.toContain('.then');
-      expect(code).not.toContain('setTimeout');
+      expect(code).toContain('base.then(() => setTimeout(() => {}));');
       expect(code).toContain('keep');
+      expect(() => stripTypesAndJsxWithOxc(code, filename)).not.toThrow();
     });
 
     it('replaces JSX with null', () => {
@@ -462,6 +470,215 @@ describe('oxc preeval transforms', () => {
       );
 
       expect(code).toBe('function Component() { return null; }');
+    });
+
+    it('preserves class methods whose name matches a forbidden global', () => {
+      const code = removeDangerousCodeWithOxc(
+        [
+          'export class Api {',
+          '  fetch() { return 1; }',
+          '  setTimeout() { return 2; }',
+          '  keep() { return 3; }',
+          '}',
+        ].join('\n'),
+        filename
+      );
+
+      expect(code).toContain('fetch() { return 1; }');
+      expect(code).toContain('setTimeout() { return 2; }');
+      expect(code).toContain('keep() { return 3; }');
+      expect(() => stripTypesAndJsxWithOxc(code, filename)).not.toThrow();
+    });
+
+    it('preserves class fields whose name matches a forbidden global', () => {
+      const code = removeDangerousCodeWithOxc(
+        [
+          'export class Api {',
+          '  fetch = 1;',
+          '  setTimeout = 2;',
+          '  keep = 3;',
+          '}',
+        ].join('\n'),
+        filename
+      );
+
+      expect(code).toContain('fetch = 1;');
+      expect(code).toContain('setTimeout = 2;');
+      expect(code).toContain('keep = 3;');
+      expect(() => stripTypesAndJsxWithOxc(code, filename)).not.toThrow();
+    });
+
+    it('preserves object property keys whose name matches a forbidden global', () => {
+      const code = removeDangerousCodeWithOxc(
+        'export default { fetch: 1, setTimeout: 2, keep: 3 };',
+        filename
+      );
+
+      expect(code).toContain('fetch: 1');
+      expect(code).toContain('setTimeout: 2');
+      expect(code).toContain('keep: 3');
+      expect(() => stripTypesAndJsxWithOxc(code, filename)).not.toThrow();
+    });
+
+    it('does not skip computed property keys that reference forbidden globals', () => {
+      const code = removeDangerousCodeWithOxc(
+        [
+          'const dangerous = { [fetch]: 1 };',
+          'const keep = 1;',
+        ].join('\n'),
+        filename
+      );
+
+      expect(code).not.toContain('[fetch]');
+      expect(code).not.toContain('dangerous');
+      expect(code).toContain('const keep = 1;');
+    });
+
+    it('replaces shorthand object property values referencing forbidden globals with undefined', () => {
+      const code = removeDangerousCodeWithOxc(
+        'export default { fetch, keep: 1 };',
+        filename
+      );
+
+      expect(code).toContain('fetch: undefined');
+      expect(code).toContain('keep: 1');
+      expect(code).not.toMatch(/\{\s*,/);
+      expect(() => stripTypesAndJsxWithOxc(code, filename)).not.toThrow();
+    });
+
+    it('replaces explicit object property values referencing forbidden globals with undefined', () => {
+      const code = removeDangerousCodeWithOxc(
+        'export default { sub: setTimeout, keep: 1 };',
+        filename
+      );
+
+      expect(code).toContain('sub: undefined');
+      expect(code).toContain('keep: 1');
+      expect(code).not.toMatch(/:\s*,/);
+      expect(() => stripTypesAndJsxWithOxc(code, filename)).not.toThrow();
+    });
+
+    it('preserves shorthand re-exports of locally-bound helpers transitively touching forbidden globals', () => {
+      const code = removeDangerousCodeWithOxc(
+        [
+          'let initEventListener = () => {',
+          '  window.addEventListener("message", (event) => {',
+          '    setTimeout(() => notify(event.data), 50);',
+          '  });',
+          '  initEventListener = () => {};',
+          '};',
+          'const listeners = new Set();',
+          'const subscribe = (fn) => { initEventListener(); listeners.add(fn); };',
+          'const unsubscribe = (fn) => { listeners.delete(fn); };',
+          'export default { subscribe, unsubscribe };',
+        ].join('\n'),
+        filename
+      );
+
+      expect(code).toContain('export default { subscribe, unsubscribe }');
+      expect(code).not.toMatch(/\{\s*,/);
+      expect(() => stripTypesAndJsxWithOxc(code, filename)).not.toThrow();
+    });
+
+    it('preserves an exported arrow function whose body references a forbidden global (deferred body)', () => {
+      const code = removeDangerousCodeWithOxc(
+        [
+          'export const isFlagPresent = (flag) =>',
+          '  globalThis.window && new RegExp(`[?&]${flag}\\b`).test(window.location.search);',
+        ].join('\n'),
+        filename
+      );
+
+      expect(code).toContain('export const isFlagPresent = (flag) =>');
+      expect(code).toContain('globalThis.window');
+      expect(code).toContain('window.location.search');
+      expect(() => stripTypesAndJsxWithOxc(code, filename)).not.toThrow();
+    });
+
+    it('preserves an exported arrow whose body calls a forbidden identifier (deferred body)', () => {
+      const code = removeDangerousCodeWithOxc(
+        'export const fetchProxy = (...args) => fetch(...args);',
+        filename
+      );
+
+      expect(code).toContain('export const fetchProxy = (...args) => fetch(...args)');
+      expect(() => stripTypesAndJsxWithOxc(code, filename)).not.toThrow();
+    });
+
+    it('preserves an exported function declaration whose body references a forbidden global', () => {
+      const code = removeDangerousCodeWithOxc(
+        [
+          'export function isFlagPresent(flag) {',
+          '  return Boolean(window.location.search.includes(flag));',
+          '}',
+        ].join('\n'),
+        filename
+      );
+
+      expect(code).toContain('export function isFlagPresent(flag)');
+      expect(code).toContain('window.location.search');
+      expect(() => stripTypesAndJsxWithOxc(code, filename)).not.toThrow();
+    });
+
+    it('preserves a detached named export whose backing function references a forbidden global', () => {
+      const code = removeDangerousCodeWithOxc(
+        [
+          'const isFlagPresent = (flag) => window.location.search.includes(flag);',
+          'export { isFlagPresent };',
+        ].join('\n'),
+        filename
+      );
+
+      expect(code).toContain('const isFlagPresent = (flag) => window.location.search.includes(flag)');
+      expect(code).toContain('export { isFlagPresent }');
+      expect(() => stripTypesAndJsxWithOxc(code, filename)).not.toThrow();
+    });
+
+    it('preserves a class method body that references forbidden globals', () => {
+      const code = removeDangerousCodeWithOxc(
+        [
+          'export class Storage {',
+          '  read(key) {',
+          '    return localStorage.getItem(key);',
+          '  }',
+          '}',
+        ].join('\n'),
+        filename
+      );
+
+      expect(code).toContain('read(key)');
+      expect(code).toContain('localStorage.getItem(key)');
+      expect(() => stripTypesAndJsxWithOxc(code, filename)).not.toThrow();
+    });
+
+    it('still strips immediately-invoked function expressions that touch forbidden globals', () => {
+      const code = removeDangerousCodeWithOxc(
+        [
+          'const details = (() => {',
+          '  document.body.style.overflowY = "hidden";',
+          '  return { panel: 1 };',
+          '})();',
+          'const keep = 1;',
+        ].join('\n'),
+        filename
+      );
+
+      expect(code).not.toContain('document.body.style.overflowY');
+      expect(code).toContain('keep');
+      expect(() => stripTypesAndJsxWithOxc(code, filename)).not.toThrow();
+    });
+
+    it('preserves sibling declarators in the same exported declaration when one top-level initializer references a forbidden global', () => {
+      const code = removeDangerousCodeWithOxc(
+        'export const dangerous = window.location.search, keep = 1;',
+        filename
+      );
+
+      expect(code).toContain('export');
+      expect(code).toContain('dangerous = undefined');
+      expect(code).toContain('keep = 1');
+      expect(code).not.toContain('window.location');
+      expect(() => stripTypesAndJsxWithOxc(code, filename)).not.toThrow();
     });
   });
 });

@@ -22,10 +22,10 @@ describe('collectOxcTemplateDependencies', () => {
 
     const result = collectOxcTemplateDependencies(code, filename, true);
 
-    expect(result.code).toContain('const _exp = () => 42;');
-    expect(result.code).toContain('const _exp2 = () => "test";');
+    expect(result.code).toContain('const _exp = () => (42);');
+    expect(result.code).toContain('const _exp2 = () => ("test");');
     expect(result.code).toContain('"result"');
-    expect(result.code).toContain('const _exp4 = () => 21 * x;');
+    expect(result.code).toContain('const _exp4 = () => (21 * x);');
     expect(result.code).toContain(
       'tag`${_exp()}${_exp2()}${_exp3()}${_exp4()}`'
     );
@@ -104,7 +104,7 @@ describe('collectOxcTemplateDependencies', () => {
       source: '(props) => props.value + theme',
     });
     expect(result.code).toContain(
-      'const _exp = () => (props) => props.value + theme;'
+      'const _exp = () => ((props) => props.value + theme);'
     );
   });
 
@@ -131,7 +131,7 @@ describe('collectOxcTemplateDependencies', () => {
         '}',
       ].join('\n'),
     });
-    expect(result.code).toContain('const _exp = () => (props) => {');
+    expect(result.code).toContain('const _exp = () => ((props) => {');
     expect(result.code).toContain('const lines = Math.ceil(props.value.length / 55);');
     expect(result.code).toContain('return `');
     expect(result.code).toContain('${11 + lines * 24}px');
@@ -154,7 +154,7 @@ describe('collectOxcTemplateDependencies', () => {
 
     expect(result.code).toContain('let arg = str;');
     expect(result.code).toContain('let variable = arg + "2";');
-    expect(result.code).toContain('const _exp = () => variable;');
+    expect(result.code).toContain('const _exp = () => (variable);');
     expect(result.code).toContain('tag`${_exp()}`');
   });
 
@@ -171,7 +171,7 @@ describe('collectOxcTemplateDependencies', () => {
 
     expect(result.code).toContain('let result = "result";');
     expect(result.code).toContain('let { variable } = { variable: result };');
-    expect(result.code).toContain('const _exp = () => variable;');
+    expect(result.code).toContain('const _exp = () => (variable);');
   });
 
   it('preserves importedFrom after local hoisting', () => {
@@ -206,7 +206,7 @@ describe('collectOxcTemplateDependencies', () => {
 
     const result = collectOxcTemplateDependencies(code, filename, true);
 
-    expect(result.code).toContain('const _exp = () => "blue";');
+    expect(result.code).toContain('const _exp = () => ("blue");');
     expect(result.code).not.toContain('let color =');
     expect(result.code).not.toContain('let val =');
   });
@@ -223,7 +223,7 @@ describe('collectOxcTemplateDependencies', () => {
 
     const result = collectOxcTemplateDependencies(code, filename, true);
 
-    expect(result.code).toContain('const _exp = () => 5;');
+    expect(result.code).toContain('const _exp = () => (5);');
     expect(result.code).not.toContain('let color =');
   });
 
@@ -243,7 +243,7 @@ describe('collectOxcTemplateDependencies', () => {
     const result = collectOxcTemplateDependencies(code, filename, true);
 
     expect(result.code).toContain(
-      `const _exp = () => ({\"fontSize\":12,\"fontWeight\":\"bold\"});`
+      `const _exp = () => (({\"fontSize\":12,\"fontWeight\":\"bold\"}));`
     );
   });
 
@@ -259,7 +259,36 @@ describe('collectOxcTemplateDependencies', () => {
 
     const result = collectOxcTemplateDependencies(code, filename, true);
 
-    expect(result.code).toContain('const _exp = () => 2;');
+    expect(result.code).toContain('const _exp = () => (2);');
+  });
+
+  it('parenthesizes hoisted object-literal interpolations so the body is an expression', () => {
+    const code = dedent`
+      import { dynamic } from '../__fixtures__/slugify';
+
+      const template = tag\`${'${{ value: dynamic }}'}\`;
+    `;
+
+    const result = collectOxcTemplateDependencies(code, filename, true);
+
+    expect(result.code).toContain('const _exp = () => ({ value: dynamic });');
+    expect(result.code).not.toContain('const _exp = () => { value: dynamic };');
+    expect(() =>
+      // eslint-disable-next-line no-new-func
+      new Function(`const dynamic = 1; return (() => ({ value: dynamic }))()`)()
+    ).not.toThrow();
+  });
+
+  it('parenthesizes hoisted sequence-expression interpolations so commas survive', () => {
+    const code = dedent`
+      import { sideEffect, value } from '../__fixtures__/slugify';
+
+      const template = tag\`${'${(sideEffect(), value)}'}\`;
+    `;
+
+    const result = collectOxcTemplateDependencies(code, filename, true);
+
+    expect(result.code).toContain('const _exp = () => ((sideEffect(), value));');
   });
 
   it('does not inline tagged-template root objects into selector helpers', () => {
@@ -276,8 +305,8 @@ describe('collectOxcTemplateDependencies', () => {
 
     const result = collectOxcTemplateDependencies(code, filename, true);
 
-    expect(result.code).toContain('const _exp = () => classes.small;');
-    expect(result.code).toContain('const _exp2 = () => classes.contrast;');
+    expect(result.code).toContain('const _exp = () => (classes.small);');
+    expect(result.code).toContain('const _exp2 = () => (classes.contrast);');
     expect(result.code).not.toContain('const _exp = () => ({');
     expect(result.code).not.toContain('const _exp2 = () => ({');
   });

@@ -778,14 +778,36 @@ const isBindingPosition = (node: Node, parent: Node | null): boolean => {
     return true;
   }
 
+  if (
+    parent.type === 'ExportSpecifier' &&
+    (parent.local === node || parent.exported === node)
+  ) {
+    return true;
+  }
+
   return false;
 };
 
-const isPropertyOnlyIdentifier = (node: Node, parent: Node | null): boolean =>
-  !!parent &&
-  parent.type === 'MemberExpression' &&
-  parent.property === node &&
-  !parent.computed;
+const isPropertyOnlyIdentifier = (node: Node, parent: Node | null): boolean => {
+  if (!parent || parent.computed) {
+    return false;
+  }
+
+  if (parent.type === 'MemberExpression' && parent.property === node) {
+    return true;
+  }
+
+  if (
+    (parent.type === 'Property' ||
+      parent.type === 'MethodDefinition' ||
+      parent.type === 'PropertyDefinition') &&
+    parent.key === node
+  ) {
+    return true;
+  }
+
+  return false;
+};
 
 const isTypeContext = (ancestors: Node[]): boolean =>
   ancestors.some(
@@ -846,6 +868,96 @@ const findRemovableOwner = (node: Node, ancestors: Node[]): Node => {
   }
 
   return owner;
+};
+
+type ExportedBindingProtection = {
+  start: number;
+  end: number;
+  value: string;
+};
+
+const collectReExportedLocalNames = (program: Program): Set<string> => {
+  const names = new Set<string>();
+  for (const stmt of program.body) {
+    if (
+      stmt.type !== 'ExportNamedDeclaration' ||
+      stmt.declaration ||
+      stmt.source
+    ) {
+      continue;
+    }
+    for (const spec of stmt.specifiers) {
+      if (
+        spec.type === 'ExportSpecifier' &&
+        spec.local.type === 'Identifier'
+      ) {
+        names.add(spec.local.name);
+      }
+    }
+  }
+  return names;
+};
+
+// When an offending identifier sits inside the value of a top-level export,
+// removing the surrounding declaration would strip the export binding too.
+// ESM linker then fails on consumers' `import { name } from '...'` because the
+// named export no longer exists. To keep the binding alive, replace just the
+// value (declarator init or default-export expression) with `undefined`.
+const findExportedBindingProtection = (
+  node: Node,
+  ancestors: Node[],
+  reExportedLocalNames: Set<string>
+): ExportedBindingProtection | null => {
+  for (let idx = ancestors.length - 1; idx >= 0; idx -= 1) {
+    const ancestor = ancestors[idx];
+
+    if (ancestor.type === 'ExportDefaultDeclaration') {
+      const decl = ancestor.declaration;
+      if (decl && decl !== node && 'start' in decl && 'end' in decl) {
+        return { start: decl.start, end: decl.end, value: 'undefined' };
+      }
+      return null;
+    }
+
+    if (ancestor.type !== 'VariableDeclarator') {
+      continue;
+    }
+
+    if (
+      ancestor.id.type !== 'Identifier' ||
+      !ancestor.init ||
+      ancestor.init === node
+    ) {
+      return null;
+    }
+
+    const varDecl = ancestors[idx - 1];
+    const wrapper = ancestors[idx - 2] ?? null;
+
+    if (varDecl?.type !== 'VariableDeclaration') {
+      return null;
+    }
+
+    const isDirectExport =
+      wrapper?.type === 'ExportNamedDeclaration' &&
+      wrapper.declaration === varDecl;
+    const isTopLevelDeclaration =
+      wrapper === null || wrapper?.type === 'Program';
+    const isReExported =
+      isTopLevelDeclaration && reExportedLocalNames.has(ancestor.id.name);
+
+    if (!isDirectExport && !isReExported) {
+      return null;
+    }
+
+    return {
+      start: ancestor.init.start,
+      end: ancestor.init.end,
+      value: 'undefined',
+    };
+  }
+
+  return null;
 };
 
 const findPromiseCallbackOwner = (ancestors: Node[]): Node | null => {
@@ -1213,6 +1325,57 @@ const isFunctionLikeNode = (node: Node): node is OxcFunctionLikeNode =>
   node.type === 'FunctionExpression' ||
   node.type === 'ArrowFunctionExpression';
 
+const isImmediatelyInvokedFunction = (
+  fnNode: Node,
+  ancestors: Node[],
+  fnIndex: number
+): boolean => {
+  // Walk past any ParenthesizedExpression / SequenceExpression wrappers that
+  // sit between the function and its enclosing CallExpression. oxc-parser
+  // preserves ParenthesizedExpression nodes, so `(() => {...})()` shows up
+  // as CallExpression -> ParenthesizedExpression -> ArrowFunctionExpression.
+  let child: Node = fnNode;
+  for (let idx = fnIndex - 1; idx >= 0; idx -= 1) {
+    const ancestor = ancestors[idx];
+    if (
+      ancestor.type === 'ParenthesizedExpression' &&
+      'expression' in ancestor &&
+      ancestor.expression === child
+    ) {
+      child = ancestor;
+      continue;
+    }
+    if (
+      ancestor.type === 'SequenceExpression' &&
+      Array.isArray(ancestor.expressions) &&
+      ancestor.expressions[ancestor.expressions.length - 1] === child
+    ) {
+      child = ancestor;
+      continue;
+    }
+    return ancestor.type === 'CallExpression' && ancestor.callee === child;
+  }
+  return false;
+};
+
+// A reference is "deferred" when it lives inside a function body that is
+// not immediately invoked. Module preeval reads exports without calling
+// them, so deferred references never run and must not be sanitized — that
+// would silently drop the binding (or remove the entire export) and break
+// importers that expect the function to be callable.
+const isInDeferredFunctionScope = (ancestors: Node[]): boolean => {
+  for (let idx = ancestors.length - 1; idx >= 0; idx -= 1) {
+    const ancestor = ancestors[idx];
+    if (!isFunctionLikeNode(ancestor)) {
+      continue;
+    }
+    if (!isImmediatelyInvokedFunction(ancestor, ancestors, idx)) {
+      return true;
+    }
+  }
+  return false;
+};
+
 const findFunctionReplacement = (ancestors: Node[]): Replacement | null => {
   const renderMethod = findLastAncestor(
     ancestors,
@@ -1305,6 +1468,7 @@ export const removeDangerousCodeWithOxc = (
   const windowScopedNames = windowTokenRe.test(code)
     ? collectWindowScopedNames(program)
     : new Set<string>();
+  const reExportedLocalNames = collectReExportedLocalNames(program);
 
   let discoveredNewDerivedBinding = true;
   while (discoveredNewDerivedBinding) {
@@ -1436,6 +1600,10 @@ export const removeDangerousCodeWithOxc = (
       return;
     }
 
+    if (!isAlwaysForbidden && isInDeferredFunctionScope(ancestors)) {
+      return;
+    }
+
     if (isBindingPosition(node, parent) && !isAlwaysForbidden) {
       return;
     }
@@ -1470,6 +1638,15 @@ export const removeDangerousCodeWithOxc = (
       return;
     }
 
+    if (parent?.type === 'Property' && parent.value === node) {
+      replacements.push({
+        start: node.start,
+        end: node.end,
+        value: parent.shorthand ? `${node.name}: undefined` : 'undefined',
+      });
+      return;
+    }
+
     const grandparent = ancestors[ancestors.length - 2] ?? null;
     if (
       parent?.type === 'MemberExpression' &&
@@ -1482,6 +1659,16 @@ export const removeDangerousCodeWithOxc = (
         end: grandparent.end,
         value: '...{}',
       });
+      return;
+    }
+
+    const exportProtection = findExportedBindingProtection(
+      node,
+      ancestors,
+      reExportedLocalNames
+    );
+    if (exportProtection) {
+      replacements.push(exportProtection);
       return;
     }
 

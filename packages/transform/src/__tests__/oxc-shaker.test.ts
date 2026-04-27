@@ -545,4 +545,44 @@ describe('shakeOxcToESM', () => {
     expect(code).toContain('Suffix');
     expect(code).toContain('export default value');
   });
+
+  it('keeps imports referenced inside TS expression-wrapper nodes', () => {
+    const { code, imports } = run(
+      ['textStyles'],
+      `
+        import { themeVars } from './theme';
+        import { transition } from './animation';
+
+        export const textStyles = {
+          base: {
+            color: themeVars.textColor,
+            transition: \`color \${transition}\`,
+          },
+        } as const;
+      `
+    );
+
+    expect(code).toContain("import { themeVars } from './theme'");
+    expect(code).toContain("import { transition } from './animation'");
+    expect(imports.get('./theme')).toEqual(['themeVars']);
+    expect(imports.get('./animation')).toEqual(['transition']);
+  });
+
+  it('keeps imports referenced inside TSSatisfiesExpression and TSNonNullExpression', () => {
+    const { code } = run(
+      ['result'],
+      `
+        import { config } from './config';
+        import { maybe } from './maybe';
+
+        export const result = {
+          ok: config.value,
+          must: maybe!.field,
+        } satisfies Record<string, unknown>;
+      `
+    );
+
+    expect(code).toContain("import { config } from './config'");
+    expect(code).toContain("import { maybe } from './maybe'");
+  });
 });

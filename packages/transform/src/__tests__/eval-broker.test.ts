@@ -439,7 +439,7 @@ describe('EvalBroker', () => {
     rmSync(root, { recursive: true, force: true });
   });
 
-  it('strips browser globals from prepared output for __wywPreval-only loads', async () => {
+  it('strips top-level browser-global expressions from prepared __wywPreval-only loads', async () => {
     const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
     const dep = join(root, 'dep.js');
     writeFileSync(
@@ -467,8 +467,10 @@ describe('EvalBroker', () => {
       request: dep,
     });
 
-    expect(loaded.code).not.toContain('document');
-    expect(loaded.code).not.toContain('window');
+    // Top-level forbidden references are stripped (executed at module load).
+    expect(loaded.code).not.toContain('window.location.href');
+    // Deferred function bodies are kept — they don't run during preeval.
+    expect(loaded.code).toContain('document.createTreeWalker');
 
     broker.dispose();
     rmSync(root, { recursive: true, force: true });
