@@ -12,7 +12,7 @@ import path from 'node:path';
 import { cwd, exit } from 'node:process';
 
 import { globSync } from 'glob';
-import { transform } from 'oxc-transform';
+import { transformSync } from 'oxc-transform';
 
 const DEFAULT_EXTS = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.json'];
 const KNOWN_EXTS = new Set([
@@ -78,7 +78,7 @@ for (const filename of files) {
   const outRelative = relative.replace(/\.[^.]+$/, outputExtension);
   const outFilename = path.resolve(outDir, outRelative);
   const source = readFileSync(filename, 'utf8');
-  const result = transform(filename, source, {
+  const result = transformSync(filename, source, {
     cwd: packageRoot,
     jsx: {
       runtime: 'classic',

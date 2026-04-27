@@ -8,8 +8,8 @@
     "cosmiconfig": "^8.0.0",
     "happy-dom": "^20.1.0",
     "minimatch": "^9.0.5",
-    "oxc-parser": "0.86.0",
-    "oxc-transform": "0.86.0",
+    "oxc-parser": "0.127.0",
+    "oxc-transform": "0.127.0",
     "source-map": "^0.7.4",
     "stylis": "^4.3.0",
     "ts-invariant": "^0.10.3"

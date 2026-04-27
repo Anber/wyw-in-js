@@ -1463,7 +1463,7 @@ describe('EvalBroker', () => {
     });
 
 
-    it('builds direct proxy modules for requested exports from mixed re-export barrels', async () => {
+  it('builds direct proxy modules for requested exports from mixed re-export barrels', async () => {
       const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
       const entry = join(root, 'entry.js');
       const barrel = join(root, 'barrel.js');
@@ -1527,6 +1527,94 @@ describe('EvalBroker', () => {
       const result = await broker.evaluate(entrypoint);
 
       expect(result.values?.get('value')).toBe(41);
+
+      broker.dispose();
+      rmSync(root, { recursive: true, force: true });
+    });
+
+    it('widens shared dependency export surface from cached parent requests', async () => {
+      const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
+      const first = join(root, 'first.js');
+      const second = join(root, 'second.js');
+      const dep = join(root, 'dep.js');
+
+      writeFileSync(
+        dep,
+        [
+          'const values = (() => ({ foo: "foo", bar: "bar" }))();',
+          'export const foo = values.foo;',
+          'export const bar = values.bar;',
+        ].join('\n')
+      );
+      writeFileSync(
+        first,
+        [
+          "import { foo } from './dep.js';",
+          'export const value = foo;',
+        ].join('\n')
+      );
+      writeFileSync(
+        second,
+        [
+          "import { bar } from './dep.js';",
+          'export const value = bar;',
+        ].join('\n')
+      );
+      const services = createServices(root, first);
+      services.cache.add(
+        'entrypoints',
+        first,
+        {
+          dependencies: new Map([
+            [
+              './dep.js',
+              {
+                only: ['foo'],
+                resolved: dep,
+                source: './dep.js',
+              },
+            ],
+          ]),
+        } as any
+      );
+      services.cache.add(
+        'entrypoints',
+        second,
+        {
+          dependencies: new Map([
+            [
+              './dep.js',
+              {
+                only: ['bar'],
+                resolved: dep,
+                source: './dep.js',
+              },
+            ],
+          ]),
+        } as any
+      );
+
+      const broker = new EvalBroker(
+        services,
+        jest.fn(async (what: string, importer: string) => {
+          if (what.startsWith('.')) {
+            return resolve(dirname(importer), what);
+          }
+          return null;
+        })
+      );
+      const privateBroker = getPrivateBroker(broker);
+      privateBroker.onlyByModule.set(dep, ['foo']);
+
+      const loaded = await privateBroker.loadModule({
+        id: dep,
+        importerId: first,
+        request: './dep.js',
+      });
+
+      expect(loaded.only).toEqual(expect.arrayContaining(['foo', 'bar']));
+      expect(loaded.code).toContain('foo');
+      expect(loaded.code).toContain('bar');
 
       broker.dispose();
       rmSync(root, { recursive: true, force: true });

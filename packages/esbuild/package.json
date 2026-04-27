@@ -5,7 +5,7 @@
   "dependencies": {
     "@wyw-in-js/shared": "workspace:*",
     "@wyw-in-js/transform": "workspace:*",
-    "oxc-transform": "0.86.0"
+    "oxc-transform": "0.127.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

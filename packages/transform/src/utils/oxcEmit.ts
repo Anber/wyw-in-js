@@ -54,7 +54,8 @@ type OxcTransform = (
 ) => OxcTransformResult;
 
 type OxcTransformModule = {
-  transform: OxcTransform;
+  transform?: OxcTransform;
+  transformSync?: OxcTransform;
 };
 
 let oxcTransform: OxcTransform | null = null;
@@ -209,7 +210,15 @@ const loadOxcTransform = (): OxcTransform => {
       oxcTransformModule = loadNativeOxcTransform(requireFromHere);
     }
 
-    oxcTransform = oxcTransformModule.transform;
+    const syncTransform =
+      oxcTransformModule.transformSync ?? oxcTransformModule.transform;
+    if (!syncTransform) {
+      throw new Error(
+        '[wyw-in-js] Loaded oxc-transform module does not expose a sync transform API.'
+      );
+    }
+
+    oxcTransform = syncTransform;
   }
 
   return oxcTransform;

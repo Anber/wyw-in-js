@@ -230,6 +230,15 @@ type PreparedCacheEntry = PreparedModule & {
   exports?: Record<string, SerializedValue>;
 };
 
+type CachedDependencyRecord = {
+  only?: string[];
+  resolved: string | null;
+};
+
+type CachedDependencyOwner = {
+  dependencies?: Map<string, CachedDependencyRecord>;
+};
+
 type DirectBarrelBinding =
   | {
       kind: 'named';
@@ -2170,7 +2179,7 @@ export class EvalBroker {
       cached = undefined;
     }
 
-    let requiredOnly = this.onlyByModule.get(id) ?? ['*'];
+    let requiredOnly = this.mergeKnownDependencyOnly(id);
     const cachedEntrypoint = this.services.cache.get('entrypoints', id) as
       | {
           evaluated?: boolean;
@@ -2530,6 +2539,36 @@ export class EvalBroker {
       pending.reject(error);
     });
     this.pending.clear();
+  }
+
+  private mergeKnownDependencyOnly(id: string): string[] {
+    const storedOnly = this.onlyByModule.get(id) ?? ['*'];
+    if (storedOnly.includes('*')) {
+      return storedOnly;
+    }
+
+    let mergedOnly = storedOnly;
+    for (const cachedEntrypoint of this.services.cache.entrypoints.values() as Iterable<CachedDependencyOwner>) {
+      const dependencies = cachedEntrypoint.dependencies;
+      if (!dependencies) {
+        continue;
+      }
+
+      for (const dependency of dependencies.values()) {
+        if (dependency.resolved !== id || !dependency.only) {
+          continue;
+        }
+
+        mergedOnly = mergeOnly(mergedOnly, dependency.only);
+        if (mergedOnly.includes('*')) {
+          this.onlyByModule.set(id, mergedOnly);
+          return mergedOnly;
+        }
+      }
+    }
+
+    this.onlyByModule.set(id, mergedOnly);
+    return mergedOnly;
   }
 }
 

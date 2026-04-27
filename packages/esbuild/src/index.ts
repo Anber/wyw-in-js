@@ -9,8 +9,10 @@ import { dirname, isAbsolute, join, parse, posix } from 'path';
 
 import type { Plugin, TransformOptions, Loader } from 'esbuild';
 import { transformSync as esbuildTransformSync } from 'esbuild';
-import type { TransformOptions as OxcTransformOptions } from 'oxc-transform';
-import { transform as oxcTransformSync } from 'oxc-transform';
+import {
+  transformSync as oxcTransformSync,
+  type TransformOptions as OxcTransformOptions,
+} from 'oxc-transform';
 
 import type {
   PluginOptions,
