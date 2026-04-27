@@ -292,6 +292,91 @@ const isEvalTimeoutError = (error: unknown): boolean => {
   return false;
 };
 
+// ---------------------------------------------------------------------------
+// WYW_DEBUG eval dump
+// ---------------------------------------------------------------------------
+
+const resolveDebugEvalDir = (): string | undefined => {
+  const override = process.env.WYW_DUMP_EVALS_DIR;
+  if (override) {
+    return path.resolve(override);
+  }
+
+  const base = process.env.WYW_DUMP_EVALS;
+  if (!base) {
+    return undefined;
+  }
+
+  const ts = new Date()
+    .toISOString()
+    .slice(0, 19)
+    .replace(/[-:T]/g, (c) => (c === 'T' ? '-' : ''));
+  const root = base === '1' || base === 'true' ? './tmp' : base;
+  return path.resolve(root, `wyw-dump-evals-${ts}`);
+};
+
+const debugEvalDir = resolveDebugEvalDir();
+let debugEvalDirReady = false;
+
+const ensureDebugEvalDir = () => {
+  if (!debugEvalDir || debugEvalDirReady) {
+    return;
+  }
+  fs.mkdirSync(debugEvalDir, { recursive: true });
+  debugEvalDirReady = true;
+};
+
+let debugEvalSeq = 0;
+
+const dumpEvalCode = (
+  id: string,
+  code: string,
+  only: string[],
+  source: string,
+  evalSeq: number
+) => {
+  if (!debugEvalDir) {
+    return;
+  }
+  ensureDebugEvalDir();
+  const seq = String(++debugEvalSeq).padStart(5, '0');
+  const eSeq = String(evalSeq).padStart(5, '0');
+  const relId = path.relative(process.cwd(), stripQueryAndHash(id));
+  const safeName = relId.replace(/[/\\]/g, '__').replace(/^__/, '');
+  const filename = `seq${seq}_eval${eSeq}_${safeName}.js`;
+  const header = [
+    `// id: ${id}`,
+    `// only: ${JSON.stringify(only)}`,
+    `// source: ${source}`,
+    `// seq: ${seq}`,
+    `// eval: #${eSeq}`,
+    '',
+  ].join('\n');
+  fs.writeFileSync(path.join(debugEvalDir, filename), header + code);
+};
+
+let debugActionStream: fs.WriteStream | null = null;
+
+const debugAction = (event: Record<string, unknown>) => {
+  if (!debugEvalDir) {
+    return;
+  }
+  ensureDebugEvalDir();
+  if (!debugActionStream) {
+    debugActionStream = fs.createWriteStream(
+      path.join(debugEvalDir, 'actions.jsonl')
+    );
+  }
+  debugActionStream.write(`${JSON.stringify(event)}\n`);
+};
+
+const flushDebugStreams = () => {
+  debugActionStream?.end();
+  debugActionStream = null;
+};
+
+// ---------------------------------------------------------------------------
+
 const warnedUnknownImportsByServices = new WeakMap<Services, Set<string>>();
 
 const getWarnedUnknownImports = (services: Services): Set<string> => {
@@ -937,6 +1022,8 @@ export class EvalBroker {
 
   private readonly emittedDependencies = new Set<string>();
 
+  private evalSeq = 0;
+
   private happyDomDisabled = false;
 
   private happyDomDisableWarned = false;
@@ -969,6 +1056,14 @@ export class EvalBroker {
       this.resolveCache.clear();
       this.resolveInFlight.clear();
       this.onlyByModule.set(entrypoint.name, ['__wywPreval']);
+      this.evalSeq += 1;
+
+      debugAction({
+        type: 'eval:start',
+        evalSeq: this.evalSeq,
+        entrypoint: entrypoint.name,
+        ts: performance.now(),
+      });
 
       await this.ensureRunner();
       await this.initRunner(entrypoint);
@@ -980,6 +1075,14 @@ export class EvalBroker {
         },
         EVAL_TIMEOUT_MS
       );
+
+      debugAction({
+        type: 'eval:finish',
+        evalSeq: this.evalSeq,
+        entrypoint: entrypoint.name,
+        hasValues: Boolean(payload.values),
+        ts: performance.now(),
+      });
 
       if (payload.modules) {
         this.applyModuleExports(payload.modules);
@@ -1084,6 +1187,7 @@ export class EvalBroker {
     }
     this.lastInitKey = null;
     this.lastHappyDomEnabled = false;
+    flushDebugStreams();
   }
 
   private createRunnerProcess(): ChildProcessWithoutNullStreams {
@@ -1484,6 +1588,18 @@ export class EvalBroker {
 
   private async handleResolve(id: string, payload: ResolveRequestPayload) {
     const result = await this.resolveImport(payload);
+
+    debugAction({
+      type: 'resolve',
+      evalSeq: this.evalSeq,
+      specifier: payload.specifier,
+      importer: payload.importerId,
+      kind: payload.kind,
+      resolvedId: result.resolvedId ?? null,
+      external: result.external ?? false,
+      ts: performance.now(),
+    });
+
     await this.sendMessage({
       type: 'RESOLVE_RESULT',
       id,
@@ -2144,6 +2260,29 @@ export class EvalBroker {
 
   private async handleLoad(id: string, payload: LoadRequestPayload) {
     const prepared = await this.loadModule(payload);
+
+    if (debugEvalDir && prepared.code) {
+      dumpEvalCode(
+        payload.id,
+        prepared.code,
+        prepared.only,
+        prepared.hash ? `cache:${prepared.hash}` : 'fresh',
+        this.evalSeq
+      );
+    }
+
+    debugAction({
+      type: 'load',
+      evalSeq: this.evalSeq,
+      id: payload.id,
+      importer: payload.importerId ?? null,
+      only: prepared.only,
+      hasCode: Boolean(prepared.code),
+      hasExports: Boolean(prepared.exports),
+      hash: prepared.hash ?? null,
+      ts: performance.now(),
+    });
+
     await this.sendLoadResult(id, {
       id: payload.id,
       code: prepared.code,
