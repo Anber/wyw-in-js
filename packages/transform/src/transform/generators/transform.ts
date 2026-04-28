@@ -5,7 +5,10 @@ import { emitOxcCommonJS, stripTypesAndJsxWithOxc } from '../../utils/oxcEmit';
 import { runOxcPreevalStage } from '../../utils/oxcPreevalStage';
 import { shakeOxcToESM } from '../../utils/oxcShaker';
 import type { Entrypoint } from '../Entrypoint';
-import type { IEntrypointDependency } from '../Entrypoint.types';
+import type {
+  IEntrypointDependency,
+  IPreevalResult,
+} from '../Entrypoint.types';
 import type {
   ITransformAction,
   Services,
@@ -64,6 +67,55 @@ const normalizeOxcPreparedESM = (code: string): string =>
     .replace(/\n{2,}/g, '\n')
     .replace(/^const /gm, 'var ');
 
+const ensureOxcPreevalResult = (
+  services: Services,
+  item: Entrypoint,
+  originalAst: unknown | null
+): IPreevalResult => {
+  const cached = item.getPreevalResult();
+  if (cached) {
+    return cached;
+  }
+
+  const { loadedAndParsed } = item;
+  if (loadedAndParsed.evaluator === 'ignored') {
+    throw new Error('Cannot run Oxc preeval for an ignored entrypoint.');
+  }
+
+  const filename = loadedAndParsed.evalConfig.filename ?? item.name;
+  const { eventEmitter } = services;
+  const { pluginOptions } = services.options;
+  const root = services.options.root ?? process.cwd();
+
+  const preevalStageResult = eventEmitter.perf('transform:preeval', () => {
+    const result = runOxcPreevalStage(
+      loadedAndParsed.code,
+      {
+        filename,
+        root,
+      },
+      {
+        ...pluginOptions,
+        eventEmitter,
+      }
+    );
+
+    return {
+      ast: originalAst,
+      baseCode: result.baseCode,
+      code: result.code,
+      dependencyNames: result.dependencyNames,
+      metadata: result.metadata,
+      staticDependencies: result.staticDependencies,
+      staticValueCache: result.staticValueCache,
+      staticValueCandidates: result.staticValueCandidates,
+    };
+  });
+
+  item.setPreevalResult(preevalStageResult);
+  return preevalStageResult;
+};
+
 const prepareOxcCodeImpl = (
   services: Services,
   item: Entrypoint,
@@ -81,35 +133,11 @@ const prepareOxcCodeImpl = (
   const { pluginOptions } = services.options;
   const root = services.options.root ?? process.cwd();
 
-  let preevalStageResult = item.getPreevalResult();
-  if (!preevalStageResult) {
-    preevalStageResult = eventEmitter.perf('transform:preeval', () => {
-      const result = runOxcPreevalStage(
-        loadedAndParsed.code,
-        {
-          filename,
-          root,
-        },
-        {
-          ...pluginOptions,
-          eventEmitter,
-        }
-      );
-
-      return {
-        ast: originalAst,
-        baseCode: result.baseCode,
-        code: result.code,
-        dependencyNames: result.dependencyNames,
-        metadata: result.metadata,
-        staticDependencies: result.staticDependencies,
-        staticValueCache: result.staticValueCache,
-        staticValueCandidates: result.staticValueCandidates,
-      };
-    });
-
-    item.setPreevalResult(preevalStageResult);
-  }
+  const preevalStageResult = ensureOxcPreevalResult(
+    services,
+    item,
+    originalAst
+  );
 
   const transformMetadata = preevalStageResult.metadata;
   if (
@@ -224,22 +252,16 @@ export function* internalTransform(
 
   log('>> (%o)', only);
 
-  let [preparedCode, imports, metadata] = prepareFn(
+  if (loadedAndParsed.evaluator === oxcShaker) {
+    ensureOxcPreevalResult(this.services, this.entrypoint, null);
+    yield* resolveStaticOxcPreevalValues.call(this);
+  }
+
+  const [preparedCode, imports, metadata] = prepareFn(
     this.services,
     this.entrypoint,
     null
   );
-  if (loadedAndParsed.evaluator === oxcShaker) {
-    const didResolveStaticValues =
-      yield* resolveStaticOxcPreevalValues.call(this);
-    if (didResolveStaticValues) {
-      [preparedCode, imports, metadata] = prepareFn(
-        this.services,
-        this.entrypoint,
-        null
-      );
-    }
-  }
   let finalPreparedCode = preparedCode;
 
   if (loadedAndParsed.evaluator === oxcShaker) {

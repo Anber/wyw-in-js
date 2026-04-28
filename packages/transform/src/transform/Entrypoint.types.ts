@@ -36,6 +36,7 @@ export interface IPreevalResult {
   dependencyNames?: string[];
   metadata: WYWTransformMetadata | null;
   staticDependencies?: string[];
+  staticNullWYWMetaExtendsHelpers?: string[];
   staticValueCache?: Map<string, unknown>;
   staticValueCandidates?: Array<{
     imports: Array<{
