@@ -270,6 +270,11 @@ const getLang = (filename: string): 'js' | 'jsx' | 'ts' | 'tsx' | 'dts' => {
   return 'js';
 };
 
+const getCurrentNodeTarget = (): string => {
+  const [major] = process.versions.node.split('.');
+  return `node${major}`;
+};
+
 const assertOxcSuccess = (
   errors: { message: string; severity: string }[]
 ): void => {
@@ -291,7 +296,7 @@ export const stripTypesAndJsxWithOxc = (
     lang: getLang(filename),
     sourceType: 'module',
     sourcemap: options.sourcemap ?? false,
-    target: 'es2020',
+    target: getCurrentNodeTarget(),
     typescript: {
       allowNamespaces: true,
       onlyRemoveTypeImports: false,
