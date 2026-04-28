@@ -128,23 +128,49 @@ const isPreparedOnlySuperSet = (
 
 const hasPreparedExportKeys = (
   prepared: {
+    code?: string;
     exports?: Record<string, SerializedValue>;
   },
   requestedOnly: string[]
 ): boolean => {
-  if (!prepared.exports) {
+  const requestedKeys = requestedOnly.filter(
+    (key) => !isEvalOnlyKey(key) && key !== '*'
+  );
+
+  if (requestedKeys.length === 0) {
     return true;
   }
 
-  if (requestedOnly.includes('*')) {
-    return false;
+  if (!prepared.exports) {
+    if (!prepared.code) {
+      return false;
+    }
+
+    try {
+      const collected = collectOxcExportsAndImports(
+        prepared.code,
+        'prepared-module.js'
+      );
+      if (collected.reexports.some((reexport) => reexport.exported === '*')) {
+        return true;
+      }
+
+      const exportNames = new Set([
+        ...Object.keys(collected.exports),
+        ...collected.reexports
+          .filter((reexport) => reexport.exported !== '*')
+          .map((reexport) => reexport.exported),
+      ]);
+
+      return requestedKeys.every((key) => exportNames.has(key));
+    } catch {
+      return false;
+    }
   }
 
-  return requestedOnly
-    .filter((key) => !isEvalOnlyKey(key) && key !== '*')
-    .every((key) =>
-      Object.prototype.hasOwnProperty.call(prepared.exports, key)
-    );
+  return requestedKeys.every((key) =>
+    Object.prototype.hasOwnProperty.call(prepared.exports, key)
+  );
 };
 
 const isPreparedCacheHit = (
@@ -291,20 +317,37 @@ const getSerializableStaticImportKeys = (
   importerId?: string | null
 ): string[] | null => {
   const isStaticImportLoad = Boolean(request && importerId);
+  const requestedExports = requiredOnly.includes('*')
+    ? null
+    : requiredOnly.filter((key) => !isEvalOnlyKey(key) && key !== '*');
   const knownExports = collectKnownExportNames(
     services,
     id,
     cachedEntrypoint
   )?.filter((key) => !isEvalOnlyKey(key) && key !== '*');
 
+  if (isStaticImportLoad) {
+    if (
+      !requestedExports?.length ||
+      !knownExports?.length ||
+      !isSuperSet(cachedEntrypoint.evaluatedOnly ?? [], knownExports)
+    ) {
+      return null;
+    }
+
+    if (!requestedExports.every((key) => knownExports.includes(key))) {
+      return null;
+    }
+
+    return isSuperSet(cachedEntrypoint.evaluatedOnly ?? [], requestedExports)
+      ? requestedExports
+      : null;
+  }
+
   if (knownExports?.length) {
     return isSuperSet(cachedEntrypoint.evaluatedOnly ?? [], knownExports)
       ? knownExports
       : null;
-  }
-
-  if (isStaticImportLoad) {
-    return null;
   }
 
   const evaluatedOnly = cachedEntrypoint.evaluatedOnly ?? requiredOnly;
@@ -1180,6 +1223,64 @@ export class EvalBroker {
     this.importsByModule.set(id, imports ?? new Map());
   }
 
+  private getImportOnly(
+    importerId: string | null | undefined,
+    specifier: string
+  ): string[] {
+    const importsOnly = importerId
+      ? this.importsByModule.get(importerId)?.get(specifier)
+      : undefined;
+    const importerOnly = importerId
+      ? this.onlyByModule.get(importerId) ?? ['*']
+      : ['*'];
+    return importerOnly.includes('__wywPreval')
+      ? mergeOnly(importsOnly ?? ['*'], ['__wywPreval'])
+      : importsOnly ?? ['*'];
+  }
+
+  private getLoadRequestOnly(
+    id: string,
+    importerId: string | null | undefined,
+    request: string | null | undefined
+  ): string[] | null {
+    if (!request || !importerId || importerId === id) {
+      return null;
+    }
+
+    const imports = this.importsByModule.get(importerId);
+    if (!imports?.has(request)) {
+      return null;
+    }
+
+    const { root } = this.services.options;
+    const keyInfo = toImportKey({
+      source: request,
+      resolved: id,
+      root,
+    });
+    const override = getImportOverride(
+      this.services.options.pluginOptions.importOverrides,
+      keyInfo.key
+    );
+    let nextOnly = applyImportOverrideToOnly(
+      this.getImportOnly(importerId, request),
+      override
+    );
+    const cached = this.services.cache.get('entrypoints', id) as
+      | CachedEntrypointLike
+      | undefined;
+    if (
+      nextOnly.includes('__wywPreval') &&
+      cached?.evaluated &&
+      !cached.ignored &&
+      !hasCachedWywPrevalExport(this.services, id, cached)
+    ) {
+      nextOnly = nextOnly.filter((item) => item !== '__wywPreval');
+    }
+
+    return nextOnly;
+  }
+
   public async evaluate(
     entrypoint: Entrypoint,
     services?: Services
@@ -1848,10 +1949,7 @@ export class EvalBroker {
     const evalOptions = getEvalOptions(this.services);
     const stack = this.getResolveStack(importerId);
     const importsOnly = this.importsByModule.get(importerId)?.get(specifier);
-    const importerOnly = this.onlyByModule.get(importerId) ?? ['*'];
-    const only = importerOnly.includes('__wywPreval')
-      ? mergeOnly(importsOnly ?? ['*'], ['__wywPreval'])
-      : importsOnly ?? ['*'];
+    const only = this.getImportOnly(importerId, specifier);
     if (process.env.WYW_DEBUG_EVAL_RESOLVE && !importsOnly) {
       // eslint-disable-next-line no-console
       console.warn('[wyw-eval:resolve:only-miss]', {
@@ -2467,6 +2565,17 @@ export class EvalBroker {
     if (this.services.cache.consumeInvalidation(id)) {
       this.loadCache.delete(id);
       cached = undefined;
+    }
+
+    const loadRequestOnly = this.getLoadRequestOnly(id, importerId, request);
+    if (loadRequestOnly) {
+      const storedOnly = this.onlyByModule.get(id);
+      this.onlyByModule.set(
+        id,
+        storedOnly ? mergeOnly(storedOnly, loadRequestOnly) : loadRequestOnly
+      );
+      this.trackImporterDependency(importerId!, request!, id, loadRequestOnly);
+      this.emitDependency(importerId!, request!, id, loadRequestOnly);
     }
 
     let requiredOnly = this.mergeKnownDependencyOnly(id);

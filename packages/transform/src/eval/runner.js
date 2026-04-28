@@ -1007,7 +1007,8 @@ const resetSingleModuleState = (id, cachedModule = moduleCache.get(id)) => {
   moduleLastVariant.delete(id);
 };
 
-const isFullModuleLoad = (loaded) => !loaded.only || loaded.only.includes('*');
+const isFullModuleLoad = (loaded) =>
+  !loaded.only || (loaded.only.length === 1 && loaded.only[0] === '*');
 
 const getModuleVariant = (id, hash) => moduleVariants.get(id)?.get(hash);
 

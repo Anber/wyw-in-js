@@ -48,6 +48,7 @@ const options: Pick<
   extensions: ['.tsx'],
   features: {
     dangerousCodeRemover: true,
+    staticImportValues: true,
   },
   tagResolver: (source, imported) => {
     if (source !== 'test-package' || imported !== 'css') {

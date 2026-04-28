@@ -38,6 +38,21 @@ type OxcPreevalResult = {
 const DYNAMIC_IMPORT_RE = /\bimport(?:\s|\/\*[\s\S]*?\*\/)*\(/;
 const REQUIRE_CALL_RE = /\brequire(?:\s|\/\*[\s\S]*?\*\/)*\(/;
 
+const isEnvDisabled = (value: string): boolean =>
+  value === '0' || value === 'false' || value === 'no' || value === 'off';
+
+const isStaticImportValuesEnabled = (
+  features: StrictOptions['features'],
+  filename: string
+): boolean => {
+  const envValue = process.env.WYW_STATIC_IMPORT_VALUES?.trim().toLowerCase();
+  if (envValue) {
+    return !isEnvDisabled(envValue);
+  }
+
+  return isFeatureEnabled(features, 'staticImportValues', filename);
+};
+
 const parseSourceType = (
   code: string,
   filename: string
@@ -92,12 +107,16 @@ export const runOxcPreevalStage = (
       processor.doEvaltimeReplacement();
     })
   );
-  const staticValueNames = new Set(
-    processed.staticValues.map((item) => item.name)
+  const staticValuesEnabled = isStaticImportValuesEnabled(
+    options.features,
+    filename
   );
-  const evalDependencyNames = dependencyNames.filter(
-    (name) => !staticValueNames.has(name)
-  );
+  const staticValueNames = staticValuesEnabled
+    ? new Set(processed.staticValues.map((item) => item.name))
+    : null;
+  const evalDependencyNames = staticValuesEnabled
+    ? dependencyNames.filter((name) => !staticValueNames!.has(name))
+    : dependencyNames;
 
   let nextCode = eventEmitter.perf('transform:preeval:importMetaEnv', () =>
     replaceImportMetaEnvWithOxc(processed.code, filename)
@@ -136,9 +155,11 @@ export const runOxcPreevalStage = (
   }
 
   const staticValueCache = new Map<string, unknown>();
-  processed.staticValues.forEach(({ name, value }) => {
-    staticValueCache.set(name, value);
-  });
+  if (staticValuesEnabled) {
+    processed.staticValues.forEach(({ name, value }) => {
+      staticValueCache.set(name, value);
+    });
+  }
 
   return {
     baseCode: nextCode,
@@ -151,7 +172,9 @@ export const runOxcPreevalStage = (
       rules: {},
     },
     staticDependencies: [],
-    staticValueCandidates: processed.staticValueCandidates,
+    staticValueCandidates: staticValuesEnabled
+      ? processed.staticValueCandidates
+      : [],
     staticValueCache,
   };
 };
