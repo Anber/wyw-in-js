@@ -2509,6 +2509,70 @@ describe('EvalBroker', () => {
     rmSync(root, { recursive: true, force: true });
   });
 
+  it('nested sibling dependencies can widen a shared source module during link', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
+
+    writeFileSync(join(root, 'flag.js'), 'export const flag = 2;');
+    writeFileSync(
+      join(root, 'shared.js'),
+      [
+        "import { flag } from './flag.js';",
+        'export const narrow = flag * 10;',
+        'export const wide = flag * 20;',
+      ].join('\n')
+    );
+    writeFileSync(
+      join(root, 'direct.js'),
+      [
+        "import { narrow } from './shared.js';",
+        'export const direct = narrow;',
+      ].join('\n')
+    );
+    writeFileSync(
+      join(root, 'nested.js'),
+      [
+        "import { wide } from './shared.js';",
+        'export const nested = wide;',
+      ].join('\n')
+    );
+    writeFileSync(
+      join(root, 'parent.js'),
+      [
+        "import { direct } from './direct.js';",
+        "import { nested } from './nested.js';",
+        'export const parent = direct + nested;',
+      ].join('\n')
+    );
+    writeFileSync(
+      join(root, 'entry.js'),
+      [
+        "import { parent } from './parent.js';",
+        'export const __wywPreval = { parent: () => parent };',
+      ].join('\n')
+    );
+
+    const asyncResolve = jest.fn(async (what: string, importer: string) => {
+      if (what.startsWith('.')) {
+        return resolve(dirname(importer), what);
+      }
+      return null;
+    });
+    const services = createServices(root, join(root, 'entry.js'));
+    const broker = new EvalBroker(services, asyncResolve);
+
+    const ep = Entrypoint.createRoot(
+      services,
+      join(root, 'entry.js'),
+      ['__wywPreval'],
+      readFileSync(join(root, 'entry.js'), 'utf-8')
+    );
+    const result = await broker.evaluate(ep);
+    expect(result.values?.get('parent')).toBe(60);
+
+    broker.dispose();
+    rmSync(root, { recursive: true, force: true });
+  });
+
   it('cross-session barrel widening: second session needing different exports re-prepares', async () => {
     // Reproduces stale-only issue across sessions with reuseModules.
     // Session 1: barrel prepared with only:["fontWeight"].

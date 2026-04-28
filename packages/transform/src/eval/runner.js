@@ -995,6 +995,14 @@ const resetSingleModuleState = (id, cachedModule = moduleCache.get(id)) => {
   moduleData.delete(id);
 };
 
+const toSourceModuleId = (id) => stripQueryAndHash(String(id));
+
+const toVersionedModuleIdentifier = (id, hash) => {
+  if (!hash) return id;
+  const separator = id.includes('?') ? '&' : '?';
+  return `${id}${separator}wyw-hash=${hash}`;
+};
+
 const resetEvaluationState = () => {
   if (state.teardown) {
     state.teardown();
@@ -1557,11 +1565,12 @@ const linkModule = async (module) => {
 };
 
 resolveModule = async (specifier, importer, kind) => {
+  const importerId = toSourceModuleId(importer);
   if (process.env.WYW_DEBUG_EVAL_RESOLVE) {
     process.stderr.write(
       `[wyw-eval-runner:resolve] ${JSON.stringify({
         specifier,
-        importer,
+        importer: importerId,
         kind,
       })}\n`
     );
@@ -1577,7 +1586,7 @@ resolveModule = async (specifier, importer, kind) => {
     return createSyntheticModule(specifier, { default: {} });
   }
 
-  const key = `${kind}:${importer}:${specifier}`;
+  const key = `${kind}:${importerId}:${specifier}`;
   const cached = resolveCache.get(key);
   if (cached) {
     if (!cached.resolvedId) {
@@ -1588,7 +1597,7 @@ resolveModule = async (specifier, importer, kind) => {
         [
           `[wyw-in-js] Unable to resolve "${specifier}" during evaluation.`,
           ``,
-          `importer: ${importer}`,
+          `importer: ${importerId}`,
           `hint: check eval.resolver/customResolver or add importOverrides for this specifier.`,
         ].join('\n')
       );
@@ -1603,12 +1612,12 @@ resolveModule = async (specifier, importer, kind) => {
       const normalized = normalizeResolvedId(
         cached.resolvedId,
         specifier,
-        importer,
+        importerId,
         state.evalOptions.extensions
       );
       const externalModule = await loadExternalModule(
         normalized,
-        importer,
+        importerId,
         specifier
       );
       return externalModule;
@@ -1617,10 +1626,10 @@ resolveModule = async (specifier, importer, kind) => {
     const normalized = normalizeResolvedId(
       cached.resolvedId,
       specifier,
-      importer,
+      importerId,
       state.evalOptions.extensions
     );
-    return loadModule(normalized, importer, specifier);
+    return loadModule(normalized, importerId, specifier);
   }
 
   const inFlight = resolveInFlight.get(key);
@@ -1629,7 +1638,7 @@ resolveModule = async (specifier, importer, kind) => {
   const task = (async () => {
     const resolved = await request('RESOLVE', {
       specifier,
-      importerId: importer,
+      importerId,
       kind,
     });
 
@@ -1641,7 +1650,7 @@ resolveModule = async (specifier, importer, kind) => {
       ? normalizeResolvedId(
           resolved.resolvedId,
           specifier,
-          importer,
+          importerId,
           state.evalOptions.extensions
         )
       : resolved.resolvedId;
@@ -1649,7 +1658,7 @@ resolveModule = async (specifier, importer, kind) => {
       process.stderr.write(
         `[wyw-eval-runner:resolved] ${JSON.stringify({
           specifier,
-          importer,
+          importer: importerId,
           resolved: resolved.resolvedId ?? null,
           normalized: normalized ?? null,
           external: Boolean(resolved.external),
@@ -1670,7 +1679,7 @@ resolveModule = async (specifier, importer, kind) => {
         [
           `[wyw-in-js] Unable to resolve "${specifier}" during evaluation.`,
           ``,
-          `importer: ${importer}`,
+          `importer: ${importerId}`,
           `hint: check eval.resolver/customResolver or add importOverrides for this specifier.`,
         ].join('\n')
       );
@@ -1682,10 +1691,10 @@ resolveModule = async (specifier, importer, kind) => {
       isNodeModulesId(normalized);
 
     if (treatExternal) {
-      return loadExternalModule(normalized, importer, specifier);
+      return loadExternalModule(normalized, importerId, specifier);
     }
 
-    return loadModule(normalized, importer, specifier);
+    return loadModule(normalized, importerId, specifier);
   })();
 
   resolveInFlight.set(key, task);
@@ -1754,7 +1763,7 @@ loadModule = async (id, importer, requestSpec) => {
       `${buildPreamble(id)}${loaded.code ?? ''}`,
       {
         context: state.context,
-        identifier: id,
+        identifier: toVersionedModuleIdentifier(id, loaded.hash),
         initializeImportMeta(meta, targetModule) {
           const identifier =
             typeof targetModule.identifier === 'string'
