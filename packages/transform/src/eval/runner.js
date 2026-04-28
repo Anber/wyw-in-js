@@ -53,7 +53,11 @@ const prefixStream = (getPrefix) =>
     write(chunk, _enc, cb) {
       const p = getPrefix();
       const s = chunk.toString();
-      process.stderr.write(p + s.replaceAll('\n', `\n${p}`), cb);
+      // Prefix interior newlines but not the trailing one — avoids
+      // double-prefix when consecutive writes each start with a prefix.
+      const tail = s.endsWith('\n') ? '\n' : '';
+      const body = tail ? s.slice(0, -1) : s;
+      process.stderr.write(p + body.replaceAll('\n', `\n${p}`) + tail, cb);
     },
   });
 

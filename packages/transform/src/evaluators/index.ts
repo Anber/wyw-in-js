@@ -20,7 +20,7 @@ export default async function evaluate(
     services.evalBroker,
     '[wyw-in-js] Eval broker is missing for evaluation.'
   );
-  const result = await services.evalBroker.evaluate(entrypoint);
+  const result = await services.evalBroker.evaluate(entrypoint, services);
 
   return {
     values: result.values,

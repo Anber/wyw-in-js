@@ -241,6 +241,7 @@ export type StrictOptions = {
     tag: string,
     meta: TagResolverMeta
   ) => string | null;
+  evalConsole?: 'warning' | 'pipe';
   variableNameConfig?: 'var' | 'dashes' | 'raw';
   variableNameSlug?: string | VariableNameFn;
 };

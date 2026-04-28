@@ -337,7 +337,14 @@ const webpack5Loader: Loader = function webpack5LoaderPlugin(
     },
     asyncResolveKey,
     cache: transformCache,
-    emitWarning: (message: string) => this.emitWarning(new Error(message)),
+    emitWarning: (message: string) => {
+      const warning = new Error(message);
+      // Remove the stack so webpack's ModuleWarning doesn't copy it into
+      // `details`, which causes the message to render twice (once from
+      // .message, once from .details containing "Error: <same message>").
+      delete warning.stack;
+      this.emitWarning(warning);
+    },
     eventEmitter: sharedState.emitter,
   };
 

@@ -1043,6 +1043,8 @@ export class EvalBroker {
 
   private activeResolveRootId: string | null = null;
 
+  private currentServices: Services;
+
   constructor(
     private readonly services: Services,
     private readonly asyncResolve: (
@@ -1050,7 +1052,9 @@ export class EvalBroker {
       importer: string,
       stack: string[]
     ) => Promise<string | null>
-  ) {}
+  ) {
+    this.currentServices = services;
+  }
 
   private ensureImportsMapping(
     id: string,
@@ -1059,10 +1063,13 @@ export class EvalBroker {
     this.importsByModule.set(id, imports ?? new Map());
   }
 
-  public async evaluate(entrypoint: Entrypoint): Promise<{
+  public async evaluate(entrypoint: Entrypoint, services?: Services): Promise<{
     values: Map<string, unknown> | null;
     dependencies: string[];
   }> {
+    if (services) {
+      this.currentServices = services;
+    }
     const resolveRootId = getEntrypointResolveRoot(entrypoint);
     const task = this.evalQueue.then(async () => {
       this.activeResolveRootId = resolveRootId;
@@ -1232,15 +1239,14 @@ export class EvalBroker {
     );
 
     runner.stdout.setEncoding('utf8');
-    runner.stderr.setEncoding('utf8');
 
     return runner;
   }
 
   private attachRunnerListeners(runner: ChildProcessWithoutNullStreams) {
     runner.stdout.on('data', (chunk) => this.onData(String(chunk)));
-    runner.stderr.on('data', (chunk) => {
-      emitWarning(this.services, `[wyw-eval-runner] ${chunk.toString()}`);
+    runner.stderr.on('data', (chunk: Buffer) => {
+      this.handleRunnerStderr(chunk);
     });
     runner.on('exit', (code, signal) => {
       if (this.runner !== runner) {
@@ -1313,8 +1319,8 @@ export class EvalBroker {
         reject(value);
       };
 
-      const onStderr = (chunk: string | Buffer) => {
-        emitWarning(this.services, `[wyw-eval-runner] ${chunk.toString()}`);
+      const onStderr = (chunk: Buffer) => {
+        this.handleRunnerStderr(chunk);
       };
 
       const onExit = (code: number | null, signal: NodeJS.Signals | null) => {
@@ -1600,11 +1606,26 @@ export class EvalBroker {
     }
   }
 
+  private handleRunnerStderr(chunk: Buffer) {
+    const { evalConsole } = this.currentServices.options.pluginOptions;
+    if (evalConsole === 'warning') {
+      const text = chunk.toString('utf8');
+      for (const line of text.split('\n')) {
+        const trimmed = line.trim();
+        if (trimmed) {
+          emitWarning(this.currentServices, trimmed);
+        }
+      }
+    } else if (evalConsole === 'pipe') {
+      process.stderr.write(chunk);
+    }
+  }
+
   private handleWarn(warning: EvalWarning) {
     if (warning.importer && warning.specifier) {
       this.trackRuntimeDependency(warning.importer, warning.specifier);
     }
-    emitEvalWarning(this.services, warning);
+    emitEvalWarning(this.currentServices, warning);
   }
 
   private async handleResolve(id: string, payload: ResolveRequestPayload) {
@@ -2275,7 +2296,7 @@ export class EvalBroker {
         .filter(Boolean)
         .join('\n');
 
-      emitEvalWarning(this.services, {
+      emitEvalWarning(this.currentServices, {
         code: kind === 'require' ? 'require-fallback' : 'resolve-fallback',
         message: warningMessage,
         importer: importerId,
@@ -2563,7 +2584,7 @@ export class EvalBroker {
               ``,
               `note: configure threshold with WYW_WARN_SLOW_IMPORTS_MS (current: ${slowImportThresholdMs}ms)`,
             ].join('\n');
-            emitWarning(this.services, warning);
+            emitWarning(this.currentServices, warning);
           }
         }
       }
