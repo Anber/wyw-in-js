@@ -2440,13 +2440,22 @@ describe('EvalBroker', () => {
 
     const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
 
-    // barrel.js — re-exports from two conceptual groups
+    // Use a non-trivial re-export barrel so broker cannot promote it to
+    // only:["*"] and accidentally mask narrow prepared code.
     writeFileSync(
       join(root, 'barrel.js'),
       [
-        'export const fontWeight = 400;',
-        'export const iconSize = 24;',
+        "export { fontWeight } from './typography.js';",
+        "export { iconSize } from './layout.js';",
       ].join('\n')
+    );
+    writeFileSync(
+      join(root, 'typography.js'),
+      ['const base = 100;', 'export const fontWeight = base * 4;'].join('\n')
+    );
+    writeFileSync(
+      join(root, 'layout.js'),
+      ['const unit = 8;', 'export const iconSize = unit * 3;'].join('\n')
     );
 
     // consumer-a.js — uses fontWeight from barrel

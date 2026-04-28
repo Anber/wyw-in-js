@@ -1697,9 +1697,12 @@ resolveModule = async (specifier, importer, kind) => {
 };
 
 loadModule = async (id, importer, requestSpec) => {
-  const cached = moduleCache.get(id);
+  let cached = moduleCache.get(id);
   const inFlight = loadInFlight.get(id);
-  if (inFlight) return inFlight;
+  if (inFlight) {
+    await inFlight;
+    cached = moduleCache.get(id);
+  }
 
   const task = (async () => {
     const loadStart = Date.now();
