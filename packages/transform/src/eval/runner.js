@@ -124,7 +124,7 @@ const getPackageType = (filename) => {
   let dir = path.dirname(filename);
   while (dir && dir !== path.dirname(dir)) {
     const cached = packageTypeCache.get(dir);
-    if (cached !== undefined) return cached;
+    if (cached === 'module' || cached === 'commonjs') return cached;
     const pkgPath = path.join(dir, 'package.json');
     if (fs.existsSync(pkgPath)) {
       try {

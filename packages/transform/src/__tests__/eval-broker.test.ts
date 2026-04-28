@@ -732,6 +732,82 @@ describe('EvalBroker', () => {
     rmSync(root, { recursive: true, force: true });
   });
 
+  it('keeps package subdirectory modules classified as ESM after cached package misses', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
+    const entry = join(root, 'entry.js');
+    const packageDir = join(root, 'node_modules', 'fake');
+    const srcDir = join(packageDir, 'src');
+    const cjsDir = join(packageDir, 'cjs');
+    const first = join(srcDir, 'first.js');
+    const second = join(srcDir, 'second.js');
+
+    mkdirSync(srcDir, { recursive: true });
+    mkdirSync(cjsDir, { recursive: true });
+    writeFileSync(
+      join(packageDir, 'package.json'),
+      JSON.stringify({
+        type: 'module',
+        exports: {
+          './first': {
+            import: './src/first.js',
+            require: './cjs/first.cjs',
+          },
+          './second': {
+            import: './src/second.js',
+            require: './cjs/second.cjs',
+          },
+        },
+      })
+    );
+    writeFileSync(first, 'export const first = 1;');
+    writeFileSync(second, 'export const second = 2;');
+    writeFileSync(join(cjsDir, 'first.cjs'), 'exports.first = 10;');
+    writeFileSync(join(cjsDir, 'second.cjs'), 'exports.second = 20;');
+    writeFileSync(
+      entry,
+      [
+        "import { first } from 'fake/first';",
+        "import { second } from 'fake/second';",
+        'export const __wywPreval = {',
+        '  value: () => first + second,',
+        '};',
+      ].join('\n')
+    );
+
+    const warnings: Array<{ code: string; specifier?: string }> = [];
+    const asyncResolve = jest.fn(async (what: string) => {
+      if (what === 'fake/first') {
+        return first;
+      }
+      if (what === 'fake/second') {
+        return second;
+      }
+      return null;
+    });
+    const services = createServices(root, entry, {
+      eval: {
+        onWarn: (warning) => warnings.push(warning),
+      },
+    });
+    const broker = new EvalBroker(services, asyncResolve);
+    const entrypoint = Entrypoint.createRoot(
+      services,
+      entry,
+      ['__wywPreval'],
+      readFileSync(entry, 'utf-8')
+    );
+
+    const result = await broker.evaluate(entrypoint);
+
+    expect(result.values?.get('value')).toBe(3);
+    expect(warnings.filter((w) => w.code === 'require-fallback')).toHaveLength(
+      0
+    );
+
+    broker.dispose();
+    rmSync(root, { recursive: true, force: true });
+  });
+
   it('uses root ancestor as async resolver stack root for evaluated child entrypoints', async () => {
     const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
     const entry = join(root, 'entry.js');
