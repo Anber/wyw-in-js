@@ -872,6 +872,9 @@ const isInsideTypeof = (ancestors: Node[]): boolean =>
       ancestor.type === 'UnaryExpression' && ancestor.operator === 'typeof'
   );
 
+const isInsideImportDeclaration = (ancestors: Node[]): boolean =>
+  ancestors.some((ancestor) => ancestor.type === 'ImportDeclaration');
+
 function findLastAncestor<T extends Node>(
   ancestors: Node[],
   predicate: (ancestor: Node) => ancestor is T
@@ -1624,7 +1627,8 @@ export const removeDangerousCodeWithOxc = (
     if (
       node.type !== 'Identifier' ||
       isTypeContext(ancestors) ||
-      isInsideTypeof(ancestors)
+      isInsideTypeof(ancestors) ||
+      isInsideImportDeclaration(ancestors)
     ) {
       return;
     }

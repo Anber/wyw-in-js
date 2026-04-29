@@ -181,6 +181,24 @@ describe('oxc preeval transforms', () => {
       expect(code).not.toContain('third');
     });
 
+    it('does not remove imported names from aliased import specifiers', () => {
+      const code = removeDangerousCodeWithOxc(
+        [
+          'import { Comment as CommentComponent, commentContentStyle } from "./comment";',
+          'window.Comment;',
+          'export const keep = CommentComponent ? commentContentStyle : "";',
+        ].join('\n'),
+        filename
+      );
+
+      expect(code).toContain(
+        'import { Comment as CommentComponent, commentContentStyle } from "./comment";'
+      );
+      expect(code).not.toContain('import {  as CommentComponent');
+      expect(code).not.toContain('window.Comment');
+      expect(code).toContain('export const keep = CommentComponent');
+    });
+
     it('removes exported browser-global declarations without leaving dangling export syntax', () => {
       const code = removeDangerousCodeWithOxc(
         [

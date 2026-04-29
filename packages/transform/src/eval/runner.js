@@ -53,7 +53,11 @@ const prefixStream = (getPrefix) =>
     write(chunk, _enc, cb) {
       const p = getPrefix();
       const s = chunk.toString();
-      process.stderr.write(p + s.replaceAll('\n', `\n${p}`), cb);
+      // Prefix interior newlines but not the trailing one — avoids
+      // double-prefix when consecutive writes each start with a prefix.
+      const tail = s.endsWith('\n') ? '\n' : '';
+      const body = tail ? s.slice(0, -1) : s;
+      process.stderr.write(p + body.replaceAll('\n', `\n${p}`) + tail, cb);
     },
   });
 
@@ -124,7 +128,7 @@ const getPackageType = (filename) => {
   let dir = path.dirname(filename);
   while (dir && dir !== path.dirname(dir)) {
     const cached = packageTypeCache.get(dir);
-    if (cached !== undefined) return cached;
+    if (cached === 'module' || cached === 'commonjs') return cached;
     const pkgPath = path.join(dir, 'package.json');
     if (fs.existsSync(pkgPath)) {
       try {
@@ -991,6 +995,14 @@ const resetSingleModuleState = (id, cachedModule = moduleCache.get(id)) => {
   moduleData.delete(id);
 };
 
+const toSourceModuleId = (id) => stripQueryAndHash(String(id));
+
+const toVersionedModuleIdentifier = (id, hash) => {
+  if (!hash) return id;
+  const separator = id.includes('?') ? '&' : '?';
+  return `${id}${separator}wyw-hash=${hash}`;
+};
+
 const resetEvaluationState = () => {
   if (state.teardown) {
     state.teardown();
@@ -1140,6 +1152,17 @@ const shutdown = () => {
 
 const sendWarn = (warning) => {
   sendMessage({ type: 'WARN', payload: warning });
+};
+
+const serializeError = (error) => {
+  const result = {
+    message: error?.message ?? String(error),
+    stack: error?.stack,
+  };
+  if (error?.cause instanceof Error) {
+    result.cause = serializeError(error.cause);
+  }
+  return result;
 };
 
 const request = (type, payload) => {
@@ -1514,6 +1537,24 @@ const linkModule = async (module) => {
       );
       return module;
     } catch (error) {
+      // ERR_VM_MODULE_LINK_FAILURE means a dependency is in "errored" state.
+      // Node chains .cause through the link failure hierarchy. Walk to the
+      // deepest cause to surface the original evaluation error (e.g. a
+      // TypeError in user code), not intermediate "resolved to errored" hops.
+      if (error?.code === 'ERR_VM_MODULE_LINK_FAILURE') {
+        let rootCause = error;
+        while (rootCause.cause instanceof Error) {
+          rootCause = rootCause.cause;
+        }
+        if (rootCause !== error) {
+          const enhanced = new Error(
+            `${error.message}\n` +
+              `  Root cause: ${rootCause.name ?? 'Error'}: ${rootCause.message}`
+          );
+          enhanced.cause = rootCause;
+          throw enhanced;
+        }
+      }
       throw error;
     } finally {
       linkPromises.delete(module);
@@ -1524,11 +1565,12 @@ const linkModule = async (module) => {
 };
 
 resolveModule = async (specifier, importer, kind) => {
+  const importerId = toSourceModuleId(importer);
   if (process.env.WYW_DEBUG_EVAL_RESOLVE) {
     process.stderr.write(
       `[wyw-eval-runner:resolve] ${JSON.stringify({
         specifier,
-        importer,
+        importer: importerId,
         kind,
       })}\n`
     );
@@ -1544,7 +1586,7 @@ resolveModule = async (specifier, importer, kind) => {
     return createSyntheticModule(specifier, { default: {} });
   }
 
-  const key = `${kind}:${importer}:${specifier}`;
+  const key = `${kind}:${importerId}:${specifier}`;
   const cached = resolveCache.get(key);
   if (cached) {
     if (!cached.resolvedId) {
@@ -1555,7 +1597,7 @@ resolveModule = async (specifier, importer, kind) => {
         [
           `[wyw-in-js] Unable to resolve "${specifier}" during evaluation.`,
           ``,
-          `importer: ${importer}`,
+          `importer: ${importerId}`,
           `hint: check eval.resolver/customResolver or add importOverrides for this specifier.`,
         ].join('\n')
       );
@@ -1570,12 +1612,12 @@ resolveModule = async (specifier, importer, kind) => {
       const normalized = normalizeResolvedId(
         cached.resolvedId,
         specifier,
-        importer,
+        importerId,
         state.evalOptions.extensions
       );
       const externalModule = await loadExternalModule(
         normalized,
-        importer,
+        importerId,
         specifier
       );
       return externalModule;
@@ -1584,10 +1626,10 @@ resolveModule = async (specifier, importer, kind) => {
     const normalized = normalizeResolvedId(
       cached.resolvedId,
       specifier,
-      importer,
+      importerId,
       state.evalOptions.extensions
     );
-    return loadModule(normalized, importer, specifier);
+    return loadModule(normalized, importerId, specifier);
   }
 
   const inFlight = resolveInFlight.get(key);
@@ -1596,7 +1638,7 @@ resolveModule = async (specifier, importer, kind) => {
   const task = (async () => {
     const resolved = await request('RESOLVE', {
       specifier,
-      importerId: importer,
+      importerId,
       kind,
     });
 
@@ -1608,7 +1650,7 @@ resolveModule = async (specifier, importer, kind) => {
       ? normalizeResolvedId(
           resolved.resolvedId,
           specifier,
-          importer,
+          importerId,
           state.evalOptions.extensions
         )
       : resolved.resolvedId;
@@ -1616,7 +1658,7 @@ resolveModule = async (specifier, importer, kind) => {
       process.stderr.write(
         `[wyw-eval-runner:resolved] ${JSON.stringify({
           specifier,
-          importer,
+          importer: importerId,
           resolved: resolved.resolvedId ?? null,
           normalized: normalized ?? null,
           external: Boolean(resolved.external),
@@ -1637,7 +1679,7 @@ resolveModule = async (specifier, importer, kind) => {
         [
           `[wyw-in-js] Unable to resolve "${specifier}" during evaluation.`,
           ``,
-          `importer: ${importer}`,
+          `importer: ${importerId}`,
           `hint: check eval.resolver/customResolver or add importOverrides for this specifier.`,
         ].join('\n')
       );
@@ -1649,10 +1691,10 @@ resolveModule = async (specifier, importer, kind) => {
       isNodeModulesId(normalized);
 
     if (treatExternal) {
-      return loadExternalModule(normalized, importer, specifier);
+      return loadExternalModule(normalized, importerId, specifier);
     }
 
-    return loadModule(normalized, importer, specifier);
+    return loadModule(normalized, importerId, specifier);
   })();
 
   resolveInFlight.set(key, task);
@@ -1664,9 +1706,12 @@ resolveModule = async (specifier, importer, kind) => {
 };
 
 loadModule = async (id, importer, requestSpec) => {
-  const cached = moduleCache.get(id);
+  let cached = moduleCache.get(id);
   const inFlight = loadInFlight.get(id);
-  if (inFlight) return inFlight;
+  if (inFlight) {
+    await inFlight;
+    cached = moduleCache.get(id);
+  }
 
   const task = (async () => {
     const loadStart = Date.now();
@@ -1718,7 +1763,7 @@ loadModule = async (id, importer, requestSpec) => {
       `${buildPreamble(id)}${loaded.code ?? ''}`,
       {
         context: state.context,
-        identifier: id,
+        identifier: toVersionedModuleIdentifier(id, loaded.hash),
         initializeImportMeta(meta, targetModule) {
           const identifier =
             typeof targetModule.identifier === 'string'
@@ -1843,6 +1888,20 @@ const collectModuleExports = () => {
     const module = moduleCache.get(id);
     const data = moduleData.get(id);
     if (!module || !data) return;
+
+    // .namespace is only safe on fully evaluated modules. Modules that
+    // errored or were never evaluated (stale from a prior failed session
+    // with reuseModules) have TDZ bindings that crash Object.keys().
+    if (module.status !== 'evaluated') {
+      sendWarn({
+        code: 'eval-stale-module',
+        message:
+          `[wyw-in-js] Skipping export collection for ${id}: ` +
+          `module status is "${module.status}" (expected "evaluated"). ` +
+          `Cached exports for this module may be stale.`,
+      });
+      return;
+    }
 
     const { namespace } = module;
     const hasNamespace =
@@ -1973,6 +2032,18 @@ const handleMessage = async (message) => {
         if (canReuseContext) {
           if (!reuseModules) {
             resetModuleState();
+          } else {
+            // Clear resolution caches between sessions even when reusing modules.
+            // The broker rebuilds onlyByModule from scratch each session (cleared
+            // in evaluate()). If the runner's resolveCache persists, RESOLVE
+            // requests for previously-seen (importer, specifier) pairs are
+            // skipped, preventing the broker from learning what exports are
+            // needed. This can cause a barrel module to be served with a stale
+            // `only` set that's missing exports a consumer actually imports,
+            // leading to "does not provide an export named 'X'" link errors.
+            resolveCache.clear();
+            resolveInFlight.clear();
+            loadInFlight.clear();
           }
           state.evalOptions = nextEvalOptions;
           state.features = nextFeatures;
@@ -2016,10 +2087,7 @@ const handleMessage = async (message) => {
         sendMessage({
           type: 'INIT_ACK',
           id: message.id,
-          error: {
-            message: error?.message ?? String(error),
-            stack: error?.stack,
-          },
+          error: serializeError(error),
         });
       }
       break;
@@ -2042,10 +2110,7 @@ const handleMessage = async (message) => {
           type: 'EVAL_RESULT',
           id: message.id,
           payload: { values: null },
-          error: {
-            message: error?.message ?? String(error),
-            stack: error?.stack,
-          },
+          error: serializeError(error),
         });
       }
       break;

@@ -18,6 +18,7 @@ import type {
 import { isFeatureEnabled } from '@wyw-in-js/shared';
 
 import type { Entrypoint } from '../transform/Entrypoint';
+import type { ParentEntrypoint } from '../types';
 import { isStaticallyEvaluatableModule } from '../transform/isStaticallyEvaluatableModule';
 import type { Services } from '../transform/types';
 import {
@@ -292,6 +293,91 @@ const isEvalTimeoutError = (error: unknown): boolean => {
   return false;
 };
 
+// ---------------------------------------------------------------------------
+// WYW_DEBUG eval dump
+// ---------------------------------------------------------------------------
+
+const resolveDebugEvalDir = (): string | undefined => {
+  const override = process.env.WYW_DUMP_EVALS_DIR;
+  if (override) {
+    return path.resolve(override);
+  }
+
+  const base = process.env.WYW_DUMP_EVALS;
+  if (!base) {
+    return undefined;
+  }
+
+  const ts = new Date()
+    .toISOString()
+    .slice(0, 19)
+    .replace(/[-:T]/g, (c) => (c === 'T' ? '-' : ''));
+  const root = base === '1' || base === 'true' ? './tmp' : base;
+  return path.resolve(root, `wyw-dump-evals-${ts}`);
+};
+
+const debugEvalDir = resolveDebugEvalDir();
+let debugEvalDirReady = false;
+
+const ensureDebugEvalDir = () => {
+  if (!debugEvalDir || debugEvalDirReady) {
+    return;
+  }
+  fs.mkdirSync(debugEvalDir, { recursive: true });
+  debugEvalDirReady = true;
+};
+
+let debugEvalSeq = 0;
+
+const dumpEvalCode = (
+  id: string,
+  code: string,
+  only: string[],
+  source: string,
+  evalSeq: number
+) => {
+  if (!debugEvalDir) {
+    return;
+  }
+  ensureDebugEvalDir();
+  const seq = String(++debugEvalSeq).padStart(5, '0');
+  const eSeq = String(evalSeq).padStart(5, '0');
+  const relId = path.relative(process.cwd(), stripQueryAndHash(id));
+  const safeName = relId.replace(/[/\\]/g, '__').replace(/^__/, '');
+  const filename = `seq${seq}_eval${eSeq}_${safeName}.js`;
+  const header = [
+    `// id: ${id}`,
+    `// only: ${JSON.stringify(only)}`,
+    `// source: ${source}`,
+    `// seq: ${seq}`,
+    `// eval: #${eSeq}`,
+    '',
+  ].join('\n');
+  fs.writeFileSync(path.join(debugEvalDir, filename), header + code);
+};
+
+let debugActionStream: fs.WriteStream | null = null;
+
+const debugAction = (event: Record<string, unknown>) => {
+  if (!debugEvalDir) {
+    return;
+  }
+  ensureDebugEvalDir();
+  if (!debugActionStream) {
+    debugActionStream = fs.createWriteStream(
+      path.join(debugEvalDir, 'actions.jsonl')
+    );
+  }
+  debugActionStream.write(`${JSON.stringify(event)}\n`);
+};
+
+const flushDebugStreams = () => {
+  debugActionStream?.end();
+  debugActionStream = null;
+};
+
+// ---------------------------------------------------------------------------
+
 const warnedUnknownImportsByServices = new WeakMap<Services, Set<string>>();
 
 const getWarnedUnknownImports = (services: Services): Set<string> => {
@@ -358,6 +444,18 @@ export const stripEntrypointGlobalsFromRunnerContext = (
   }
 
   return nextGlobals;
+};
+
+const getEntrypointResolveRoot = (entrypoint: Entrypoint): string => {
+  let current: { name: string; parents: ParentEntrypoint[] } = entrypoint;
+  const seen = new Set<string>();
+
+  while (current.parents.length > 0 && !seen.has(current.name)) {
+    seen.add(current.name);
+    [current] = current.parents;
+  }
+
+  return current.name;
 };
 
 const buildRunnerInitPayload = (
@@ -937,9 +1035,15 @@ export class EvalBroker {
 
   private readonly emittedDependencies = new Set<string>();
 
+  private evalSeq = 0;
+
   private happyDomDisabled = false;
 
   private happyDomDisableWarned = false;
+
+  private activeResolveRootId: string | null = null;
+
+  private currentServices: Services;
 
   constructor(
     private readonly services: Services,
@@ -948,7 +1052,9 @@ export class EvalBroker {
       importer: string,
       stack: string[]
     ) => Promise<string | null>
-  ) {}
+  ) {
+    this.currentServices = services;
+  }
 
   private ensureImportsMapping(
     id: string,
@@ -957,48 +1063,77 @@ export class EvalBroker {
     this.importsByModule.set(id, imports ?? new Map());
   }
 
-  public async evaluate(entrypoint: Entrypoint): Promise<{
+  public async evaluate(
+    entrypoint: Entrypoint,
+    services?: Services
+  ): Promise<{
     values: Map<string, unknown> | null;
     dependencies: string[];
   }> {
-    const task = this.evalQueue.then(async () => {
-      this.runtimeDependenciesByModule.clear();
-      this.emittedDependencies.clear();
-      this.importsByModule.clear();
-      this.onlyByModule.clear();
-      this.resolveCache.clear();
-      this.resolveInFlight.clear();
-      this.onlyByModule.set(entrypoint.name, ['__wywPreval']);
+    const activeServices = services ?? this.currentServices;
+    const resolveRootId = getEntrypointResolveRoot(entrypoint);
+    const task = this.evalQueue
+      .then(async () => {
+        this.currentServices = activeServices;
+        this.activeResolveRootId = resolveRootId;
+        this.runtimeDependenciesByModule.clear();
+        this.emittedDependencies.clear();
+        this.importsByModule.clear();
+        this.onlyByModule.clear();
+        this.resolveCache.clear();
+        this.resolveInFlight.clear();
+        this.onlyByModule.set(entrypoint.name, ['__wywPreval']);
+        this.evalSeq += 1;
 
-      await this.ensureRunner();
-      await this.initRunner(entrypoint);
+        debugAction({
+          type: 'eval:start',
+          evalSeq: this.evalSeq,
+          entrypoint: entrypoint.name,
+          ts: performance.now(),
+        });
 
-      const payload = await this.request<EvalResultPayload>(
-        'EVAL',
-        {
-          id: entrypoint.name,
-        },
-        EVAL_TIMEOUT_MS
-      );
+        await this.ensureRunner();
+        await this.initRunner(entrypoint);
 
-      if (payload.modules) {
-        this.applyModuleExports(payload.modules);
-      }
+        const payload = await this.request<EvalResultPayload>(
+          'EVAL',
+          {
+            id: entrypoint.name,
+          },
+          EVAL_TIMEOUT_MS
+        );
 
-      if (!payload.values) {
-        return { values: null, dependencies: [] };
-      }
+        debugAction({
+          type: 'eval:finish',
+          evalSeq: this.evalSeq,
+          entrypoint: entrypoint.name,
+          hasValues: Boolean(payload.values),
+          ts: performance.now(),
+        });
 
-      const values = new Map<string, unknown>();
-      Object.entries(payload.values).forEach(([key, serialized]) => {
-        values.set(key, deserializeValue(serialized));
+        if (payload.modules) {
+          this.applyModuleExports(payload.modules);
+        }
+
+        if (!payload.values) {
+          return { values: null, dependencies: [] };
+        }
+
+        const values = new Map<string, unknown>();
+        Object.entries(payload.values).forEach(([key, serialized]) => {
+          values.set(key, deserializeValue(serialized));
+        });
+
+        return {
+          values,
+          dependencies: this.collectEntrypointDependencies(entrypoint.name),
+        };
+      })
+      .finally(() => {
+        if (this.activeResolveRootId === resolveRootId) {
+          this.activeResolveRootId = null;
+        }
       });
-
-      return {
-        values,
-        dependencies: this.collectEntrypointDependencies(entrypoint.name),
-      };
-    });
 
     this.evalQueue = task.then(
       () => {},
@@ -1084,6 +1219,7 @@ export class EvalBroker {
     }
     this.lastInitKey = null;
     this.lastHappyDomEnabled = false;
+    flushDebugStreams();
   }
 
   private createRunnerProcess(): ChildProcessWithoutNullStreams {
@@ -1107,15 +1243,14 @@ export class EvalBroker {
     );
 
     runner.stdout.setEncoding('utf8');
-    runner.stderr.setEncoding('utf8');
 
     return runner;
   }
 
   private attachRunnerListeners(runner: ChildProcessWithoutNullStreams) {
     runner.stdout.on('data', (chunk) => this.onData(String(chunk)));
-    runner.stderr.on('data', (chunk) => {
-      emitWarning(this.services, `[wyw-eval-runner] ${chunk.toString()}`);
+    runner.stderr.on('data', (chunk: Buffer) => {
+      this.handleRunnerStderr(chunk);
     });
     runner.on('exit', (code, signal) => {
       if (this.runner !== runner) {
@@ -1188,8 +1323,8 @@ export class EvalBroker {
         reject(value);
       };
 
-      const onStderr = (chunk: string | Buffer) => {
-        emitWarning(this.services, `[wyw-eval-runner] ${chunk.toString()}`);
+      const onStderr = (chunk: Buffer) => {
+        this.handleRunnerStderr(chunk);
       };
 
       const onExit = (code: number | null, signal: NodeJS.Signals | null) => {
@@ -1475,15 +1610,43 @@ export class EvalBroker {
     }
   }
 
+  private handleRunnerStderr(chunk: Buffer) {
+    const evalConsole =
+      this.currentServices.options.pluginOptions.evalConsole ?? 'pipe';
+    if (evalConsole === 'warning') {
+      const text = chunk.toString('utf8');
+      for (const line of text.split('\n')) {
+        const trimmed = line.trim();
+        if (trimmed) {
+          emitWarning(this.currentServices, trimmed);
+        }
+      }
+    } else if (evalConsole === 'pipe') {
+      process.stderr.write(chunk);
+    }
+  }
+
   private handleWarn(warning: EvalWarning) {
     if (warning.importer && warning.specifier) {
       this.trackRuntimeDependency(warning.importer, warning.specifier);
     }
-    emitEvalWarning(this.services, warning);
+    emitEvalWarning(this.currentServices, warning);
   }
 
   private async handleResolve(id: string, payload: ResolveRequestPayload) {
     const result = await this.resolveImport(payload);
+
+    debugAction({
+      type: 'resolve',
+      evalSeq: this.evalSeq,
+      specifier: payload.specifier,
+      importer: payload.importerId,
+      kind: payload.kind,
+      resolvedId: result.resolvedId ?? null,
+      external: result.external ?? false,
+      ts: performance.now(),
+    });
+
     await this.sendMessage({
       type: 'RESOLVE_RESULT',
       id,
@@ -1568,6 +1731,14 @@ export class EvalBroker {
     );
   }
 
+  private getResolveStack(importerId: string): string[] {
+    if (!this.activeResolveRootId || this.activeResolveRootId === importerId) {
+      return [importerId];
+    }
+
+    return [importerId, this.activeResolveRootId];
+  }
+
   private async resolveImportImpl({
     specifier,
     importerId,
@@ -1579,7 +1750,7 @@ export class EvalBroker {
     }
     const key = `${kind}:${importerId}:${specifier}`;
     const evalOptions = getEvalOptions(this.services);
-    const stack = [importerId];
+    const stack = this.getResolveStack(importerId);
     const importsOnly = this.importsByModule.get(importerId)?.get(specifier);
     const importerOnly = this.onlyByModule.get(importerId) ?? ['*'];
     const only = importerOnly.includes('__wywPreval')
@@ -2130,7 +2301,7 @@ export class EvalBroker {
         .filter(Boolean)
         .join('\n');
 
-      emitEvalWarning(this.services, {
+      emitEvalWarning(this.currentServices, {
         code: kind === 'require' ? 'require-fallback' : 'resolve-fallback',
         message: warningMessage,
         importer: importerId,
@@ -2144,6 +2315,29 @@ export class EvalBroker {
 
   private async handleLoad(id: string, payload: LoadRequestPayload) {
     const prepared = await this.loadModule(payload);
+
+    if (debugEvalDir && prepared.code) {
+      dumpEvalCode(
+        payload.id,
+        prepared.code,
+        prepared.only,
+        prepared.hash ? `cache:${prepared.hash}` : 'fresh',
+        this.evalSeq
+      );
+    }
+
+    debugAction({
+      type: 'load',
+      evalSeq: this.evalSeq,
+      id: payload.id,
+      importer: payload.importerId ?? null,
+      only: prepared.only,
+      hasCode: Boolean(prepared.code),
+      hasExports: Boolean(prepared.exports),
+      hash: prepared.hash ?? null,
+      ts: performance.now(),
+    });
+
     await this.sendLoadResult(id, {
       id: payload.id,
       code: prepared.code,
@@ -2180,6 +2374,24 @@ export class EvalBroker {
     }
 
     let requiredOnly = this.mergeKnownDependencyOnly(id);
+
+    // Merge the specific exports the importer needs from this module.
+    // The broker's onlyByModule is populated by RESOLVE handlers, but
+    // concurrent message processing can cause a LOAD to arrive before
+    // all pending RESOLVEs are complete. Directly consulting the
+    // importer's imports map ensures we never serve a module with
+    // fewer exports than the requesting importer actually imports.
+    if (importerId && request) {
+      const importerImports = this.importsByModule.get(importerId);
+      if (importerImports) {
+        const specifierOnly = importerImports.get(request);
+        if (specifierOnly && specifierOnly.length > 0) {
+          requiredOnly = requiredOnly.includes('*')
+            ? requiredOnly
+            : mergeOnly(requiredOnly, specifierOnly);
+        }
+      }
+    }
     const cachedEntrypoint = this.services.cache.get('entrypoints', id) as
       | {
           evaluated?: boolean;
@@ -2377,7 +2589,7 @@ export class EvalBroker {
               ``,
               `note: configure threshold with WYW_WARN_SLOW_IMPORTS_MS (current: ${slowImportThresholdMs}ms)`,
             ].join('\n');
-            emitWarning(this.services, warning);
+            emitWarning(this.currentServices, warning);
           }
         }
       }
@@ -2520,13 +2732,20 @@ export class EvalBroker {
 
   private rejectPending(
     id: string,
-    error: { message: string; stack?: string }
+    error: { message: string; stack?: string; cause?: { message: string; stack?: string } }
   ) {
     const pending = this.pending.get(id);
     if (!pending) return;
     clearTimeout(pending.timeout);
     this.pending.delete(id);
-    const err = new Error(error.message);
+    const cause = error.cause
+      ? Object.assign(new Error(error.cause.message), {
+          stack: error.cause.stack,
+        })
+      : undefined;
+    const err = cause
+      ? new Error(error.message, { cause })
+      : new Error(error.message);
     if (error.stack) {
       err.stack = error.stack;
     }

@@ -54,6 +54,40 @@ describe('stripTypesAndJsxWithOxc', () => {
     expect(result.code).toContain('react/jsx-runtime');
     expect(result.code).toContain('_jsx("div"');
   });
+
+  it('uses the running Node major as the Oxc target when stripping TypeScript', () => {
+    const originalNodeVersion = Object.getOwnPropertyDescriptor(
+      process.versions,
+      'node'
+    );
+
+    try {
+      Object.defineProperty(process.versions, 'node', {
+        configurable: true,
+        value: '20.11.0',
+      });
+
+      const result = stripTypesAndJsxWithOxc(
+        dedent`
+          class Cache {
+            #value = 1;
+            get() {
+              return this.#value;
+            }
+          }
+          export const cache = new Cache();
+        `,
+        tsFilename
+      );
+
+      expect(result.code).toContain('#value');
+      expect(result.code).not.toContain('@oxc-project/runtime');
+    } finally {
+      if (originalNodeVersion) {
+        Object.defineProperty(process.versions, 'node', originalNodeVersion);
+      }
+    }
+  });
 });
 
 describe('emitOxcCommonJS', () => {

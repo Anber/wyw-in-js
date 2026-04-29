@@ -30,6 +30,7 @@ describe('loadWywOptions', () => {
     });
 
     expect(options.eval?.resolver).toBe('bundler');
+    expect(options.evalConsole).toBe('pipe');
     expect(options.oxcOptions).toBe(oxcOptions);
     expect(options.rules[0].oxcOptions).toBe(oxcOptions);
   });

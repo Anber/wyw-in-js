@@ -2,6 +2,7 @@ export type SerializedError = {
   message: string;
   name?: string;
   stack?: string;
+  cause?: SerializedError;
 };
 
 export type SerializedValue =

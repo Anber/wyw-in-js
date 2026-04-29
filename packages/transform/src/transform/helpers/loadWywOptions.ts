@@ -172,6 +172,7 @@ export function loadWywOptions(
   const options: StrictOptions = {
     displayName: false,
     evaluate: true,
+    evalConsole: 'pipe',
     extensions: ['.cjs', '.cts', '.js', '.jsx', '.mjs', '.mts', '.ts', '.tsx'],
     outputMetadata: false,
     rules: rules ?? [
