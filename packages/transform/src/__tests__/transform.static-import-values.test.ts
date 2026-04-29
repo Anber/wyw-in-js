@@ -1432,6 +1432,61 @@ describe('transform static import value inlining', () => {
     }
   });
 
+  it('inlines post-declaration Object.assign alias members without eval', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
+    const entryFile = join(root, 'entry.js');
+    const baseFile = join(root, 'base.js');
+    const cache = new TransformCacheCollection();
+    const perf = createPerfEventRecorder();
+
+    writeFileSync(
+      baseFile,
+      dedent`
+        import { styled } from 'test-styled-processor';
+
+        const Infix = styled.span\`
+          color: blue;
+        \`;
+        const Base = styled.div\`
+          color: red;
+        \`;
+
+        Object.assign(Base, { Infix });
+
+        export default Base;
+      `
+    );
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { styled } from 'test-styled-processor';
+        import Base from './base.js';
+
+        export const Extended = styled(Base.Infix)\`
+          font-size: 12px;
+        \`;
+      `
+    );
+
+    try {
+      const result = await runTransform(
+        root,
+        entryFile,
+        cache,
+        perf.eventEmitter
+      );
+
+      expect(result.cssText).toContain('font-size:12px');
+      expect(result.cssText).toMatch(
+        /\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\s*\{[^}]*font-size:12px;[^}]*\}/s
+      );
+      expect(result.dependencies).toContain(baseFile);
+      expect(perf.counts.get('transform:evalFile') ?? 0).toBe(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('keeps unsafe post-declaration styled metadata calls on the eval path', async () => {
     const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
     const entryFile = join(root, 'entry.js');

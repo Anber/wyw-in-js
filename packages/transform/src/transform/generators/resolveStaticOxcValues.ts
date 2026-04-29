@@ -2608,6 +2608,56 @@ const hasOnlySafeObjectAssignCallArgumentUses = (
   return hasSafeUse && !hasUnsafeUse;
 };
 
+const objectAssignAugmentationAliasExpressions = (
+  program: Program,
+  targetName: string
+): Expression[] | null => {
+  const aliases: Expression[] = [];
+  let hasUnsafeUse = false;
+
+  const visit = (node: Node): void => {
+    if (hasUnsafeUse || isFunctionBoundaryNode(node)) {
+      return;
+    }
+
+    const unwrapped = unwrapExpression(node);
+    if (unwrapped.type === 'CallExpression') {
+      if (callHasArgumentRootName(unwrapped, targetName)) {
+        if (
+          isSafeObjectAssignAliasAugmentation(program, unwrapped, targetName)
+        ) {
+          const [, ...nextAliases] = unwrapped.arguments;
+          aliases.push(...(nextAliases as Expression[]));
+        } else {
+          hasUnsafeUse = true;
+        }
+
+        return;
+      }
+    }
+
+    getChildren(node).forEach(visit);
+  };
+
+  topLevelStatements(program).forEach(visit);
+  return !hasUnsafeUse && aliases.length > 0 ? aliases : null;
+};
+
+const objectAssignAliasExpressionsForTarget = (
+  program: Program,
+  target: Extract<ExportTarget, { kind: 'expression' }>
+): Expression[] | null => {
+  const aliases = [
+    ...(objectAssignAliasExpressions(program, target.expression) ?? []),
+    ...(target.localName
+      ? objectAssignAugmentationAliasExpressions(program, target.localName) ??
+        []
+      : []),
+  ];
+
+  return aliases.length > 0 ? aliases : null;
+};
+
 const resolveObjectAssignProcessorExpression = (
   program: Program,
   expr: Expression
@@ -3915,9 +3965,9 @@ function* resolveProcessorStaticExport(
     return null;
   }
 
-  const processorObjectAssignAliases = objectAssignAliasExpressions(
+  const processorObjectAssignAliases = objectAssignAliasExpressionsForTarget(
     preevalProgram,
-    target.expression
+    target
   );
   const processorExpression = resolveObjectAssignProcessorExpression(
     preevalProgram,
@@ -4121,9 +4171,9 @@ function* resolveObjectAssignStaticExport(
   stack: Set<string>,
   memo: Map<string, StaticExportResult | null>
 ): SyncScenarioFor<StaticExportResult | null> {
-  const objectAssignAliases = objectAssignAliasExpressions(
+  const objectAssignAliases = objectAssignAliasExpressionsForTarget(
     program,
-    target.expression
+    target
   );
   const objectAssignTarget = objectAssignTargetExpression(
     program,
