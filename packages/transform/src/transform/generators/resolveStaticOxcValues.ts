@@ -80,6 +80,14 @@ type StaticFileHashCacheEntry = {
   size: number;
 };
 
+type StaticMetadataPreevalCacheEntry =
+  | {
+      result: null;
+    }
+  | {
+      result: ReturnType<typeof runOxcPreevalStage>;
+    };
+
 type StaticExportCacheEntry =
   | {
       result: null;
@@ -205,6 +213,11 @@ const staticExportResultCaches = new WeakMap<
   Map<string, StaticExportCacheEntry>
 >();
 
+const staticMetadataPreevalCaches = new WeakMap<
+  object,
+  Map<string, StaticMetadataPreevalCacheEntry>
+>();
+
 const hashStaticContent = (content: string | Buffer): string =>
   createHash('sha256').update(content).digest('hex');
 
@@ -250,6 +263,11 @@ const staticExportResultCache = (
 ): Map<string, StaticExportCacheEntry> =>
   getWeakCacheMap(staticExportResultCaches, action.services.cache);
 
+const staticMetadataPreevalCache = (
+  action: ITransformAction
+): Map<string, StaticMetadataPreevalCacheEntry> =>
+  getWeakCacheMap(staticMetadataPreevalCaches, action.services.cache);
+
 const staticFileAnalysisCacheKey = (
   action: ITransformAction,
   filename: string,
@@ -263,6 +281,12 @@ const staticExportCacheKey = (
   codeHash: string
 ): string =>
   `${staticCachePrefix(action)}\0${filename}\0${exportedName}\0${codeHash}`;
+
+const staticMetadataPreevalCacheKey = (
+  action: ITransformAction,
+  filename: string,
+  codeHash: string
+): string => `${staticCachePrefix(action)}\0${filename}\0${codeHash}`;
 
 const getStaticFileContentHash = (
   action: ITransformAction,
@@ -438,6 +462,44 @@ const getStaticFileAnalysis = (
   };
   cache.set(cacheKey, analysis);
   return analysis;
+};
+
+const getStaticMetadataPreevalResult = (
+  action: ITransformAction,
+  filename: string,
+  code: string,
+  codeHash: string
+): ReturnType<typeof runOxcPreevalStage> | null => {
+  const cache = staticMetadataPreevalCache(action);
+  const cacheKey = staticMetadataPreevalCacheKey(action, filename, codeHash);
+  const cached = cache.get(cacheKey);
+  if (cached) {
+    return cached.result;
+  }
+
+  const root = action.services.options.root ?? process.cwd();
+  try {
+    const result = action.services.eventEmitter.perf(
+      'transform:preeval:staticMetadata',
+      () =>
+        runOxcPreevalStage(
+          code,
+          {
+            filename,
+            root,
+          },
+          {
+            ...action.services.options.pluginOptions,
+            eventEmitter: action.services.eventEmitter,
+          }
+        )
+    );
+    cache.set(cacheKey, { result });
+    return result;
+  } catch {
+    cache.set(cacheKey, { result: null });
+    return null;
+  }
 };
 
 const getChildren = (node: Node): Node[] => {
@@ -4163,6 +4225,7 @@ function* resolveProcessorStaticExport(
   action: ITransformAction,
   filename: string,
   code: string,
+  codeHash: string,
   program: Program,
   exportedName: string,
   stack: Set<string>,
@@ -4193,24 +4256,13 @@ function* resolveProcessorStaticExport(
     return null;
   }
 
-  let preevalResult: ReturnType<typeof runOxcPreevalStage>;
-  try {
-    preevalResult = action.services.eventEmitter.perf(
-      'transform:preeval:staticMetadata',
-      () =>
-        runOxcPreevalStage(
-          code,
-          {
-            filename,
-            root,
-          },
-          {
-            ...action.services.options.pluginOptions,
-            eventEmitter: action.services.eventEmitter,
-          }
-        )
-    );
-  } catch {
+  const preevalResult = getStaticMetadataPreevalResult(
+    action,
+    filename,
+    code,
+    codeHash
+  );
+  if (!preevalResult) {
     debugStaticResolve(action, {
       exported: exportedName,
       filename,
@@ -4864,6 +4916,7 @@ function* resolveStaticExport(
       action,
       filename,
       code,
+      codeHash,
       program,
       exportedName,
       stack,

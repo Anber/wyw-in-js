@@ -2397,6 +2397,62 @@ describe('transform static import value inlining', () => {
     }
   });
 
+  it('reuses static metadata preeval for multiple exports from one file', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
+    const entryFile = join(root, 'entry.js');
+    const baseFile = join(root, 'base.js');
+    const cache = new TransformCacheCollection();
+    const perf = createPerfEventRecorder();
+
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'app' }));
+    writeFileSync(
+      baseFile,
+      dedent`
+        import { styled } from 'test-styled-processor';
+
+        export const Base = styled.div\`
+          color: red;
+        \`;
+
+        export const Accent = styled.div\`
+          color: blue;
+        \`;
+      `
+    );
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { styled } from 'test-styled-processor';
+        import { Accent, Base } from './base.js';
+
+        export const ExtendedBase = styled(Base)\`
+          font-size: 12px;
+        \`;
+
+        export const ExtendedAccent = styled(Accent)\`
+          line-height: 16px;
+        \`;
+      `
+    );
+
+    try {
+      const result = await runTransform(
+        root,
+        entryFile,
+        cache,
+        perf.eventEmitter
+      );
+
+      expect(result.cssText).toContain('font-size:12px');
+      expect(result.cssText).toContain('line-height:16px');
+      expect(result.dependencies).toContain(baseFile);
+      expect(perf.counts.get('transform:preeval:staticMetadata') ?? 0).toBe(1);
+      expect(perf.counts.get('transform:evalFile') ?? 0).toBe(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('inlines transitive styled metadata chains without eval', async () => {
     const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
     const entryFile = join(root, 'entry.js');
