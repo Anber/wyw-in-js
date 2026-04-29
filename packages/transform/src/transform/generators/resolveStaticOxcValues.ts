@@ -2628,6 +2628,17 @@ type ObjectAssignAliasResolution = {
   values: Record<string, unknown>[];
 };
 
+type ObjectAssignAliasPropertyResolution = {
+  dependencies: string[];
+  sideEffectDependencies: string[];
+  value: unknown;
+};
+
+type ObjectAssignAliasPropertyEntry = {
+  key: string;
+  value: Expression;
+};
+
 const mergeStaticObjectAssignAliases = (
   targetValue: unknown,
   aliasValues: Record<string, unknown>[]
@@ -2644,6 +2655,260 @@ const mergeStaticObjectAssignAliases = (
   return result;
 };
 
+const objectAssignAliasObjectExpression = (
+  program: Program,
+  alias: Expression,
+  seen: Set<string> = new Set()
+): Expression | null => {
+  const unwrapped = unwrapExpression(alias);
+  if (unwrapped.type === 'ObjectExpression') {
+    return unwrapped as Expression;
+  }
+
+  if (unwrapped.type !== 'Identifier' || seen.has(unwrapped.name)) {
+    return null;
+  }
+
+  const local = findTopLevelConstExpression(program, unwrapped.name);
+  if (!local) {
+    return null;
+  }
+
+  seen.add(unwrapped.name);
+  const result = objectAssignAliasObjectExpression(program, local, seen);
+  seen.delete(unwrapped.name);
+  return result;
+};
+
+const objectAssignAliasPropertyEntries = (
+  program: Program,
+  alias: Expression
+): ObjectAssignAliasPropertyEntry[] | null => {
+  const aliasObject = objectAssignAliasObjectExpression(program, alias);
+  if (!aliasObject || aliasObject.type !== 'ObjectExpression') {
+    return null;
+  }
+
+  const entries: ObjectAssignAliasPropertyEntry[] = [];
+  for (const property of aliasObject.properties) {
+    if (property.type === 'SpreadElement') {
+      return null;
+    }
+
+    const propertyNode = property as AnyNode;
+    if (
+      propertyNode.computed ||
+      propertyNode.method ||
+      !propertyNode.key ||
+      !propertyNode.value ||
+      typeof propertyNode.key !== 'object' ||
+      typeof propertyNode.value !== 'object'
+    ) {
+      return null;
+    }
+
+    const key = objectPropertyKeyName(propertyNode.key as Node);
+    if (!key) {
+      return null;
+    }
+
+    entries.push({
+      key,
+      value: propertyNode.value as Expression,
+    });
+  }
+
+  return entries;
+};
+
+function* resolveObjectAssignAliasExpressionValue(
+  action: ITransformAction,
+  filename: string,
+  code: string,
+  program: Program,
+  expression: Expression,
+  ignoredMutableCallArgumentNames: Set<string>,
+  stack: Set<string>,
+  memo: Map<string, StaticExportResult | null>
+): SyncScenarioFor<ObjectAssignAliasPropertyResolution | null> {
+  const staticDependencies = collectStaticExpressionDependencies(
+    program,
+    {
+      expression,
+      kind: 'expression',
+    },
+    {
+      allowMetadataCalls: true,
+      ignoredMutableCallArgumentNames,
+    }
+  );
+  if (!staticDependencies) {
+    return null;
+  }
+
+  const env = new Map<string, unknown>();
+  const dependencies = new Set<string>();
+  const sideEffectDependencies = new Set<string>();
+
+  for (const binding of staticDependencies.imports) {
+    const resolved = yield* resolveImportValue(
+      action,
+      filename,
+      binding,
+      stack,
+      memo
+    );
+    if (
+      !resolved ||
+      !bindStaticResolvedValue(env, expression, binding.local, resolved)
+    ) {
+      return null;
+    }
+
+    resolved.dependencies.forEach((item) => dependencies.add(item));
+    resolved.sideEffectDependencies?.forEach((item) =>
+      sideEffectDependencies.add(item)
+    );
+  }
+
+  const value = evaluateOxcStaticExpressionAt(
+    code,
+    filename,
+    {
+      end: expression.end,
+      start: expression.start,
+    },
+    env
+  );
+  return isStaticObjectAssignAliasValue(value)
+    ? {
+        dependencies: [...dependencies],
+        sideEffectDependencies: [...sideEffectDependencies],
+        value,
+      }
+    : null;
+}
+
+function* resolveObjectAssignAliasPropertyValue(
+  action: ITransformAction,
+  filename: string,
+  code: string,
+  program: Program,
+  expression: Expression,
+  ignoredMutableCallArgumentNames: Set<string>,
+  stack: Set<string>,
+  memo: Map<string, StaticExportResult | null>
+): SyncScenarioFor<ObjectAssignAliasPropertyResolution | null> {
+  const expressionValue = yield* resolveObjectAssignAliasExpressionValue(
+    action,
+    filename,
+    code,
+    program,
+    expression,
+    ignoredMutableCallArgumentNames,
+    stack,
+    memo
+  );
+  if (expressionValue) {
+    return expressionValue;
+  }
+
+  const unwrapped = unwrapExpression(expression);
+  if (
+    unwrapped.type !== 'Identifier' ||
+    !findExportTarget(program, unwrapped.name)
+  ) {
+    return null;
+  }
+
+  const resolved = yield* resolveStaticExport(
+    action,
+    filename,
+    unwrapped.name,
+    stack,
+    memo
+  );
+  return resolved && isStaticObjectAssignAliasValue(resolved.value)
+    ? {
+        dependencies: resolved.dependencies,
+        sideEffectDependencies: resolved.sideEffectDependencies ?? [],
+        value: resolved.value,
+      }
+    : null;
+}
+
+function* resolveObjectAssignAliasValue(
+  action: ITransformAction,
+  filename: string,
+  code: string,
+  program: Program,
+  alias: Expression,
+  ignoredMutableCallArgumentNames: Set<string>,
+  stack: Set<string>,
+  memo: Map<string, StaticExportResult | null>
+): SyncScenarioFor<{
+  dependencies: string[];
+  sideEffectDependencies: string[];
+  value: Record<string, unknown>;
+} | null> {
+  const aliasValue = yield* resolveObjectAssignAliasExpressionValue(
+    action,
+    filename,
+    code,
+    program,
+    alias,
+    ignoredMutableCallArgumentNames,
+    stack,
+    memo
+  );
+  if (aliasValue && isPlainObjectRecord(aliasValue.value)) {
+    return Object.values(aliasValue.value).every(isStaticObjectAssignAliasValue)
+      ? {
+          dependencies: aliasValue.dependencies,
+          sideEffectDependencies: aliasValue.sideEffectDependencies,
+          value: aliasValue.value,
+        }
+      : null;
+  }
+
+  const entries = objectAssignAliasPropertyEntries(program, alias);
+  if (!entries) {
+    return null;
+  }
+
+  const dependencies = new Set<string>();
+  const sideEffectDependencies = new Set<string>();
+  const value: Record<string, unknown> = {};
+
+  for (const entry of entries) {
+    const resolved = yield* resolveObjectAssignAliasPropertyValue(
+      action,
+      filename,
+      code,
+      program,
+      entry.value,
+      ignoredMutableCallArgumentNames,
+      stack,
+      memo
+    );
+    if (!resolved || !isStaticObjectAssignAliasValue(resolved.value)) {
+      return null;
+    }
+
+    value[entry.key] = resolved.value;
+    resolved.dependencies.forEach((item) => dependencies.add(item));
+    resolved.sideEffectDependencies.forEach((item) =>
+      sideEffectDependencies.add(item)
+    );
+  }
+
+  return {
+    dependencies: [...dependencies],
+    sideEffectDependencies: [...sideEffectDependencies],
+    value,
+  };
+}
+
 function* resolveObjectAssignAliasValues(
   action: ITransformAction,
   filename: string,
@@ -2653,7 +2918,6 @@ function* resolveObjectAssignAliasValues(
   stack: Set<string>,
   memo: Map<string, StaticExportResult | null>
 ): SyncScenarioFor<ObjectAssignAliasResolution | null> {
-  const env = new Map<string, unknown>();
   const dependencies = new Set<string>();
   const sideEffectDependencies = new Set<string>();
   const values: Record<string, unknown>[] = [];
@@ -2666,59 +2930,25 @@ function* resolveObjectAssignAliasValues(
   });
 
   for (const alias of aliases) {
-    const staticDependencies = collectStaticExpressionDependencies(
-      program,
-      {
-        expression: alias,
-        kind: 'expression',
-      },
-      {
-        allowMetadataCalls: true,
-        ignoredMutableCallArgumentNames,
-      }
-    );
-    if (!staticDependencies) {
-      return null;
-    }
-
-    for (const binding of staticDependencies.imports) {
-      const resolved = yield* resolveImportValue(
-        action,
-        filename,
-        binding,
-        stack,
-        memo
-      );
-      if (
-        !resolved ||
-        !bindStaticResolvedValue(env, alias, binding.local, resolved)
-      ) {
-        return null;
-      }
-
-      resolved.dependencies.forEach((item) => dependencies.add(item));
-      resolved.sideEffectDependencies?.forEach((item) =>
-        sideEffectDependencies.add(item)
-      );
-    }
-
-    const value = evaluateOxcStaticExpressionAt(
-      code,
+    const aliasValue = yield* resolveObjectAssignAliasValue(
+      action,
       filename,
-      {
-        end: alias.end,
-        start: alias.start,
-      },
-      env
+      code,
+      program,
+      alias,
+      ignoredMutableCallArgumentNames,
+      stack,
+      memo
     );
-    if (
-      !isPlainObjectRecord(value) ||
-      !Object.values(value).every(isStaticObjectAssignAliasValue)
-    ) {
+    if (!aliasValue) {
       return null;
     }
 
-    values.push(value);
+    aliasValue.dependencies.forEach((item) => dependencies.add(item));
+    aliasValue.sideEffectDependencies.forEach((item) =>
+      sideEffectDependencies.add(item)
+    );
+    values.push(aliasValue.value);
   }
 
   return {
