@@ -338,6 +338,109 @@ describe('transform static import value inlining', () => {
     }
   });
 
+  it('inlines imported zero-arg helper calls with static return values', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
+    const entryFile = join(root, 'entry.js');
+    const helperFile = join(root, 'helper.js');
+    const tokensFile = join(root, 'tokens.js');
+    const cache = new TransformCacheCollection();
+    const perf = createPerfEventRecorder();
+
+    writeFileSync(
+      tokensFile,
+      dedent`
+        export const sizes = {
+          text: {
+            fontSize: '18px',
+          },
+        };
+        export const MOBILE = 'screen and (max-width: 768px)';
+      `
+    );
+    writeFileSync(
+      helperFile,
+      dedent`
+        import { MOBILE, sizes } from './tokens.js';
+
+        export const getLabelStyle = () => {
+          return \`
+            display: flex;
+            font-size: ${'${sizes.text.fontSize}'};
+
+            @media ${'${MOBILE}'} {
+              display: block;
+            }
+          \`;
+        };
+      `
+    );
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { css } from 'test-css-processor';
+        import { getLabelStyle } from './helper.js';
+
+        export const className = css\`
+          ${'${getLabelStyle()}'};
+        \`;
+      `
+    );
+
+    try {
+      const result = await runTransform(
+        root,
+        entryFile,
+        cache,
+        perf.eventEmitter
+      );
+
+      expect(result.cssText).toContain('display:flex');
+      expect(result.cssText).toContain('font-size:18px');
+      expect(result.cssText).toContain('@media screen and (max-width: 768px)');
+      expect(result.dependencies).toContain(helperFile);
+      expect(result.dependencies).toContain(tokensFile);
+      expect(result.code).not.toContain('./helper.js');
+      expect(perf.counts.get('transform:evalFile') ?? 0).toBe(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps imported zero-arg helpers in eval for bare function references', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
+    const entryFile = join(root, 'entry.js');
+    const helperFile = join(root, 'helper.js');
+    const cache = new TransformCacheCollection();
+    const perf = createPerfEventRecorder();
+
+    writeFileSync(
+      helperFile,
+      dedent`
+        export const getColor = () => 'red';
+      `
+    );
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { css } from 'test-css-processor';
+        import { getColor } from './helper.js';
+
+        export const className = css\`
+          color: ${'${getColor}'};
+        \`;
+      `
+    );
+
+    try {
+      await expect(
+        runTransform(root, entryFile, cache, perf.eventEmitter)
+      ).rejects.toThrow("css tag cannot handle 'getColor'");
+      expect(perf.counts.get('transform:evalFile') ?? 0).toBeGreaterThan(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('falls back to eval for unsafe dependency modules', async () => {
     const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
     const entryFile = join(root, 'entry.js');

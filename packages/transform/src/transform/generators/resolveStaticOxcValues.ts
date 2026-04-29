@@ -61,6 +61,7 @@ type ExportTarget =
     };
 
 type StaticExportResult = {
+  callable?: 'zero-arg';
   dependencies: string[];
   sideEffectDependencies?: string[];
   sideEffectImportLocals?: string[];
@@ -835,6 +836,89 @@ const collectImportLocalReferences = (
   };
 
   walk(node, null);
+};
+
+const parseStaticExpressionSource = (
+  source: string,
+  filename: string
+): Expression | null => {
+  try {
+    const program = parseProgram(
+      `const __wyw_static_value = ${source};`,
+      filename
+    );
+    const declaration = program.body[0];
+    if (declaration?.type !== 'VariableDeclaration') {
+      return null;
+    }
+
+    const [declarator] = declaration.declarations;
+    return declarator?.init ?? null;
+  } catch {
+    return null;
+  }
+};
+
+const expressionUsesNameOnlyAsZeroArgCalls = (
+  expression: Node,
+  name: string
+): boolean => {
+  let seen = false;
+  let valid = true;
+
+  const walk = (node: Node, parent: Node | null): void => {
+    if (!valid) {
+      return;
+    }
+
+    if (
+      node.type === 'Identifier' &&
+      node.name === name &&
+      !isIdentifierBindingPosition(node, parent) &&
+      !isPropertyKeyOnlyIdentifier(node, parent)
+    ) {
+      if (
+        parent?.type === 'CallExpression' &&
+        parent.callee === node &&
+        parent.arguments.length === 0
+      ) {
+        seen = true;
+      } else {
+        valid = false;
+        return;
+      }
+    }
+
+    getChildren(node).forEach((child) => walk(child, node));
+  };
+
+  walk(expression, null);
+  return seen && valid;
+};
+
+const bindStaticResolvedValue = (
+  env: Map<string, unknown>,
+  expression: Node,
+  local: string,
+  resolved: StaticExportResult,
+  options: { wrapNonCallable?: boolean } = {}
+): boolean => {
+  if (resolved.callable === 'zero-arg') {
+    if (!expressionUsesNameOnlyAsZeroArgCalls(expression, local)) {
+      return false;
+    }
+
+    env.set(local, createOxcStaticCallableValue(resolved.value));
+    return true;
+  }
+
+  env.set(
+    local,
+    options.wrapNonCallable
+      ? createOxcStaticCallableValue(resolved.value)
+      : resolved.value
+  );
+  return true;
 };
 
 const removeStaticHelperDeclarations = (
@@ -3049,6 +3133,7 @@ function* resolveImportValue(
   });
 
   return {
+    callable: resolved.callable,
     dependencies: [
       dependency.resolved,
       ...resolved.dependencies.filter((item) => item !== dependency.resolved),
@@ -3454,7 +3539,29 @@ function* resolveProcessorStaticExport(
       return null;
     }
 
-    env.set(binding.local, createOxcStaticCallableValue(resolved.value));
+    if (
+      !bindStaticResolvedValue(
+        env,
+        preparedTarget.expression,
+        binding.local,
+        resolved,
+        {
+          wrapNonCallable: true,
+        }
+      )
+    ) {
+      debugStaticResolve(action, {
+        exported: exportedName,
+        filename,
+        imported: binding.imported,
+        phase: 'processor-metadata',
+        reason: 'callable-usage-unsupported',
+        source: binding.source,
+        status: 'rejected',
+      });
+      return null;
+    }
+
     resolved.dependencies.forEach((dependency) => dependencies.add(dependency));
     resolved.sideEffectDependencies?.forEach((dependency) =>
       sideEffectDependencies.add(dependency)
@@ -3614,7 +3721,10 @@ function* resolveObjectAssignStaticExport(
       return null;
     }
 
-    env.set(binding.local, resolved.value);
+    if (!bindStaticResolvedValue(env, expression, binding.local, resolved)) {
+      return null;
+    }
+
     resolved.dependencies.forEach((item) => dependencies.add(item));
     resolved.sideEffectDependencies?.forEach((item) =>
       sideEffectDependencies.add(item)
@@ -3632,6 +3742,108 @@ function* resolveObjectAssignStaticExport(
   );
   return isStaticWYWMetaValue(value)
     ? {
+        dependencies: [...dependencies],
+        sideEffectDependencies: [...sideEffectDependencies],
+        value,
+      }
+    : null;
+}
+
+const zeroArgFunctionReturnExpression = (
+  expression: Expression
+): Expression | null => {
+  const unwrapped = unwrapExpression(expression);
+  if (
+    unwrapped.type !== 'ArrowFunctionExpression' &&
+    unwrapped.type !== 'FunctionExpression'
+  ) {
+    return null;
+  }
+
+  if (unwrapped.async || unwrapped.params.length !== 0 || !unwrapped.body) {
+    return null;
+  }
+
+  if (unwrapped.body.type !== 'BlockStatement') {
+    return unwrapped.body as Expression;
+  }
+
+  if (unwrapped.body.body.length !== 1) {
+    return null;
+  }
+
+  const [statement] = unwrapped.body.body;
+  return statement?.type === 'ReturnStatement' && statement.argument
+    ? statement.argument
+    : null;
+};
+
+function* resolveZeroArgFunctionStaticExport(
+  action: ITransformAction,
+  filename: string,
+  code: string,
+  program: Program,
+  target: Extract<ExportTarget, { kind: 'expression' }>,
+  stack: Set<string>,
+  memo: Map<string, StaticExportResult | null>
+): SyncScenarioFor<StaticExportResult | null> {
+  const returnExpression = zeroArgFunctionReturnExpression(target.expression);
+  if (!returnExpression) {
+    return null;
+  }
+
+  const staticDependencies = collectStaticExpressionDependencies(
+    program,
+    {
+      ...target,
+      expression: returnExpression,
+    },
+    { allowMetadataCalls: true }
+  );
+  if (!staticDependencies) {
+    return null;
+  }
+
+  const env = new Map<string, unknown>();
+  const dependencies = new Set<string>([filename]);
+  const sideEffectDependencies = new Set<string>();
+
+  for (const binding of staticDependencies.imports) {
+    const resolved = yield* resolveImportValue(
+      action,
+      filename,
+      binding,
+      stack,
+      memo
+    );
+    if (!resolved) {
+      return null;
+    }
+
+    if (
+      !bindStaticResolvedValue(env, returnExpression, binding.local, resolved)
+    ) {
+      return null;
+    }
+
+    resolved.dependencies.forEach((item) => dependencies.add(item));
+    resolved.sideEffectDependencies?.forEach((item) =>
+      sideEffectDependencies.add(item)
+    );
+  }
+
+  const value = evaluateOxcStaticExpressionAt(
+    code,
+    filename,
+    {
+      end: returnExpression.end,
+      start: returnExpression.start,
+    },
+    env
+  );
+  return isOxcStaticSerializableValue(value)
+    ? {
+        callable: 'zero-arg',
         dependencies: [...dependencies],
         sideEffectDependencies: [...sideEffectDependencies],
         value,
@@ -3759,6 +3971,26 @@ function* resolveStaticExport(
     return finish(objectAssignResult);
   }
 
+  const zeroArgFunctionResult = yield* resolveZeroArgFunctionStaticExport(
+    action,
+    filename,
+    code,
+    program,
+    target,
+    stack,
+    memo
+  );
+  if (zeroArgFunctionResult) {
+    debugStaticResolve(action, {
+      exported: exportedName,
+      filename,
+      phase: 'export',
+      reason: 'zero-arg-function',
+      status: 'resolved',
+    });
+    return finish(zeroArgFunctionResult);
+  }
+
   const staticDependencies = collectStaticExpressionDependencies(
     program,
     target
@@ -3815,7 +4047,21 @@ function* resolveStaticExport(
       return finish(null);
     }
 
-    env.set(binding.local, resolved.value);
+    if (
+      !bindStaticResolvedValue(env, target.expression, binding.local, resolved)
+    ) {
+      debugStaticResolve(action, {
+        exported: exportedName,
+        filename,
+        imported: binding.imported,
+        phase: 'export',
+        reason: 'callable-usage-unsupported',
+        source: binding.source,
+        status: 'rejected',
+      });
+      return finish(null);
+    }
+
     resolved.dependencies.forEach((item) => dependencies.add(item));
     resolved.sideEffectDependencies?.forEach((item) =>
       sideEffectDependencies.add(item)
@@ -3866,6 +4112,7 @@ function* resolveCandidateValue(
   const dependencies = new Set<string>();
   const sideEffectDependencies = new Set<string>();
   const sideEffectImportLocals = new Set<string>();
+  let candidateExpression: Expression | null | undefined;
 
   for (const item of candidate.imports) {
     const resolved = yield* resolveImportValue(
@@ -3888,7 +4135,41 @@ function* resolveCandidateValue(
       return null;
     }
 
-    env.set(item.local, resolved.value);
+    if (resolved.callable === 'zero-arg' && candidateExpression === undefined) {
+      candidateExpression = parseStaticExpressionSource(
+        candidate.source,
+        filename
+      );
+    }
+
+    const expressionForBinding =
+      resolved.callable === 'zero-arg' ? candidateExpression : null;
+    if (
+      (resolved.callable === 'zero-arg' && !expressionForBinding) ||
+      (expressionForBinding &&
+        !bindStaticResolvedValue(
+          env,
+          expressionForBinding,
+          item.local,
+          resolved
+        ))
+    ) {
+      debugStaticResolve(action, {
+        candidate: candidate.name,
+        filename,
+        imported: item.imported,
+        phase: 'candidate',
+        reason: 'candidate-callable-usage-unsupported',
+        source: item.source,
+        status: 'rejected',
+      });
+      return null;
+    }
+
+    if (!expressionForBinding) {
+      env.set(item.local, resolved.value);
+    }
+
     resolved.dependencies.forEach((dependency) => dependencies.add(dependency));
     resolved.sideEffectDependencies?.forEach((dependency) => {
       sideEffectDependencies.add(dependency);
