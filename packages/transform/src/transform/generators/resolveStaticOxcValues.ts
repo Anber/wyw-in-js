@@ -1,5 +1,7 @@
 /* eslint-disable no-restricted-syntax,no-continue,@typescript-eslint/no-use-before-define */
 
+import { createHash } from 'crypto';
+import { readFileSync, statSync } from 'fs';
 import { dirname, isAbsolute, relative, resolve as resolvePath } from 'path';
 
 import { isFeatureEnabled, type FeatureFlag } from '@wyw-in-js/shared';
@@ -37,9 +39,13 @@ import type { ITransformAction, SyncScenarioFor } from '../types';
 type AnyNode = Node & Record<string, unknown>;
 
 type ImportBinding = {
-  imported: 'default' | string;
+  imported: '*' | 'default' | string;
   local: string;
   source: string;
+};
+
+type CollectImportBindingsOptions = {
+  includeNamespace?: boolean;
 };
 
 type ExportTarget =
@@ -56,8 +62,31 @@ type ExportTarget =
 
 type StaticExportResult = {
   dependencies: string[];
+  sideEffectDependencies?: string[];
+  sideEffectImportLocals?: string[];
   value: unknown;
 };
+
+type StaticFileAnalysis = {
+  code: string;
+  codeHash: string;
+  program: Program;
+};
+
+type StaticFileHashCacheEntry = {
+  hash: string;
+  mtimeMs: number;
+  size: number;
+};
+
+type StaticExportCacheEntry =
+  | {
+      result: null;
+    }
+  | {
+      dependencyHashes: Map<string, string>;
+      result: StaticExportResult;
+    };
 
 type StaticImportValueFeatures = {
   staticImportValues?: FeatureFlag;
@@ -65,6 +94,7 @@ type StaticImportValueFeatures = {
 
 type StaticExpressionOptions = {
   allowMetadataCalls?: boolean;
+  ignoredMutableCallArgumentNames?: Set<string>;
 };
 
 type StaticResolveDebugPhase =
@@ -158,6 +188,256 @@ const debugStaticResolve = (
 
 const parseProgram = (code: string, filename: string): Program =>
   parseOxcProgramCached(filename, code, 'unambiguous');
+
+const staticFileAnalysisCaches = new WeakMap<
+  object,
+  Map<string, StaticFileAnalysis>
+>();
+
+const staticFileHashCaches = new WeakMap<
+  object,
+  Map<string, StaticFileHashCacheEntry>
+>();
+
+const staticExportResultCaches = new WeakMap<
+  object,
+  Map<string, StaticExportCacheEntry>
+>();
+
+const hashStaticContent = (content: string | Buffer): string =>
+  createHash('sha256').update(content).digest('hex');
+
+const getWeakCacheMap = <TValue>(
+  caches: WeakMap<object, Map<string, TValue>>,
+  key: object
+): Map<string, TValue> => {
+  let cache = caches.get(key);
+  if (!cache) {
+    cache = new Map();
+    caches.set(key, cache);
+  }
+
+  return cache;
+};
+
+const isStaticResolveCacheEnabled = (): boolean => {
+  const envValue = process.env.WYW_STATIC_RESOLVE_CACHE?.trim().toLowerCase();
+  if (envValue) {
+    return !isEnvDisabled(envValue);
+  }
+
+  return !isStaticResolveDebugEnabled();
+};
+
+const staticCachePrefix = (action: ITransformAction): string =>
+  `${action.services.cache.getKeySalt() ?? ''}\0${
+    action.services.options.root ?? ''
+  }`;
+
+const staticFileAnalysisCache = (
+  action: ITransformAction
+): Map<string, StaticFileAnalysis> =>
+  getWeakCacheMap(staticFileAnalysisCaches, action.services.cache);
+
+const staticFileHashCache = (
+  action: ITransformAction
+): Map<string, StaticFileHashCacheEntry> =>
+  getWeakCacheMap(staticFileHashCaches, action.services.cache);
+
+const staticExportResultCache = (
+  action: ITransformAction
+): Map<string, StaticExportCacheEntry> =>
+  getWeakCacheMap(staticExportResultCaches, action.services.cache);
+
+const staticFileAnalysisCacheKey = (
+  action: ITransformAction,
+  filename: string,
+  codeHash: string
+): string => `${staticCachePrefix(action)}\0${filename}\0${codeHash}`;
+
+const staticExportCacheKey = (
+  action: ITransformAction,
+  filename: string,
+  exportedName: string,
+  codeHash: string
+): string =>
+  `${staticCachePrefix(action)}\0${filename}\0${exportedName}\0${codeHash}`;
+
+const getStaticFileContentHash = (
+  action: ITransformAction,
+  dependency: string
+): string | null => {
+  const filename = stripQueryAndHash(dependency);
+  if (!isAbsolute(filename)) {
+    return null;
+  }
+
+  let stat;
+  try {
+    stat = statSync(filename);
+  } catch {
+    return null;
+  }
+
+  if (!stat.isFile()) {
+    return null;
+  }
+
+  const cache = staticFileHashCache(action);
+  const cached = cache.get(filename);
+  if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) {
+    return cached.hash;
+  }
+
+  let hash: string;
+  try {
+    hash = hashStaticContent(readFileSync(filename));
+  } catch {
+    return null;
+  }
+
+  cache.set(filename, {
+    hash,
+    mtimeMs: stat.mtimeMs,
+    size: stat.size,
+  });
+  return hash;
+};
+
+const collectStaticDependencyHashes = (
+  action: ITransformAction,
+  dependencies: string[]
+): Map<string, string> | null => {
+  const hashes = new Map<string, string>();
+  for (const dependency of dependencies) {
+    const hash = getStaticFileContentHash(action, dependency);
+    if (!hash) {
+      return null;
+    }
+
+    hashes.set(stripQueryAndHash(dependency), hash);
+  }
+
+  return hashes;
+};
+
+const areStaticDependencyHashesCurrent = (
+  action: ITransformAction,
+  dependencyHashes: Map<string, string>
+): boolean => {
+  for (const [dependency, expectedHash] of dependencyHashes) {
+    if (getStaticFileContentHash(action, dependency) !== expectedHash) {
+      return false;
+    }
+  }
+
+  return true;
+};
+
+const getStaticExportCachedResult = (
+  action: ITransformAction,
+  filename: string,
+  exportedName: string,
+  codeHash: string
+): StaticExportResult | null | undefined => {
+  if (!isStaticResolveCacheEnabled()) {
+    return undefined;
+  }
+
+  const cache = staticExportResultCache(action);
+  const cacheKey = staticExportCacheKey(
+    action,
+    filename,
+    exportedName,
+    codeHash
+  );
+  const cached = cache.get(cacheKey);
+  if (!cached) {
+    return undefined;
+  }
+
+  if (cached.result === null) {
+    return null;
+  }
+
+  if (areStaticDependencyHashesCurrent(action, cached.dependencyHashes)) {
+    return cached.result;
+  }
+
+  cache.delete(cacheKey);
+  return undefined;
+};
+
+const setStaticExportCachedResult = (
+  action: ITransformAction,
+  filename: string,
+  exportedName: string,
+  codeHash: string,
+  result: StaticExportResult | null
+): void => {
+  if (!isStaticResolveCacheEnabled()) {
+    return;
+  }
+
+  const cacheKey = staticExportCacheKey(
+    action,
+    filename,
+    exportedName,
+    codeHash
+  );
+  if (!result) {
+    staticExportResultCache(action).set(cacheKey, { result: null });
+    return;
+  }
+
+  const dependencyHashes = collectStaticDependencyHashes(
+    action,
+    result.dependencies
+  );
+  if (!dependencyHashes) {
+    return;
+  }
+
+  staticExportResultCache(action).set(cacheKey, {
+    dependencyHashes,
+    result,
+  });
+};
+
+const getStaticFileAnalysis = (
+  action: ITransformAction,
+  filename: string
+): StaticFileAnalysis | null => {
+  const loadedAndParsed = action.services.loadAndParseFn(
+    action.services,
+    filename,
+    undefined,
+    action.services.log
+  );
+  if (
+    loadedAndParsed.evaluator === 'ignored' ||
+    loadedAndParsed.evaluator !== oxcShaker
+  ) {
+    return null;
+  }
+
+  const { code } = loadedAndParsed;
+  const codeHash = hashStaticContent(code);
+  const cache = staticFileAnalysisCache(action);
+  const cacheKey = staticFileAnalysisCacheKey(action, filename, codeHash);
+  const cached = cache.get(cacheKey);
+  if (cached) {
+    return cached;
+  }
+
+  const analysis = {
+    code,
+    codeHash,
+    program: parseProgram(code, filename),
+  };
+  cache.set(cacheKey, analysis);
+  return analysis;
+};
 
 const getChildren = (node: Node): Node[] => {
   const children: Node[] = [];
@@ -348,11 +628,22 @@ const isTypeOnlyImport = (statement: ImportDeclaration): boolean => {
 
 const getImportBinding = (
   statement: ImportDeclaration,
-  specifier: ImportDeclaration['specifiers'][number]
+  specifier: ImportDeclaration['specifiers'][number],
+  options: CollectImportBindingsOptions = {}
 ): ImportBinding | null => {
   const local = specifier.local?.name;
   if (!local) {
     return null;
+  }
+
+  if (specifier.type === 'ImportNamespaceSpecifier') {
+    return options.includeNamespace
+      ? {
+          imported: '*',
+          local,
+          source: statement.source.value,
+        }
+      : null;
   }
 
   if (specifier.type === 'ImportDefaultSpecifier') {
@@ -382,7 +673,8 @@ const getImportBinding = (
 };
 
 const collectImportBindings = (
-  program: Program
+  program: Program,
+  options: CollectImportBindingsOptions = {}
 ): Map<string, ImportBinding> => {
   const result = new Map<string, ImportBinding>();
 
@@ -392,7 +684,7 @@ const collectImportBindings = (
     }
 
     statement.specifiers.forEach((specifier) => {
-      const binding = getImportBinding(statement, specifier);
+      const binding = getImportBinding(statement, specifier, options);
       if (binding) {
         result.set(binding.local, binding);
       }
@@ -409,16 +701,6 @@ type Range = {
 
 type Replacement = Range & {
   text: string;
-};
-
-const removeRanges = (code: string, ranges: Range[]): string => {
-  let result = code;
-  ranges
-    .sort((a, b) => b.start - a.start)
-    .forEach((range) => {
-      result = result.slice(0, range.start) + result.slice(range.end);
-    });
-  return result;
 };
 
 const applyReplacements = (
@@ -634,7 +916,8 @@ const importSpecifierLocalName = (
 const removeUnusedStaticImports = (
   code: string,
   filename: string,
-  staticImportLocals: Set<string>
+  staticImportLocals: Set<string>,
+  sideEffectImportLocals: Set<string>
 ): string => {
   if (staticImportLocals.size === 0) {
     return code;
@@ -643,6 +926,7 @@ const removeUnusedStaticImports = (
   const program = parseProgram(code, filename);
   const used = collectUsedIdentifierNames(program);
   const ranges: Range[] = [];
+  const replacements: Replacement[] = [];
 
   program.body.forEach((statement) => {
     if (
@@ -652,22 +936,34 @@ const removeUnusedStaticImports = (
       return;
     }
 
-    const removableIndexes = statement.specifiers.flatMap(
-      (specifier, index) => {
-        const localName = importSpecifierLocalName(specifier);
-        return localName &&
-          staticImportLocals.has(localName) &&
-          !used.has(localName)
-          ? [index]
-          : [];
-      }
-    );
+    const removable = statement.specifiers.flatMap((specifier, index) => {
+      const localName = importSpecifierLocalName(specifier);
+      return localName &&
+        staticImportLocals.has(localName) &&
+        !used.has(localName)
+        ? [{ index, localName }]
+        : [];
+    });
 
-    if (removableIndexes.length === 0) {
+    if (removable.length === 0) {
       return;
     }
 
-    if (removableIndexes.length === statement.specifiers.length) {
+    if (removable.length === statement.specifiers.length) {
+      if (
+        removable.some((item) => sideEffectImportLocals.has(item.localName))
+      ) {
+        replacements.push({
+          end: statement.end,
+          start: statement.start,
+          text: `import ${code.slice(
+            statement.source.start,
+            statement.source.end
+          )};`,
+        });
+        return;
+      }
+
       ranges.push({
         end: statement.end,
         start: statement.start,
@@ -675,7 +971,10 @@ const removeUnusedStaticImports = (
     }
   });
 
-  return removeRanges(code, ranges);
+  return applyReplacements(code, [
+    ...ranges.map((range) => ({ ...range, text: '' })),
+    ...replacements,
+  ]);
 };
 
 const replaceStaticWYWMetaExtendsHelpers = (
@@ -722,7 +1021,8 @@ const pruneStaticPreevalCode = (
   filename: string,
   staticValueNames: Set<string>,
   staticImportLocals: Set<string>,
-  staticNullWYWMetaExtendsHelpers: Set<string>
+  staticNullWYWMetaExtendsHelpers: Set<string>,
+  sideEffectImportLocals: Set<string>
 ): string => {
   const codeWithMetadataPruned = replaceStaticWYWMetaExtendsHelpers(
     code,
@@ -746,7 +1046,8 @@ const pruneStaticPreevalCode = (
   return removeUnusedStaticImports(
     helpersRemoved.code,
     filename,
-    importLocalsToPrune
+    importLocalsToPrune,
+    sideEffectImportLocals
   );
 };
 
@@ -824,6 +1125,88 @@ const isStaticWYWMetaValue = (
   );
 };
 
+const staticWYWMetaTreeValueStatus = (
+  value: unknown,
+  seen: Set<unknown> = new Set()
+): { hasMetadata: boolean; safe: boolean } => {
+  if (
+    value === null ||
+    typeof value === 'string' ||
+    typeof value === 'number' ||
+    typeof value === 'boolean'
+  ) {
+    return {
+      hasMetadata: false,
+      safe: true,
+    };
+  }
+
+  if (typeof value !== 'object') {
+    return {
+      hasMetadata: false,
+      safe: false,
+    };
+  }
+
+  if (seen.has(value)) {
+    return {
+      hasMetadata: false,
+      safe: false,
+    };
+  }
+  seen.add(value);
+
+  if (Array.isArray(value)) {
+    let hasMetadata = false;
+    for (const item of value) {
+      const status = staticWYWMetaTreeValueStatus(item, seen);
+      if (!status.safe) {
+        return {
+          hasMetadata: false,
+          safe: false,
+        };
+      }
+
+      hasMetadata = hasMetadata || status.hasMetadata;
+    }
+
+    return {
+      hasMetadata,
+      safe: true,
+    };
+  }
+
+  if ('__wyw_meta' in value) {
+    return {
+      hasMetadata: isStaticWYWMetaValue(value),
+      safe: isStaticWYWMetaValue(value),
+    };
+  }
+
+  let hasMetadata = false;
+  for (const item of Object.values(value)) {
+    const status = staticWYWMetaTreeValueStatus(item, seen);
+    if (!status.safe) {
+      return {
+        hasMetadata: false,
+        safe: false,
+      };
+    }
+
+    hasMetadata = hasMetadata || status.hasMetadata;
+  }
+
+  return {
+    hasMetadata,
+    safe: true,
+  };
+};
+
+const isStaticWYWMetaTreeValue = (value: unknown): boolean => {
+  const status = staticWYWMetaTreeValueStatus(value);
+  return status.safe && status.hasMetadata;
+};
+
 type StaticProcessorInstance = {
   artifacts: unknown[];
   build: (values: Map<string, unknown>) => void;
@@ -879,17 +1262,50 @@ const isEmptyProcessorClassName = (
     return false;
   }
 
-  try {
-    processor.build(new Map());
-  } catch {
-    cache.set(value, false);
-    return false;
+  if (processor.artifacts.length === 0) {
+    try {
+      processor.build(new Map());
+    } catch {
+      cache.set(value, false);
+      return false;
+    }
   }
 
   const result = processor.artifacts.every((artifact) => {
     const cssText = artifactCssText(artifact);
     return cssText !== null && cssText.trim() === '';
   });
+  cache.set(value, result);
+  return result;
+};
+
+const isProcessorClassName = (
+  value: string,
+  processors: StaticProcessorInstance[],
+  cache: Map<string, boolean>
+): boolean => {
+  if (cache.has(value)) {
+    return cache.get(value)!;
+  }
+
+  const processor = processors.find((item) => item.className === value);
+  if (!processor) {
+    cache.set(value, false);
+    return false;
+  }
+
+  if (processor.artifacts.length === 0) {
+    try {
+      processor.build(new Map());
+    } catch {
+      cache.set(value, false);
+      return false;
+    }
+  }
+
+  const result = processor.artifacts.every(
+    (artifact) => artifactCssText(artifact) !== null
+  );
   cache.set(value, result);
   return result;
 };
@@ -923,6 +1339,41 @@ const isSelectorOnlyProcessorValue = (
     seen.add(value);
     return Object.values(value).every((item) =>
       isSelectorOnlyProcessorValue(item, processors, cache, seen)
+    );
+  }
+
+  return false;
+};
+
+const isProcessorClassValue = (
+  value: unknown,
+  processors: StaticProcessorInstance[],
+  cache: Map<string, boolean>,
+  seen: Set<unknown> = new Set()
+): boolean => {
+  if (typeof value === 'string') {
+    return isProcessorClassName(value, processors, cache);
+  }
+
+  if (Array.isArray(value)) {
+    if (seen.has(value)) {
+      return false;
+    }
+
+    seen.add(value);
+    return value.every((item) =>
+      isProcessorClassValue(item, processors, cache, seen)
+    );
+  }
+
+  if (typeof value === 'object' && value !== null) {
+    if (seen.has(value)) {
+      return false;
+    }
+
+    seen.add(value);
+    return Object.values(value).every((item) =>
+      isProcessorClassValue(item, processors, cache, seen)
     );
   }
 
@@ -969,8 +1420,9 @@ type StaticExpressionDependencies = {
 
 type PreparedProcessorTarget = {
   dependencies: StaticExpressionDependencies;
+  evaluationCode?: string;
+  evaluationSpan?: Range;
   expression: Expression;
-  expressionCode?: string;
   opaqueRuntimeBase: boolean;
 };
 
@@ -1585,6 +2037,25 @@ const findWYWMetaExtendsExpression = (expr: Expression): Expression | null => {
   return findObjectPropertyValue(meta, 'extends');
 };
 
+const collectWYWMetaExtendsExpressions = (expr: Expression): Expression[] => {
+  const result: Expression[] = [];
+  const visit = (node: Node): void => {
+    if (node.type === 'ObjectExpression') {
+      const extendsExpression = findWYWMetaExtendsExpression(
+        node as Expression
+      );
+      if (extendsExpression) {
+        result.push(extendsExpression);
+      }
+    }
+
+    getChildren(node).forEach(visit);
+  };
+
+  visit(expr);
+  return result;
+};
+
 const topLevelStatements = (program: Program): Node[] => {
   const result: Node[] = [];
 
@@ -1667,7 +2138,10 @@ const isTopLevelFunctionOrClass = (program: Program, name: string): boolean =>
     return false;
   });
 
-const functionReturnExpression = (expr: Node): Expression | null => {
+const functionReturnExpression = (
+  expr: Node,
+  options: { allowParams?: boolean } = {}
+): Expression | null => {
   const unwrapped = unwrapExpression(expr);
   if (
     unwrapped.type !== 'ArrowFunctionExpression' &&
@@ -1676,7 +2150,11 @@ const functionReturnExpression = (expr: Node): Expression | null => {
     return null;
   }
 
-  if (unwrapped.async || unwrapped.params.length > 0 || !unwrapped.body) {
+  if (
+    unwrapped.async ||
+    (!options.allowParams && unwrapped.params.length > 0) ||
+    !unwrapped.body
+  ) {
     return null;
   }
 
@@ -1731,8 +2209,36 @@ const isKnownReactFactoryCall = (
   );
 };
 
+const isKnownOpaqueRuntimeWrapperImport = (
+  binding: ImportBinding | undefined
+): boolean => {
+  if (!binding) {
+    return false;
+  }
+
+  return (
+    binding.imported === 'observer' &&
+    (binding.source === 'mobx-react' || binding.source === 'mobx-react-lite')
+  );
+};
+
+const isKnownOpaqueRuntimeWrapperCallee = (
+  expr: Node,
+  imports: Map<string, ImportBinding>
+): boolean => {
+  const callee = unwrapExpression(expr);
+  if (callee.type === 'Identifier') {
+    return isKnownOpaqueRuntimeWrapperImport(imports.get(callee.name));
+  }
+
+  return false;
+};
+
 const isKnownOpaqueRuntimeImportSource = (source: string): boolean =>
   /\.svg(?:$|[?#])/.test(source);
+
+const isKnownExternalRuntimeComponentImportSource = (source: string): boolean =>
+  source.startsWith('@radix-ui/react-');
 
 type OpaqueRuntimeImportProof = {
   dependencies: string[];
@@ -1836,6 +2342,92 @@ const objectAssignTargetExpression = (
   return target;
 };
 
+const isFunctionBoundaryNode = (node: Node): boolean =>
+  node.type === 'ArrowFunctionExpression' ||
+  node.type === 'FunctionDeclaration' ||
+  node.type === 'FunctionExpression' ||
+  node.type === 'ClassDeclaration' ||
+  node.type === 'ClassExpression';
+
+const callHasArgumentRootName = (expr: Node, targetName: string): boolean => {
+  const unwrapped = unwrapExpression(expr);
+  return (
+    unwrapped.type === 'CallExpression' &&
+    unwrapped.arguments.some((argument) => {
+      const argumentNode =
+        argument.type === 'SpreadElement' ? argument.argument : argument;
+      return rootIdentifierName(argumentNode) === targetName;
+    })
+  );
+};
+
+const isSafeObjectAssignAliasAugmentation = (
+  program: Program,
+  expr: Node,
+  targetName: string
+): boolean => {
+  const unwrapped = unwrapExpression(expr);
+  if (
+    unwrapped.type !== 'CallExpression' ||
+    !isObjectAssignCallee(program, unwrapped.callee) ||
+    unwrapped.arguments.length < 2
+  ) {
+    return false;
+  }
+
+  const [target, ...aliases] = unwrapped.arguments;
+  if (!target || target.type === 'SpreadElement') {
+    return false;
+  }
+
+  const unwrappedTarget = unwrapExpression(target);
+  if (
+    unwrappedTarget.type !== 'Identifier' ||
+    unwrappedTarget.name !== targetName
+  ) {
+    return false;
+  }
+
+  return aliases.every(
+    (alias) =>
+      alias.type !== 'SpreadElement' &&
+      isSafeObjectAssignAliasExpression(program, alias)
+  );
+};
+
+const hasOnlySafeObjectAssignCallArgumentUses = (
+  program: Program,
+  targetName: string
+): boolean => {
+  let hasSafeUse = false;
+  let hasUnsafeUse = false;
+
+  const visit = (node: Node): void => {
+    if (hasUnsafeUse || isFunctionBoundaryNode(node)) {
+      return;
+    }
+
+    const unwrapped = unwrapExpression(node);
+    if (unwrapped.type === 'CallExpression') {
+      if (callHasArgumentRootName(unwrapped, targetName)) {
+        if (
+          isSafeObjectAssignAliasAugmentation(program, unwrapped, targetName)
+        ) {
+          hasSafeUse = true;
+        } else {
+          hasUnsafeUse = true;
+          return;
+        }
+      }
+    }
+
+    getChildren(node).forEach(visit);
+  };
+
+  topLevelStatements(program).forEach(visit);
+  return hasSafeUse && !hasUnsafeUse;
+};
+
 const resolveObjectAssignProcessorExpression = (
   program: Program,
   expr: Expression
@@ -1856,7 +2448,7 @@ const isOpaqueRuntimeComponentExpression = (
   opaqueImportNames: Set<string> = new Set(),
   seen: Set<string> = new Set()
 ): boolean => {
-  const imports = collectImportBindings(program);
+  const imports = collectImportBindings(program, { includeNamespace: true });
   const unwrapped = unwrapExpression(expr);
 
   if (isStaticMetaObjectExpression(unwrapped)) {
@@ -1877,11 +2469,32 @@ const isOpaqueRuntimeComponentExpression = (
 
   if (
     unwrapped.type === 'CallExpression' &&
-    unwrapped.callee.type === 'Identifier' &&
-    unwrapped.arguments.length === 0
+    unwrapped.arguments.length === 1 &&
+    isKnownOpaqueRuntimeWrapperCallee(unwrapped.callee, imports)
   ) {
+    const [argument] = unwrapped.arguments;
+    return argument.type !== 'SpreadElement'
+      ? isOpaqueRuntimeComponentExpression(
+          program,
+          argument,
+          opaqueImportNames,
+          seen
+        )
+      : false;
+  }
+
+  if (
+    unwrapped.type === 'CallExpression' &&
+    unwrapped.callee.type === 'Identifier'
+  ) {
+    const allowParams = unwrapped.arguments.every(
+      (argument) =>
+        argument.type !== 'SpreadElement' && isSafeStaticExpression(argument)
+    );
     const local = findTopLevelConstExpression(program, unwrapped.callee.name);
-    const returned = local ? functionReturnExpression(local) : null;
+    const returned = local
+      ? functionReturnExpression(local, { allowParams })
+      : null;
     return returned
       ? isOpaqueRuntimeComponentExpression(
           program,
@@ -1890,6 +2503,17 @@ const isOpaqueRuntimeComponentExpression = (
           seen
         )
       : false;
+  }
+
+  if (unwrapped.type === 'MemberExpression' && !unwrapped.computed) {
+    const name = rootIdentifierName(unwrapped);
+    const imported = name ? imports.get(name) : undefined;
+    return (
+      !!name &&
+      !!imported &&
+      (opaqueImportNames.has(name) ||
+        isKnownExternalRuntimeComponentImportSource(imported.source))
+    );
   }
 
   if (unwrapped.type !== 'Identifier') {
@@ -1906,7 +2530,8 @@ const isOpaqueRuntimeComponentExpression = (
   if (imported) {
     return (
       opaqueImportNames.has(name) ||
-      isKnownOpaqueRuntimeImportSource(imported.source)
+      isKnownOpaqueRuntimeImportSource(imported.source) ||
+      isKnownExternalRuntimeComponentImportSource(imported.source)
     );
   }
 
@@ -1935,15 +2560,20 @@ const collectOpaqueRuntimeReferenceNames = (
 
   if (
     unwrapped.type === 'CallExpression' &&
-    unwrapped.callee.type === 'Identifier' &&
-    unwrapped.arguments.length === 0
+    unwrapped.callee.type === 'Identifier'
   ) {
+    const allowParams = unwrapped.arguments.every(
+      (argument) =>
+        argument.type !== 'SpreadElement' && isSafeStaticExpression(argument)
+    );
     if (seenHelpers.has(unwrapped.callee.name)) {
       return;
     }
 
     const local = findTopLevelConstExpression(program, unwrapped.callee.name);
-    const returned = local ? functionReturnExpression(local) : null;
+    const returned = local
+      ? functionReturnExpression(local, { allowParams })
+      : null;
     if (returned) {
       seenHelpers.add(unwrapped.callee.name);
       collectOpaqueRuntimeReferenceNames(program, returned, names, seenHelpers);
@@ -1987,50 +2617,121 @@ const collectWYWMetaExtendsHelperNames = (program: Program): Set<string> => {
   return result;
 };
 
-const replaceExpressionChild = (
+const replaceExpressionChildren = (
   code: string,
   expression: Expression,
-  child: Expression,
-  replacement: string
+  replacements: Array<{ child: Expression; replacement: string }>
 ): string => {
   const expressionCode = code.slice(expression.start, expression.end);
-  return (
-    expressionCode.slice(0, child.start - expression.start) +
-    replacement +
-    expressionCode.slice(child.end - expression.start)
+  return applyReplacements(
+    expressionCode,
+    replacements.map(({ child, replacement }) => ({
+      end: child.end - expression.start,
+      start: child.start - expression.start,
+      text: replacement,
+    }))
   );
+};
+
+const parseSyntheticExpression = (
+  expressionCode: string,
+  filename: string
+): Expression | null => {
+  const program = parseProgram(
+    `const __wyw_static_target = ${expressionCode};`,
+    filename
+  );
+  const declaration = program.body[0];
+  if (declaration?.type !== 'VariableDeclaration') {
+    return null;
+  }
+
+  const [declarator] = declaration.declarations;
+  return declarator?.init ?? null;
 };
 
 const prepareProcessorTarget = (
   code: string,
+  filename: string,
   program: Program,
   target: Extract<ExportTarget, { kind: 'expression' }>,
   opaqueImportNames: Set<string> = new Set()
 ): PreparedProcessorTarget | null => {
+  const ignoredMutableCallArgumentNames =
+    target.localName &&
+    hasOnlySafeObjectAssignCallArgumentUses(program, target.localName)
+      ? new Set([target.localName])
+      : undefined;
+  const dependencyOptions: StaticExpressionOptions = {
+    allowMetadataCalls: true,
+    ignoredMutableCallArgumentNames,
+  };
   const expression = resolveObjectAssignProcessorExpression(
     program,
     target.expression
   );
-  const extendsExpression = findWYWMetaExtendsExpression(expression);
-  if (
-    extendsExpression &&
-    isOpaqueRuntimeComponentExpression(
-      program,
-      extendsExpression,
-      opaqueImportNames
-    )
-  ) {
-    return {
-      dependencies: { imports: [] },
-      expression,
-      expressionCode: replaceExpressionChild(
-        code,
-        expression,
+  const extendsExpressions = collectWYWMetaExtendsExpressions(expression);
+  const opaqueExtendsExpressions = extendsExpressions.filter(
+    (extendsExpression) =>
+      isOpaqueRuntimeComponentExpression(
+        program,
         extendsExpression,
-        'null'
-      ),
-      opaqueRuntimeBase: true,
-    };
+        opaqueImportNames
+      )
+  );
+
+  if (opaqueExtendsExpressions.length > 0) {
+    const replacements = opaqueExtendsExpressions.map((extendsExpression) => ({
+      child: extendsExpression,
+      replacement: 'null',
+    }));
+    const expressionCode = replaceExpressionChildren(
+      code,
+      expression,
+      replacements
+    );
+    const syntheticExpression = parseSyntheticExpression(
+      expressionCode,
+      filename
+    );
+    if (!syntheticExpression) {
+      return null;
+    }
+
+    const dependencies = collectStaticExpressionDependencies(
+      program,
+      {
+        ...target,
+        expression: syntheticExpression,
+      },
+      dependencyOptions
+    );
+
+    return dependencies
+      ? {
+          dependencies,
+          evaluationCode: applyReplacements(
+            code,
+            replacements.map(({ child, replacement }) => ({
+              end: child.end,
+              start: child.start,
+              text: replacement,
+            }))
+          ),
+          evaluationSpan: {
+            end:
+              expression.end +
+              replacements.reduce(
+                (delta, { child, replacement }) =>
+                  delta + replacement.length - (child.end - child.start),
+                0
+              ),
+            start: expression.start,
+          },
+          expression,
+          opaqueRuntimeBase: true,
+        }
+      : null;
   }
 
   const dependencies = collectStaticExpressionDependencies(
@@ -2039,9 +2740,7 @@ const prepareProcessorTarget = (
       ...target,
       expression,
     },
-    {
-      allowMetadataCalls: true,
-    }
+    dependencyOptions
   );
   return dependencies
     ? {
@@ -2143,7 +2842,10 @@ const collectStaticExpressionDependencies = (
   }
 
   for (const name of mutableReferencedNames) {
-    if (mutationHints.callArgumentNames.has(name)) {
+    if (
+      mutationHints.callArgumentNames.has(name) &&
+      !options.ignoredMutableCallArgumentNames?.has(name)
+    ) {
       return null;
     }
   }
@@ -2351,6 +3053,7 @@ function* resolveImportValue(
       dependency.resolved,
       ...resolved.dependencies.filter((item) => item !== dependency.resolved),
     ],
+    sideEffectDependencies: resolved.sideEffectDependencies,
     value: resolved.value,
   };
 }
@@ -2391,19 +3094,80 @@ function* resolveExportAsOpaqueRuntimeImport(
 
   const program = parseProgram(loadedAndParsed.code, filename);
   const target = findExportTarget(program, exportedName);
-  if (!target || target.kind !== 'import') {
+  if (!target) {
     memo.set(memoKey, null);
     stack.delete(memoKey);
     return null;
   }
 
-  const resolved = yield* resolveImportAsOpaqueRuntime(
-    action,
-    filename,
-    target,
-    stack,
-    memo
+  if (target.kind === 'import') {
+    const resolved = yield* resolveImportAsOpaqueRuntime(
+      action,
+      filename,
+      target,
+      stack,
+      memo
+    );
+    memo.set(memoKey, resolved);
+    stack.delete(memoKey);
+    return resolved;
+  }
+
+  if (isOpaqueRuntimeComponentExpression(program, target.expression)) {
+    const resolved = {
+      dependencies: [filename],
+      names: new Set<string>(),
+    };
+    memo.set(memoKey, resolved);
+    stack.delete(memoKey);
+    return resolved;
+  }
+
+  const imports = collectImportBindings(program, { includeNamespace: true });
+  const referencedNames = new Set<string>();
+  collectOpaqueRuntimeReferenceNames(
+    program,
+    target.expression,
+    referencedNames
   );
+  const opaqueImportNames = new Set<string>();
+  const dependencies = new Set<string>([filename]);
+
+  for (const name of referencedNames) {
+    const binding = imports.get(name);
+    if (
+      !binding ||
+      binding.source === 'react' ||
+      isKnownOpaqueRuntimeWrapperImport(binding)
+    ) {
+      continue;
+    }
+
+    const proof = yield* resolveImportAsOpaqueRuntime(
+      action,
+      filename,
+      binding,
+      stack,
+      memo
+    );
+    if (!proof) {
+      continue;
+    }
+
+    opaqueImportNames.add(name);
+    proof.dependencies.forEach((dependency) => dependencies.add(dependency));
+  }
+
+  const resolved = isOpaqueRuntimeComponentExpression(
+    program,
+    target.expression,
+    opaqueImportNames
+  )
+    ? {
+        dependencies: [...dependencies],
+        names: opaqueImportNames,
+      }
+    : null;
   memo.set(memoKey, resolved);
   stack.delete(memoKey);
   return resolved;
@@ -2441,6 +3205,13 @@ function* resolveImportAsOpaqueRuntime(
   if (knownSourceDependency) {
     return {
       dependencies: [knownSourceDependency],
+      names: new Set(),
+    };
+  }
+
+  if (isKnownExternalRuntimeComponentImportSource(binding.source)) {
+    return {
+      dependencies: [],
       names: new Set(),
     };
   }
@@ -2491,20 +3262,22 @@ function* collectOpaqueRuntimeImportProof(
   program: Program,
   expression: Expression
 ): SyncScenarioFor<OpaqueRuntimeImportProof> {
-  const extendsExpression = findWYWMetaExtendsExpression(expression);
-  if (!extendsExpression) {
+  const extendsExpressions = collectWYWMetaExtendsExpressions(expression);
+  if (extendsExpressions.length === 0) {
     return {
       dependencies: [],
       names: new Set(),
     };
   }
 
-  const imports = collectImportBindings(program);
+  const imports = collectImportBindings(program, { includeNamespace: true });
   const referencedNames = new Set<string>();
-  collectOpaqueRuntimeReferenceNames(
-    program,
-    extendsExpression,
-    referencedNames
+  extendsExpressions.forEach((extendsExpression) =>
+    collectOpaqueRuntimeReferenceNames(
+      program,
+      extendsExpression,
+      referencedNames
+    )
   );
 
   const dependencies = new Set<string>();
@@ -2637,6 +3410,7 @@ function* resolveProcessorStaticExport(
   );
   const preparedTarget = prepareProcessorTarget(
     preevalCode,
+    filename,
     preevalProgram,
     target,
     opaqueRuntimeImportProof.names
@@ -2654,6 +3428,7 @@ function* resolveProcessorStaticExport(
 
   const env = new Map<string, unknown>();
   const dependencies = new Set<string>([filename]);
+  const sideEffectDependencies = new Set<string>();
   opaqueRuntimeImportProof.dependencies.forEach((dependency) =>
     dependencies.add(dependency)
   );
@@ -2681,19 +3456,28 @@ function* resolveProcessorStaticExport(
 
     env.set(binding.local, createOxcStaticCallableValue(resolved.value));
     resolved.dependencies.forEach((dependency) => dependencies.add(dependency));
+    resolved.sideEffectDependencies?.forEach((dependency) =>
+      sideEffectDependencies.add(dependency)
+    );
   }
 
-  const value = preparedTarget.expressionCode
-    ? evaluateOxcStaticExpression(preparedTarget.expressionCode, filename, env)
-    : evaluateOxcStaticExpressionAt(
-        preevalCode,
-        filename,
-        {
-          end: preparedTarget.expression.end,
-          start: preparedTarget.expression.start,
-        },
-        env
-      );
+  const value =
+    preparedTarget.evaluationCode && preparedTarget.evaluationSpan
+      ? evaluateOxcStaticExpressionAt(
+          preparedTarget.evaluationCode,
+          filename,
+          preparedTarget.evaluationSpan,
+          env
+        )
+      : evaluateOxcStaticExpressionAt(
+          preevalCode,
+          filename,
+          {
+            end: preparedTarget.expression.end,
+            start: preparedTarget.expression.start,
+          },
+          env
+        );
   if (!isOxcStaticSerializableValue(value)) {
     debugStaticResolve(action, {
       exported: exportedName,
@@ -2705,13 +3489,24 @@ function* resolveProcessorStaticExport(
     return null;
   }
 
+  const isStaticMeta = isStaticWYWMetaValue(value);
+  const isStaticMetaTree = !isStaticMeta && isStaticWYWMetaTreeValue(value);
+  const processors = preevalResult.metadata
+    .processors as unknown as StaticProcessorInstance[];
+  const isSelectorOnly =
+    !isStaticMeta &&
+    !isStaticMetaTree &&
+    isSelectorOnlyProcessorValue(value, processors, new Map());
+  const isSideEffectClassValue =
+    !isStaticMeta &&
+    !isStaticMetaTree &&
+    !isSelectorOnly &&
+    isProcessorClassValue(value, processors, new Map());
   if (
-    !isStaticWYWMetaValue(value) &&
-    !isSelectorOnlyProcessorValue(
-      value,
-      preevalResult.metadata.processors as unknown as StaticProcessorInstance[],
-      new Map()
-    )
+    !isStaticMeta &&
+    !isStaticMetaTree &&
+    !isSelectorOnly &&
+    !isSideEffectClassValue
   ) {
     debugStaticResolve(action, {
       exported: exportedName,
@@ -2723,18 +3518,26 @@ function* resolveProcessorStaticExport(
     return null;
   }
 
+  let resolvedReason: string | undefined;
+  if (preparedTarget.opaqueRuntimeBase) {
+    resolvedReason = 'opaque-runtime-component';
+  } else if (isSideEffectClassValue) {
+    resolvedReason = 'non-empty-css-artifact-side-effect';
+  }
+
   debugStaticResolve(action, {
     exported: exportedName,
     filename,
     phase: 'processor-metadata',
-    reason: preparedTarget.opaqueRuntimeBase
-      ? 'opaque-runtime-component'
-      : undefined,
+    reason: resolvedReason,
     status: 'resolved',
   });
 
   return {
     dependencies: [...dependencies],
+    sideEffectDependencies: isSideEffectClassValue
+      ? [filename, ...sideEffectDependencies]
+      : [...sideEffectDependencies],
     value,
   };
 }
@@ -2776,6 +3579,7 @@ function* resolveObjectAssignStaticExport(
           filename,
           ...resolved.dependencies.filter((item) => item !== filename),
         ],
+        sideEffectDependencies: resolved.sideEffectDependencies,
         value: resolved.value,
       };
     }
@@ -2796,6 +3600,7 @@ function* resolveObjectAssignStaticExport(
 
   const env = new Map<string, unknown>();
   const dependencies = new Set<string>([filename]);
+  const sideEffectDependencies = new Set<string>();
 
   for (const binding of staticDependencies.imports) {
     const resolved = yield* resolveImportValue(
@@ -2811,6 +3616,9 @@ function* resolveObjectAssignStaticExport(
 
     env.set(binding.local, resolved.value);
     resolved.dependencies.forEach((item) => dependencies.add(item));
+    resolved.sideEffectDependencies?.forEach((item) =>
+      sideEffectDependencies.add(item)
+    );
   }
 
   const value = evaluateOxcStaticExpressionAt(
@@ -2825,6 +3633,7 @@ function* resolveObjectAssignStaticExport(
   return isStaticWYWMetaValue(value)
     ? {
         dependencies: [...dependencies],
+        sideEffectDependencies: [...sideEffectDependencies],
         value,
       }
     : null;
@@ -2856,16 +3665,8 @@ function* resolveStaticExport(
 
   stack.add(memoKey);
 
-  const loadedAndParsed = action.services.loadAndParseFn(
-    action.services,
-    filename,
-    undefined,
-    action.services.log
-  );
-  if (
-    loadedAndParsed.evaluator === 'ignored' ||
-    loadedAndParsed.evaluator !== oxcShaker
-  ) {
+  const analysis = getStaticFileAnalysis(action, filename);
+  if (!analysis) {
     memo.set(memoKey, null);
     stack.delete(memoKey);
     debugStaticResolve(action, {
@@ -2878,12 +3679,36 @@ function* resolveStaticExport(
     return null;
   }
 
-  const { code } = loadedAndParsed;
-  const program = parseProgram(code, filename);
+  const { code, codeHash, program } = analysis;
+  const finish = (
+    result: StaticExportResult | null
+  ): StaticExportResult | null => {
+    memo.set(memoKey, result);
+    stack.delete(memoKey);
+    setStaticExportCachedResult(
+      action,
+      filename,
+      exportedName,
+      codeHash,
+      result
+    );
+    return result;
+  };
+
+  const cachedResult = getStaticExportCachedResult(
+    action,
+    filename,
+    exportedName,
+    codeHash
+  );
+  if (cachedResult !== undefined) {
+    memo.set(memoKey, cachedResult);
+    stack.delete(memoKey);
+    return cachedResult;
+  }
+
   const target = findExportTarget(program, exportedName);
   if (!target) {
-    memo.set(memoKey, null);
-    stack.delete(memoKey);
     debugStaticResolve(action, {
       exported: exportedName,
       filename,
@@ -2891,7 +3716,7 @@ function* resolveStaticExport(
       reason: 'no-export-target',
       status: 'rejected',
     });
-    return null;
+    return finish(null);
   }
 
   if (target.kind === 'import') {
@@ -2902,8 +3727,6 @@ function* resolveStaticExport(
       stack,
       memo
     );
-    memo.set(memoKey, resolved);
-    stack.delete(memoKey);
     debugStaticResolve(action, {
       exported: exportedName,
       filename,
@@ -2913,7 +3736,7 @@ function* resolveStaticExport(
       source: target.source,
       status: resolved ? 'resolved' : 'rejected',
     });
-    return resolved;
+    return finish(resolved);
   }
 
   const objectAssignResult = yield* resolveObjectAssignStaticExport(
@@ -2926,8 +3749,6 @@ function* resolveStaticExport(
     memo
   );
   if (objectAssignResult) {
-    memo.set(memoKey, objectAssignResult);
-    stack.delete(memoKey);
     debugStaticResolve(action, {
       exported: exportedName,
       filename,
@@ -2935,7 +3756,7 @@ function* resolveStaticExport(
       reason: 'object-assign',
       status: 'resolved',
     });
-    return objectAssignResult;
+    return finish(objectAssignResult);
   }
 
   const staticDependencies = collectStaticExpressionDependencies(
@@ -2959,8 +3780,6 @@ function* resolveStaticExport(
       stack,
       memo
     );
-    memo.set(memoKey, metadataResult);
-    stack.delete(memoKey);
     debugStaticResolve(action, {
       exported: exportedName,
       filename,
@@ -2968,11 +3787,12 @@ function* resolveStaticExport(
       reason: metadataResult ? undefined : 'resolve-failed',
       status: metadataResult ? 'resolved' : 'rejected',
     });
-    return metadataResult;
+    return finish(metadataResult);
   }
 
   const env = new Map<string, unknown>();
   const dependencies = new Set<string>([filename]);
+  const sideEffectDependencies = new Set<string>();
 
   for (const binding of staticDependencies.imports) {
     const resolved = yield* resolveImportValue(
@@ -2983,8 +3803,6 @@ function* resolveStaticExport(
       memo
     );
     if (!resolved) {
-      memo.set(memoKey, null);
-      stack.delete(memoKey);
       debugStaticResolve(action, {
         exported: exportedName,
         filename,
@@ -2994,11 +3812,14 @@ function* resolveStaticExport(
         source: binding.source,
         status: 'rejected',
       });
-      return null;
+      return finish(null);
     }
 
     env.set(binding.local, resolved.value);
     resolved.dependencies.forEach((item) => dependencies.add(item));
+    resolved.sideEffectDependencies?.forEach((item) =>
+      sideEffectDependencies.add(item)
+    );
   }
 
   const value = evaluateOxcStaticExpressionAt(
@@ -3011,8 +3832,6 @@ function* resolveStaticExport(
     env
   );
   if (!isOxcStaticSerializableValue(value)) {
-    memo.set(memoKey, null);
-    stack.delete(memoKey);
     debugStaticResolve(action, {
       exported: exportedName,
       filename,
@@ -3020,22 +3839,21 @@ function* resolveStaticExport(
       reason: 'non-serializable',
       status: 'rejected',
     });
-    return null;
+    return finish(null);
   }
 
   const result = {
     dependencies: [...dependencies],
+    sideEffectDependencies: [...sideEffectDependencies],
     value,
   };
-  memo.set(memoKey, result);
-  stack.delete(memoKey);
   debugStaticResolve(action, {
     exported: exportedName,
     filename,
     phase: 'export',
     status: 'resolved',
   });
-  return result;
+  return finish(result);
 }
 
 function* resolveCandidateValue(
@@ -3046,6 +3864,8 @@ function* resolveCandidateValue(
 ): SyncScenarioFor<StaticExportResult | null> {
   const env = new Map<string, unknown>();
   const dependencies = new Set<string>();
+  const sideEffectDependencies = new Set<string>();
+  const sideEffectImportLocals = new Set<string>();
 
   for (const item of candidate.imports) {
     const resolved = yield* resolveImportValue(
@@ -3070,6 +3890,10 @@ function* resolveCandidateValue(
 
     env.set(item.local, resolved.value);
     resolved.dependencies.forEach((dependency) => dependencies.add(dependency));
+    resolved.sideEffectDependencies?.forEach((dependency) => {
+      sideEffectDependencies.add(dependency);
+      sideEffectImportLocals.add(item.importLocal ?? item.local);
+    });
   }
 
   const value = evaluateOxcStaticExpression(candidate.source, filename, env);
@@ -3093,6 +3917,8 @@ function* resolveCandidateValue(
 
   return {
     dependencies: [...dependencies],
+    sideEffectDependencies: [...sideEffectDependencies],
+    sideEffectImportLocals: [...sideEffectImportLocals],
     value,
   };
 }
@@ -3158,6 +3984,7 @@ export function* resolveStaticOxcPreevalValues(
     preevalResult.staticValueCache ?? new Map<string, unknown>();
   const staticDependencies = new Set(preevalResult.staticDependencies ?? []);
   const staticImportLocals = new Set<string>();
+  const sideEffectImportLocals = new Set<string>();
   const staticNullWYWMetaExtendsHelpers = new Set(
     preevalResult.staticNullWYWMetaExtendsHelpers ?? []
   );
@@ -3165,6 +3992,7 @@ export function* resolveStaticOxcPreevalValues(
   const opaqueRuntimeBaseHelpers = collectWYWMetaExtendsHelperNames(
     parseProgram(preevalResult.baseCode ?? preevalResult.code, filename)
   );
+  const evalDependencyNames = new Set(preevalResult.dependencyNames ?? []);
   let changed = false;
   let hasKnownStaticCandidate = false;
 
@@ -3172,6 +4000,21 @@ export function* resolveStaticOxcPreevalValues(
     const isOpaqueRuntimeBaseHelper = opaqueRuntimeBaseHelpers.has(
       candidate.name
     );
+    if (
+      !evalDependencyNames.has(candidate.name) &&
+      !isOpaqueRuntimeBaseHelper &&
+      !staticValueCache.has(candidate.name)
+    ) {
+      debugStaticResolve(this, {
+        candidate: candidate.name,
+        filename,
+        phase: 'candidate',
+        reason: 'not-eval-dependency',
+        status: 'skipped',
+      });
+      continue;
+    }
+
     if (staticValueCache.has(candidate.name)) {
       hasKnownStaticCandidate = true;
       candidate.imports.forEach((item) =>
@@ -3236,6 +4079,9 @@ export function* resolveStaticOxcPreevalValues(
     resolved.dependencies.forEach((dependency) =>
       staticDependencies.add(dependency)
     );
+    resolved.sideEffectImportLocals?.forEach((local) =>
+      sideEffectImportLocals.add(local)
+    );
     changed = true;
   }
 
@@ -3252,15 +4098,34 @@ export function* resolveStaticOxcPreevalValues(
   preevalResult.staticNullWYWMetaExtendsHelpers = [
     ...staticNullWYWMetaExtendsHelpers,
   ];
+  const originalBaseCode = preevalResult.baseCode ?? preevalResult.code;
   const baseCode = pruneStaticPreevalCode(
-    preevalResult.baseCode ?? preevalResult.code,
+    originalBaseCode,
     filename,
     new Set(staticValueCache.keys()),
     staticImportLocals,
-    staticNullWYWMetaExtendsHelpers
+    staticNullWYWMetaExtendsHelpers,
+    sideEffectImportLocals
   );
+  const evalBaseCode =
+    sideEffectImportLocals.size > 0
+      ? pruneStaticPreevalCode(
+          originalBaseCode,
+          filename,
+          new Set(staticValueCache.keys()),
+          staticImportLocals,
+          staticNullWYWMetaExtendsHelpers,
+          new Set()
+        )
+      : baseCode;
   preevalResult.baseCode = baseCode;
   preevalResult.code = appendOxcWywPreval(baseCode, filename, dependencyNames);
+  preevalResult.evalCode = appendOxcWywPreval(
+    evalBaseCode,
+    filename,
+    dependencyNames
+  );
+  preevalResult.staticSideEffectImportLocals = [...sideEffectImportLocals];
 
   for (const dependency of staticDependencies) {
     this.entrypoint.addInvalidationDependency({

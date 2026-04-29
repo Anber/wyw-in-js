@@ -1091,7 +1091,8 @@ const collectUnusedImportRemovals = (
   code: string,
   program: Program,
   referencedNames: Set<string>,
-  removableNames: Set<string>
+  removableNames: Set<string>,
+  preserveSideEffectImportLocals: Set<string>
 ): Replacement[] => {
   const removals: Replacement[] = [];
 
@@ -1109,6 +1110,22 @@ const collectUnusedImportRemovals = (
       removableLocalNames.length === localNames.length &&
       removableLocalNames.every((localName) => !referencedNames.has(localName))
     ) {
+      if (
+        removableLocalNames.some((localName) =>
+          preserveSideEffectImportLocals.has(localName)
+        )
+      ) {
+        removals.push({
+          end: statement.end,
+          start: statement.start,
+          value: `import ${code.slice(
+            statement.source.start,
+            statement.source.end
+          )};`,
+        });
+        return;
+      }
+
       removals.push(
         expandImportRemovalRange(code, statement.start, statement.end)
       );
@@ -1270,7 +1287,8 @@ const removeUnusedAfterReplacement = (
   code: string,
   filename: string,
   initialRemovableNames: Set<string>,
-  removableExpressionRefs: Set<string>
+  removableExpressionRefs: Set<string>,
+  preserveSideEffectImportLocals: Set<string>
 ): string => {
   let current = code;
   const cumulativeRemovableNames = new Set(initialRemovableNames);
@@ -1316,7 +1334,8 @@ const removeUnusedAfterReplacement = (
         current,
         program,
         referencedNames,
-        cumulativeRemovableNames
+        cumulativeRemovableNames,
+        preserveSideEffectImportLocals
       ),
       ...collectTopLevelExpressionStatementRemovals(
         current,
@@ -2125,7 +2144,10 @@ export const applyOxcProcessors = (
   options: Pick<
     StrictOptions,
     'classNameSlug' | 'displayName' | 'extensions' | 'evaluate' | 'tagResolver'
-  > & { eventEmitter?: EventEmitter },
+  > & {
+    eventEmitter?: EventEmitter;
+    preserveSideEffectImportLocals?: Set<string>;
+  },
   callback: (processor: BaseProcessor) => void,
   cleanupUnused = false
 ): ApplyOxcProcessorsResult => {
@@ -2314,7 +2336,8 @@ export const applyOxcProcessors = (
             codeWithAddedImports,
             filename,
             removableImportLocals,
-            new Set([...removableExpressionRefs, ...extracted.dependencyNames])
+            new Set([...removableExpressionRefs, ...extracted.dependencyNames]),
+            options.preserveSideEffectImportLocals ?? new Set()
           )
         )
       : codeWithAddedImports,

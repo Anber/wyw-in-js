@@ -105,7 +105,9 @@ const ensureOxcPreevalResult = (
       baseCode: result.baseCode,
       code: result.code,
       dependencyNames: result.dependencyNames,
+      evalCode: result.code,
       metadata: result.metadata,
+      staticSideEffectImportLocals: [],
       staticDependencies: result.staticDependencies,
       staticValueCache: result.staticValueCache,
       staticValueCandidates: result.staticValueCandidates,
@@ -140,16 +142,17 @@ const prepareOxcCodeImpl = (
   );
 
   const transformMetadata = preevalStageResult.metadata;
+  const preevalCode =
+    options.stripForEvalRuntime && preevalStageResult.evalCode
+      ? preevalStageResult.evalCode
+      : preevalStageResult.code;
   if (
     isPrevalOnly(only) &&
     !transformMetadata &&
     options.shortCircuitOnMissingMetadata !== false
   ) {
     log('[evaluator:end] no metadata');
-    const strippedCode = stripTypesAndJsxWithOxc(
-      preevalStageResult.code,
-      filename
-    ).code;
+    const strippedCode = stripTypesAndJsxWithOxc(preevalCode, filename).code;
 
     return [
       normalizeOxcPreparedESM(strippedCode),
@@ -160,10 +163,10 @@ const prepareOxcCodeImpl = (
 
   log('[preeval] metadata %O', transformMetadata);
   log('[evaluator:start] using %s', loadedAndParsed.evaluator.name);
-  log.extend('source')('%s', preevalStageResult.code);
+  log.extend('source')('%s', preevalCode);
 
   const shaken = eventEmitter.perf('transform:evaluator', () =>
-    shakeOxcToESM(preevalStageResult.code, filename, {
+    shakeOxcToESM(preevalCode, filename, {
       importOverrides: pluginOptions.importOverrides,
       onlyExports: only,
       root,

@@ -112,6 +112,10 @@ export class TransformCacheCollection<
     return `${key}::${this.keySalt}`;
   }
 
+  public getKeySalt() {
+    return this.keySalt;
+  }
+
   public add<
     TCache extends CacheNames,
     TValue extends MapValue<ICaches<TEntrypoint>[TCache]>,

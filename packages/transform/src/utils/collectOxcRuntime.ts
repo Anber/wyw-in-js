@@ -18,7 +18,9 @@ type OxcCollectOptions = Pick<
   | 'extensions'
   | 'tagResolver'
   | 'variableNameConfig'
->;
+> & {
+  preserveSideEffectImportLocals?: Set<string>;
+};
 
 type OxcCollectResult = {
   code: string;
