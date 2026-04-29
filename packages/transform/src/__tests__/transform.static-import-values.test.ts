@@ -1851,6 +1851,128 @@ describe('transform static import value inlining', () => {
     }
   });
 
+  it('inlines styled metadata from Object.assign alias members without eval', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
+    const entryFile = join(root, 'entry.js');
+    const barrelFile = join(root, 'barrel.js');
+    const tableFile = join(root, 'table.js');
+    const cache = new TransformCacheCollection();
+    const perf = createPerfEventRecorder();
+
+    writeFileSync(
+      tableFile,
+      dedent`
+        import { styled } from 'test-styled-processor';
+
+        export const Table = styled.div\`
+          color: red;
+        \`;
+        export const Row = styled.div\`
+          color: blue;
+        \`;
+      `
+    );
+    writeFileSync(
+      barrelFile,
+      dedent`
+        import { Row, Table } from './table.js';
+
+        const aliases = {
+          Row,
+        };
+
+        export default Object.assign(Table, aliases);
+      `
+    );
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { styled } from 'test-styled-processor';
+        import Table from './barrel.js';
+
+        export const Extended = styled(Table.Row)\`
+          font-size: 12px;
+        \`;
+      `
+    );
+
+    try {
+      const result = await runTransform(
+        root,
+        entryFile,
+        cache,
+        perf.eventEmitter
+      );
+
+      expect(result.cssText).toContain('font-size:12px');
+      expect(result.cssText).toMatch(
+        /\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\s*\{[^}]*font-size:12px;[^}]*\}/s
+      );
+      expect(result.dependencies).toEqual(
+        expect.arrayContaining([barrelFile, tableFile])
+      );
+      expect(perf.counts.get('transform:evalFile') ?? 0).toBe(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('inlines same-module Object.assign alias members without eval', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
+    const entryFile = join(root, 'entry.js');
+    const panelFile = join(root, 'panel.js');
+    const cache = new TransformCacheCollection();
+    const perf = createPerfEventRecorder();
+
+    writeFileSync(
+      panelFile,
+      dedent`
+        import { styled } from 'test-styled-processor';
+
+        const aliases = {
+          Body: styled.div\`
+            color: blue;
+          \`,
+        };
+
+        const Panel = styled.div\`
+          color: red;
+        \`;
+
+        export default Object.assign(Panel, aliases);
+      `
+    );
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { styled } from 'test-styled-processor';
+        import Panel from './panel.js';
+
+        export const Extended = styled(Panel.Body)\`
+          font-size: 12px;
+        \`;
+      `
+    );
+
+    try {
+      const result = await runTransform(
+        root,
+        entryFile,
+        cache,
+        perf.eventEmitter
+      );
+
+      expect(result.cssText).toContain('font-size:12px');
+      expect(result.cssText).toMatch(
+        /\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\s*\{[^}]*font-size:12px;[^}]*\}/s
+      );
+      expect(result.dependencies).toContain(panelFile);
+      expect(perf.counts.get('transform:evalFile') ?? 0).toBe(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('keeps non-metadata Object.assign values on the eval path', async () => {
     const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
     const entryFile = join(root, 'entry.js');

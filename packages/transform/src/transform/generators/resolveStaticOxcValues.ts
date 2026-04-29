@@ -1297,6 +1297,17 @@ type StaticProcessorInstance = {
   className: string;
 };
 
+const isPlainObjectRecord = (
+  value: unknown
+): value is Record<string, unknown> =>
+  typeof value === 'object' &&
+  value !== null &&
+  !Array.isArray(value) &&
+  Object.getPrototypeOf(value) === Object.prototype;
+
+const isStaticObjectAssignAliasValue = (value: unknown): boolean =>
+  isStaticWYWMetaValue(value) || isStaticWYWMetaTreeValue(value);
+
 const artifactCssText = (artifact: unknown): string | null => {
   if (!Array.isArray(artifact) || artifact[0] !== 'css') {
     return null;
@@ -2426,6 +2437,33 @@ const objectAssignTargetExpression = (
   return target;
 };
 
+const objectAssignAliasExpressions = (
+  program: Program,
+  expr: Node
+): Expression[] | null => {
+  const unwrapped = unwrapExpression(expr);
+  if (
+    unwrapped.type !== 'CallExpression' ||
+    !isObjectAssignCallee(program, unwrapped.callee) ||
+    unwrapped.arguments.length < 2
+  ) {
+    return null;
+  }
+
+  const [, ...aliases] = unwrapped.arguments;
+  if (
+    aliases.some(
+      (alias) =>
+        alias.type === 'SpreadElement' ||
+        !isSafeObjectAssignAliasExpression(program, alias)
+    )
+  ) {
+    return null;
+  }
+
+  return aliases as Expression[];
+};
+
 const isFunctionBoundaryNode = (node: Node): boolean =>
   node.type === 'ArrowFunctionExpression' ||
   node.type === 'FunctionDeclaration' ||
@@ -2525,6 +2563,112 @@ const resolveObjectAssignProcessorExpression = (
 
   return findTopLevelConstExpression(program, target.name) ?? target;
 };
+
+type ObjectAssignAliasResolution = {
+  dependencies: string[];
+  sideEffectDependencies: string[];
+  values: Record<string, unknown>[];
+};
+
+const mergeStaticObjectAssignAliases = (
+  targetValue: unknown,
+  aliasValues: Record<string, unknown>[]
+): unknown | null => {
+  if (!isPlainObjectRecord(targetValue) || !isStaticWYWMetaValue(targetValue)) {
+    return null;
+  }
+
+  const result: Record<string, unknown> = { ...targetValue };
+  aliasValues.forEach((aliasValue) => {
+    Object.assign(result, aliasValue);
+  });
+
+  return result;
+};
+
+function* resolveObjectAssignAliasValues(
+  action: ITransformAction,
+  filename: string,
+  code: string,
+  program: Program,
+  aliases: Expression[],
+  stack: Set<string>,
+  memo: Map<string, StaticExportResult | null>
+): SyncScenarioFor<ObjectAssignAliasResolution | null> {
+  const env = new Map<string, unknown>();
+  const dependencies = new Set<string>();
+  const sideEffectDependencies = new Set<string>();
+  const values: Record<string, unknown>[] = [];
+  const ignoredMutableCallArgumentNames = new Set<string>();
+  aliases.forEach((alias) => {
+    const name = rootIdentifierName(alias);
+    if (name) {
+      ignoredMutableCallArgumentNames.add(name);
+    }
+  });
+
+  for (const alias of aliases) {
+    const staticDependencies = collectStaticExpressionDependencies(
+      program,
+      {
+        expression: alias,
+        kind: 'expression',
+      },
+      {
+        allowMetadataCalls: true,
+        ignoredMutableCallArgumentNames,
+      }
+    );
+    if (!staticDependencies) {
+      return null;
+    }
+
+    for (const binding of staticDependencies.imports) {
+      const resolved = yield* resolveImportValue(
+        action,
+        filename,
+        binding,
+        stack,
+        memo
+      );
+      if (
+        !resolved ||
+        !bindStaticResolvedValue(env, alias, binding.local, resolved)
+      ) {
+        return null;
+      }
+
+      resolved.dependencies.forEach((item) => dependencies.add(item));
+      resolved.sideEffectDependencies?.forEach((item) =>
+        sideEffectDependencies.add(item)
+      );
+    }
+
+    const value = evaluateOxcStaticExpressionAt(
+      code,
+      filename,
+      {
+        end: alias.end,
+        start: alias.start,
+      },
+      env
+    );
+    if (
+      !isPlainObjectRecord(value) ||
+      !Object.values(value).every(isStaticObjectAssignAliasValue)
+    ) {
+      return null;
+    }
+
+    values.push(value);
+  }
+
+  return {
+    dependencies: [...dependencies],
+    sideEffectDependencies: [...sideEffectDependencies],
+    values,
+  };
+}
 
 const isOpaqueRuntimeComponentExpression = (
   program: Program,
@@ -3483,6 +3627,10 @@ function* resolveProcessorStaticExport(
     return null;
   }
 
+  const processorObjectAssignAliases = objectAssignAliasExpressions(
+    preevalProgram,
+    target.expression
+  );
   const processorExpression = resolveObjectAssignProcessorExpression(
     preevalProgram,
     target.expression
@@ -3596,19 +3744,46 @@ function* resolveProcessorStaticExport(
     return null;
   }
 
-  const isStaticMeta = isStaticWYWMetaValue(value);
-  const isStaticMetaTree = !isStaticMeta && isStaticWYWMetaTreeValue(value);
+  let resolvedValue = value;
+  if (processorObjectAssignAliases && isStaticWYWMetaValue(value)) {
+    const aliasValues = yield* resolveObjectAssignAliasValues(
+      action,
+      filename,
+      preevalCode,
+      preevalProgram,
+      processorObjectAssignAliases,
+      stack,
+      memo
+    );
+    const mergedValue = aliasValues
+      ? mergeStaticObjectAssignAliases(value, aliasValues.values)
+      : null;
+
+    if (mergedValue) {
+      resolvedValue = mergedValue;
+      aliasValues?.dependencies.forEach((dependency) =>
+        dependencies.add(dependency)
+      );
+      aliasValues?.sideEffectDependencies.forEach((dependency) =>
+        sideEffectDependencies.add(dependency)
+      );
+    }
+  }
+
+  const isStaticMeta = isStaticWYWMetaValue(resolvedValue);
+  const isStaticMetaTree =
+    !isStaticMeta && isStaticWYWMetaTreeValue(resolvedValue);
   const processors = preevalResult.metadata
     .processors as unknown as StaticProcessorInstance[];
   const isSelectorOnly =
     !isStaticMeta &&
     !isStaticMetaTree &&
-    isSelectorOnlyProcessorValue(value, processors, new Map());
+    isSelectorOnlyProcessorValue(resolvedValue, processors, new Map());
   const isSideEffectClassValue =
     !isStaticMeta &&
     !isStaticMetaTree &&
     !isSelectorOnly &&
-    isProcessorClassValue(value, processors, new Map());
+    isProcessorClassValue(resolvedValue, processors, new Map());
   if (
     !isStaticMeta &&
     !isStaticMetaTree &&
@@ -3645,7 +3820,7 @@ function* resolveProcessorStaticExport(
     sideEffectDependencies: isSideEffectClassValue
       ? [filename, ...sideEffectDependencies]
       : [...sideEffectDependencies],
-    value,
+    value: resolvedValue,
   };
 }
 
@@ -3658,6 +3833,10 @@ function* resolveObjectAssignStaticExport(
   stack: Set<string>,
   memo: Map<string, StaticExportResult | null>
 ): SyncScenarioFor<StaticExportResult | null> {
+  const objectAssignAliases = objectAssignAliasExpressions(
+    program,
+    target.expression
+  );
   const objectAssignTarget = objectAssignTargetExpression(
     program,
     target.expression
@@ -3681,13 +3860,36 @@ function* resolveObjectAssignStaticExport(
         return null;
       }
 
+      const dependencies = new Set([
+        filename,
+        ...resolved.dependencies.filter((item) => item !== filename),
+      ]);
+      const sideEffectDependencies = new Set(
+        resolved.sideEffectDependencies ?? []
+      );
+      const aliasValues = objectAssignAliases
+        ? yield* resolveObjectAssignAliasValues(
+            action,
+            filename,
+            code,
+            program,
+            objectAssignAliases,
+            stack,
+            memo
+          )
+        : null;
+      const mergedValue = aliasValues
+        ? mergeStaticObjectAssignAliases(resolved.value, aliasValues.values)
+        : null;
+      aliasValues?.dependencies.forEach((item) => dependencies.add(item));
+      aliasValues?.sideEffectDependencies.forEach((item) =>
+        sideEffectDependencies.add(item)
+      );
+
       return {
-        dependencies: [
-          filename,
-          ...resolved.dependencies.filter((item) => item !== filename),
-        ],
-        sideEffectDependencies: resolved.sideEffectDependencies,
-        value: resolved.value,
+        dependencies: [...dependencies],
+        sideEffectDependencies: [...sideEffectDependencies],
+        value: mergedValue ?? resolved.value,
       };
     }
   }
@@ -3740,13 +3942,34 @@ function* resolveObjectAssignStaticExport(
     },
     env
   );
-  return isStaticWYWMetaValue(value)
-    ? {
-        dependencies: [...dependencies],
-        sideEffectDependencies: [...sideEffectDependencies],
-        value,
-      }
+  if (!isStaticWYWMetaValue(value)) {
+    return null;
+  }
+
+  const aliasValues = objectAssignAliases
+    ? yield* resolveObjectAssignAliasValues(
+        action,
+        filename,
+        code,
+        program,
+        objectAssignAliases,
+        stack,
+        memo
+      )
     : null;
+  const mergedValue = aliasValues
+    ? mergeStaticObjectAssignAliases(value, aliasValues.values)
+    : null;
+  aliasValues?.dependencies.forEach((item) => dependencies.add(item));
+  aliasValues?.sideEffectDependencies.forEach((item) =>
+    sideEffectDependencies.add(item)
+  );
+
+  return {
+    dependencies: [...dependencies],
+    sideEffectDependencies: [...sideEffectDependencies],
+    value: mergedValue ?? value,
+  };
 }
 
 const zeroArgFunctionReturnExpression = (
