@@ -137,6 +137,69 @@ describe('transform static import value inlining', () => {
     }
   });
 
+  it('inlines compiled TypeScript enum exports without eval', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
+    const entryFile = join(root, 'entry.js');
+    const statusFile = join(root, 'status.js');
+    const levelFile = join(root, 'level.js');
+    const cache = new TransformCacheCollection();
+    const perf = createPerfEventRecorder();
+
+    writeFileSync(
+      statusFile,
+      dedent`
+        var PowerStatus;
+        (function (PowerStatus) {
+          PowerStatus["UNKNOWN"] = "unknown";
+          PowerStatus["POWERED_ON"] = "powered_on";
+        })(PowerStatus || (PowerStatus = {}));
+        export { PowerStatus as PowerStatus };
+        export default PowerStatus;
+      `
+    );
+    writeFileSync(
+      levelFile,
+      dedent`
+        var Level;
+        (function (Level) {
+          Level[Level["Low"] = 0] = "Low";
+          Level[Level["High"] = 2] = "High";
+        })(Level || (Level = {}));
+        export default Level;
+      `
+    );
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { css } from 'test-css-processor';
+        import { PowerStatus } from './status.js';
+        import Level from './level.js';
+
+        export const className = css\`
+          content: "${'${PowerStatus.UNKNOWN}'}";
+          z-index: ${'${Level.High}'};
+        \`;
+      `
+    );
+
+    try {
+      const result = await runTransform(
+        root,
+        entryFile,
+        cache,
+        perf.eventEmitter
+      );
+
+      expect(result.cssText).toContain('content:"unknown"');
+      expect(result.cssText).toContain('z-index:2');
+      expect(result.dependencies).toContain(statusFile);
+      expect(result.dependencies).toContain(levelFile);
+      expect(perf.counts.get('transform:evalFile') ?? 0).toBe(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('can disable imported static value inlining with a feature flag', async () => {
     const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
     const entryFile = join(root, 'entry.js');
