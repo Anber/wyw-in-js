@@ -67,16 +67,20 @@ const testCssProcessorFile = join(
 
 const getPrivateBroker = (broker: EvalBroker) =>
   broker as unknown as {
+    activeResolveRootId: string | null;
+    currentServices: ReturnType<typeof createServices>;
     happyDomDisabled: boolean;
+    importsByModule: Map<string, Map<string, string[]>>;
+    lastHappyDomEnabled: boolean;
+    lastInitKey: string | null;
+    onlyByModule: Map<string, string[]>;
+    ensureRunner: () => Promise<void>;
+    handleRunnerStderr: (chunk: Buffer) => void;
     initIsolatedRunner: (
       payload: unknown,
       timeoutMs: number
     ) => Promise<unknown>;
     initRunner: (entrypoint: Entrypoint) => Promise<void>;
-    importsByModule: Map<string, Map<string, string[]>>;
-    lastHappyDomEnabled: boolean;
-    lastInitKey: string | null;
-    activeResolveRootId: string | null;
     loadModule: (payload: {
       id: string;
       importerId?: string | null;
@@ -86,17 +90,16 @@ const getPrivateBroker = (broker: EvalBroker) =>
       imports: Map<string, string[]> | null;
       only: string[];
     }>;
-    onlyByModule: Map<string, string[]>;
-    resolveImport: (payload: {
-      importerId: string;
-      kind: 'import' | 'dynamic-import' | 'require';
-      specifier: string;
-    }) => Promise<{ resolvedId: string | null }>;
     request: (
       type: 'INIT' | 'EVAL',
       payload: unknown,
       timeoutMs?: number
     ) => Promise<unknown>;
+    resolveImport: (payload: {
+      importerId: string;
+      kind: 'import' | 'dynamic-import' | 'require';
+      specifier: string;
+    }) => Promise<{ resolvedId: string | null }>;
     runner: unknown;
   };
 
@@ -144,6 +147,79 @@ describe('EvalBroker', () => {
     expect(customResolver).toHaveBeenCalledTimes(1);
     expect(asyncResolve).not.toHaveBeenCalled();
     expect(result.resolvedId).toBe(dep);
+
+    broker.dispose();
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('keeps active eval services while later evals wait in queue', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
+    const firstEntry = join(root, 'first.js');
+    const secondEntry = join(root, 'second.js');
+    writeFileSync(firstEntry, 'export const __wywPreval = {};');
+    writeFileSync(secondEntry, 'export const __wywPreval = {};');
+
+    const firstWarnings: string[] = [];
+    const secondWarnings: string[] = [];
+    const firstServices = createServices(root, firstEntry, {
+      evalConsole: 'warning',
+    });
+    const secondServices = createServices(root, secondEntry, {
+      evalConsole: 'warning',
+    });
+    firstServices.emitWarning = (message) => firstWarnings.push(message);
+    secondServices.emitWarning = (message) => secondWarnings.push(message);
+
+    const broker = new EvalBroker(
+      firstServices,
+      jest.fn(async () => null)
+    );
+    const privateBroker = getPrivateBroker(broker);
+    privateBroker.ensureRunner = jest.fn(async () => {});
+    privateBroker.initRunner = jest.fn(async () => {});
+
+    let resolveFirstEval: ((payload: { values: null }) => void) | null = null;
+    let firstEvalStarted: (() => void) | null = null;
+    const firstEvalStartedPromise = new Promise<void>((resolveStarted) => {
+      firstEvalStarted = resolveStarted;
+    });
+    privateBroker.request = jest.fn((_type, payload) => {
+      const { id } = payload as { id: string };
+      if (id === firstEntry) {
+        firstEvalStarted?.();
+        return new Promise<{ values: null }>((resolveEval) => {
+          resolveFirstEval = resolveEval;
+        });
+      }
+
+      return Promise.resolve({ values: null });
+    });
+
+    const firstEntrypoint = Entrypoint.createRoot(
+      firstServices,
+      firstEntry,
+      ['__wywPreval'],
+      readFileSync(firstEntry, 'utf-8')
+    );
+    const secondEntrypoint = Entrypoint.createRoot(
+      secondServices,
+      secondEntry,
+      ['__wywPreval'],
+      readFileSync(secondEntry, 'utf-8')
+    );
+
+    const firstEval = broker.evaluate(firstEntrypoint, firstServices);
+    await firstEvalStartedPromise;
+    const secondEval = broker.evaluate(secondEntrypoint, secondServices);
+
+    privateBroker.handleRunnerStderr(Buffer.from('active warning\n'));
+
+    expect(firstWarnings).toEqual(['active warning']);
+    expect(secondWarnings).toEqual([]);
+
+    resolveFirstEval?.({ values: null });
+    await firstEval;
+    await secondEval;
 
     broker.dispose();
     rmSync(root, { recursive: true, force: true });

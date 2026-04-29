@@ -1063,73 +1063,77 @@ export class EvalBroker {
     this.importsByModule.set(id, imports ?? new Map());
   }
 
-  public async evaluate(entrypoint: Entrypoint, services?: Services): Promise<{
+  public async evaluate(
+    entrypoint: Entrypoint,
+    services?: Services
+  ): Promise<{
     values: Map<string, unknown> | null;
     dependencies: string[];
   }> {
-    if (services) {
-      this.currentServices = services;
-    }
+    const activeServices = services ?? this.currentServices;
     const resolveRootId = getEntrypointResolveRoot(entrypoint);
-    const task = this.evalQueue.then(async () => {
-      this.activeResolveRootId = resolveRootId;
-      this.runtimeDependenciesByModule.clear();
-      this.emittedDependencies.clear();
-      this.importsByModule.clear();
-      this.onlyByModule.clear();
-      this.resolveCache.clear();
-      this.resolveInFlight.clear();
-      this.onlyByModule.set(entrypoint.name, ['__wywPreval']);
-      this.evalSeq += 1;
+    const task = this.evalQueue
+      .then(async () => {
+        this.currentServices = activeServices;
+        this.activeResolveRootId = resolveRootId;
+        this.runtimeDependenciesByModule.clear();
+        this.emittedDependencies.clear();
+        this.importsByModule.clear();
+        this.onlyByModule.clear();
+        this.resolveCache.clear();
+        this.resolveInFlight.clear();
+        this.onlyByModule.set(entrypoint.name, ['__wywPreval']);
+        this.evalSeq += 1;
 
-      debugAction({
-        type: 'eval:start',
-        evalSeq: this.evalSeq,
-        entrypoint: entrypoint.name,
-        ts: performance.now(),
+        debugAction({
+          type: 'eval:start',
+          evalSeq: this.evalSeq,
+          entrypoint: entrypoint.name,
+          ts: performance.now(),
+        });
+
+        await this.ensureRunner();
+        await this.initRunner(entrypoint);
+
+        const payload = await this.request<EvalResultPayload>(
+          'EVAL',
+          {
+            id: entrypoint.name,
+          },
+          EVAL_TIMEOUT_MS
+        );
+
+        debugAction({
+          type: 'eval:finish',
+          evalSeq: this.evalSeq,
+          entrypoint: entrypoint.name,
+          hasValues: Boolean(payload.values),
+          ts: performance.now(),
+        });
+
+        if (payload.modules) {
+          this.applyModuleExports(payload.modules);
+        }
+
+        if (!payload.values) {
+          return { values: null, dependencies: [] };
+        }
+
+        const values = new Map<string, unknown>();
+        Object.entries(payload.values).forEach(([key, serialized]) => {
+          values.set(key, deserializeValue(serialized));
+        });
+
+        return {
+          values,
+          dependencies: this.collectEntrypointDependencies(entrypoint.name),
+        };
+      })
+      .finally(() => {
+        if (this.activeResolveRootId === resolveRootId) {
+          this.activeResolveRootId = null;
+        }
       });
-
-      await this.ensureRunner();
-      await this.initRunner(entrypoint);
-
-      const payload = await this.request<EvalResultPayload>(
-        'EVAL',
-        {
-          id: entrypoint.name,
-        },
-        EVAL_TIMEOUT_MS
-      );
-
-      debugAction({
-        type: 'eval:finish',
-        evalSeq: this.evalSeq,
-        entrypoint: entrypoint.name,
-        hasValues: Boolean(payload.values),
-        ts: performance.now(),
-      });
-
-      if (payload.modules) {
-        this.applyModuleExports(payload.modules);
-      }
-
-      if (!payload.values) {
-        return { values: null, dependencies: [] };
-      }
-
-      const values = new Map<string, unknown>();
-      Object.entries(payload.values).forEach(([key, serialized]) => {
-        values.set(key, deserializeValue(serialized));
-      });
-
-      return {
-        values,
-        dependencies: this.collectEntrypointDependencies(entrypoint.name),
-      };
-    }).finally(() => {
-      if (this.activeResolveRootId === resolveRootId) {
-        this.activeResolveRootId = null;
-      }
-    });
 
     this.evalQueue = task.then(
       () => {},
@@ -1607,7 +1611,8 @@ export class EvalBroker {
   }
 
   private handleRunnerStderr(chunk: Buffer) {
-    const { evalConsole } = this.currentServices.options.pluginOptions;
+    const evalConsole =
+      this.currentServices.options.pluginOptions.evalConsole ?? 'pipe';
     if (evalConsole === 'warning') {
       const text = chunk.toString('utf8');
       for (const line of text.split('\n')) {
