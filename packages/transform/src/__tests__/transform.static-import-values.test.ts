@@ -2073,6 +2073,77 @@ describe('transform static import value inlining', () => {
     }
   });
 
+  it('inlines static styled metadata helpers into local styled chains before eval', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
+    const entryFile = join(root, 'entry.js');
+    const flexFile = join(root, 'flex.js');
+    const dynamicFile = join(root, 'dynamic.js');
+    const cache = new TransformCacheCollection();
+    const perf = createPerfEventRecorder();
+
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'app' }));
+    writeFileSync(
+      flexFile,
+      dedent`
+        import { styled } from 'test-styled-processor';
+
+        const runtimeOnly = (() => {
+          throw new Error('styled primitive module should not run during eval');
+        })();
+
+        export const Horizontal = styled.div\`
+          display: flex;
+        \`;
+
+        export const Spring = styled.div\`
+          flex: 1;
+        \`;
+
+        export { runtimeOnly };
+      `
+    );
+    writeFileSync(dynamicFile, `export const spacing = Date.now();`);
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { css } from 'test-css-processor';
+        import { styled } from 'test-styled-processor';
+        import { spacing } from './dynamic.js';
+        import { Horizontal, Spring } from './flex.js';
+
+        export const Runtime = () => Spring;
+
+        const Row = styled(Horizontal)\`
+          color: red;
+        \`;
+
+        export const Root = styled(Row)\`
+          font-size: 12px;
+        \`;
+
+        export const className = css\`
+          margin: ${'${spacing}'}px;
+        \`;
+      `
+    );
+
+    try {
+      const result = await runTransform(
+        root,
+        entryFile,
+        cache,
+        perf.eventEmitter
+      );
+
+      expect(result.cssText).toContain('color:red');
+      expect(result.cssText).toContain('font-size:12px');
+      expect(result.dependencies).toContain(flexFile);
+      expect(perf.counts.get('transform:evalFile') ?? 0).toBeGreaterThan(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('reuses cached static styled metadata across entry transforms', async () => {
     const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
     const firstEntryFile = join(root, 'entry-a.js');

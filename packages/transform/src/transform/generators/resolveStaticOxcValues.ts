@@ -1064,9 +1064,9 @@ const removeUnusedStaticImports = (
 const replaceStaticWYWMetaExtendsHelpers = (
   code: string,
   filename: string,
-  helperNames: Set<string>
+  helperValues: Map<string, unknown>
 ): string => {
-  if (helperNames.size === 0) {
+  if (helperValues.size === 0) {
     return code;
   }
 
@@ -1082,13 +1082,18 @@ const replaceStaticWYWMetaExtendsHelpers = (
           unwrapped.type === 'CallExpression' &&
           unwrapped.callee.type === 'Identifier' &&
           unwrapped.arguments.length === 0 &&
-          helperNames.has(unwrapped.callee.name)
+          helperValues.has(unwrapped.callee.name)
         ) {
-          replacements.push({
-            end: extendsExpression.end,
-            start: extendsExpression.start,
-            text: 'null',
-          });
+          const replacement = staticWYWMetaExtendsReplacementCode(
+            helperValues.get(unwrapped.callee.name)
+          );
+          if (replacement) {
+            replacements.push({
+              end: extendsExpression.end,
+              start: extendsExpression.start,
+              text: replacement,
+            });
+          }
         }
       }
     }
@@ -1105,13 +1110,13 @@ const pruneStaticPreevalCode = (
   filename: string,
   staticValueNames: Set<string>,
   staticImportLocals: Set<string>,
-  staticNullWYWMetaExtendsHelpers: Set<string>,
+  staticExtendsHelperValues: Map<string, unknown>,
   sideEffectImportLocals: Set<string>
 ): string => {
   const codeWithMetadataPruned = replaceStaticWYWMetaExtendsHelpers(
     code,
     filename,
-    staticNullWYWMetaExtendsHelpers
+    staticExtendsHelperValues
   );
   const helpersRemoved = removeStaticHelperDeclarations(
     codeWithMetadataPruned,
@@ -1207,6 +1212,59 @@ const isStaticWYWMetaValue = (
     typeof className === 'string' &&
     (extended === null || isStaticWYWMetaValue(extended, seen))
   );
+};
+
+type StaticWYWSelectorMetaValue = {
+  __wyw_meta: {
+    className: string;
+    extends: StaticWYWSelectorMetaValue | null;
+  };
+};
+
+const toStaticWYWSelectorMetaValue = (
+  value: unknown,
+  seen: Set<unknown> = new Set()
+): StaticWYWSelectorMetaValue | null => {
+  if (typeof value !== 'object' || value === null || seen.has(value)) {
+    return null;
+  }
+
+  seen.add(value);
+
+  const meta = (value as { __wyw_meta?: unknown }).__wyw_meta;
+  if (typeof meta !== 'object' || meta === null) {
+    return null;
+  }
+
+  const { className, extends: extended } = meta as {
+    className?: unknown;
+    extends?: unknown;
+  };
+  if (typeof className !== 'string') {
+    return null;
+  }
+
+  const staticExtends =
+    extended === null ? null : toStaticWYWSelectorMetaValue(extended, seen);
+  if (extended !== null && staticExtends === null) {
+    return null;
+  }
+
+  return {
+    __wyw_meta: {
+      className,
+      extends: staticExtends,
+    },
+  };
+};
+
+const staticWYWMetaExtendsReplacementCode = (value: unknown): string | null => {
+  if (value === null) {
+    return 'null';
+  }
+
+  const selectorMeta = toStaticWYWSelectorMetaValue(value);
+  return selectorMeta ? `(${JSON.stringify(selectorMeta)})` : null;
 };
 
 const staticWYWMetaTreeValueStatus = (
@@ -4603,12 +4661,18 @@ export function* resolveStaticOxcPreevalValues(
     ...staticNullWYWMetaExtendsHelpers,
   ];
   const originalBaseCode = preevalResult.baseCode ?? preevalResult.code;
+  const staticExtendsHelperValues = new Map(staticValueCache);
+  staticNullWYWMetaExtendsHelpers.forEach((name) => {
+    if (!staticExtendsHelperValues.has(name)) {
+      staticExtendsHelperValues.set(name, null);
+    }
+  });
   const baseCode = pruneStaticPreevalCode(
     originalBaseCode,
     filename,
     new Set(staticValueCache.keys()),
     staticImportLocals,
-    staticNullWYWMetaExtendsHelpers,
+    staticExtendsHelperValues,
     sideEffectImportLocals
   );
   const evalBaseCode =
@@ -4618,7 +4682,7 @@ export function* resolveStaticOxcPreevalValues(
           filename,
           new Set(staticValueCache.keys()),
           staticImportLocals,
-          staticNullWYWMetaExtendsHelpers,
+          staticExtendsHelperValues,
           new Set()
         )
       : baseCode;
