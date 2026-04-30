@@ -39,7 +39,7 @@ const createResolver =
     return null;
   };
 
-const runTransform = async (
+const runTransformWithOptions = async (
   root: string,
   entryFile: string,
   cache: TransformCacheCollection,
@@ -72,6 +72,29 @@ const runTransform = async (
       },
     },
     readFileSync(entryFile, 'utf8'),
+    asyncResolve
+  );
+
+const runTransform = async (
+  root: string,
+  entryFile: string,
+  cache: TransformCacheCollection,
+  eventEmitter?: EventEmitter,
+  pluginOptions: Partial<PluginOptions> = {},
+  asyncResolve = createResolver(processorFile)
+) =>
+  runTransformWithOptions(
+    root,
+    entryFile,
+    cache,
+    eventEmitter,
+    {
+      ...pluginOptions,
+      features: {
+        staticImportValues: true,
+        ...pluginOptions.features,
+      },
+    },
     asyncResolve
   );
 
@@ -132,6 +155,42 @@ describe('transform static import value inlining', () => {
       expect(result.dependencies).toContain(depFile);
       expect(perf.counts.get('transform:evaluator') ?? 0).toBe(1);
       expect(perf.counts.get('transform:evalFile') ?? 0).toBe(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps imported static values in eval by default', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
+    const entryFile = join(root, 'entry.js');
+    const depFile = join(root, 'tokens.js');
+    const cache = new TransformCacheCollection();
+    const perf = createPerfEventRecorder();
+
+    writeFileSync(depFile, `export const color = 'red';`);
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { css } from 'test-css-processor';
+        import { color } from './tokens.js';
+
+        export const className = css\`
+          color: ${'${color}'};
+        \`;
+      `
+    );
+
+    try {
+      const result = await runTransformWithOptions(
+        root,
+        entryFile,
+        cache,
+        perf.eventEmitter
+      );
+
+      expect(result.cssText).toContain('color:red');
+      expect(result.dependencies).toContain('./tokens.js');
+      expect(perf.counts.get('transform:evalFile') ?? 0).toBeGreaterThan(0);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -200,7 +259,7 @@ describe('transform static import value inlining', () => {
     }
   });
 
-  it('can disable imported static value inlining with a feature flag', async () => {
+  it('keeps imported static values in eval when disabled explicitly', async () => {
     const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
     const entryFile = join(root, 'entry.js');
     const depFile = join(root, 'tokens.js');
@@ -241,7 +300,7 @@ describe('transform static import value inlining', () => {
     }
   });
 
-  it('can disable local static value inlining with a feature flag', async () => {
+  it('keeps local static values in eval when disabled explicitly', async () => {
     const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
     const entryFile = join(root, 'entry.js');
     const cache = new TransformCacheCollection();

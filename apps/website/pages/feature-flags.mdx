@@ -71,15 +71,27 @@ The `softErrors` is disabled by default. It is designed to provide a more lenien
 
 # `staticImportValues` Feature
 
-The `staticImportValues` feature is enabled by default. It lets the Oxc transform inline imported values that can be proven static, such as primitives, arrays, and plain objects, without sending those bindings through build-time evaluation. Disable it when the extra static analysis is not useful for a project or when comparing build performance with and without the optimization.
+The `staticImportValues` feature is disabled by default. It lets the Oxc transform inline values that can be proven static, such as primitives, `null`, arrays, and plain objects, without sending those bindings through build-time evaluation.
+
+Enable it when your project has many style interpolations that point at static design tokens, constant objects, constant arrays, compiled enum objects, or simple static metadata chains. In those cases, WyW-in-JS can skip some eval work and can avoid importing token-only modules during eval.
+
+Keep it disabled when a project has few static imports, when most candidate modules are runtime-heavy, or when you are comparing build performance with and without the extra static analysis. The pass has to parse and resolve extra modules before it can prove that a value is safe, so codebases with little static data may see extra build overhead.
+
+## Limitations
+
+The resolver is intentionally conservative. If it cannot prove a value is static and serializable, WyW-in-JS falls back to the existing eval path.
+
+It does not inline arbitrary runtime-created values. Functions, classes, symbols, getters, non-plain objects, mutable bindings, dynamic imports, unresolved imports, cycles, side-effectful module shapes, and ambiguous computed or namespace access stay in eval.
 
 ```js
 {
   features: {
-    staticImportValues: false,
+    staticImportValues: true,
   },
 }
 ```
+
+You can also use `WYW_STATIC_IMPORT_VALUES=1` to force the feature on for local validation or performance comparison. `0`, `false`, `no`, and `off` force it off.
 
 # `useWeakRefInEval` Feature
 
