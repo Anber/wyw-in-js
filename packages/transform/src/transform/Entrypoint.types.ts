@@ -1,20 +1,23 @@
-import type { TransformOptions } from '@babel/core';
-import type { File } from '@babel/types';
-
-import type { Debugger, Evaluator } from '@wyw-in-js/shared';
+import type {
+  Debugger,
+  Evaluator,
+  TransformEngineOptions,
+} from '@wyw-in-js/shared';
 
 import type { Services } from './types';
 import type { WYWTransformMetadata } from '../utils/TransformMetadata';
 
+export type ParsedAst = unknown;
+
 export interface IEntrypointCode {
-  readonly ast: File;
+  readonly ast: ParsedAst;
   code: string;
-  evalConfig: TransformOptions;
+  evalConfig: TransformEngineOptions;
   evaluator: Evaluator;
 }
 
 export interface IIgnoredEntrypoint {
-  readonly ast?: File;
+  readonly ast?: ParsedAst;
   readonly code?: string;
   evaluator: 'ignored';
   reason: 'extension' | 'rule';
@@ -27,7 +30,7 @@ export interface IEntrypointDependency {
 }
 
 export interface IPreevalResult {
-  ast: File;
+  ast: ParsedAst | null;
   code: string;
   metadata: WYWTransformMetadata | null;
 }

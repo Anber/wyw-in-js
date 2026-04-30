@@ -1,16 +1,15 @@
 /* eslint-disable class-methods-use-this */
-import type { NodePath, types as t } from '@babel/core';
-import generator from '@babel/generator';
-import type {
-  Expression,
-  Identifier,
-  SourceLocation,
-  MemberExpression,
-} from '@babel/types';
-
 import type { Artifact, ExpressionValue } from '@wyw-in-js/shared';
 import { hasEvalMeta } from '@wyw-in-js/shared';
 
+import type {
+  AstService,
+  Expression,
+  Identifier,
+  MemberExpression,
+  SourceLocation,
+} from './ast';
+import { expressionToCode } from './ast';
 import { createProcessorDiagnosticArtifact } from './diagnostics';
 import type {
   IInterpolation,
@@ -24,7 +23,7 @@ import { isCSSable } from './utils/toCSS';
 import type { IFileContext, IOptions } from './utils/types';
 import { validateParams } from './utils/validateParams';
 
-export { Expression };
+export type { Expression };
 
 export type ProcessorParams = ConstructorParameters<typeof BaseProcessor>;
 export type TailProcessorParams = ProcessorParams extends [Params, ...infer T]
@@ -58,17 +57,10 @@ export abstract class BaseProcessor {
   public constructor(
     params: Params,
     public tagSource: TagSource,
-    protected readonly astService: typeof t & {
-      addDefaultImport: (source: string, nameHint?: string) => Identifier;
-      addNamedImport: (
-        name: string,
-        source: string,
-        nameHint?: string
-      ) => Identifier;
-    },
+    protected readonly astService: AstService,
     public readonly location: SourceLocation | null,
     protected readonly replacer: (
-      replacement: Expression | ((tagPath: NodePath) => Expression),
+      replacement: Expression | ((tagPath: unknown) => Expression),
       isPure: boolean
     ) => void,
     public readonly displayName: string,
@@ -129,11 +121,7 @@ export abstract class BaseProcessor {
   }
 
   protected tagSourceCode(): string {
-    if (this.callee.type === 'Identifier') {
-      return this.callee.name;
-    }
-
-    return generator(this.callee).code;
+    return expressionToCode(this.callee);
   }
 
   public abstract build(values: ValueCache): void;

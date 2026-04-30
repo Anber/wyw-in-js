@@ -280,14 +280,8 @@ function injectWywLoader(
   wywNext: WywNextPluginOptions
 ) {
   const loader = nodeRequire.resolve('@wyw-in-js/webpack-loader');
-  const nextBabelPreset = nodeRequire.resolve('next/babel', {
-    paths: [process.cwd()],
-  });
 
   const extension = wywNext.loaderOptions?.extension ?? DEFAULT_EXTENSION;
-  const babelOptions = wywNext.loaderOptions?.babelOptions ?? {
-    presets: [nextBabelPreset],
-  };
 
   const userImportOverrides = wywNext.loaderOptions?.importOverrides;
   const importOverrides = userImportOverrides
@@ -297,7 +291,6 @@ function injectWywLoader(
   const loaderOptions = {
     cssImport: 'import',
     ...wywNext.loaderOptions,
-    babelOptions,
     extension,
     importOverrides,
     sourceMap: wywNext.loaderOptions?.sourceMap ?? nextOptions.dev,
@@ -359,9 +352,6 @@ function injectWywTurbopackRules(
   wywNext: WywNextPluginOptions
 ): NextConfig {
   const loader = nodeRequire.resolve('@wyw-in-js/turbopack-loader');
-  const nextBabelPreset = nodeRequire.resolve('next/babel', {
-    paths: [process.cwd()],
-  });
 
   const userOptions = wywNext.turbopackLoaderOptions ?? {};
 
@@ -372,7 +362,6 @@ function injectWywTurbopackRules(
     : undefined;
 
   const loaderOptions = {
-    babelOptions: { presets: [nextBabelPreset] },
     sourceMap: process.env.NODE_ENV !== 'production',
     ...userOptions,
     importOverrides: userImportOverrides

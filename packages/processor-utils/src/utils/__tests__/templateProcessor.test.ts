@@ -1,8 +1,7 @@
-import type { TemplateElement } from '@babel/types';
-
 import { ValueType } from '@wyw-in-js/shared';
 
 import type { TaggedTemplateProcessor } from '../../TaggedTemplateProcessor';
+import type { TemplateElement } from '../../ast';
 import type { Value, ValueCache } from '../../types';
 import templateProcessor from '../templateProcessor';
 

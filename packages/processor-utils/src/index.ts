@@ -1,4 +1,5 @@
 export { BaseProcessor } from './BaseProcessor';
+export { expressionToCode } from './ast';
 export {
   createProcessorDiagnosticArtifact,
   isProcessorDiagnosticArtifact,
@@ -6,9 +7,27 @@ export {
 } from './diagnostics';
 export type { ProcessorDiagnosticArtifact } from './diagnostics';
 export type {
+  ArrayExpression,
+  ArrowFunctionExpression,
+  AstService,
+  BaseAstNode,
+  BlockStatement,
+  BooleanLiteral,
+  CallExpression,
   Expression,
-  TagSource,
+  Identifier,
+  MemberExpression,
+  NullLiteral,
+  NumericLiteral,
+  ObjectExpression,
+  ObjectProperty,
+  SourceLocation,
+  StringLiteral,
+  TemplateElement,
+} from './ast';
+export type {
   ProcessorParams,
+  TagSource,
   TailProcessorParams,
 } from './BaseProcessor';
 export * from './types';

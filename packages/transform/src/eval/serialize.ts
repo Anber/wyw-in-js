@@ -2,6 +2,7 @@ export type SerializedError = {
   message: string;
   name?: string;
   stack?: string;
+  cause?: SerializedError;
 };
 
 export type SerializedValue =
@@ -58,14 +59,6 @@ type SerializeValueOptions = {
   rootLabel?: string;
 };
 
-const isLikeError = (value: unknown): value is Error =>
-  typeof value === 'object' &&
-  value !== null &&
-  !isPlainObject(value) &&
-  'message' in value &&
-  typeof value.message === 'string' &&
-  ('stack' in value || 'name' in value);
-
 const isPlainObject = (value: unknown): value is Record<string, unknown> => {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     return false;
@@ -79,8 +72,40 @@ const isPlainObject = (value: unknown): value is Record<string, unknown> => {
   return Object.getPrototypeOf(prototype) === null;
 };
 
+const isLikeError = (value: unknown): value is Error =>
+  typeof value === 'object' &&
+  value !== null &&
+  !isPlainObject(value) &&
+  'message' in value &&
+  typeof value.message === 'string' &&
+  ('stack' in value || 'name' in value);
+
 const isCallable = (value: unknown): value is (...args: unknown[]) => unknown =>
   typeof value === 'function';
+
+const getBoxedPrimitiveValue = (
+  value: object
+):
+  | { kind: 'boolean'; value: boolean }
+  | { kind: 'number'; value: number }
+  | { kind: 'string'; value: string }
+  | null => {
+  const tag = Object.prototype.toString.call(value);
+
+  if (tag === '[object String]') {
+    return { kind: 'string', value: String(value.valueOf()) };
+  }
+
+  if (tag === '[object Number]') {
+    return { kind: 'number', value: Number(value.valueOf()) };
+  }
+
+  if (tag === '[object Boolean]') {
+    return { kind: 'boolean', value: Boolean(value.valueOf()) };
+  }
+
+  return null;
+};
 
 const getObjectTypeName = (value: object): string => {
   const { constructor } = value as { constructor?: { name?: unknown } };
@@ -199,6 +224,25 @@ const serializeValueAtPath = (
     throwUnsupportedIpcValue(rootLabel, path, 'an unsupported symbol');
   }
 
+  if (typeof value === 'object' && value !== null) {
+    const boxed = getBoxedPrimitiveValue(value as object);
+    if (boxed) {
+      if (boxed.kind === 'number') {
+        if (Number.isNaN(boxed.value)) {
+          return { kind: 'nan' };
+        }
+        if (boxed.value === Infinity) {
+          return { kind: 'infinity' };
+        }
+        if (boxed.value === -Infinity) {
+          return { kind: '-infinity' };
+        }
+      }
+
+      return boxed;
+    }
+  }
+
   if (isLikeError(value)) {
     return {
       kind: 'error',
@@ -263,9 +307,7 @@ const serializeValueAtPath = (
     throwUnsupportedIpcValue(
       rootLabel,
       path,
-      `an unsupported non-plain object (${getObjectTypeName(
-        value as object
-      )})`
+      `an unsupported non-plain object (${getObjectTypeName(value as object)})`
     );
   }
 
@@ -335,6 +377,7 @@ export const deserializeValue = (value: SerializedValue): unknown => {
     case 'function':
       return () => {};
     case 'symbol':
+      // eslint-disable-next-line symbol-description
       return value.description ? Symbol.for(value.description) : Symbol();
     case 'error': {
       const error = new Error(value.error.message);

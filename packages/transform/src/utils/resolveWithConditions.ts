@@ -1,4 +1,5 @@
 import { spawnSync } from 'child_process';
+import NativeModule from 'module';
 
 type ResolveFilenameParent = {
   filename: string;
@@ -52,6 +53,10 @@ try {
 `;
 
 const isBunRuntime = () => process.execPath.includes('bun');
+
+const nativeResolveFilename = (
+  NativeModule as unknown as ResolveFilenameModuleImplementation
+)._resolveFilename;
 
 const resolveWithNodeProcess = (
   id: string,
@@ -123,7 +128,10 @@ export const resolveFilenameWithConditions = (
   conditions?: Set<string>
 ): string => {
   const resolveOptions = conditions ? { conditions } : undefined;
-  if (!conditions || !isBunRuntime()) {
+  const usesNativeResolver =
+    moduleImpl._resolveFilename === nativeResolveFilename;
+
+  if (!conditions || !isBunRuntime() || !usesNativeResolver) {
     return moduleImpl._resolveFilename(id, parent, false, resolveOptions);
   }
 

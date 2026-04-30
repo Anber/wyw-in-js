@@ -4,7 +4,7 @@ import * as babel from '@babel/core';
 
 import type { StrictOptions } from '@wyw-in-js/shared';
 
-import { applyProcessors } from '../utils/getTagProcessor';
+import { applyProcessors } from './legacy-babel-reference/utils/getTagProcessor';
 
 const arrowProcessorPath = path.resolve(
   __dirname,

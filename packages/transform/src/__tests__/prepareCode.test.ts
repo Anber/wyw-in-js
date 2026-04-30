@@ -265,7 +265,11 @@ describe('prepareCode', () => {
     }
 
     prepareCode(services, firstEntrypoint, firstEntrypoint.loadedAndParsed.ast);
-    services.cache.add('entrypoints', inputFilePath, firstEntrypoint.createEvaluated());
+    services.cache.add(
+      'entrypoints',
+      inputFilePath,
+      firstEntrypoint.createEvaluated()
+    );
 
     const widenedEntrypoint = Entrypoint.createRoot(
       services,

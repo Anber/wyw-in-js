@@ -150,7 +150,9 @@ const turbopackLoader: Loader = function turbopackLoader(
     cache,
     emitWarning: (message: string) => {
       if (typeof this.emitWarning === 'function') {
-        this.emitWarning(new Error(message));
+        const warning = new Error(message);
+        delete warning.stack;
+        this.emitWarning(warning);
       }
     },
   };

@@ -1,13 +1,3 @@
-import type {
-  BigIntLiteral,
-  BooleanLiteral,
-  DecimalLiteral,
-  Identifier,
-  NullLiteral,
-  NumericLiteral,
-  StringLiteral,
-} from '@babel/types';
-
 export type Artifact = [name: string, data: unknown];
 
 export type BuildCodeFrameErrorFn = <TError extends Error>(
@@ -20,6 +10,56 @@ export enum ValueType {
   FUNCTION,
   CONST,
 }
+
+export type SourceLocation = {
+  end: Location;
+  filename?: string;
+  identifierName?: string | null;
+  start: Location;
+};
+
+export type AstNode = {
+  end?: number | null;
+  loc?: SourceLocation | null;
+  start?: number | null;
+  type: string;
+};
+
+export type AstExpression = AstNode;
+
+export type Identifier = AstExpression & {
+  name: string;
+  type: 'Identifier';
+};
+
+export type StringLiteral = AstExpression & {
+  type: 'StringLiteral';
+  value: string;
+};
+
+export type NumericLiteral = AstExpression & {
+  type: 'NumericLiteral';
+  value: number;
+};
+
+export type NullLiteral = AstExpression & {
+  type: 'NullLiteral';
+};
+
+export type BooleanLiteral = AstExpression & {
+  type: 'BooleanLiteral';
+  value: boolean;
+};
+
+export type BigIntLiteral = AstExpression & {
+  type: 'BigIntLiteral';
+  value: bigint | string;
+};
+
+export type DecimalLiteral = AstExpression & {
+  type: 'DecimalLiteral';
+  value: string;
+};
 
 export type LazyValue = {
   buildCodeFrameError: BuildCodeFrameErrorFn;

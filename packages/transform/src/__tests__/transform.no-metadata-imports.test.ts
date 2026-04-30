@@ -97,5 +97,7 @@ it('does not recurse into imported modules for __wywPreval-only files without me
 
   expect(result.code).toBe(fs.readFileSync(entryFile, 'utf8'));
   expect(result.cssText).toBeUndefined();
-  expect(asyncResolve).not.toHaveBeenCalledWith('./child', entryFile, [entryFile]);
+  expect(asyncResolve).not.toHaveBeenCalledWith('./child', entryFile, [
+    entryFile,
+  ]);
 });

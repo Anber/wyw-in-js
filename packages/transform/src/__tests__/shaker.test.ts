@@ -432,8 +432,12 @@ describe('shaker', () => {
     `;
 
     expect(code).toContain('class NotFoundException');
-    expect(code).toContain('class TaskNotFoundException extends NotFoundException');
-    expect(code).toContain('exports.TaskNotFoundException = TaskNotFoundException;');
+    expect(code).toContain(
+      'class TaskNotFoundException extends NotFoundException'
+    );
+    expect(code).toContain(
+      'exports.TaskNotFoundException = TaskNotFoundException;'
+    );
     expect(code).not.toContain('exports.NotFoundException');
   });
 

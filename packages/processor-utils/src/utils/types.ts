@@ -1,5 +1,3 @@
-import type { TransformOptions } from '@babel/core';
-
 import type { ClassNameFn, VariableNameFn } from '@wyw-in-js/shared';
 
 export interface IOptions {
@@ -10,4 +8,7 @@ export interface IOptions {
   variableNameSlug?: string | VariableNameFn;
 }
 
-export type IFileContext = Pick<TransformOptions, 'root' | 'filename'>;
+export type IFileContext = {
+  filename?: string | null;
+  root?: string | null;
+};

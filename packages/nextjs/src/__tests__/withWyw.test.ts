@@ -20,11 +20,13 @@ describe('withWyw', () => {
       expect(tsRule[0].options.importOverrides).toMatchObject({
         react: { mock: 'react' },
       });
+      expect(tsRule[0].options).not.toHaveProperty('babelOptions');
     } else {
       expect(tsRule.loaders[0].loader).toContain('turbopack-loader');
       expect(tsRule.loaders[0].options.importOverrides).toMatchObject({
         react: { mock: 'react' },
       });
+      expect(tsRule.loaders[0].options).not.toHaveProperty('babelOptions');
     }
   });
 
@@ -85,6 +87,7 @@ describe('withWyw', () => {
     expect(use[1].options.importOverrides).toMatchObject({
       react: { mock: 'react' },
     });
+    expect(use[1].options).not.toHaveProperty('babelOptions');
   });
 
   it('merges default React importOverrides with user overrides', () => {

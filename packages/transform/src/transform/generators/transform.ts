@@ -1,15 +1,9 @@
-import type { File } from '@babel/types';
-
-import type { EvaluatorConfig } from '@wyw-in-js/shared';
-import { emitCommonJS, shakeToESM, shaker } from '../../shaker';
+import { oxcShaker } from '../../shaker';
 import type { WYWTransformMetadata } from '../../utils/TransformMetadata';
-import { getTransformMetadata } from '../../utils/TransformMetadata';
-import {
-  collectExportsAndImports,
-  explicitImport,
-  sideEffectImport,
-} from '../../utils/collectExportsAndImports';
-import { runPreevalStage } from '../preevalStage';
+import { collectOxcExportsAndImports } from '../../utils/collectOxcExportsAndImports';
+import { emitOxcCommonJS, stripTypesAndJsxWithOxc } from '../../utils/oxcEmit';
+import { runOxcPreevalStage } from '../../utils/oxcPreevalStage';
+import { shakeOxcToESM } from '../../utils/oxcShaker';
 import type { Entrypoint } from '../Entrypoint';
 import type { IEntrypointDependency } from '../Entrypoint.types';
 import type {
@@ -18,41 +12,26 @@ import type {
   SyncScenarioForAction,
 } from '../types';
 
-import { rewriteOptimizedBarrelImports } from './rewriteBarrelImports';
+import { rewriteOptimizedOxcBarrelImports } from './rewriteOxcBarrelImports';
 
 const EMPTY_FILE = '=== empty file ===';
 
-const collectImportsFromAst = (
-  services: Services,
-  ast: File
+const collectImportsFromOxc = (
+  code: string,
+  filename: string
 ): Map<string, string[]> => {
   const imports = new Map<string, string[]>();
   const addImport = (source: string, imported: string) => {
-    if (!imports.has(source)) {
-      imports.set(source, []);
-    }
-
-    const bucket = imports.get(source)!;
+    const bucket = imports.get(source) ?? [];
     if (!bucket.includes(imported)) {
       bucket.push(imported);
     }
+
+    imports.set(source, bucket);
   };
 
-  services.babel.traverse(ast, {
-    Program(path) {
-      const collected = collectExportsAndImports(path, 'disabled');
-      collected.imports.forEach((item) => {
-        if (sideEffectImport(item)) {
-          addImport(item.source, 'side-effect');
-          return;
-        }
-
-        if (explicitImport(item)) {
-          addImport(item.source, item.imported);
-        }
-      });
-      path.stop();
-    },
+  collectOxcExportsAndImports(code, filename).imports.forEach((item) => {
+    addImport(item.source, item.imported || 'side-effect');
   });
 
   return imports;
@@ -61,71 +40,65 @@ const collectImportsFromAst = (
 type PrepareCodeFn = (
   services: Services,
   item: Entrypoint,
-  originalAst: File
+  originalAst: unknown | null
 ) => [
   code: string,
   imports: Map<string, string[]> | null,
   metadata: WYWTransformMetadata | null,
 ];
 
-type PreparedEvaluatorInput =
-  | {
-      kind: 'continue';
-      ast: File;
-      code: string;
-      evalConfig: ReturnType<PrepareCodeFn> extends [any, any, any]
-        ? Entrypoint['loadedAndParsed'] extends infer T
-          ? T extends { evalConfig: infer U }
-            ? U
-            : never
-          : never
-        : never;
-      evaluatorConfig: EvaluatorConfig;
-      metadata: WYWTransformMetadata | null;
-    }
-  | {
-      code: string;
-      kind: 'short-circuit';
-    };
-
-type PrepareEvaluatorInputOptions = {
-  shortCircuitOnMissingMetadata?: boolean;
-};
-
 const isPrevalOnly = (only: string[]) =>
   only.length === 1 && only[0] === '__wywPreval';
 
-const prepareEvaluatorInput = (
+type PrepareCodeOptions = {
+  emitCommonJS?: boolean;
+  shortCircuitOnMissingMetadata?: boolean;
+  stripForEvalRuntime?: boolean;
+};
+
+const normalizeOxcPreparedESM = (code: string): string =>
+  code
+    .replace(/^(?:[ \t]*\n)+/, '')
+    .replace(/[ \t\n]+$/, '')
+    .replace(/\n{2,}/g, '\n')
+    .replace(/^const /gm, 'var ');
+
+const prepareOxcCodeImpl = (
   services: Services,
   item: Entrypoint,
-  originalAst: File,
-  prepareOptions: PrepareEvaluatorInputOptions = {}
-): PreparedEvaluatorInput => {
+  originalAst: unknown | null,
+  options: PrepareCodeOptions = {}
+): ReturnType<PrepareCodeFn> => {
   const { only, loadedAndParsed, log } = item;
   if (loadedAndParsed.evaluator === 'ignored') {
-    throw new Error(`Cannot prepare ignored entrypoint ${item.name}`);
+    log('is ignored');
+    return [loadedAndParsed.code ?? '', null, null];
   }
 
-  const { code, evalConfig } = loadedAndParsed;
-  const { options, babel, eventEmitter } = services;
-  const { pluginOptions } = options;
+  const filename = loadedAndParsed.evalConfig.filename ?? item.name;
+  const { eventEmitter } = services;
+  const { pluginOptions } = services.options;
+  const root = services.options.root ?? process.cwd();
 
   let preevalStageResult = item.getPreevalResult();
   if (!preevalStageResult) {
     preevalStageResult = eventEmitter.perf('transform:preeval', () => {
-      const result = runPreevalStage(
-        babel,
-        evalConfig,
-        pluginOptions,
-        code,
-        originalAst,
-        eventEmitter
+      const result = runOxcPreevalStage(
+        loadedAndParsed.code,
+        {
+          filename,
+          root,
+        },
+        {
+          ...pluginOptions,
+          eventEmitter,
+        }
       );
 
       return {
-        ast: result.ast!,
-        code: result.code ?? '',
-        metadata: getTransformMetadata(result.metadata) ?? null,
+        ast: originalAst,
+        code: result.code,
+        metadata: result.metadata,
       };
     });
 
@@ -136,42 +109,60 @@ const prepareEvaluatorInput = (
   if (
     isPrevalOnly(only) &&
     !transformMetadata &&
-    prepareOptions.shortCircuitOnMissingMetadata !== false
+    options.shortCircuitOnMissingMetadata !== false
   ) {
     log('[evaluator:end] no metadata');
+    const strippedCode = stripTypesAndJsxWithOxc(
+      preevalStageResult.code,
+      filename
+    ).code;
 
-    return {
-      code: preevalStageResult.code,
-      kind: 'short-circuit',
-    };
+    return [
+      normalizeOxcPreparedESM(strippedCode),
+      collectImportsFromOxc(strippedCode, filename),
+      null,
+    ];
   }
 
   log('[preeval] metadata %O', transformMetadata);
+  log('[evaluator:start] using %s', loadedAndParsed.evaluator.name);
+  log.extend('source')('%s', preevalStageResult.code);
 
-  return {
-    ast: preevalStageResult.ast,
-    code: preevalStageResult.code,
-    evalConfig,
-    evaluatorConfig: {
-      onlyExports: only,
-      highPriorityPlugins: pluginOptions.highPriorityPlugins,
-      features: pluginOptions.features,
+  const shaken = eventEmitter.perf('transform:evaluator', () =>
+    shakeOxcToESM(preevalStageResult.code, filename, {
       importOverrides: pluginOptions.importOverrides,
-      root: options.root,
-    },
-    kind: 'continue',
-    metadata: transformMetadata ?? null,
-  };
-};
+      onlyExports: only,
+      root,
+    })
+  );
 
-type PrepareCodeOptions = {
-  shortCircuitOnMissingMetadata?: boolean;
+  log('[evaluator:end]');
+
+  if (!options.emitCommonJS) {
+    const preparedCode = options.stripForEvalRuntime
+      ? stripTypesAndJsxWithOxc(shaken.code, filename).code
+      : shaken.code;
+
+    return [
+      normalizeOxcPreparedESM(preparedCode),
+      options.stripForEvalRuntime
+        ? collectImportsFromOxc(preparedCode, filename)
+        : shaken.imports,
+      transformMetadata ?? null,
+    ];
+  }
+
+  const emitted = eventEmitter.perf('transform:emitCommonJS', () =>
+    emitOxcCommonJS(shaken.code, filename)
+  );
+
+  return [emitted.code, shaken.imports, transformMetadata ?? null];
 };
 
 const prepareCodeImpl = (
   services: Services,
   item: Entrypoint,
-  originalAst: File,
+  originalAst: unknown | null,
   options: PrepareCodeOptions = {}
 ): ReturnType<PrepareCodeFn> => {
   const { log, loadedAndParsed } = item;
@@ -181,45 +172,29 @@ const prepareCodeImpl = (
   }
 
   const { evaluator } = loadedAndParsed;
-  const { babel, eventEmitter } = services;
-  const prepared = prepareEvaluatorInput(services, item, originalAst, options);
-  if (prepared.kind === 'short-circuit') {
-    return [prepared.code, collectImportsFromAst(services, originalAst), null];
+  if (evaluator !== oxcShaker) {
+    throw new Error(
+      `[wyw-in-js] ${item.name} matched a legacy evaluator. The Oxc runtime path supports only the default Oxc evaluator.`
+    );
   }
 
-  log('[evaluator:start] using %s', evaluator.name);
-  log.extend('source')('%s', prepared.code);
-
-  const [, transformedCode, imports] = eventEmitter.perf(
-    'transform:evaluator',
-    () =>
-      evaluator(
-        prepared.evalConfig,
-        prepared.ast,
-        prepared.code,
-        prepared.evaluatorConfig,
-        babel
-      )
-  );
-
-  log('[evaluator:end]');
-
-  return [transformedCode, imports, prepared.metadata];
+  return prepareOxcCodeImpl(services, item, originalAst, options);
 };
 
 export const prepareCode = (
   services: Services,
   item: Entrypoint,
-  originalAst: File
+  originalAst: unknown | null
 ): ReturnType<PrepareCodeFn> => prepareCodeImpl(services, item, originalAst);
 
 export const prepareCodeForEvalRuntime = (
   services: Services,
   item: Entrypoint,
-  originalAst: File
+  originalAst: unknown | null
 ): ReturnType<PrepareCodeFn> =>
   prepareCodeImpl(services, item, originalAst, {
-    shortCircuitOnMissingMetadata: item.loadedAndParsed.evaluator !== shaker,
+    shortCircuitOnMissingMetadata: true,
+    stripForEvalRuntime: true,
   });
 
 export function* internalTransform(
@@ -235,38 +210,149 @@ export function* internalTransform(
     };
   }
 
+  if (loadedAndParsed.evaluator !== oxcShaker) {
+    throw new Error(
+      `[wyw-in-js] ${this.entrypoint.name} matched a legacy evaluator. The Oxc runtime path supports only the default Oxc evaluator.`
+    );
+  }
+
   log('>> (%o)', only);
 
   const [preparedCode, imports, metadata] = prepareFn(
     this.services,
     this.entrypoint,
-    loadedAndParsed.ast
+    null
   );
+  let finalPreparedCode = preparedCode;
 
-  if (loadedAndParsed.code === preparedCode) {
+  if (loadedAndParsed.evaluator === oxcShaker) {
+    if (metadata === null && isPrevalOnly(only)) {
+      log(
+        'skip resolving imports for __wywPreval-only entrypoint without metadata'
+      );
+      return {
+        code: finalPreparedCode,
+        metadata: null,
+      };
+    }
+
+    let nextCode = preparedCode;
+    let nextResolvedImports: IEntrypointDependency[] = [];
+    let skippedParentDependencyTracking: string[] = [];
+
+    if (imports !== null && imports.size > 0) {
+      const resolvedImports = yield* this.getNext(
+        'resolveImports',
+        this.entrypoint,
+        {
+          imports,
+          phase: 'initial',
+        }
+      );
+
+      if (resolvedImports.length > 0) {
+        const rewritten = yield* rewriteOptimizedOxcBarrelImports.call(
+          this,
+          preparedCode,
+          loadedAndParsed.evalConfig.filename ?? this.entrypoint.name,
+          resolvedImports
+        );
+
+        nextCode = rewritten.code;
+
+        if (rewritten.optimizedCount > 0) {
+          skippedParentDependencyTracking = rewritten.generatedSources;
+          const fullyRewrittenSources = new Set(
+            rewritten.fullyRewrittenSources
+          );
+          const partialFallbackSources = new Set(
+            rewritten.partialFallbackSources
+          );
+
+          for (const dependency of resolvedImports) {
+            if (
+              dependency.resolved &&
+              (fullyRewrittenSources.has(dependency.source) ||
+                partialFallbackSources.has(dependency.source))
+            ) {
+              if (partialFallbackSources.has(dependency.source)) {
+                this.entrypoint.addDependency(dependency);
+              } else {
+                this.entrypoint.addInvalidationDependency(dependency);
+              }
+
+              this.entrypoint.markInvalidateOnDependencyChange(
+                dependency.resolved
+              );
+            }
+          }
+
+          nextResolvedImports = yield* this.getNext(
+            'resolveImports',
+            this.entrypoint,
+            {
+              imports: rewritten.imports,
+              phase: 'rewritten',
+              preResolved: rewritten.preResolvedImports,
+            }
+          );
+        } else {
+          nextResolvedImports = resolvedImports;
+        }
+      }
+    }
+
+    if (nextResolvedImports.length !== 0) {
+      yield [
+        'processImports',
+        this.entrypoint,
+        {
+          resolved: nextResolvedImports,
+          skipParentDependencyTracking: skippedParentDependencyTracking,
+        },
+      ];
+    }
+
+    finalPreparedCode = this.services.eventEmitter.perf(
+      'transform:emitCommonJS',
+      () =>
+        emitOxcCommonJS(
+          nextCode,
+          loadedAndParsed.evalConfig.filename ?? this.entrypoint.name
+        ).code
+    );
+  }
+
+  if (loadedAndParsed.code === finalPreparedCode) {
     log('<< (%o)\n === no changes ===', only);
   } else {
     log('<< (%o)', only);
-    log.extend('source')('%s', preparedCode || EMPTY_FILE);
+    log.extend('source')('%s', finalPreparedCode || EMPTY_FILE);
   }
 
-  if (preparedCode === '') {
+  if (finalPreparedCode === '') {
     log('is skipped');
     return {
       code: loadedAndParsed.code ?? '',
-      metadata: null,
+      metadata,
     };
   }
 
   if (metadata === null && isPrevalOnly(only)) {
-    log('skip resolving imports for __wywPreval-only entrypoint without metadata');
+    log(
+      'skip resolving imports for __wywPreval-only entrypoint without metadata'
+    );
     return {
-      code: preparedCode,
+      code: finalPreparedCode,
       metadata: null,
     };
   }
 
-  if (imports !== null && imports.size > 0) {
+  if (
+    loadedAndParsed.evaluator !== oxcShaker &&
+    imports !== null &&
+    imports.size > 0
+  ) {
     const resolvedImports = yield* this.getNext(
       'resolveImports',
       this.entrypoint,
@@ -287,7 +373,7 @@ export function* internalTransform(
   }
 
   return {
-    code: preparedCode,
+    code: finalPreparedCode,
     metadata,
   };
 }
@@ -295,162 +381,5 @@ export function* internalTransform(
 export function* transform(
   this: ITransformAction
 ): SyncScenarioForAction<ITransformAction> {
-  const { only, loadedAndParsed, log } = this.entrypoint;
-  if (loadedAndParsed.evaluator === 'ignored') {
-    log('is ignored');
-    return {
-      code: loadedAndParsed.code ?? '',
-      metadata: null,
-    };
-  }
-
-  if (loadedAndParsed.evaluator !== shaker) {
-    return yield* internalTransform.call(this, prepareCode);
-  }
-
-  log('>> (%o)', only);
-
-  const prepared = prepareEvaluatorInput(
-    this.services,
-    this.entrypoint,
-    loadedAndParsed.ast
-  );
-
-  if (prepared.kind === 'short-circuit') {
-    if (loadedAndParsed.code === prepared.code) {
-      log('<< (%o)\n === no changes ===', only);
-    } else {
-      log('<< (%o)', only);
-      log.extend('source')('%s', prepared.code || EMPTY_FILE);
-    }
-
-    if (prepared.code === '') {
-      log('is skipped');
-      return {
-        code: loadedAndParsed.code ?? '',
-        metadata: null,
-      };
-    }
-
-    return {
-      code: prepared.code,
-      metadata: null,
-    };
-  }
-
-  log('[evaluator:start] using %s', loadedAndParsed.evaluator.name);
-  log.extend('source')('%s', prepared.code);
-
-  const { babel, eventEmitter } = this.services;
-  const [shakenAst, shakenCode, shakenImports] = eventEmitter.perf(
-    'transform:evaluator',
-    () =>
-      shakeToESM(
-        prepared.evalConfig,
-        prepared.ast,
-        prepared.code,
-        prepared.evaluatorConfig,
-        babel
-      )
-  );
-
-  let nextAst = shakenAst;
-  let nextCode = shakenCode;
-  let nextResolvedImports: IEntrypointDependency[] = [];
-
-  if (shakenImports !== null && shakenImports.size > 0) {
-    const resolvedImports = yield* this.getNext(
-      'resolveImports',
-      this.entrypoint,
-      {
-        imports: shakenImports,
-        phase: 'initial',
-      }
-    );
-
-    if (resolvedImports.length > 0) {
-      const rewritten = yield* rewriteOptimizedBarrelImports.call(
-        this,
-        shakenAst,
-        shakenCode,
-        resolvedImports
-      );
-
-      nextAst = rewritten.ast;
-      nextCode = rewritten.code;
-
-      if (rewritten.optimizedCount > 0) {
-        const fullyRewrittenSources = new Set(rewritten.fullyRewrittenSources);
-        const partialFallbackSources = new Set(
-          rewritten.partialFallbackSources
-        );
-
-        for (const dependency of resolvedImports) {
-          if (
-            dependency.resolved &&
-            (fullyRewrittenSources.has(dependency.source) ||
-              partialFallbackSources.has(dependency.source))
-          ) {
-            if (partialFallbackSources.has(dependency.source)) {
-              this.entrypoint.addDependency(dependency);
-            } else {
-              this.entrypoint.addInvalidationDependency(dependency);
-            }
-
-            this.entrypoint.markInvalidateOnDependencyChange(
-              dependency.resolved
-            );
-          }
-        }
-
-        nextResolvedImports = yield* this.getNext(
-          'resolveImports',
-          this.entrypoint,
-          {
-            imports: rewritten.imports,
-            phase: 'rewritten',
-            preResolved: rewritten.preResolvedImports,
-          }
-        );
-      } else {
-        nextResolvedImports = resolvedImports;
-      }
-    }
-  }
-
-  if (nextResolvedImports.length !== 0) {
-    yield [
-      'processImports',
-      this.entrypoint,
-      {
-        resolved: nextResolvedImports,
-      },
-    ];
-  }
-
-  const [, preparedCode] = eventEmitter.perf('transform:emitCommonJS', () =>
-    emitCommonJS(prepared.evalConfig, nextAst, nextCode, babel)
-  );
-
-  log('[evaluator:end]');
-
-  if (loadedAndParsed.code === preparedCode) {
-    log('<< (%o)\n === no changes ===', only);
-  } else {
-    log('<< (%o)', only);
-    log.extend('source')('%s', preparedCode || EMPTY_FILE);
-  }
-
-  if (preparedCode === '') {
-    log('is skipped');
-    return {
-      code: loadedAndParsed.code ?? '',
-      metadata: null,
-    };
-  }
-
-  return {
-    code: preparedCode,
-    metadata: prepared.metadata,
-  };
+  return yield* internalTransform.call(this, prepareCode);
 }

@@ -5,7 +5,7 @@
  * - shakes each dependency and removes unused code
  * - runs generated code in a sandbox
  * - collects artifacts
- * - returns transformed code (without WYW template literals), generated CSS, source maps and babel metadata from transform step.
+ * - returns transformed code (without WYW template literals), generated CSS, source maps and transform metadata.
  */
 
 import { createHash } from 'crypto';

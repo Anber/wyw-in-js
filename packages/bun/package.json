@@ -10,7 +10,6 @@
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
-    "@wyw-in-js/babel-config": "workspace:*",
     "@wyw-in-js/eslint-config": "workspace:*",
     "@wyw-in-js/ts-config": "workspace:*"
   },
@@ -34,7 +33,7 @@
     "access": "public"
   },
   "scripts": {
-    "build:esm": "babel src --out-dir esm --out-file-extension .mjs --extensions '.js,.jsx,.ts,.tsx' --source-maps --delete-dir-on-start",
+    "build:esm": "node ../../scripts/build-esm-oxc.mjs --out-file-extension .mjs",
     "build:types": "tsc --project ./tsconfig.lib.json --baseUrl . --rootDir ./src",
     "lint": "eslint --ext .js,.ts .",
     "test": "bun test src"

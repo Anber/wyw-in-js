@@ -4,7 +4,7 @@ import { runInNewContext } from 'vm';
 import { transformSync } from '@babel/core';
 import dedent from 'dedent';
 
-import { preeval } from '../plugins/preeval';
+import { preeval } from './legacy-babel-reference/plugins/preeval';
 
 type RunOverrides = Parameters<typeof preeval>[1];
 

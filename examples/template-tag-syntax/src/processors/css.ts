@@ -1,6 +1,9 @@
-import type { SourceLocation, StringLiteral } from '@babel/types';
-
-import type { Rules, ValueCache } from '@wyw-in-js/processor-utils';
+import type {
+  Rules,
+  SourceLocation,
+  StringLiteral,
+  ValueCache,
+} from '@wyw-in-js/processor-utils';
 import { TaggedTemplateProcessor } from '@wyw-in-js/processor-utils';
 
 export default class CssProcessor extends TaggedTemplateProcessor {

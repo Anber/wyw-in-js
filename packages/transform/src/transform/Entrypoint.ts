@@ -64,6 +64,10 @@ export class Entrypoint extends BaseEntrypoint {
 
   #preevalResult: IPreevalResult | null = null;
 
+  #processingPromise: Promise<void> | null = null;
+
+  #resolveProcessing: (() => void) | null = null;
+
   #supersededWith: Entrypoint | null = null;
 
   #transformResultCode: string | null = null;
@@ -151,7 +155,13 @@ export class Entrypoint extends BaseEntrypoint {
   }
 
   public get transformed(): boolean {
-    return this.#hasTransformResult || this.supersededWith?.transformed || false;
+    return (
+      this.#hasTransformResult || this.supersededWith?.transformed || false
+    );
+  }
+
+  public get isProcessing(): boolean {
+    return this.#isProcessing;
   }
 
   public static createRoot(
@@ -241,7 +251,7 @@ export class Entrypoint extends BaseEntrypoint {
       !changed && cached?.evaluated && cached.loadedAndParsed !== undefined;
     const canReuseEvaluatedTransformResult =
       reusableEvaluatedState &&
-      isSuperSet(cached.only, mergedOnly) &&
+      isSuperSet(cached.evaluatedOnly, mergedOnly) &&
       cached.hasTransformResult &&
       cached.loadedAndParsed !== undefined;
 
@@ -298,6 +308,15 @@ export class Entrypoint extends BaseEntrypoint {
       );
 
       if (cached.#isProcessing) {
+        if (parent === null) {
+          cached.log(
+            'is being processed during root request, supersede immediately (%o -> %o)',
+            cached.only,
+            mergedOnly
+          );
+          return [isLoop ? 'loop' : 'created', cached.supersede(mergedOnly)];
+        }
+
         cached.deferOnlySupersede(mergedOnly);
         cached.log(
           'is being processed, defer supersede (%o -> %o)',
@@ -400,6 +419,11 @@ export class Entrypoint extends BaseEntrypoint {
 
   public beginProcessing() {
     this.#isProcessing = true;
+    if (!this.#processingPromise) {
+      this.#processingPromise = new Promise<void>((resolve) => {
+        this.#resolveProcessing = resolve;
+      });
+    }
   }
 
   public createAction<
@@ -483,6 +507,9 @@ export class Entrypoint extends BaseEntrypoint {
 
   public endProcessing() {
     this.#isProcessing = false;
+    this.#resolveProcessing?.();
+    this.#resolveProcessing = null;
+    this.#processingPromise = null;
   }
 
   public getDependency(name: string): IEntrypointDependency | undefined {
@@ -511,6 +538,10 @@ export class Entrypoint extends BaseEntrypoint {
 
   public hasWywMetadata() {
     return this.#hasWywMetadata;
+  }
+
+  public waitForProcessing(): Promise<void> {
+    return this.#processingPromise ?? Promise.resolve();
   }
 
   public reuseTransformResult(
@@ -561,24 +592,24 @@ export class Entrypoint extends BaseEntrypoint {
 
   private supersede(newOnlyOrEntrypoint: string[] | Entrypoint): Entrypoint {
     this.#pendingOnly = null;
-    const newEntrypoint =
-      newOnlyOrEntrypoint instanceof Entrypoint
-        ? newOnlyOrEntrypoint
-        : new Entrypoint(
-            this.services,
-            this.parents,
-            this.initialCode,
-            this.name,
-            newOnlyOrEntrypoint,
-            this.exports,
-            this.evaluatedOnly,
-            this.loadedAndParsed,
-            this.resolveTasks,
-            this.dependencies,
-            this.invalidationDependencies,
-            this.invalidateOnDependencyChange,
-            this.generation + 1
-          );
+    const widensOnly = !(newOnlyOrEntrypoint instanceof Entrypoint);
+    const newEntrypoint = widensOnly
+      ? new Entrypoint(
+          this.services,
+          this.parents,
+          this.initialCode,
+          this.name,
+          newOnlyOrEntrypoint,
+          this.exports,
+          this.evaluatedOnly,
+          this.loadedAndParsed,
+          this.resolveTasks,
+          this.dependencies,
+          this.invalidationDependencies,
+          this.invalidateOnDependencyChange,
+          this.generation + 1
+        )
+      : newOnlyOrEntrypoint;
 
     this.services.eventEmitter.entrypointEvent(this.seqId, {
       type: 'superseded',
@@ -590,7 +621,10 @@ export class Entrypoint extends BaseEntrypoint {
       this.only,
       newEntrypoint.only
     );
-    newEntrypoint.#preevalResult = this.#preevalResult;
+    if (widensOnly) {
+      newEntrypoint.#preevalResult = this.#preevalResult;
+    }
+
     this.#supersededWith = newEntrypoint;
     this.onSupersedeHandlers.forEach((handler) => handler(newEntrypoint));
 

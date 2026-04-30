@@ -7,9 +7,9 @@ import type { NodePath } from '@babel/core';
 import generator from '@babel/generator';
 import { globSync } from 'glob';
 
-import type { MissedBabelCoreTypes } from '../types';
-import type { IReexport } from '../utils/collectExportsAndImports';
-import { collectExportsAndImports } from '../utils/collectExportsAndImports';
+import type { MissedBabelCoreTypes } from './legacy-babel-reference/legacyBabelTypes';
+import type { IReexport } from './legacy-babel-reference/utils/collectExportsAndImports';
+import { collectExportsAndImports } from './legacy-babel-reference/utils/collectExportsAndImports';
 
 const { File } = babel as typeof babel & MissedBabelCoreTypes;
 

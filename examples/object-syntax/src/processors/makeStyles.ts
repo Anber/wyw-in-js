@@ -1,5 +1,4 @@
 /* eslint-disable class-methods-use-this */
-import type { Expression } from '@babel/types';
 import { resolveStyleRulesForSlots } from '@griffel/core';
 import type {
   StylesBySlots,
@@ -8,6 +7,7 @@ import type {
 } from '@griffel/core/types';
 
 import type {
+  Expression,
   ValueCache,
   Params,
   TailProcessorParams,

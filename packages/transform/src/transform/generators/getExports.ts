@@ -1,8 +1,13 @@
-import type { IReexport } from '../../utils/collectExportsAndImports';
-import { collectExportsAndImports } from '../../utils/collectExportsAndImports';
+/* eslint-disable no-continue */
+import { collectOxcExportsAndImports } from '../../utils/collectOxcExportsAndImports';
+import { oxcShaker } from '../../shaker';
 import type { Entrypoint } from '../Entrypoint';
 import type { IEntrypointDependency } from '../Entrypoint.types';
 import type { IGetExportsAction, SyncScenarioForAction } from '../types';
+
+type WildcardReexport = {
+  source: string;
+};
 
 export function findExportsInImports(
   entrypoint: Entrypoint,
@@ -43,37 +48,38 @@ export function* getExports(
   } = this;
   const { loadedAndParsed } = entrypoint;
 
-  if (loadedAndParsed.ast === undefined) {
-    return [];
-  }
-
   entrypoint.log('get exports from %s', entrypoint.name);
 
   if (cache.has('exports', entrypoint.name)) {
     return cache.get('exports', entrypoint.name)!;
   }
 
-  let withWildcardReexport: IReexport[] = [];
+  let withWildcardReexport: WildcardReexport[] = [];
   const result: string[] = [];
 
-  this.services.babel.traverse(loadedAndParsed.ast, {
-    Program(path) {
-      const { exports, reexports } = collectExportsAndImports(path, 'disabled');
-      Object.keys(exports).forEach((token) => {
-        result.push(token);
-      });
+  if (loadedAndParsed.evaluator !== oxcShaker) {
+    throw new Error(
+      `[wyw-in-js] ${entrypoint.name} matched a legacy evaluator. The Oxc runtime path supports only the default Oxc evaluator.`
+    );
+  }
 
-      reexports.forEach((reexport) => {
-        if (reexport.exported !== '*') {
-          result.push(reexport.exported);
-        }
-      });
-
-      withWildcardReexport = reexports.filter(
-        (reexport) => reexport.exported === '*'
-      );
-    },
+  const { exports, reexports } = collectOxcExportsAndImports(
+    loadedAndParsed.code,
+    loadedAndParsed.evalConfig.filename ?? entrypoint.name
+  );
+  Object.keys(exports).forEach((token) => {
+    result.push(token);
   });
+
+  reexports.forEach((reexport) => {
+    if (reexport.exported !== '*') {
+      result.push(reexport.exported);
+    }
+  });
+
+  withWildcardReexport = reexports.filter(
+    (reexport) => reexport.exported === '*'
+  );
 
   if (withWildcardReexport.length) {
     const resolvedImports = yield* this.getNext('resolveImports', entrypoint, {
@@ -89,13 +95,13 @@ export function* getExports(
     );
 
     for (const importedEntrypoint of importedEntrypoints) {
-      const exports = yield* this.getNext(
+      const childExports = yield* this.getNext(
         'getExports',
         importedEntrypoint.entrypoint,
         undefined
       );
 
-      result.push(...exports);
+      result.push(...childExports);
     }
 
     cache.add('exports', entrypoint.name, result);

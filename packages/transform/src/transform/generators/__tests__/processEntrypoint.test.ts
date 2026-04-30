@@ -34,4 +34,34 @@ describe('processEntrypoint', () => {
 
     expect(handlers.transform).not.toHaveBeenCalled();
   });
+
+  it('skips duplicate processing when the entrypoint is already processing', () => {
+    const services = createServices();
+    const entrypoint = createEntrypoint(
+      services,
+      '/foo/entry.js',
+      ['value'],
+      'export const value = 1;'
+    );
+
+    entrypoint.beginProcessing();
+
+    try {
+      const handlers = getHandlers<'sync'>({
+        processEntrypoint,
+      });
+
+      const action = entrypoint.createAction(
+        'processEntrypoint',
+        undefined,
+        null
+      );
+
+      syncActionRunner(action, handlers);
+
+      expect(handlers.transform).not.toHaveBeenCalled();
+    } finally {
+      entrypoint.endProcessing();
+    }
+  });
 });

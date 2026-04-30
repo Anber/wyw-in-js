@@ -136,7 +136,6 @@ export function loadWywOptions(
     configFile,
     ignore,
     rules,
-    babelOptions = {},
     oxcOptions = {},
     importLoaders: overridesImportLoaders,
     ...rest
@@ -147,7 +146,7 @@ export function loadWywOptions(
     globalCache: true,
     happyDOM: true,
     softErrors: false,
-    useBabelConfigs: true,
+    staticImportValues: true,
     useWeakRefInEval: true,
   };
   const defaultEval: EvalOptionsV2 = {
@@ -174,6 +173,7 @@ export function loadWywOptions(
   const options: StrictOptions = {
     displayName: false,
     evaluate: true,
+    evalConsole: 'pipe',
     extensions: ['.cjs', '.cts', '.js', '.jsx', '.mjs', '.mts', '.ts', '.tsx'],
     outputMetadata: false,
     rules: rules ?? [
@@ -198,7 +198,6 @@ export function loadWywOptions(
         action: shaker,
       },
     ],
-    babelOptions,
     highPriorityPlugins: ['module-resolver'],
     oxcOptions,
     ...config,

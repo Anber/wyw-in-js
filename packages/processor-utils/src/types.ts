@@ -1,11 +1,11 @@
+import type { ExpressionValue, Location, WYWEvalMeta } from '@wyw-in-js/shared';
+
 import type {
   Expression,
   Identifier,
-  TemplateElement,
   MemberExpression,
-} from '@babel/types';
-
-import type { ExpressionValue, Location, WYWEvalMeta } from '@wyw-in-js/shared';
+  TemplateElement,
+} from './ast';
 
 export type CSSPropertyValue = string | number;
 

@@ -1,10 +1,10 @@
+/* eslint-disable no-continue, no-plusplus, no-nested-ternary, no-void, no-await-in-loop, @typescript-eslint/no-use-before-define */
 import { createHash } from 'crypto';
 import fs from 'fs';
 import NativeModule from 'module';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process';
-import type { File, Program } from '@babel/types';
 
 import { invariant } from 'ts-invariant';
 
@@ -18,6 +18,8 @@ import type {
 import { isFeatureEnabled } from '@wyw-in-js/shared';
 
 import type { Entrypoint } from '../transform/Entrypoint';
+import type { ParentEntrypoint } from '../types';
+import { isStaticallyEvaluatableModule } from '../transform/isStaticallyEvaluatableModule';
 import type { Services } from '../transform/types';
 import {
   applyImportOverrideToOnly,
@@ -26,9 +28,16 @@ import {
   toImportKey,
 } from '../utils/importOverrides';
 import { getFileIdx } from '../utils/getFileIdx';
+import { collectOxcExportsAndImports } from '../utils/collectOxcExportsAndImports';
 import { parseRequest, stripQueryAndHash } from '../utils/parseRequest';
 import { resolveFilenameWithConditions } from '../utils/resolveWithConditions';
+import {
+  hasCachedWywPrevalExport,
+  type CachedEntrypointLike,
+} from '../utils/hasCachedWywPrevalExport';
 import { isSuperSet, mergeOnly } from '../transform/Entrypoint.helpers';
+import { oxcShaker } from '../shaker';
+import { analyzeOxcBarrelFile } from '../transform/oxcBarrelManifest';
 
 import {
   type EvalRunnerInitPayload,
@@ -222,6 +231,15 @@ type PreparedCacheEntry = PreparedModule & {
   exports?: Record<string, SerializedValue>;
 };
 
+type CachedDependencyRecord = {
+  only?: string[];
+  resolved: string | null;
+};
+
+type CachedDependencyOwner = {
+  dependencies?: Map<string, CachedDependencyRecord>;
+};
+
 type DirectBarrelBinding =
   | {
       kind: 'named';
@@ -232,6 +250,34 @@ type DirectBarrelBinding =
       kind: 'namespace';
       source: string;
     };
+
+type ModuleNameNode =
+  | { type: 'Identifier'; name: string }
+  | { type: 'StringLiteral'; value: string };
+
+type ModuleSpecifierNode = {
+  exportKind?: string | null;
+  exported: ModuleNameNode;
+  imported: ModuleNameNode;
+  importKind?: string | null;
+  local: ModuleNameNode & { name: string };
+  type: string;
+};
+
+type ModuleStatement = {
+  declaration: { name: string; type: string };
+  exportKind?: string | null;
+  importKind?: string | null;
+  source: { value: string };
+  specifiers: ModuleSpecifierNode[];
+  type: string;
+};
+
+type ParsedModuleAst = {
+  program: {
+    body: ModuleStatement[];
+  };
+};
 
 type PendingRequest = {
   resolve: (payload: unknown) => void;
@@ -246,6 +292,91 @@ const isEvalTimeoutError = (error: unknown): boolean => {
   }
   return false;
 };
+
+// ---------------------------------------------------------------------------
+// WYW_DEBUG eval dump
+// ---------------------------------------------------------------------------
+
+const resolveDebugEvalDir = (): string | undefined => {
+  const override = process.env.WYW_DUMP_EVALS_DIR;
+  if (override) {
+    return path.resolve(override);
+  }
+
+  const base = process.env.WYW_DUMP_EVALS;
+  if (!base) {
+    return undefined;
+  }
+
+  const ts = new Date()
+    .toISOString()
+    .slice(0, 19)
+    .replace(/[-:T]/g, (c) => (c === 'T' ? '-' : ''));
+  const root = base === '1' || base === 'true' ? './tmp' : base;
+  return path.resolve(root, `wyw-dump-evals-${ts}`);
+};
+
+const debugEvalDir = resolveDebugEvalDir();
+let debugEvalDirReady = false;
+
+const ensureDebugEvalDir = () => {
+  if (!debugEvalDir || debugEvalDirReady) {
+    return;
+  }
+  fs.mkdirSync(debugEvalDir, { recursive: true });
+  debugEvalDirReady = true;
+};
+
+let debugEvalSeq = 0;
+
+const dumpEvalCode = (
+  id: string,
+  code: string,
+  only: string[],
+  source: string,
+  evalSeq: number
+) => {
+  if (!debugEvalDir) {
+    return;
+  }
+  ensureDebugEvalDir();
+  const seq = String(++debugEvalSeq).padStart(5, '0');
+  const eSeq = String(evalSeq).padStart(5, '0');
+  const relId = path.relative(process.cwd(), stripQueryAndHash(id));
+  const safeName = relId.replace(/[/\\]/g, '__').replace(/^__/, '');
+  const filename = `seq${seq}_eval${eSeq}_${safeName}.js`;
+  const header = [
+    `// id: ${id}`,
+    `// only: ${JSON.stringify(only)}`,
+    `// source: ${source}`,
+    `// seq: ${seq}`,
+    `// eval: #${eSeq}`,
+    '',
+  ].join('\n');
+  fs.writeFileSync(path.join(debugEvalDir, filename), header + code);
+};
+
+let debugActionStream: fs.WriteStream | null = null;
+
+const debugAction = (event: Record<string, unknown>) => {
+  if (!debugEvalDir) {
+    return;
+  }
+  ensureDebugEvalDir();
+  if (!debugActionStream) {
+    debugActionStream = fs.createWriteStream(
+      path.join(debugEvalDir, 'actions.jsonl')
+    );
+  }
+  debugActionStream.write(`${JSON.stringify(event)}\n`);
+};
+
+const flushDebugStreams = () => {
+  debugActionStream?.end();
+  debugActionStream = null;
+};
+
+// ---------------------------------------------------------------------------
 
 const warnedUnknownImportsByServices = new WeakMap<Services, Set<string>>();
 
@@ -315,13 +446,26 @@ export const stripEntrypointGlobalsFromRunnerContext = (
   return nextGlobals;
 };
 
+const getEntrypointResolveRoot = (entrypoint: Entrypoint): string => {
+  let current: { name: string; parents: ParentEntrypoint[] } = entrypoint;
+  const seen = new Set<string>();
+
+  while (current.parents.length > 0 && !seen.has(current.name)) {
+    seen.add(current.name);
+    [current] = current.parents;
+  }
+
+  return current.name;
+};
+
 const buildRunnerInitPayload = (
   services: Services,
   entrypoint: Entrypoint,
   featuresOverride?: FeatureFlags<'happyDOM'>
 ): EvalRunnerInitPayload => {
   const evalOptions = getEvalOptions(services);
-  const { pluginOptions, root } = services.options;
+  const { pluginOptions } = services.options;
+  const root = services.options.root ?? process.cwd();
   const { overrideContext, importOverrides, extensions } = pluginOptions;
   const features = featuresOverride ?? pluginOptions.features;
   const baseGlobals: Record<string, unknown> = {
@@ -447,7 +591,7 @@ const loadByImportLoaders = (
 const hashContent = (content: string): string =>
   createHash('sha256').update(content).digest('hex');
 
-const isTypeOnlyImport = (statement: Program['body'][number]): boolean => {
+const isTypeOnlyImport = (statement: ModuleStatement): boolean => {
   if (statement.type !== 'ImportDeclaration') {
     return false;
   }
@@ -466,25 +610,14 @@ const isTypeOnlyImport = (statement: Program['body'][number]): boolean => {
   );
 };
 
-const isTypeOnlyExport = (
-  statement: Extract<
-    Program['body'][number],
-    { type: 'ExportNamedDeclaration' }
-  >
-): boolean => statement.exportKind === 'type';
+const isTypeOnlyExport = (statement: ModuleStatement): boolean =>
+  statement.exportKind === 'type';
 
-const getModuleExportName = (
-  node:
-    | { type: 'Identifier'; name: string }
-    | { type: 'StringLiteral'; value: string }
-): string => (node.type === 'Identifier' ? node.name : node.value);
+const getModuleExportName = (node: ModuleNameNode): string =>
+  node.type === 'Identifier' ? node.name : node.value;
 
-const getImportSpecifierName = (
-  specifier: Extract<
-    Program['body'][number],
-    { type: 'ImportDeclaration' }
-  >['specifiers'][number] & { type: 'ImportSpecifier' }
-): string => getModuleExportName(specifier.imported);
+const getImportSpecifierName = (specifier: ModuleSpecifierNode): string =>
+  getModuleExportName(specifier.imported);
 
 const buildDirectBarrelProxy = (
   services: Services,
@@ -510,9 +643,13 @@ const buildDirectBarrelProxy = (
     return null;
   }
 
+  if (loadedAndParsed.evaluator === oxcShaker) {
+    return buildDirectOxcBarrelProxy(id, loadedAndParsed.code, only);
+  }
+
   const importedBindings = new Map<string, DirectBarrelBinding>();
   const exportedBindings = new Map<string, DirectBarrelBinding>();
-  const ast = loadedAndParsed.ast as File;
+  const ast = loadedAndParsed.ast as unknown as ParsedModuleAst;
 
   for (const statement of ast.program.body) {
     if (statement.type === 'ImportDeclaration') {
@@ -727,6 +864,91 @@ const buildDirectBarrelProxy = (
   };
 };
 
+const buildDirectOxcBarrelProxy = (
+  id: string,
+  code: string,
+  only: string[]
+): PreparedModule | null => {
+  const requested = only.filter((key) => !isEvalOnlyKey(key));
+  const analyzed = analyzeOxcBarrelFile(code, id);
+  if (!('reexports' in analyzed)) {
+    return null;
+  }
+
+  const imports = new Map<string, string[]>();
+  const lines: string[] = [];
+  let namespaceIdx = 0;
+
+  const addImport = (source: string, imported: string) => {
+    if (!imports.has(source)) {
+      imports.set(source, []);
+    }
+
+    const bucket = imports.get(source)!;
+    if (!bucket.includes(imported)) {
+      bucket.push(imported);
+    }
+  };
+
+  for (const exported of requested) {
+    const binding = analyzed.reexports.find(
+      (reexport) => reexport.exported === exported
+    );
+    if (!binding) {
+      return null;
+    }
+
+    if (binding.kind === 'namespace') {
+      if (exported === 'default' || !IDENTIFIER_RE.test(exported)) {
+        return null;
+      }
+
+      const local = `__wyw_ns_${namespaceIdx++}`;
+      lines.push(
+        `import * as ${local} from ${JSON.stringify(binding.source)};`
+      );
+      lines.push(`export { ${local} as ${exported} };`);
+      addImport(binding.source, '*');
+      continue;
+    }
+
+    if (
+      binding.imported !== 'default' &&
+      !IDENTIFIER_RE.test(binding.imported)
+    ) {
+      return null;
+    }
+
+    if (exported !== 'default' && !IDENTIFIER_RE.test(exported)) {
+      return null;
+    }
+
+    const imported =
+      binding.imported === 'default' ? 'default' : binding.imported;
+    const exportClause =
+      exported === 'default'
+        ? `${imported} as default`
+        : imported === exported
+        ? imported
+        : `${imported} as ${exported}`;
+
+    lines.push(
+      `export { ${exportClause} } from ${JSON.stringify(binding.source)};`
+    );
+    addImport(binding.source, binding.imported);
+  }
+
+  if (lines.length === 0) {
+    return null;
+  }
+
+  return {
+    code: `${lines.join('\n')}\n`,
+    imports,
+    only,
+  };
+};
+
 const isPlainObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
@@ -809,13 +1031,19 @@ export class EvalBroker {
 
   private readonly onlyByModule = new Map<string, string[]>();
 
-  private readonly dependencies = new Set<string>();
+  private readonly runtimeDependenciesByModule = new Map<string, Set<string>>();
 
   private readonly emittedDependencies = new Set<string>();
+
+  private evalSeq = 0;
 
   private happyDomDisabled = false;
 
   private happyDomDisableWarned = false;
+
+  private activeResolveRootId: string | null = null;
+
+  private currentServices: Services;
 
   constructor(
     private readonly services: Services,
@@ -824,7 +1052,9 @@ export class EvalBroker {
       importer: string,
       stack: string[]
     ) => Promise<string | null>
-  ) {}
+  ) {
+    this.currentServices = services;
+  }
 
   private ensureImportsMapping(
     id: string,
@@ -833,48 +1063,77 @@ export class EvalBroker {
     this.importsByModule.set(id, imports ?? new Map());
   }
 
-  public async evaluate(entrypoint: Entrypoint): Promise<{
+  public async evaluate(
+    entrypoint: Entrypoint,
+    services?: Services
+  ): Promise<{
     values: Map<string, unknown> | null;
     dependencies: string[];
   }> {
-    const task = this.evalQueue.then(async () => {
-      this.dependencies.clear();
-      this.emittedDependencies.clear();
-      this.importsByModule.clear();
-      this.onlyByModule.clear();
-      this.resolveCache.clear();
-      this.resolveInFlight.clear();
-      this.onlyByModule.set(entrypoint.name, ['__wywPreval']);
+    const activeServices = services ?? this.currentServices;
+    const resolveRootId = getEntrypointResolveRoot(entrypoint);
+    const task = this.evalQueue
+      .then(async () => {
+        this.currentServices = activeServices;
+        this.activeResolveRootId = resolveRootId;
+        this.runtimeDependenciesByModule.clear();
+        this.emittedDependencies.clear();
+        this.importsByModule.clear();
+        this.onlyByModule.clear();
+        this.resolveCache.clear();
+        this.resolveInFlight.clear();
+        this.onlyByModule.set(entrypoint.name, ['__wywPreval']);
+        this.evalSeq += 1;
 
-      await this.ensureRunner();
-      await this.initRunner(entrypoint);
+        debugAction({
+          type: 'eval:start',
+          evalSeq: this.evalSeq,
+          entrypoint: entrypoint.name,
+          ts: performance.now(),
+        });
 
-      const payload = await this.request<EvalResultPayload>(
-        'EVAL',
-        {
-          id: entrypoint.name,
-        },
-        EVAL_TIMEOUT_MS
-      );
+        await this.ensureRunner();
+        await this.initRunner(entrypoint);
 
-      if (payload.modules) {
-        this.applyModuleExports(payload.modules);
-      }
+        const payload = await this.request<EvalResultPayload>(
+          'EVAL',
+          {
+            id: entrypoint.name,
+          },
+          EVAL_TIMEOUT_MS
+        );
 
-      if (!payload.values) {
-        return { values: null, dependencies: [] };
-      }
+        debugAction({
+          type: 'eval:finish',
+          evalSeq: this.evalSeq,
+          entrypoint: entrypoint.name,
+          hasValues: Boolean(payload.values),
+          ts: performance.now(),
+        });
 
-      const values = new Map<string, unknown>();
-      Object.entries(payload.values).forEach(([key, serialized]) => {
-        values.set(key, deserializeValue(serialized));
+        if (payload.modules) {
+          this.applyModuleExports(payload.modules);
+        }
+
+        if (!payload.values) {
+          return { values: null, dependencies: [] };
+        }
+
+        const values = new Map<string, unknown>();
+        Object.entries(payload.values).forEach(([key, serialized]) => {
+          values.set(key, deserializeValue(serialized));
+        });
+
+        return {
+          values,
+          dependencies: this.collectEntrypointDependencies(entrypoint.name),
+        };
+      })
+      .finally(() => {
+        if (this.activeResolveRootId === resolveRootId) {
+          this.activeResolveRootId = null;
+        }
       });
-
-      return {
-        values,
-        dependencies: this.collectEntrypointDependencies(entrypoint.name),
-      };
-    });
 
     this.evalQueue = task.then(
       () => {},
@@ -908,9 +1167,39 @@ export class EvalBroker {
         exportsProxy[key] = deserializeValue(serialized);
       });
 
+      let knownExports = this.services.cache.get('exports', id) as
+        | string[]
+        | undefined;
+      if (
+        !knownExports &&
+        target.loadedAndParsed &&
+        target.loadedAndParsed.evaluator === oxcShaker
+      ) {
+        const analyzed = collectOxcExportsAndImports(
+          target.loadedAndParsed.code,
+          target.loadedAndParsed.evalConfig.filename ?? id
+        );
+        if (analyzed.reexports.every((reexport) => reexport.exported !== '*')) {
+          knownExports = Array.from(
+            new Set([
+              ...Object.keys(analyzed.exports),
+              ...analyzed.reexports.map((reexport) => reexport.exported),
+            ])
+          );
+          this.services.cache.add('exports', id, knownExports);
+        }
+      }
+      const serializedKeys = Object.keys(serializedExports);
+      const coversAllKnownExports =
+        Array.isArray(knownExports) &&
+        knownExports.filter((key) => !isEvalOnlyKey(key)).length > 0 &&
+        knownExports
+          .filter((key) => !isEvalOnlyKey(key))
+          .every((key) => serializedKeys.includes(key));
+      const coversModule = coversAllKnownExports;
       const merged = mergeOnly(
         existingEvaluatedOnly,
-        Object.keys(serializedExports)
+        coversModule ? ['*'] : serializedKeys
       );
       if (target.evaluatedOnly) {
         target.evaluatedOnly.splice(0, target.evaluatedOnly.length, ...merged);
@@ -930,6 +1219,7 @@ export class EvalBroker {
     }
     this.lastInitKey = null;
     this.lastHappyDomEnabled = false;
+    flushDebugStreams();
   }
 
   private createRunnerProcess(): ChildProcessWithoutNullStreams {
@@ -953,15 +1243,14 @@ export class EvalBroker {
     );
 
     runner.stdout.setEncoding('utf8');
-    runner.stderr.setEncoding('utf8');
 
     return runner;
   }
 
   private attachRunnerListeners(runner: ChildProcessWithoutNullStreams) {
     runner.stdout.on('data', (chunk) => this.onData(String(chunk)));
-    runner.stderr.on('data', (chunk) => {
-      emitWarning(this.services, `[wyw-eval-runner] ${chunk.toString()}`);
+    runner.stderr.on('data', (chunk: Buffer) => {
+      this.handleRunnerStderr(chunk);
     });
     runner.on('exit', (code, signal) => {
       if (this.runner !== runner) {
@@ -1034,8 +1323,8 @@ export class EvalBroker {
         reject(value);
       };
 
-      const onStderr = (chunk: string | Buffer) => {
-        emitWarning(this.services, `[wyw-eval-runner] ${chunk.toString()}`);
+      const onStderr = (chunk: Buffer) => {
+        this.handleRunnerStderr(chunk);
       };
 
       const onExit = (code: number | null, signal: NodeJS.Signals | null) => {
@@ -1321,15 +1610,43 @@ export class EvalBroker {
     }
   }
 
-  private handleWarn(warning: EvalWarning) {
-    if (warning.code === 'require-fallback' && warning.specifier) {
-      this.dependencies.add(warning.specifier);
+  private handleRunnerStderr(chunk: Buffer) {
+    const evalConsole =
+      this.currentServices.options.pluginOptions.evalConsole ?? 'pipe';
+    if (evalConsole === 'warning') {
+      const text = chunk.toString('utf8');
+      for (const line of text.split('\n')) {
+        const trimmed = line.trim();
+        if (trimmed) {
+          emitWarning(this.currentServices, trimmed);
+        }
+      }
+    } else if (evalConsole === 'pipe') {
+      process.stderr.write(chunk);
     }
-    emitEvalWarning(this.services, warning);
+  }
+
+  private handleWarn(warning: EvalWarning) {
+    if (warning.importer && warning.specifier) {
+      this.trackRuntimeDependency(warning.importer, warning.specifier);
+    }
+    emitEvalWarning(this.currentServices, warning);
   }
 
   private async handleResolve(id: string, payload: ResolveRequestPayload) {
     const result = await this.resolveImport(payload);
+
+    debugAction({
+      type: 'resolve',
+      evalSeq: this.evalSeq,
+      specifier: payload.specifier,
+      importer: payload.importerId,
+      kind: payload.kind,
+      resolvedId: result.resolvedId ?? null,
+      external: result.external ?? false,
+      ts: performance.now(),
+    });
+
     await this.sendMessage({
       type: 'RESOLVE_RESULT',
       id,
@@ -1414,6 +1731,14 @@ export class EvalBroker {
     );
   }
 
+  private getResolveStack(importerId: string): string[] {
+    if (!this.activeResolveRootId || this.activeResolveRootId === importerId) {
+      return [importerId];
+    }
+
+    return [importerId, this.activeResolveRootId];
+  }
+
   private async resolveImportImpl({
     specifier,
     importerId,
@@ -1425,9 +1750,12 @@ export class EvalBroker {
     }
     const key = `${kind}:${importerId}:${specifier}`;
     const evalOptions = getEvalOptions(this.services);
-    const stack = [importerId];
+    const stack = this.getResolveStack(importerId);
     const importsOnly = this.importsByModule.get(importerId)?.get(specifier);
-    const only = importsOnly ?? ['*'];
+    const importerOnly = this.onlyByModule.get(importerId) ?? ['*'];
+    const only = importerOnly.includes('__wywPreval')
+      ? mergeOnly(importsOnly ?? ['*'], ['__wywPreval'])
+      : (importsOnly ?? ['*']);
     if (process.env.WYW_DEBUG_EVAL_RESOLVE && !importsOnly) {
       // eslint-disable-next-line no-console
       console.warn('[wyw-eval:resolve:only-miss]', {
@@ -1697,6 +2025,17 @@ export class EvalBroker {
     });
   }
 
+  private trackRuntimeDependency(importerId: string, specifier: string) {
+    if (isBuiltinSpecifier(specifier) || isVirtualSpecifier(specifier)) {
+      return;
+    }
+
+    const dependencies =
+      this.runtimeDependenciesByModule.get(importerId) ?? new Set<string>();
+    dependencies.add(specifier);
+    this.runtimeDependenciesByModule.set(importerId, dependencies);
+  }
+
   private trackImporterDependency(
     importerId: string,
     source: string,
@@ -1736,7 +2075,9 @@ export class EvalBroker {
   }
 
   private collectEntrypointDependencies(entrypointId: string): string[] {
-    const collected = new Set(this.dependencies);
+    const collected = new Set(
+      this.runtimeDependenciesByModule.get(entrypointId) ?? []
+    );
     const cachedEntrypoint = this.services.cache.get(
       'entrypoints',
       entrypointId
@@ -1761,14 +2102,6 @@ export class EvalBroker {
         collected.add(specifier);
       }
     });
-    const imports = this.importsByModule.get(entrypointId);
-    if (imports) {
-      for (const specifier of imports.keys()) {
-        if (!isBuiltinSpecifier(specifier) && !isVirtualSpecifier(specifier)) {
-          collected.add(specifier);
-        }
-      }
-    }
     return Array.from(collected);
   }
 
@@ -1805,7 +2138,18 @@ export class EvalBroker {
       nextExternal = false;
     }
 
-    const nextOnly = applyImportOverrideToOnly(resolved.only, override);
+    let nextOnly = applyImportOverrideToOnly(resolved.only, override);
+    const cached = this.services.cache.get('entrypoints', nextResolved) as
+      | CachedEntrypointLike
+      | undefined;
+    if (
+      nextOnly.includes('__wywPreval') &&
+      cached?.evaluated &&
+      !cached.ignored &&
+      !hasCachedWywPrevalExport(this.services, nextResolved, cached)
+    ) {
+      nextOnly = nextOnly.filter((item) => item !== '__wywPreval');
+    }
     const storedOnly = this.onlyByModule.get(nextResolved);
     this.onlyByModule.set(
       nextResolved,
@@ -1957,7 +2301,7 @@ export class EvalBroker {
         .filter(Boolean)
         .join('\n');
 
-      emitEvalWarning(this.services, {
+      emitEvalWarning(this.currentServices, {
         code: kind === 'require' ? 'require-fallback' : 'resolve-fallback',
         message: warningMessage,
         importer: importerId,
@@ -1971,6 +2315,29 @@ export class EvalBroker {
 
   private async handleLoad(id: string, payload: LoadRequestPayload) {
     const prepared = await this.loadModule(payload);
+
+    if (debugEvalDir && prepared.code) {
+      dumpEvalCode(
+        payload.id,
+        prepared.code,
+        prepared.only,
+        prepared.hash ? `cache:${prepared.hash}` : 'fresh',
+        this.evalSeq
+      );
+    }
+
+    debugAction({
+      type: 'load',
+      evalSeq: this.evalSeq,
+      id: payload.id,
+      importer: payload.importerId ?? null,
+      only: prepared.only,
+      hasCode: Boolean(prepared.code),
+      hasExports: Boolean(prepared.exports),
+      hash: prepared.hash ?? null,
+      ts: performance.now(),
+    });
+
     await this.sendLoadResult(id, {
       id: payload.id,
       code: prepared.code,
@@ -2006,7 +2373,25 @@ export class EvalBroker {
       cached = undefined;
     }
 
-    const requiredOnly = this.onlyByModule.get(id) ?? ['*'];
+    let requiredOnly = this.mergeKnownDependencyOnly(id);
+
+    // Merge the specific exports the importer needs from this module.
+    // The broker's onlyByModule is populated by RESOLVE handlers, but
+    // concurrent message processing can cause a LOAD to arrive before
+    // all pending RESOLVEs are complete. Directly consulting the
+    // importer's imports map ensures we never serve a module with
+    // fewer exports than the requesting importer actually imports.
+    if (importerId && request) {
+      const importerImports = this.importsByModule.get(importerId);
+      if (importerImports) {
+        const specifierOnly = importerImports.get(request);
+        if (specifierOnly && specifierOnly.length > 0) {
+          requiredOnly = requiredOnly.includes('*')
+            ? requiredOnly
+            : mergeOnly(requiredOnly, specifierOnly);
+        }
+      }
+    }
     const cachedEntrypoint = this.services.cache.get('entrypoints', id) as
       | {
           evaluated?: boolean;
@@ -2022,6 +2407,7 @@ export class EvalBroker {
       cachedEntrypoint.evaluated &&
       !cachedEntrypoint.ignored &&
       cachedEntrypoint.exports &&
+      !requiredOnly.some(isEvalOnlyKey) &&
       isSuperSet(cachedEntrypoint.evaluatedOnly ?? [], requiredOnly)
     ) {
       const cacheOnly = cachedEntrypoint.evaluatedOnly ?? requiredOnly;
@@ -2147,6 +2533,24 @@ export class EvalBroker {
         };
       }
 
+      if (!requiredOnly.includes('*')) {
+        const loadedAndParsed = this.services.loadAndParseFn(
+          this.services,
+          id,
+          undefined,
+          this.services.log
+        );
+
+        if (
+          loadedAndParsed.evaluator !== 'ignored' &&
+          loadedAndParsed.evaluator === oxcShaker &&
+          isStaticallyEvaluatableModule(loadedAndParsed.code, id)
+        ) {
+          requiredOnly = ['*'];
+          this.onlyByModule.set(id, requiredOnly);
+        }
+      }
+
       const prepared = prepareModuleOnDemand(
         this.services,
         id,
@@ -2185,7 +2589,7 @@ export class EvalBroker {
               ``,
               `note: configure threshold with WYW_WARN_SLOW_IMPORTS_MS (current: ${slowImportThresholdMs}ms)`,
             ].join('\n');
-            emitWarning(this.services, warning);
+            emitWarning(this.currentServices, warning);
           }
         }
       }
@@ -2328,13 +2732,20 @@ export class EvalBroker {
 
   private rejectPending(
     id: string,
-    error: { message: string; stack?: string }
+    error: { message: string; stack?: string; cause?: { message: string; stack?: string } }
   ) {
     const pending = this.pending.get(id);
     if (!pending) return;
     clearTimeout(pending.timeout);
     this.pending.delete(id);
-    const err = new Error(error.message);
+    const cause = error.cause
+      ? Object.assign(new Error(error.cause.message), {
+          stack: error.cause.stack,
+        })
+      : undefined;
+    const err = cause
+      ? new Error(error.message, { cause })
+      : new Error(error.message);
     if (error.stack) {
       err.stack = error.stack;
     }
@@ -2347,6 +2758,36 @@ export class EvalBroker {
       pending.reject(error);
     });
     this.pending.clear();
+  }
+
+  private mergeKnownDependencyOnly(id: string): string[] {
+    const storedOnly = this.onlyByModule.get(id) ?? ['*'];
+    if (storedOnly.includes('*')) {
+      return storedOnly;
+    }
+
+    let mergedOnly = storedOnly;
+    for (const cachedEntrypoint of this.services.cache.entrypoints.values() as Iterable<CachedDependencyOwner>) {
+      const dependencies = cachedEntrypoint.dependencies;
+      if (!dependencies) {
+        continue;
+      }
+
+      for (const dependency of dependencies.values()) {
+        if (dependency.resolved !== id || !dependency.only) {
+          continue;
+        }
+
+        mergedOnly = mergeOnly(mergedOnly, dependency.only);
+        if (mergedOnly.includes('*')) {
+          this.onlyByModule.set(id, mergedOnly);
+          return mergedOnly;
+        }
+      }
+    }
+
+    this.onlyByModule.set(id, mergedOnly);
+    return mergedOnly;
   }
 }
 

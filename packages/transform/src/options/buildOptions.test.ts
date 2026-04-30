@@ -1,6 +1,8 @@
 describe('buildOptions', () => {
   it('does not crash when @babel/core resolvePreset returns an object (Babel 7.25.7 regression)', async () => {
-    const { buildOptions } = await import('./buildOptions');
+    const { buildOptions } = await import(
+      '../__tests__/legacy-babel-reference/options/buildOptions'
+    );
 
     expect(() =>
       buildOptions({
@@ -10,7 +12,9 @@ describe('buildOptions', () => {
   });
 
   it('merges configs deeply and preserves presets/plugins arrays', async () => {
-    const { buildOptions } = await import('./buildOptions');
+    const { buildOptions } = await import(
+      '../__tests__/legacy-babel-reference/options/buildOptions'
+    );
 
     expect(
       buildOptions(
@@ -33,7 +37,9 @@ describe('buildOptions', () => {
   });
 
   it('does not treat pnpm store paths as a single ".pnpm" package', async () => {
-    const { buildOptions } = await import('./buildOptions');
+    const { buildOptions } = await import(
+      '../__tests__/legacy-babel-reference/options/buildOptions'
+    );
 
     const typescriptPath =
       '/project/node_modules/.pnpm/@babel+plugin-transform-typescript@7.25.9/node_modules/@babel/plugin-transform-typescript/lib/index.js';
@@ -56,7 +62,9 @@ describe('buildOptions', () => {
   });
 
   it('still recognizes pnpm store paths as Babel plugin keys (Windows path)', async () => {
-    const { buildOptions } = await import('./buildOptions');
+    const { buildOptions } = await import(
+      '../__tests__/legacy-babel-reference/options/buildOptions'
+    );
 
     const typescriptWindowsPath =
       'C:\\project\\node_modules\\.pnpm\\@babel+plugin-transform-typescript@7.25.9\\node_modules\\@babel\\plugin-transform-typescript\\lib\\index.js';
@@ -76,7 +84,9 @@ describe('buildOptions', () => {
   });
 
   it('extracts real package names from pnpm store paths', async () => {
-    const { buildOptions } = await import('./buildOptions');
+    const { buildOptions } = await import(
+      '../__tests__/legacy-babel-reference/options/buildOptions'
+    );
 
     const typescriptPath =
       '/project/node_modules/.pnpm/@babel+plugin-transform-typescript@7.25.9/node_modules/@babel/plugin-transform-typescript/lib/index.js';
@@ -96,7 +106,9 @@ describe('buildOptions', () => {
   });
 
   it('extracts package names from node_modules paths', async () => {
-    const { buildOptions } = await import('./buildOptions');
+    const { buildOptions } = await import(
+      '../__tests__/legacy-babel-reference/options/buildOptions'
+    );
 
     const pluginPath = '/project/node_modules/my-plugin/lib/index.js';
 
@@ -113,7 +125,9 @@ describe('buildOptions', () => {
   });
 
   it('extracts the innermost package name from nested node_modules paths', async () => {
-    const { buildOptions } = await import('./buildOptions');
+    const { buildOptions } = await import(
+      '../__tests__/legacy-babel-reference/options/buildOptions'
+    );
 
     const pluginPath =
       '/project/node_modules/wrapper/node_modules/inner-plugin/lib/index.js';

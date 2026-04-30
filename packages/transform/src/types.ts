@@ -1,9 +1,5 @@
-import type { BabelFile, PluginPass } from '@babel/core';
-import type { NodePath } from '@babel/traverse';
-import type { File, Program } from '@babel/types';
 import type { RawSourceMap } from 'source-map';
 
-import type { BaseProcessor } from '@wyw-in-js/processor-utils';
 import type {
   Debugger,
   Replacement,
@@ -31,16 +27,6 @@ export type ParentEntrypoint = {
 };
 
 export type Dependencies = string[];
-
-export interface IPluginState extends PluginPass {
-  dependencies: Dependencies;
-  file: BabelFile & {
-    metadata: {
-      wywInJS?: WYWTransformMetadata;
-    };
-  };
-  processors: BaseProcessor[];
-}
 
 export interface ITransformFileResult {
   code: string;
@@ -74,13 +60,6 @@ export type Options = {
 
 export type PreprocessorFn = (selector: string, cssText: string) => string;
 export type Preprocessor = 'none' | 'stylis' | PreprocessorFn | void;
-
-export type MissedBabelCoreTypes = {
-  File: new (
-    options: { filename: string },
-    file: { ast: File; code: string }
-  ) => { path: NodePath<Program> };
-};
 
 export type JSONValue =
   | null

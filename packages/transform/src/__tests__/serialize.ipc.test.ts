@@ -85,6 +85,26 @@ describe('eval IPC serialization', () => {
     expect(roundTripped.nested.marker).toBe(Symbol.for('react.forward_ref'));
   });
 
+  it('unwraps boxed primitives to their primitive payloads', () => {
+    const roundTripped = deserializeValue(
+      serializeValue({
+        bool: new Boolean(false),
+        count: new Number(0.75),
+        label: new String('100%'),
+      })
+    ) as {
+      bool: boolean;
+      count: number;
+      label: string;
+    };
+
+    expect(roundTripped).toEqual({
+      bool: false,
+      count: 0.75,
+      label: '100%',
+    });
+  });
+
   it.each([
     {
       label: 'Date',
@@ -114,9 +134,12 @@ describe('eval IPC serialization', () => {
       path: '__wywPreval.value',
       detail: 'unsupported non-plain object (Box)',
     },
-  ])('reports path-aware failures for $label values', ({ value, path, detail }) => {
-    expect(() => serializePreval(value)).toThrow('[wyw-in-js] __wywPreval');
-    expect(() => serializePreval(value)).toThrow(path);
-    expect(() => serializePreval(value)).toThrow(detail);
-  });
+  ])(
+    'reports path-aware failures for $label values',
+    ({ value, path, detail }) => {
+      expect(() => serializePreval(value)).toThrow('[wyw-in-js] __wywPreval');
+      expect(() => serializePreval(value)).toThrow(path);
+      expect(() => serializePreval(value)).toThrow(detail);
+    }
+  );
 });
