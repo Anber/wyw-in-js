@@ -146,6 +146,7 @@ export function loadWywOptions(
     globalCache: true,
     happyDOM: true,
     softErrors: false,
+    staticImportValues: true,
     useWeakRefInEval: true,
   };
   const defaultEval: EvalOptionsV2 = {

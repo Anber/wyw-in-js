@@ -21,6 +21,11 @@ const runtimeDependencyCallProcessorPath = path.resolve(
   '__fixtures__',
   'test-runtime-dependency-call-processor.js'
 );
+const addedImportCallProcessorPath = path.resolve(
+  __dirname,
+  '__fixtures__',
+  'test-added-import-call-processor.js'
+);
 const arrowProcessorPath = path.resolve(
   __dirname,
   '__fixtures__',
@@ -273,7 +278,7 @@ describe('applyOxcProcessors', () => {
       () => {}
     );
 
-    expect(result.code).toContain('const _exp = () => "red";');
+    expect(result.code).toContain('const _exp = () => ("red");');
     expect(result.code).toContain('const nonWyw = `value ${color}`;');
     expect(result.code).toContain('color: ${_exp()};');
     expect(result.code).toContain('width: ${1}px;');
@@ -292,6 +297,34 @@ describe('applyOxcProcessors', () => {
         value: 1,
       },
     ]);
+  });
+
+  it('preserves sibling declarators when hoisting nested template dependencies', () => {
+    const result = applyOxcProcessors(
+      `
+        import { css } from 'test-package';
+        function build() {
+          const color = 'red', keep = 'keep';
+          const styles = { root: { color } };
+          const cls = css\`
+            color: ${'${styles.root.color}'};
+          \`;
+          return keep + cls;
+        }
+      `,
+      fileContext,
+      {
+        ...options(processorPath),
+        evaluate: false,
+      },
+      () => {},
+      true
+    );
+
+    expect(result.code).toContain(`let _color = 'red';`);
+    expect(result.code).toContain(`let _styles = { root: { color: _color } };`);
+    expect(result.code).toContain(`const color = 'red', keep = 'keep';`);
+    expect(result.code).toContain('return keep + cls;');
   });
 
   it('does not emit pure annotation for non-call replacements', () => {
@@ -359,7 +392,7 @@ describe('applyOxcProcessors', () => {
       type: 'Identifier',
     });
     expect(direct.code).toContain(
-      'const _exp = () => ({"root":{"color":"red"}});'
+      'const _exp = () => (({"root":{"color":"red"}}));'
     );
     expect(direct.code).toContain('export const useStyles = null;');
     expect(namespace.processors[0]?.toString()).toBe('pkg.makeStyles(…)');
@@ -613,7 +646,7 @@ describe('applyOxcProcessors', () => {
     expect(result.code).toContain(
       'var React = _interopRequireWildcard(require("react"));'
     );
-    expect(result.code).toContain('const _exp = () => Component;');
+    expect(result.code).toContain('const _exp = () => (Component);');
     expect(result.code).toContain('export const styles = /*#__PURE__*/__callRuntime(_exp());');
   });
 
@@ -655,6 +688,25 @@ describe('applyOxcProcessors', () => {
     expect(result.code).toContain('const formatOptionLabelDefault =');
     expect(result.code).toContain(
       'formatOptionLabel = formatOptionLabelDefault'
+    );
+  });
+
+  it('inserts imports requested by processors into the transformed module', () => {
+    const result = applyOxcProcessors(
+      `
+        import { makeStyles } from 'test-package';
+        export const useStyles = makeStyles({});
+      `,
+      fileContext,
+      options(addedImportCallProcessorPath, 'makeStyles'),
+      (processor) => processor.doRuntimeReplacement()
+    );
+
+    expect(result.code).toContain(
+      'import { __styles } from "@griffel/react";'
+    );
+    expect(result.code).toContain(
+      "export const useStyles = /*#__PURE__*/__styles('x');"
     );
   });
 

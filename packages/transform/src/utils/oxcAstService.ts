@@ -16,7 +16,7 @@ import type {
   StringLiteral,
 } from '@wyw-in-js/processor-utils';
 
-type AddedImport = {
+export type AddedImport = {
   imported: 'default' | string;
   local: string;
   source: string;

@@ -185,6 +185,7 @@ type AllFeatureFlags = {
   globalCache: FeatureFlag;
   happyDOM: FeatureFlag;
   softErrors: FeatureFlag;
+  staticImportValues: FeatureFlag;
   useWeakRefInEval: FeatureFlag;
 };
 

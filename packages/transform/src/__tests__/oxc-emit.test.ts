@@ -170,4 +170,33 @@ describe('emitOxcCommonJS', () => {
     expect(result.code).toContain('exports.spring = spring');
     expect(result.code).toContain('exports.Task = Task');
   });
+
+  it('preserves local named export specifiers declared later in the module', () => {
+    const result = emitOxcCommonJS(
+      dedent`
+        export { theme };
+        const theme = 1;
+      `,
+      tsFilename
+    );
+    const exports = executeCommonJS(result.code);
+
+    expect(exports.theme).toBe(1);
+    expect(result.code).toContain('Object.defineProperty(exports, "theme"');
+  });
+
+  it('preserves live bindings for local named export specifiers', () => {
+    const result = emitOxcCommonJS(
+      dedent`
+        let theme = 1;
+        export { theme };
+        theme = 2;
+      `,
+      tsFilename
+    );
+    const exports = executeCommonJS(result.code);
+
+    expect(exports.theme).toBe(2);
+    expect(result.code).toContain('Object.defineProperty(exports, "theme"');
+  });
 });

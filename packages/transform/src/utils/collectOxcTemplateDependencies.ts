@@ -92,11 +92,11 @@ type ExtractionContext = {
   dependencyNames: Set<string>;
   expressionValues: Omit<ExpressionValue, 'buildCodeFrameError'>[];
   filename: string;
+  hoistedBindingNames: Map<string, string>;
   hoistedDeclarations: Map<string, string>;
   hoistedDeclarationsByInsertionPoint: Map<number, string[]>;
   loc: LocationLookup;
   referencesByNode: WeakMap<Node, ReferenceIdentifier[]>;
-  removedDeclarations: Set<VariableDeclaration>;
   replacements: Replacement[];
   rootMutationsByBinding: Map<string, Array<AssignmentExpression | UpdateExpression>>;
   usedNames: Set<string>;
@@ -1440,6 +1440,42 @@ const allocateExpressionName = (ctx: ExtractionContext): string => {
   return base;
 };
 
+const hoistedBindingKey = (binding: Binding): string =>
+  `${binding.scope.start}:${binding.scope.end}:${binding.declaredAt}:${binding.name}`;
+
+const allocateHoistedBindingName = (
+  originalName: string,
+  ctx: ExtractionContext
+): string => {
+  const sanitized = originalName.replace(/[^A-Za-z0-9_$]/g, '_') || 'hoisted';
+  const base = /^[A-Za-z_$]/.test(sanitized) ? `_${sanitized}` : '_hoisted';
+  let candidate = base;
+  let idx = 2;
+
+  while (ctx.usedNames.has(candidate)) {
+    candidate = `${base}${idx}`;
+    idx += 1;
+  }
+
+  ctx.usedNames.add(candidate);
+  return candidate;
+};
+
+const getHoistedBindingName = (
+  binding: Binding,
+  ctx: ExtractionContext
+): string => {
+  const key = hoistedBindingKey(binding);
+  const existing = ctx.hoistedBindingNames.get(key);
+  if (existing) {
+    return existing;
+  }
+
+  const next = allocateHoistedBindingName(binding.name, ctx);
+  ctx.hoistedBindingNames.set(key, next);
+  return next;
+};
+
 const addHoistedCode = (
   key: string,
   code: string,
@@ -1460,13 +1496,38 @@ const addHoistedCode = (
   );
 };
 
-const declarationCode = (
-  declaration: VariableDeclaration,
-  declarator: VariableDeclarator,
-  ctx: ExtractionContext
-): string => {
-  const source = ctx.code.slice(declarator.start, declarator.end);
-  return `let ${source};`;
+const declarationCode = (binding: Binding, ctx: ExtractionContext): string => {
+  const declarator = binding.declarator;
+  if (!declarator) {
+    return '';
+  }
+
+  if (declarator.id.type !== 'Identifier') {
+    const source = ctx.code.slice(declarator.start, declarator.end);
+    return `let ${source};`;
+  }
+
+  const hoistedName = getHoistedBindingName(binding, ctx);
+  if (!declarator.init) {
+    return `let ${hoistedName};`;
+  }
+
+  const renamedDependencies = new Map<string, string>();
+  findReferences(declarator.init, ctx.referencesByNode).forEach(({ name, start }) => {
+    const dependency = resolveBindingAt(ctx, name, start);
+    if (!dependency || dependency.importedFrom || dependency.isRoot) {
+      return;
+    }
+
+    renamedDependencies.set(name, getHoistedBindingName(dependency, ctx));
+  });
+
+  const initCode =
+    renamedDependencies.size > 0
+      ? replaceIdentifierReferences(declarator.init, renamedDependencies, ctx.code)
+      : ctx.code.slice(declarator.init.start, declarator.init.end);
+
+  return `let ${hoistedName} = ${initCode};`;
 };
 
 const assertHoistable = (
@@ -1525,10 +1586,9 @@ const addHoistedDeclaration = (
   if (!ctx.hoistedDeclarations.has(binding.name)) {
     addHoistedCode(
       binding.name,
-      declarationCode(binding.declaration, binding.declarator, ctx),
+      declarationCode(binding, ctx),
       ctx
     );
-    ctx.removedDeclarations.add(binding.declaration);
   }
 };
 
@@ -1607,7 +1667,7 @@ const extractExpression = (
     }
   }
 
-  const substituted = evaluate ? substituteConstants(expression, ctx) : source;
+  const identifierReplacements = new Map<string, string>();
   const importedFrom: string[] = [];
 
   findReferences(expression, ctx.referencesByNode).forEach(({ name, start }) => {
@@ -1629,15 +1689,22 @@ const extractExpression = (
 
     const replacement = getConstantReplacement(binding, ctx);
     if (evaluate && replacement) {
+      identifierReplacements.set(name, replacement);
       return;
     }
 
     assertHoistable(binding, ctx);
     addHoistedDeclaration(binding, ctx);
+    if (!binding.isRoot && binding.declarator?.id.type === 'Identifier') {
+      identifierReplacements.set(name, getHoistedBindingName(binding, ctx));
+    }
   });
 
   return {
-    expressionCode: substituted,
+    expressionCode:
+      identifierReplacements.size > 0
+        ? replaceIdentifierReferences(expression, identifierReplacements, ctx.code)
+        : source,
     importedFrom,
     kind: isFunction ? ValueType.FUNCTION : ValueType.LAZY,
   };
@@ -1743,13 +1810,13 @@ const extractExpressions = (
     dependencyNames: new Set(),
     expressionValues: [],
     filename,
+    hoistedBindingNames: new Map(),
     hoistedDeclarations: new Map(),
     hoistedDeclarationsByInsertionPoint: new Map(),
     loc: createLocationLookup(code),
     referencesByNode: new WeakMap(),
     replacements: [],
     rootMutationsByBinding: analysis.rootMutationsByBinding,
-    removedDeclarations: new Set(),
     usedNames: new Set(analysis.usedNames),
   };
 
@@ -1790,14 +1857,6 @@ const extractExpressions = (
       kind,
       source: ctx.code.slice(expression.start, expression.end),
     } as unknown as Omit<ExpressionValue, 'buildCodeFrameError'>);
-  });
-
-  ctx.removedDeclarations.forEach((declaration) => {
-    ctx.replacements.push({
-      start: declaration.start,
-      end: declaration.end,
-      value: '',
-    });
   });
 
   ctx.hoistedDeclarationsByInsertionPoint.forEach((declarations, point) => {

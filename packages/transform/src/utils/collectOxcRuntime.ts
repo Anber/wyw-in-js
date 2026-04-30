@@ -1,5 +1,6 @@
 /* eslint-disable no-restricted-syntax */
 
+import { createRequire } from 'node:module';
 import { parseSync } from 'oxc-parser';
 import type { Node, Program } from 'oxc-parser';
 import type { ValueCache } from '@wyw-in-js/processor-utils';
@@ -39,6 +40,15 @@ type AnyProperty = AnyNode & {
   method?: boolean;
   value: Node;
 };
+
+type RemappingFn = (
+  input: RawSourceMap | RawSourceMap[],
+  loader: (source: string, context: unknown) => RawSourceMap | null | undefined
+) => RawSourceMap;
+
+const remapping = createRequire(import.meta.url)(
+  '@jridgewell/remapping'
+) as RemappingFn;
 
 const countLines = (code: string): number => code.split('\n').length;
 
@@ -346,6 +356,24 @@ const createLineSourceMap = (
   return generator.toJSON() as RawSourceMap;
 };
 
+const createComposedRuntimeSourceMap = (
+  generatedCode: string,
+  originalCode: string,
+  filename: string,
+  inputSourceMap?: RawSourceMap
+): RawSourceMap => {
+  const runtimeMap = createLineSourceMap(generatedCode, originalCode, filename);
+  if (!inputSourceMap) {
+    return runtimeMap;
+  }
+
+  const composed = remapping([runtimeMap, inputSourceMap], () => null);
+  return {
+    ...composed,
+    file: runtimeMap.file,
+  } as RawSourceMap;
+};
+
 const normalizeRuntimeCode = (code: string, filename: string): string =>
   insertMissingSemicolons(
     ensureBlankLineAfterLeadingBlockComment(
@@ -367,7 +395,8 @@ export const collectOxcRuntime = (
   filename: string,
   root: string,
   options: OxcCollectOptions,
-  values: ValueCache
+  values: ValueCache,
+  inputSourceMap?: RawSourceMap
 ): OxcCollectResult => {
   const result = applyOxcProcessors(
     code,
@@ -387,14 +416,24 @@ export const collectOxcRuntime = (
   if (result.processors.length === 0) {
     return {
       code: normalizedCode,
-      map: createLineSourceMap(normalizedCode, code, filename),
+      map: createComposedRuntimeSourceMap(
+        normalizedCode,
+        code,
+        filename,
+        inputSourceMap
+      ),
       metadata: null,
     };
   }
 
   return {
     code: normalizedCode,
-    map: createLineSourceMap(normalizedCode, code, filename),
+    map: createComposedRuntimeSourceMap(
+      normalizedCode,
+      code,
+      filename,
+      inputSourceMap
+    ),
     metadata: {
       dependencies: [],
       processors: result.processors,

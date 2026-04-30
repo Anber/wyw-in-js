@@ -25,7 +25,12 @@ import { collectOxcProcessorImportsFromProgram } from './collectOxcExportsAndImp
 import { EventEmitter } from './EventEmitter';
 import { collectOxcExpressionDependencies } from './collectOxcTemplateDependencies';
 import { isNotNull } from './isNotNull';
-import { createOxcAstService } from './oxcAstService';
+import {
+  createOxcAstService,
+  printOxcAstServiceImport,
+  type AddedImport,
+  type OxcAstService,
+} from './oxcAstService';
 import { parseOxcProgramCached } from './parseOxc';
 import { getProcessorForImport, type ProcessorClass } from './processorLookup';
 
@@ -72,6 +77,11 @@ type ProcessorUsage =
 type ExpressionSpan = {
   end: number;
   start: number;
+};
+
+type CreatedProcessor = {
+  astService: OxcAstService;
+  processor: BaseProcessor;
 };
 
 type QualifiedExpression = Expression & {
@@ -178,6 +188,42 @@ const applyReplacements = (
     });
 
   return result;
+};
+
+const insertAddedImports = (
+  code: string,
+  program: Program,
+  addedImports: AddedImport[]
+): string => {
+  if (addedImports.length === 0) {
+    return code;
+  }
+
+  const uniqueImports = [
+    ...new Map(
+      addedImports.map((item) => [
+        `${item.source}\0${item.imported}\0${item.local}`,
+        item,
+      ])
+    ).values(),
+  ];
+  const importBlock = uniqueImports.map(printOxcAstServiceImport).join('\n');
+  const lastImport = [...program.body]
+    .reverse()
+    .find((statement) => statement.type === 'ImportDeclaration');
+  const hashbangEnd = code.startsWith('#!')
+    ? (() => {
+        const newline = code.indexOf('\n');
+        return newline === -1 ? code.length : newline + 1;
+      })()
+    : 0;
+  const insertionPoint = lastImport?.end ?? hashbangEnd;
+  const prefix = code.slice(0, insertionPoint);
+  const suffix = code.slice(insertionPoint);
+  const leadingBreak = prefix.length > 0 && !prefix.endsWith('\n') ? '\n' : '';
+  const trailingBreak = suffix.length > 0 && !suffix.startsWith('\n') ? '\n' : '';
+
+  return `${prefix}${leadingBreak}${importBlock}${trailingBreak}${suffix}`;
 };
 
 const createLocationLookup = (code: string): LocationLookup => {
@@ -1953,7 +1999,7 @@ const createProcessor = (
   isReferenced: boolean,
   usedNames: Set<string>,
   replacements: Replacement[]
-): BaseProcessor | null => {
+): CreatedProcessor | null => {
   const [Processor, tagSource] = definedProcessor;
   const astService = createOxcAstService(usedNames);
 
@@ -2009,18 +2055,21 @@ const createProcessor = (
       throw error;
     }
 
-    return new Processor(
-      params,
-      tagSource,
+    return {
       astService,
-      getSourceLocation(target.start, target.end, loc, fileContext.filename),
-      replacer,
-      displayName,
-      isReferenced,
-      idx,
-      options,
-      fileContext
-    );
+      processor: new Processor(
+        params,
+        tagSource,
+        astService,
+        getSourceLocation(target.start, target.end, loc, fileContext.filename),
+        replacer,
+        displayName,
+        isReferenced,
+        idx,
+        options,
+        fileContext
+      ),
+    };
   } catch (e) {
     if (e === BaseProcessor.SKIP) {
       return null;
@@ -2163,6 +2212,7 @@ export const applyOxcProcessors = (
     'transform:preeval:processTemplate:usedNames',
     () => collectUsedNames(program)
   );
+  const addedImports: AddedImport[] = [];
   const replacements: Replacement[] = [];
   const processors: BaseProcessor[] = [];
   extracted.dependencyNames.forEach((name: string) =>
@@ -2183,7 +2233,7 @@ export const applyOxcProcessors = (
         return;
       }
 
-      const processor = createProcessor(
+      const created = createProcessor(
         usage.definedProcessor,
         params,
         usage.target,
@@ -2199,9 +2249,11 @@ export const applyOxcProcessors = (
         replacements
       );
 
-      if (!processor) {
+      if (!created) {
         return;
       }
+
+      const { astService, processor } = created;
 
       const owner = getTagOwner(usage.ancestors);
       if (owner?.type === 'VariableDeclarator') {
@@ -2213,16 +2265,22 @@ export const applyOxcProcessors = (
 
       processors.push(processor);
       callback(processor);
+      addedImports.push(...astService.getAddedImports());
     });
   });
 
   const replacedCode = applyReplacements(workingCode, replacements);
+  const codeWithAddedImports = insertAddedImports(
+    replacedCode,
+    program,
+    addedImports
+  );
 
   return {
     code: cleanupUnused
       ? eventEmitter.perf('transform:preeval:processTemplate:cleanup', () =>
           removeUnusedAfterReplacement(
-            replacedCode,
+            codeWithAddedImports,
             filename,
             removableImportLocals,
             new Set([
@@ -2231,7 +2289,7 @@ export const applyOxcProcessors = (
             ])
           )
         )
-      : replacedCode,
+      : codeWithAddedImports,
     processors,
   };
 };

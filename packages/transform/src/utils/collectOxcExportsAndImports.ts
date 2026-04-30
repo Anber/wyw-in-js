@@ -10,6 +10,7 @@ import type {
   ExportNamedDeclaration,
   ExportSpecifier,
   Expression,
+  ExpressionStatement,
   Function as OxcFunction,
   ImportDeclaration,
   ImportExpression,
@@ -398,6 +399,28 @@ const sourceFromRequireLike = (
         return source;
       }
     }
+  }
+
+  return null;
+};
+
+const sourceFromDirectRequireBinding = (
+  node: Node,
+  scope: Scope,
+  state: AnalyzerState
+): string | null => {
+  if (isRequireCall(node, scope)) {
+    const call = node as CallExpression;
+    const [sourceArg] = call.arguments;
+    if (!sourceArg || sourceArg.type === 'SpreadElement') {
+      return null;
+    }
+
+    return getStringConstant(sourceArg);
+  }
+
+  if (node.type === 'Identifier') {
+    return state.requireSources.get(node.name) ?? null;
   }
 
   return null;
@@ -998,7 +1021,40 @@ const collectFromAssignmentExpression = (
     return;
   }
 
+  const directRequireSource = sourceFromDirectRequireBinding(
+    node.right,
+    ctx.scope,
+    state
+  );
+  if (directRequireSource) {
+    addReexport(state, {
+      exported,
+      imported: '*',
+      local: node,
+      source: directRequireSource,
+    });
+    return;
+  }
+
   addExport(state, exported, node.right);
+};
+
+const collectFromRequireExpressionStatement = (
+  node: ExpressionStatement,
+  scope: Scope,
+  state: AnalyzerState
+): void => {
+  const source = sourceFromDirectRequireBinding(node.expression, scope, state);
+  if (!source) {
+    return;
+  }
+
+  addImport(state, {
+    imported: 'side-effect',
+    local: node.expression,
+    source,
+    type: 'cjs',
+  });
 };
 
 const collectFromDefineProperty = (
@@ -1047,6 +1103,24 @@ const collectFromDefineProperty = (
         local: node,
         source: imported.source,
       });
+      return true;
+    }
+
+    const directRequireSource = returned
+      ? sourceFromDirectRequireBinding(returned, ctx.scope, state)
+      : null;
+    if (directRequireSource) {
+      addReexport(state, {
+        exported,
+        imported: '*',
+        local: node,
+        source: directRequireSource,
+      });
+      return true;
+    }
+
+    if (returned) {
+      addExport(state, exported, returned);
       return true;
     }
   }
@@ -1155,6 +1229,21 @@ const collectFromHelperCall = (
           return;
         }
 
+        const directRequireSource = sourceFromDirectRequireBinding(
+          returned,
+          ctx.scope,
+          state
+        );
+        if (directRequireSource) {
+          addReexport(state, {
+            exported,
+            imported: '*',
+            local: property,
+            source: directRequireSource,
+          });
+          return;
+        }
+
         addExport(state, exported, returned);
       });
     }
@@ -1207,6 +1296,8 @@ const visit = (
   } else if (mode === 'all' && node.type === 'CallExpression') {
     collectFromWywDynamicImport(node, ctx.parent, state);
     collectFromHelperCall(node, { ...ctx, scope }, state);
+  } else if (mode === 'all' && node.type === 'ExpressionStatement') {
+    collectFromRequireExpressionStatement(node, scope, state);
   } else if (mode === 'all' && node.type === 'AssignmentExpression') {
     collectFromAssignmentExpression(node, { ...ctx, scope }, state);
   } else if (node.type === 'Identifier') {

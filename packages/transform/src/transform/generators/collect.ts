@@ -30,7 +30,8 @@ export function* collect(
     name,
     options.root ?? process.cwd(),
     options.pluginOptions,
-    valueCache
+    valueCache,
+    options.inputSourceMap
   );
 
   return {

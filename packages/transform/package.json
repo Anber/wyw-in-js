@@ -3,6 +3,7 @@
   "version": "1.0.8",
   "type": "module",
   "dependencies": {
+    "@jridgewell/remapping": "^2.3.5",
     "@wyw-in-js/processor-utils": "workspace:*",
     "@wyw-in-js/shared": "workspace:*",
     "cosmiconfig": "^8.0.0",

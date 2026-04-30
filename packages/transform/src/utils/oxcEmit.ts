@@ -321,6 +321,16 @@ const propertyAccess = (name: string): string =>
 const exportAssignment = (exported: string, local: string): string =>
   `exports${propertyAccess(exported)} = ${local};`;
 
+const exportGetter = (exported: string, value: string): string =>
+  [
+    `Object.defineProperty(exports, ${JSON.stringify(exported)}, {`,
+    '  enumerable: true,',
+    '  get: function () {',
+    `    return ${value};`,
+    '  }',
+    '});',
+  ].join('\n');
+
 const defaultInteropExpression = (value: string): string =>
   `${value} && ${value}.__esModule ? ${value}.default : ("default" in Object(${value}) ? ${value}.default : ${value})`;
 
@@ -580,7 +590,7 @@ const emitNamedExportDeclaration = (
     .map((specifier: ExportSpecifier) => {
       const local = nameFromModuleExport(specifier.local);
       const exported = nameFromModuleExport(specifier.exported);
-      return exportAssignment(exported, local);
+      return exportGetter(exported, local);
     })
     .join('\n');
 };

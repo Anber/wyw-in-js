@@ -126,6 +126,57 @@ describe('collectOxcExportsAndImports', () => {
     expect(runFixture('require_not_an_import.input.ts').imports).toEqual([]);
   });
 
+  it('collects require-backed namespace reexports from the compiled CommonJS corpus', () => {
+    expect(runFixture('re-export_named_namespace.input.ts').reexports).toMatchObject([
+      { exported: 'ns', imported: '*', source: 'unknown-package' },
+    ]);
+
+    globSync(
+      join(fixturesFolder, 're-export_named_namespace', '*.input.js')
+    ).forEach((filename) => {
+      expect(
+        comparable(
+          collectOxcExportsAndImports(readFileSync(filename, 'utf-8'), filename)
+        ).reexports
+      ).toEqual(
+        expect.arrayContaining([
+          { exported: 'ns', imported: '*', source: 'unknown-package' },
+        ])
+      );
+    });
+  });
+
+  it('collects bare require side-effect edges and direct require-backed reexports', () => {
+    const sideEffect = comparable(
+      collectOxcExportsAndImports(
+        `require('side-effects-only');`,
+        join(fixturesFolder, 'inline-require-side-effects.input.js')
+      )
+    );
+    const defaultReexport = comparable(
+      collectOxcExportsAndImports(
+        `module.exports = require('unknown-package');`,
+        join(fixturesFolder, 'inline-module-exports-require.input.js')
+      )
+    );
+    const namedReexport = comparable(
+      collectOxcExportsAndImports(
+        `exports.ns = require('unknown-package');`,
+        join(fixturesFolder, 'inline-exports-require.input.js')
+      )
+    );
+
+    expect(sideEffect.imports).toEqual([
+      { imported: 'side-effect', source: 'side-effects-only' },
+    ]);
+    expect(defaultReexport.reexports).toEqual([
+      { exported: 'default', imported: '*', source: 'unknown-package' },
+    ]);
+    expect(namedReexport.reexports).toEqual([
+      { exported: 'ns', imported: '*', source: 'unknown-package' },
+    ]);
+  });
+
   it('collects mixed ESM reexports', () => {
     expect(runFixture('re-export_mixed_exports.input.ts')).toMatchObject({
       exports: [{ exported: 'default', local: 123 }],

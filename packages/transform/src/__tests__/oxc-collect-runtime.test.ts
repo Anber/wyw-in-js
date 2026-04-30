@@ -3,6 +3,7 @@
 import { join } from 'path';
 
 import dedent from 'dedent';
+import { SourceMapGenerator } from 'source-map';
 
 import { oxcShaker } from '../shaker';
 import { Entrypoint } from '../transform/Entrypoint';
@@ -20,6 +21,7 @@ import { collectOxcRuntime } from '../utils/collectOxcRuntime';
 
 const processorFile = join(__dirname, '__fixtures__', 'test-css-processor.js');
 const filename = join(__dirname, 'source.js');
+const originalFilename = join(__dirname, 'source.tsx');
 
 const createOptions = () =>
   loadWywOptions({
@@ -38,6 +40,23 @@ const createOptions = () =>
       return null;
     },
   });
+
+const createInputSourceMap = (
+  generatedFilename: string,
+  sourceFilename: string,
+  sourceContent: string
+) => {
+  const generator = new SourceMapGenerator({
+    file: generatedFilename,
+  });
+  generator.addMapping({
+    generated: { column: 0, line: 1 },
+    original: { column: 0, line: 1 },
+    source: sourceFilename,
+  });
+  generator.setSourceContent(sourceFilename, sourceContent);
+  return generator.toJSON();
+};
 
 // eslint-disable-next-line require-yield
 function* emptyHandler<
@@ -395,6 +414,87 @@ export const whiteColor = '#fff';`);
     expect(result.metadata?.processors).toHaveLength(1);
     expect(result.code).not.toContain('css`');
     expect(result.map?.sources).toContain(filename);
+  });
+
+  it('composes runtime source maps with the incoming source map', () => {
+    const originalSource = dedent`
+      import { css } from 'test-css-processor';
+      export const className = css\`
+        color: ${'${"red"}'};
+      \`;
+    `;
+    const result = collectOxcRuntime(
+      dedent`
+        import { css } from 'test-css-processor';
+        export const className = css\`
+          color: ${'${"red"}'};
+        \`;
+      `,
+      filename,
+      __dirname,
+      createOptions(),
+      new Map([['_exp', 'red']]),
+      createInputSourceMap(filename, originalFilename, originalSource)
+    );
+
+    expect(result.map.sources).toContain(originalFilename);
+    expect(result.map.sources).not.toContain(filename);
+    expect(result.map.sourcesContent).toContain(originalSource);
+  });
+
+  it('forwards input source maps through collect action', () => {
+    const options = createOptions();
+    const originalSource = dedent`
+      import { css } from 'test-css-processor';
+      export const className = css\`
+        color: ${'${"red"}'};
+      \`;
+    `;
+    const services = withDefaultServices({
+      options: {
+        filename,
+        inputSourceMap: createInputSourceMap(
+          filename,
+          originalFilename,
+          originalSource
+        ),
+        root: __dirname,
+        pluginOptions: options,
+      },
+    });
+    const source = dedent`
+      import { css } from 'test-css-processor';
+      export const className = css\`
+        color: ${'${"red"}'};
+      \`;
+    `;
+    const entrypoint = Entrypoint.createRoot(
+      services,
+      filename,
+      ['className'],
+      source
+    );
+
+    if (entrypoint.ignored) {
+      throw new Error('Ignored');
+    }
+
+    const result = syncActionRunner(
+      entrypoint.createAction(
+        'collect',
+        {
+          valueCache: new Map([['_exp', 'red']]),
+        },
+        null
+      ),
+      getHandlers<'sync'>({
+        collect,
+      })
+    );
+
+    expect(result.map?.sources).toContain(originalFilename);
+    expect(result.map?.sources).not.toContain(filename);
+    expect(result.map?.sourcesContent).toContain(originalSource);
   });
 
   it('returns null metadata when no processors are present', () => {
