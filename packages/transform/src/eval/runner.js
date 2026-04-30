@@ -1775,17 +1775,57 @@ loadModule = async (id, importer, requestSpec) => {
     }
 
     if (loaded.exports) {
-      if (cached && loaded.hash && moduleHashes.get(id) === loaded.hash) {
-        return cached;
+      // Serialized exports are a narrow slice — only the keys the importer
+      // requested. If we have a fully evaluated module (in moduleCache or as
+      // a variant), prefer it: its namespace has ALL exports, so any consumer
+      // can link against it without "does not provide export" errors.
+      //
+      // An evaluated variant is only safe to reuse when its namespace covers
+      // the serialized key set. A narrow variant that was evaluated first may
+      // lack exports that a wider consumer needs (the 4df6e915 race).
+      const requiredKeys = Object.keys(loaded.exports);
+      const coversKeys = (mod) => {
+        const ns = mod.namespace;
+        return requiredKeys.every((k) => k in ns);
+      };
+
+      let evaluated =
+        cached && cached.status === 'evaluated' && coversKeys(cached)
+          ? cached
+          : undefined;
+
+      if (!evaluated) {
+        const variants = moduleVariants.get(id);
+        if (variants) {
+          for (const variant of variants.values()) {
+            if (variant.status === 'evaluated' && coversKeys(variant)) {
+              evaluated = variant;
+              break;
+            }
+          }
+        }
+      }
+
+      if (evaluated) {
+        return evaluated;
+      }
+
+      // Reuse a previously created SyntheticModule for this exact serialized set
+      if (loaded.hash) {
+        const existing = getModuleVariant(id, loaded.hash);
+        if (existing) {
+          return existing;
+        }
       }
 
       const exportsValue = {};
       Object.entries(loaded.exports).forEach(([key, serialized]) => {
         exportsValue[key] = deserializeValue(serialized);
       });
-      // Serialized exports can be a narrow slice of a module. Do not let them
-      // replace a cached SourceTextModule that may be needed by another import.
       const module = createSyntheticModule(id, exportsValue, false);
+      if (loaded.hash) {
+        setModuleVariant(id, loaded.hash, module);
+      }
       return module;
     }
 

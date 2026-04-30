@@ -2607,4 +2607,185 @@ describe('transform static import value inlining', () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it('does not produce link errors when a re-export barrel needs exports shaken from a prior eval', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
+    const tokensFile = join(root, 'tokens.js');
+    const barrelFile = join(root, 'barrel.js');
+    const entryA = join(root, 'entry-a.js');
+    const entryB = join(root, 'entry-b.js');
+    const cache = new TransformCacheCollection();
+
+    writeFileSync(
+      tokensFile,
+      dedent`
+        export const fontFamily = 'Inter, sans-serif';
+        export const textStyles = { fontSize: '14px', lineHeight: '1.5' };
+      `
+    );
+    writeFileSync(
+      barrelFile,
+      dedent`
+        export { fontFamily } from './tokens.js';
+      `
+    );
+    writeFileSync(
+      entryA,
+      dedent`
+        import { css } from 'test-css-processor';
+        import { textStyles } from './tokens.js';
+
+        export const className = css\`
+          font-size: ${'${textStyles.fontSize}'};
+        \`;
+      `
+    );
+    writeFileSync(
+      entryB,
+      dedent`
+        import { css } from 'test-css-processor';
+        import { fontFamily } from './barrel.js';
+
+        export const className = css\`
+          font-family: ${'${fontFamily}'};
+        \`;
+      `
+    );
+
+    try {
+      // entry-a caches tokens.js with only=['textStyles'] (fontFamily shaken out)
+      const resultA = await runTransform(root, entryA, cache);
+      expect(resultA.cssText).toContain('font-size:14px');
+
+      // entry-b needs fontFamily from tokens.js via barrel.js re-export.
+      // The broker/runner must not serve a shaken variant that omits fontFamily.
+      const resultB = await runTransform(root, entryB, cache);
+      expect(resultB.cssText).toContain('font-family:Inter,sans-serif');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('survives concurrent transforms that need different exports from the same module', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
+    const tokensFile = join(root, 'tokens.js');
+    const barrelFile = join(root, 'barrel.js');
+    const cache = new TransformCacheCollection();
+
+    writeFileSync(
+      tokensFile,
+      dedent`
+        export const fontFamily = 'Inter, sans-serif';
+        export const fontWeight = { light: 300, regular: 400, bold: 700 };
+        export const textStyles = { fontSize: '14px', lineHeight: '1.5' };
+      `
+    );
+    writeFileSync(
+      barrelFile,
+      dedent`
+        export { fontFamily, fontWeight } from './tokens.js';
+      `
+    );
+
+    // Create N entry files: half import textStyles directly, half import
+    // fontFamily via barrel.  Run all transforms concurrently (like webpack).
+    const N = 10;
+    const entries: string[] = [];
+    for (let i = 0; i < N; i++) {
+      const entryFile = join(root, `entry-${i}.js`);
+      if (i % 2 === 0) {
+        writeFileSync(
+          entryFile,
+          dedent`
+            import { css } from 'test-css-processor';
+            import { textStyles } from './tokens.js';
+
+            export const className = css\`
+              font-size: ${'${textStyles.fontSize}'};
+            \`;
+          `
+        );
+      } else {
+        writeFileSync(
+          entryFile,
+          dedent`
+            import { css } from 'test-css-processor';
+            import { fontFamily } from './barrel.js';
+
+            export const className = css\`
+              font-family: ${'${fontFamily}'};
+            \`;
+          `
+        );
+      }
+      entries.push(entryFile);
+    }
+
+    try {
+      // Run all transforms concurrently, sharing the same cache.
+      const results = await Promise.all(
+        entries.map((entry) => runTransform(root, entry, cache))
+      );
+
+      for (let i = 0; i < N; i++) {
+        if (i % 2 === 0) {
+          expect(results[i].cssText).toContain('font-size:14px');
+        } else {
+          expect(results[i].cssText).toContain('font-family:Inter,sans-serif');
+        }
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('does not produce link errors when the same module is imported directly and via barrel with different exports', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
+    const tokensFile = join(root, 'tokens.js');
+    const barrelFile = join(root, 'barrel.js');
+    const entryFile = join(root, 'entry.js');
+    const cache = new TransformCacheCollection();
+
+    writeFileSync(
+      tokensFile,
+      dedent`
+        export const fontFamily = 'Inter, sans-serif';
+        export const fontWeight = { light: 300, regular: 400, bold: 700 };
+        export const textStyles = { fontSize: '14px', lineHeight: '1.5' };
+      `
+    );
+    writeFileSync(
+      barrelFile,
+      dedent`
+        export { fontFamily, fontWeight } from './tokens.js';
+      `
+    );
+    // Single entry that imports textStyles directly from tokens
+    // AND fontFamily via the barrel — within one eval, the runner loads
+    // tokens.js once for the direct import (only=['textStyles']) and once
+    // during barrel.js linking (needs fontFamily+fontWeight).
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { css } from 'test-css-processor';
+        import { textStyles } from './tokens.js';
+        import { fontFamily, fontWeight } from './barrel.js';
+
+        export const className = css\`
+          font-size: ${'${textStyles.fontSize}'};
+          font-family: ${'${fontFamily}'};
+          font-weight: ${'${fontWeight.regular}'};
+        \`;
+      `
+    );
+
+    try {
+      const result = await runTransform(root, entryFile, cache);
+      expect(result.cssText).toContain('font-size:14px');
+      expect(result.cssText).toContain('font-family:Inter,sans-serif');
+      expect(result.cssText).toContain('font-weight:400');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
