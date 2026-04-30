@@ -266,7 +266,7 @@ export class Entrypoint extends BaseEntrypoint {
         parent ? [parent] : [],
         loadedCode,
         name,
-        cached.only,
+        mergedOnly,
         exports,
         evaluatedOnly,
         cached.loadedAndParsed,

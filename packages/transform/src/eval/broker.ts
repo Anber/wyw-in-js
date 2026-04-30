@@ -1220,7 +1220,31 @@ export class EvalBroker {
     id: string,
     imports: Map<string, string[]> | null | undefined
   ) {
-    this.importsByModule.set(id, imports ?? new Map());
+    if (!imports || imports.size === 0) {
+      if (!this.importsByModule.has(id)) {
+        this.importsByModule.set(id, new Map());
+      }
+      return;
+    }
+
+    const existing = this.importsByModule.get(id);
+    if (!existing || existing.size === 0) {
+      this.importsByModule.set(id, imports);
+      return;
+    }
+
+    // Merge: widen each specifier's import list rather than replacing.
+    // Different variants of the same module may import different subsets
+    // from the same dependency. The widest set must be preserved so that
+    // any still-linking variant can resolve all its bindings.
+    for (const [specifier, keys] of imports) {
+      const existingKeys = existing.get(specifier);
+      if (!existingKeys) {
+        existing.set(specifier, keys);
+      } else {
+        existing.set(specifier, mergeOnly(existingKeys, keys));
+      }
+    }
   }
 
   private getImportOnly(
@@ -2597,6 +2621,9 @@ export class EvalBroker {
         }
       }
     }
+
+    const isSelfLoad = !importerId || importerId === id;
+
     const cachedEntrypoint = this.services.cache.get('entrypoints', id) as
       | {
           evaluated?: boolean;
@@ -2641,7 +2668,12 @@ export class EvalBroker {
         }
       }
     }
-    const canReusePreparedLoad = !requiredOnly.includes('__wywPreval');
+    // Only skip the prepared-load cache for self-loads (the eval entrypoint),
+    // which must always be freshly prepared because __wywPreval evaluation has
+    // side effects. Dependencies propagate __wywPreval in their `only` chain
+    // but don't need fresh preparation — their code is deterministic.
+    const canReusePreparedLoad =
+      !isSelfLoad || !requiredOnly.includes('__wywPreval');
     if (
       canReusePreparedLoad &&
       cached &&
@@ -2822,6 +2854,11 @@ export class EvalBroker {
 
     try {
       const result = await task;
+      // Register imports for ALL code paths (barrel proxy, prepareModuleOnDemand,
+      // custom loaders). Without this, the barrel proxy path skips
+      // ensureImportsMapping, so getLoadRequestOnly can't determine what a barrel
+      // module imports from its sub-dependencies.
+      this.ensureImportsMapping(id, result.imports);
       this.loadCache.set(id, result);
       return result;
     } finally {
