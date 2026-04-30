@@ -184,9 +184,9 @@ describe('collectOxcTemplateDependencies', () => {
 
     const result = collectOxcTemplateDependencies(code, filename, true);
 
-    expect(result.code).toContain('let arg = str;');
-    expect(result.code).toContain('let variable = arg + "2";');
-    expect(result.code).toContain('const _exp = () => (variable);');
+    expect(result.code).toContain('let _arg = str;');
+    expect(result.code).toContain('let _variable = _arg + "2";');
+    expect(result.code).toContain('const _exp = () => (_variable);');
     expect(result.code).toContain('tag`${_exp()}`');
   });
 
@@ -201,8 +201,8 @@ describe('collectOxcTemplateDependencies', () => {
 
     const result = collectOxcTemplateDependencies(code, filename, true);
 
-    expect(result.code).toContain('let result = "result";');
-    expect(result.code).toContain('let { variable } = { variable: result };');
+    expect(result.code).toContain('let _result = "result";');
+    expect(result.code).toContain('let { variable } = { variable: _result };');
     expect(result.code).toContain('const _exp = () => (variable);');
   });
 

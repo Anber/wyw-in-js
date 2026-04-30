@@ -2952,7 +2952,11 @@ export class EvalBroker {
 
   private rejectPending(
     id: string,
-    error: { message: string; stack?: string; cause?: { message: string; stack?: string } }
+    error: {
+      message: string;
+      stack?: string;
+      cause?: { message: string; stack?: string };
+    }
   ) {
     const pending = this.pending.get(id);
     if (!pending) return;

@@ -716,9 +716,7 @@ describe('applyOxcProcessors', () => {
       (processor) => processor.doRuntimeReplacement()
     );
 
-    expect(result.code).toContain(
-      'import { __styles } from "@griffel/react";'
-    );
+    expect(result.code).toContain('import { __styles } from "@griffel/react";');
     expect(result.code).toContain(
       "export const useStyles = /*#__PURE__*/__styles('x');"
     );

@@ -227,7 +227,8 @@ const insertAddedImports = (
   const prefix = code.slice(0, insertionPoint);
   const suffix = code.slice(insertionPoint);
   const leadingBreak = prefix.length > 0 && !prefix.endsWith('\n') ? '\n' : '';
-  const trailingBreak = suffix.length > 0 && !suffix.startsWith('\n') ? '\n' : '';
+  const trailingBreak =
+    suffix.length > 0 && !suffix.startsWith('\n') ? '\n' : '';
 
   return `${prefix}${leadingBreak}${importBlock}${trailingBreak}${suffix}`;
 };

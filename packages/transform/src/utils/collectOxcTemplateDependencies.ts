@@ -1676,26 +1676,6 @@ const evaluateStatic = (
   return evaluateBinary(expression, ctx);
 };
 
-const substituteConstants = (
-  expression: Expression,
-  ctx: ExtractionContext
-): string => {
-  const replacements = new Map<string, string>();
-  findReferences(expression, ctx.referencesByNode).forEach(
-    ({ name, start }) => {
-      const replacement = getConstantReplacement(
-        resolveBindingAt(ctx, name, start),
-        ctx
-      );
-      if (replacement) {
-        replacements.set(name, replacement);
-      }
-    }
-  );
-
-  return replaceIdentifierReferences(expression, replacements, ctx.code);
-};
-
 const allocateExpressionName = (ctx: ExtractionContext): string => {
   let base = '_exp';
   let idx = 1;
@@ -1744,6 +1724,30 @@ const getHoistedBindingName = (
   return next;
 };
 
+const declarationInitCode = (
+  init: Expression,
+  ctx: ExtractionContext
+): string => {
+  const renamedDependencies = new Map<string, string>();
+  findReferences(init, ctx.referencesByNode).forEach(({ name, start }) => {
+    const dependency = resolveBindingAt(ctx, name, start);
+    if (
+      !dependency ||
+      dependency.importedFrom ||
+      dependency.isRoot ||
+      dependency.declarator?.id.type !== 'Identifier'
+    ) {
+      return;
+    }
+
+    renamedDependencies.set(name, getHoistedBindingName(dependency, ctx));
+  });
+
+  return renamedDependencies.size > 0
+    ? replaceIdentifierReferences(init, renamedDependencies, ctx.code)
+    : ctx.code.slice(init.start, init.end);
+};
+
 const addHoistedCode = (
   key: string,
   code: string,
@@ -1765,14 +1769,19 @@ const addHoistedCode = (
 };
 
 const declarationCode = (binding: Binding, ctx: ExtractionContext): string => {
-  const declarator = binding.declarator;
+  const { declarator } = binding;
   if (!declarator) {
     return '';
   }
 
-  if (declarator.id.type !== 'Identifier') {
-    const source = ctx.code.slice(declarator.start, declarator.end);
-    return `let ${source};`;
+  const { id } = declarator;
+  if (id.type !== 'Identifier') {
+    const idCode = ctx.code.slice(id.start, id.end);
+    if (!declarator.init) {
+      return `let ${idCode};`;
+    }
+
+    return `let ${idCode} = ${declarationInitCode(declarator.init, ctx)};`;
   }
 
   const hoistedName = getHoistedBindingName(binding, ctx);
@@ -1780,22 +1789,7 @@ const declarationCode = (binding: Binding, ctx: ExtractionContext): string => {
     return `let ${hoistedName};`;
   }
 
-  const renamedDependencies = new Map<string, string>();
-  findReferences(declarator.init, ctx.referencesByNode).forEach(({ name, start }) => {
-    const dependency = resolveBindingAt(ctx, name, start);
-    if (!dependency || dependency.importedFrom || dependency.isRoot) {
-      return;
-    }
-
-    renamedDependencies.set(name, getHoistedBindingName(dependency, ctx));
-  });
-
-  const initCode =
-    renamedDependencies.size > 0
-      ? replaceIdentifierReferences(declarator.init, renamedDependencies, ctx.code)
-      : ctx.code.slice(declarator.init.start, declarator.init.end);
-
-  return `let ${hoistedName} = ${initCode};`;
+  return `let ${hoistedName} = ${declarationInitCode(declarator.init, ctx)};`;
 };
 
 const assertHoistable = (
@@ -1854,11 +1848,7 @@ const addHoistedDeclaration = (
   );
 
   if (!ctx.hoistedDeclarations.has(binding.name)) {
-    addHoistedCode(
-      binding.name,
-      declarationCode(binding, ctx),
-      ctx
-    );
+    addHoistedCode(binding.name, declarationCode(binding, ctx), ctx);
   }
 };
 

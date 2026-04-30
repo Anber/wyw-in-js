@@ -1067,10 +1067,7 @@ describe('EvalBroker', () => {
     const result = await broker.evaluate(childEntrypoint);
 
     expect(result.values?.get('value')).toBe(42);
-    expect(asyncResolve).toHaveBeenCalledWith('./nested.js', dep, [
-      dep,
-      entry,
-    ]);
+    expect(asyncResolve).toHaveBeenCalledWith('./nested.js', dep, [dep, entry]);
 
     broker.dispose();
     rmSync(root, { recursive: true, force: true });
@@ -2789,10 +2786,9 @@ describe('EvalBroker', () => {
     // barrel.js — two exports
     writeFileSync(
       join(root, 'barrel.js'),
-      [
-        'export const fontWeight = 400;',
-        'export const iconSize = 24;',
-      ].join('\n')
+      ['export const fontWeight = 400;', 'export const iconSize = 24;'].join(
+        '\n'
+      )
     );
 
     // entry-a.js — only needs fontWeight
