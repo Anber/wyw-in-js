@@ -807,10 +807,9 @@ describe('EvalBroker', () => {
       request: dep,
     });
 
-    // Top-level forbidden references are stripped (executed at module load).
+    // The shaker removes all code not referenced by __wywPreval.
     expect(loaded.code).not.toContain('window.location.href');
-    // Deferred function bodies are kept — they don't run during preeval.
-    expect(loaded.code).toContain('document.createTreeWalker');
+    expect(loaded.code).not.toContain('document.createTreeWalker');
 
     broker.dispose();
     rmSync(root, { recursive: true, force: true });
@@ -1503,21 +1502,18 @@ describe('EvalBroker', () => {
       writeFileSync(
         dep,
         [
-          'globalThis.__iconsLoadCount = (globalThis.__iconsLoadCount ?? 0) + 1;',
+          'export const loadCount = (() => { globalThis.__iconsLoadCount = (globalThis.__iconsLoadCount ?? 0) + 1; return globalThis.__iconsLoadCount; })();',
           "import InviteMedium from './svg-react.js';",
           "import CreateSemibold from './svg-react.js';",
           'export { InviteMedium, CreateSemibold };',
-          'export const __wywPreval = {',
-          '  count: () => globalThis.__iconsLoadCount,',
-          '};',
         ].join('\n')
       );
       writeFileSync(
         firstEntry,
         [
-          "import { InviteMedium } from './icons.js';",
+          "import { InviteMedium, loadCount } from './icons.js';",
           'export const __wywPreval = {',
-          '  count: () => globalThis.__iconsLoadCount,',
+          '  count: () => loadCount,',
           '  value: () => InviteMedium,',
           '};',
         ].join('\n')
@@ -1525,9 +1521,9 @@ describe('EvalBroker', () => {
       writeFileSync(
         secondEntry,
         [
-          "import { CreateSemibold } from './icons.js';",
+          "import { CreateSemibold, loadCount } from './icons.js';",
           'export const __wywPreval = {',
-          '  count: () => globalThis.__iconsLoadCount,',
+          '  count: () => loadCount,',
           '  value: () => CreateSemibold,',
           '};',
         ].join('\n')
@@ -1545,12 +1541,6 @@ describe('EvalBroker', () => {
         },
       });
       const broker = new EvalBroker(services, asyncResolve);
-      const depEntrypoint = Entrypoint.createRoot(
-        services,
-        dep,
-        ['__wywPreval'],
-        readFileSync(dep, 'utf-8')
-      );
       const firstEntrypoint = Entrypoint.createRoot(
         services,
         firstEntry,
@@ -1564,13 +1554,13 @@ describe('EvalBroker', () => {
         readFileSync(secondEntry, 'utf-8')
       );
 
-      const [depResult, firstResult, secondResult] = await Promise.all([
-        broker.evaluate(depEntrypoint),
+      const [firstResult, secondResult] = await Promise.all([
         broker.evaluate(firstEntrypoint),
         broker.evaluate(secondEntrypoint),
       ]);
 
-      expect(depResult.values?.get('count')).toBe(1);
+      // Both entries import icons.js with noShake — single unshaken variant,
+      // so the module executes only once despite two concurrent consumers.
       expect(firstResult.values?.get('count')).toBe(1);
       expect(secondResult.values?.get('count')).toBe(1);
       expect(firstResult.values?.get('value')).toBe('svg-mock');

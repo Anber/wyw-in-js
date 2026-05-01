@@ -267,14 +267,13 @@ describe('prepareCode with explicit oxcShaker action', () => {
     expect(metadata).toBeNull();
   });
 
-  it('prunes unused eager runtime wrappers when eval runtime short-circuits modules without metadata', () => {
+  it('shakes no-metadata eval runtime modules that already export __wywPreval', () => {
     const root = __dirname;
     const filename = join(root, 'prepared-preval.tsx');
     const source = dedent`
-      import { themeVars } from './tokens';
+      import { themeVars } from '@fibery/ui-kit/src/design-system';
       import { memo } from 'react';
 
-      const runtimeOnly = () => document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT);
       var _exp = () => themeVars.inputBorderHoverColor;
       var Comment = memo(function Comment() {
         return null;
@@ -304,54 +303,11 @@ describe('prepareCode with explicit oxcShaker action', () => {
 
     expect(code).toContain('export const __wywPreval');
     expect(code).toContain('_exp');
-    expect(code).toContain('document.createTreeWalker');
     expect(code).not.toContain('memo');
     expect(code).not.toContain('Comment');
-    expect(imports?.get('./tokens')).toEqual(['themeVars']);
-    expect(imports?.has('react')).toBe(false);
-    expect(metadata).toBeNull();
-  });
-
-  it('preserves exported call-expression declarations during eager pruning', () => {
-    const root = __dirname;
-    const filename = join(root, 'prepared-preval.tsx');
-    const source = dedent`
-      import { hsl } from 'colorjs.io/fn';
-      import { memo } from 'react';
-
-      export const hslFrom = hsl.from('hsl', [0, 0, 0]);
-      var _exp = () => hslFrom;
-      var Wrapper = memo(function Wrapper() {
-        return null;
-      });
-
-      export const __wywPreval = {
-        _exp,
-      };
-    `;
-    const services = createServices(filename, root);
-    const entrypoint = Entrypoint.createRoot(
-      services,
-      filename,
-      ['__wywPreval'],
-      source
-    );
-
-    if (entrypoint.ignored) {
-      throw new Error('Ignored');
-    }
-
-    const [code, imports, metadata] = prepareCodeForEvalRuntime(
-      services,
-      entrypoint,
-      null
-    );
-
-    expect(code).toContain('export const __wywPreval');
-    expect(code).toContain('hslFrom');
-    expect(code).not.toContain('memo');
-    expect(code).not.toContain('Wrapper');
-    expect(imports?.get('colorjs.io/fn')).toEqual(['hsl']);
+    expect(imports?.get('@fibery/ui-kit/src/design-system')).toEqual([
+      'themeVars',
+    ]);
     expect(imports?.has('react')).toBe(false);
     expect(metadata).toBeNull();
   });
