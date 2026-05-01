@@ -445,6 +445,13 @@ type PendingRequest = {
   timeout: ReturnType<typeof setTimeout>;
 };
 
+// Mirrors runner.js `isFullModuleLoad`: wildcard `['*']` (or empty) is the
+// only shape stored in the runner's moduleCache; everything else lands in
+// moduleVariants. The shipped-code dedup must respect this shape because the
+// runner picks its lookup map based on the LoadResult's `only`.
+const isWildcardOnly = (only: string[] | undefined | null): boolean =>
+  !only || only.length === 0 || (only.length === 1 && only[0] === '*');
+
 const isEvalTimeoutError = (error: unknown): boolean => {
   if (!error || typeof error !== 'object') return false;
   if ('code' in error && (error as { code?: string }).code) {
@@ -1669,13 +1676,6 @@ export class EvalBroker {
     if (this.lastInitKey === initKey) {
       return;
     }
-    // We're about to send a fresh INIT. The runner may reset its moduleCache
-    // when its context is rebuilt (globals/happyDOM changes). We can't tell
-    // from here whether it actually will, so conservatively drop our
-    // "what runner already has" mirror — at most one redundant retransmission
-    // per init boundary, vs. the alternative of shipping `code: ''` to a
-    // runner that just cleared its cache (which would crash with empty code).
-    this.lastSentLoadByModule.clear();
     const timeoutMs = this.getInitTimeoutMs(entrypoint, features);
 
     if (
@@ -1812,6 +1812,12 @@ export class EvalBroker {
           this.rejectPending(message.id, message.error);
           this.runner?.kill();
           return;
+        }
+        if (message.modulesReset) {
+          // Runner just cleared its moduleCache during this INIT (full
+          // context rebuild or reuseModules:false). Drop our shipped-code
+          // mirror so handleLoad ships fresh code on the next LOAD.
+          this.lastSentLoadByModule.clear();
         }
         this.resolvePending(message.id, {});
         return;
@@ -2565,10 +2571,21 @@ export class EvalBroker {
     const previouslySent = prepared.hash
       ? this.lastSentLoadByModule.get(payload.id)
       : undefined;
+    // Runner stores by hash but classifies storage by `only` shape: wildcard
+    // (`['*']`) ⇒ moduleCache, anything else ⇒ moduleVariants (runner.js
+    // isFullModuleLoad / runner.js:1832-1842). Reusing across shapes would
+    // hit the wrong map and miss. Require the same shape AND the prepared
+    // `only` to be a subset of what we already shipped — same hash already
+    // implies identical bytes.
+    const sameStorageShape = Boolean(
+      previouslySent &&
+        isWildcardOnly(previouslySent.only) === isWildcardOnly(prepared.only)
+    );
     const runnerHasCachedVariant = Boolean(
       prepared.hash &&
         previouslySent &&
         previouslySent.hash === prepared.hash &&
+        sameStorageShape &&
         isSuperSet(previouslySent.only, prepared.only)
     );
     const shouldShipCode = Boolean(

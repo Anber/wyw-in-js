@@ -2133,7 +2133,8 @@ const handleMessage = async (message) => {
         const reuseModules = Boolean(message.payload.reuseModules);
 
         if (canReuseContext) {
-          if (!reuseModules) {
+          const modulesReset = !reuseModules;
+          if (modulesReset) {
             resetModuleState();
           } else {
             // Clear resolution caches between sessions even when reusing modules.
@@ -2159,7 +2160,7 @@ const handleMessage = async (message) => {
           });
           state.globalsSignature = nextGlobalsSignature;
           debug('init:reuse', Date.now() - initStart);
-          sendMessage({ type: 'INIT_ACK', id: message.id });
+          sendMessage({ type: 'INIT_ACK', id: message.id, modulesReset });
           break;
         }
 
@@ -2184,7 +2185,8 @@ const handleMessage = async (message) => {
         state.happyDomEnabled = nextHappyDomEnabled;
         state.globalsSignature = nextGlobalsSignature;
 
-        sendMessage({ type: 'INIT_ACK', id: message.id });
+        // Full context rebuild ⇒ moduleCache was cleared by resetEvaluationState.
+        sendMessage({ type: 'INIT_ACK', id: message.id, modulesReset: true });
         debug('init:done', Date.now() - initStart);
       } catch (error) {
         sendMessage({

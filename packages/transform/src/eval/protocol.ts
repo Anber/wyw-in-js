@@ -71,6 +71,11 @@ export type InitAckMessage = {
   type: 'INIT_ACK';
   id: string;
   error?: SerializedError;
+  // Set by the runner when it just reset its moduleCache during INIT (full
+  // reset on context rebuild, or `reuseModules: false`). The broker uses
+  // this to invalidate its "what runner has" mirror without doing any
+  // payload hashing or stringification on its own hot path.
+  modulesReset?: boolean;
 };
 
 export type EvalMessage = {
