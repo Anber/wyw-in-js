@@ -694,6 +694,98 @@ const removeUnusedImportSpecifiers = (
   }
 };
 
+const getVariableDeclarationFromStatement = (node: Node): Node | null => {
+  if (node.type === 'VariableDeclaration') {
+    return node;
+  }
+
+  if (node.type !== 'ExportNamedDeclaration') {
+    return null;
+  }
+
+  const declaration = (node as AnyNode).declaration as Node | null | undefined;
+  return declaration?.type === 'VariableDeclaration' ? declaration : null;
+};
+
+const isEagerCallInitializer = (node: Node | null | undefined): boolean => {
+  if (!node) {
+    return false;
+  }
+
+  if (TS_EXPRESSION_WRAPPER_TYPES.has(node.type)) {
+    return isEagerCallInitializer((node as AnyNode).expression as Node);
+  }
+
+  return node.type === 'CallExpression' || node.type === 'NewExpression';
+};
+
+export const removeUnusedEagerTopLevelDeclarations = (
+  code: string,
+  filename: string
+): string => {
+  const parsed = parseOxc(code, filename);
+  const { program } = parsed;
+  const referencesByStatement = new Map<Node, Set<string>>();
+
+  program.body.forEach((statement) => {
+    referencesByStatement.set(
+      statement as Node,
+      collectReferences(statement as Node)
+    );
+  });
+
+  const removals: Replacement[] = [];
+
+  program.body.forEach((statement) => {
+    const node = statement as Node;
+    const declaration = getVariableDeclarationFromStatement(node);
+    if (!declaration) {
+      return;
+    }
+
+    const declarators = (declaration as AnyNode).declarations as Node[];
+    if (
+      declarators.length === 0 ||
+      declarators.some(
+        (declarator) =>
+          !isEagerCallInitializer(
+            (declarator as AnyNode).init as Node | null
+          )
+      )
+    ) {
+      return;
+    }
+
+    const bindings = declarators.flatMap((declarator) =>
+      collectBindingNames((declarator as AnyNode).id as Node)
+    );
+    const referencedOutside = new Set<string>();
+
+    program.body.forEach((otherStatement) => {
+      if (otherStatement === statement) {
+        return;
+      }
+
+      referencesByStatement
+        .get(otherStatement as Node)
+        ?.forEach((name) => referencedOutside.add(name));
+    });
+
+    if (bindings.some((binding) => referencedOutside.has(binding))) {
+      return;
+    }
+
+    removals.push(expandImportRemovalRange(code, node.start, node.end));
+  });
+
+  if (removals.length === 0) {
+    return code;
+  }
+
+  const nextCode = applyReplacements(code, mergeEmptyRemovalRanges(removals));
+  return removeUnusedImportSpecifiers(nextCode, filename).code;
+};
+
 const hasImportOverride = (
   source: string,
   options: Pick<OxcShakerOptions, 'importOverrides' | 'root'>
