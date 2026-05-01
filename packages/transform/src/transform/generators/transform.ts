@@ -3,7 +3,10 @@ import type { WYWTransformMetadata } from '../../utils/TransformMetadata';
 import { collectOxcExportsAndImports } from '../../utils/collectOxcExportsAndImports';
 import { emitOxcCommonJS, stripTypesAndJsxWithOxc } from '../../utils/oxcEmit';
 import { runOxcPreevalStage } from '../../utils/oxcPreevalStage';
-import { shakeOxcToESM } from '../../utils/oxcShaker';
+import {
+  removeUnusedEagerTopLevelDeclarations,
+  shakeOxcToESM,
+} from '../../utils/oxcShaker';
 import type { Entrypoint } from '../Entrypoint';
 import type {
   IEntrypointDependency,
@@ -152,7 +155,10 @@ const prepareOxcCodeImpl = (
     options.shortCircuitOnMissingMetadata !== false
   ) {
     log('[evaluator:end] no metadata');
-    const strippedCode = stripTypesAndJsxWithOxc(preevalCode, filename).code;
+    const strippedCode = removeUnusedEagerTopLevelDeclarations(
+      stripTypesAndJsxWithOxc(preevalCode, filename).code,
+      filename
+    );
 
     return [
       normalizeOxcPreparedESM(strippedCode),
