@@ -275,6 +275,12 @@ const isIdentifierReference = (
       : true;
   }
 
+  // The `imported` name of `import { X as Y }` is what to take from the source
+  // module — it does not reference a local binding `X` in the current module.
+  if (parent.type === 'ImportSpecifier' && parentNode.imported === node) {
+    return false;
+  }
+
   return true;
 };
 
