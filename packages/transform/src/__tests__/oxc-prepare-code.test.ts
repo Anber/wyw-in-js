@@ -312,6 +312,50 @@ describe('prepareCode with explicit oxcShaker action', () => {
     expect(metadata).toBeNull();
   });
 
+  it('preserves exported call-expression declarations during eager pruning', () => {
+    const root = __dirname;
+    const filename = join(root, 'prepared-preval.tsx');
+    const source = dedent`
+      import { hsl } from 'colorjs.io/fn';
+      import { memo } from 'react';
+
+      export const hslFrom = hsl.from('hsl', [0, 0, 0]);
+      var _exp = () => hslFrom;
+      var Wrapper = memo(function Wrapper() {
+        return null;
+      });
+
+      export const __wywPreval = {
+        _exp,
+      };
+    `;
+    const services = createServices(filename, root);
+    const entrypoint = Entrypoint.createRoot(
+      services,
+      filename,
+      ['__wywPreval'],
+      source
+    );
+
+    if (entrypoint.ignored) {
+      throw new Error('Ignored');
+    }
+
+    const [code, imports, metadata] = prepareCodeForEvalRuntime(
+      services,
+      entrypoint,
+      null
+    );
+
+    expect(code).toContain('export const __wywPreval');
+    expect(code).toContain('hslFrom');
+    expect(code).not.toContain('memo');
+    expect(code).not.toContain('Wrapper');
+    expect(imports?.get('colorjs.io/fn')).toEqual(['hsl']);
+    expect(imports?.has('react')).toBe(false);
+    expect(metadata).toBeNull();
+  });
+
   it('strips TypeScript from metadata-bearing eval runtime modules', () => {
     const root = __dirname;
     const filename = join(root, 'typed-styles.ts');
