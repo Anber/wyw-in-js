@@ -183,7 +183,10 @@ const prepareOxcCodeImpl = (
 
   if (!options.emitCommonJS) {
     const preparedCode = options.stripForEvalRuntime
-      ? stripTypesAndJsxWithOxc(shaken.code, filename).code
+      ? removeUnusedEagerTopLevelDeclarations(
+          stripTypesAndJsxWithOxc(shaken.code, filename).code,
+          filename
+        )
       : shaken.code;
 
     return [
