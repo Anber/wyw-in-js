@@ -699,12 +699,10 @@ const getVariableDeclarationFromStatement = (node: Node): Node | null => {
     return node;
   }
 
-  if (node.type !== 'ExportNamedDeclaration') {
-    return null;
-  }
-
-  const declaration = (node as AnyNode).declaration as Node | null | undefined;
-  return declaration?.type === 'VariableDeclaration' ? declaration : null;
+  // Never process ExportNamedDeclaration — exported bindings were kept by the
+  // shaker intentionally and removing them causes "does not provide export" at
+  // link time.
+  return null;
 };
 
 const isEagerCallInitializer = (node: Node | null | undefined): boolean => {
