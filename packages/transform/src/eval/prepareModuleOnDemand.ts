@@ -14,7 +14,9 @@ export function prepareModuleOnDemand(
   id: string,
   only: string[]
 ): PreparedModule {
-  const entrypoint = Entrypoint.createRoot(services, id, only, undefined);
+  const entrypoint = Entrypoint.createRoot(services, id, only, undefined, {
+    mergeCachedOnly: !only.includes('__wywPreval'),
+  });
 
   if (entrypoint.ignored) {
     return {

@@ -911,6 +911,81 @@ describe('EvalBroker', () => {
     rmSync(root, { recursive: true, force: true });
   });
 
+  it('does not widen preval-only eval loads with cached runtime component exports', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
+    const entry = join(root, 'entry.tsx');
+    const tokens = join(root, 'tokens.ts');
+
+    writeFileSync(
+      tokens,
+      [
+        'export const border = { radius8: 8 };',
+        "export const themeVars = { inputBorderHoverColor: 'red' };",
+      ].join('\n')
+    );
+    writeFileSync(
+      entry,
+      [
+        "import { memo } from 'react';",
+        "import { css } from 'test-css-processor';",
+        "import { border, themeVars } from './tokens';",
+        'const className = css`',
+        '  border-radius: ${border.radius8}px;',
+        '  color: ${themeVars.inputBorderHoverColor};',
+        '`;',
+        'export const Comment = memo(function Comment() {',
+        '  return <div className={className} />;',
+        '});',
+      ].join('\n')
+    );
+
+    const asyncResolve = jest.fn(async (what: string, importer: string) => {
+      if (what === 'test-css-processor') {
+        return testCssProcessorFile;
+      }
+
+      if (what.startsWith('.')) {
+        return resolve(dirname(importer), what);
+      }
+
+      return null;
+    });
+    const services = createServices(root, entry, {
+      tagResolver: (source, tag) => {
+        if (source === 'test-css-processor' && tag === 'css') {
+          return testCssProcessorFile;
+        }
+
+        return null;
+      },
+    });
+    const broker = new EvalBroker(services, asyncResolve);
+    const privateBroker = getPrivateBroker(broker);
+
+    privateBroker.onlyByModule.set(entry, ['Comment']);
+    await privateBroker.loadModule({
+      id: entry,
+      importerId: entry,
+      request: entry,
+    });
+
+    privateBroker.onlyByModule.set(entry, ['__wywPreval']);
+    const loaded = await privateBroker.loadModule({
+      id: entry,
+      importerId: entry,
+      request: entry,
+    });
+
+    expect(loaded.only).toEqual(['__wywPreval']);
+    expect(loaded.code).toContain('export const __wywPreval');
+    expect(loaded.code).not.toContain('memo');
+    expect(loaded.code).not.toContain('Comment');
+    expect(loaded.imports?.has('react')).toBe(false);
+
+    broker.dispose();
+    rmSync(root, { recursive: true, force: true });
+  });
+
   it('evaluates a module graph via runner', async () => {
     const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
     const entry = join(root, 'entry.js');
