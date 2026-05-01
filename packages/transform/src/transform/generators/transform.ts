@@ -3,10 +3,7 @@ import type { WYWTransformMetadata } from '../../utils/TransformMetadata';
 import { collectOxcExportsAndImports } from '../../utils/collectOxcExportsAndImports';
 import { emitOxcCommonJS, stripTypesAndJsxWithOxc } from '../../utils/oxcEmit';
 import { runOxcPreevalStage } from '../../utils/oxcPreevalStage';
-import {
-  removeUnusedEagerTopLevelDeclarations,
-  shakeOxcToESM,
-} from '../../utils/oxcShaker';
+import { shakeOxcToESM } from '../../utils/oxcShaker';
 import type { Entrypoint } from '../Entrypoint';
 import type {
   IEntrypointDependency,
@@ -56,6 +53,12 @@ type PrepareCodeFn = (
 
 const isPrevalOnly = (only: string[]) =>
   only.length === 1 && only[0] === '__wywPreval';
+
+const hasWywPrevalExport = (code: string, filename: string): boolean =>
+  Object.hasOwn(
+    collectOxcExportsAndImports(code, filename).exports,
+    '__wywPreval'
+  );
 
 type PrepareCodeOptions = {
   emitCommonJS?: boolean;
@@ -152,13 +155,11 @@ const prepareOxcCodeImpl = (
   if (
     isPrevalOnly(only) &&
     !transformMetadata &&
+    !hasWywPrevalExport(preevalCode, filename) &&
     options.shortCircuitOnMissingMetadata !== false
   ) {
     log('[evaluator:end] no metadata');
-    const strippedCode = removeUnusedEagerTopLevelDeclarations(
-      stripTypesAndJsxWithOxc(preevalCode, filename).code,
-      filename
-    );
+    const strippedCode = stripTypesAndJsxWithOxc(preevalCode, filename).code;
 
     return [
       normalizeOxcPreparedESM(strippedCode),
@@ -183,10 +184,7 @@ const prepareOxcCodeImpl = (
 
   if (!options.emitCommonJS) {
     const preparedCode = options.stripForEvalRuntime
-      ? removeUnusedEagerTopLevelDeclarations(
-          stripTypesAndJsxWithOxc(shaken.code, filename).code,
-          filename
-        )
+      ? stripTypesAndJsxWithOxc(shaken.code, filename).code
       : shaken.code;
 
     return [
