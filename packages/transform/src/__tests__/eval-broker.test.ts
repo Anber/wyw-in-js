@@ -3513,4 +3513,106 @@ describe('EvalBroker', () => {
     broker.dispose();
     rmSync(root, { recursive: true, force: true });
   });
+
+  it('keeps shipped-code mirror across evaluate() boundaries with stable globals/happyDOM', async () => {
+    // Real workflows reuse the runner across many entrypoints. The runner
+    // only resets its moduleCache when globals or happyDOM change
+    // (runner.js:2116). When those are stable, INIT just rebinds entrypoint
+    // metadata and the runner keeps every cached module — so the broker's
+    // shipped-code mirror must survive cross-entrypoint INITs.
+    const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
+    const entryA = join(root, 'a.js');
+    const entryB = join(root, 'b.js');
+    const dep = join(root, 'dep.js');
+    writeFileSync(entryA, 'export const __wywPreval = {};');
+    writeFileSync(entryB, 'export const __wywPreval = {};');
+
+    const customLoader = jest.fn(async () => ({
+      code: 'export const value = 1;',
+    }));
+    const services = createServices(root, entryA, {
+      eval: { customLoader },
+    });
+    const broker = new EvalBroker(
+      services,
+      jest.fn(async () => dep)
+    );
+    const privateBroker = broker as unknown as {
+      ensureRunner: () => Promise<void>;
+      handleLoad: (
+        id: string,
+        payload: { id: string; importerId: string | null; request: string | null }
+      ) => Promise<void>;
+      initRunner: (entrypoint: Entrypoint) => Promise<void>;
+      lastInitKey: string | null;
+      lastHappyDomEnabled: boolean;
+      lastSentLoadByModule: Map<string, { hash: string; only: string[] }>;
+      onlyByModule: Map<string, string[]>;
+      request: (
+        type: string,
+        payload: unknown,
+        timeoutMs?: number
+      ) => Promise<unknown>;
+      runnerInputQueue: unknown;
+      sendMessage: (message: unknown) => Promise<void>;
+    };
+    privateBroker.ensureRunner = jest.fn(async () => {});
+    privateBroker.request = jest.fn(async () => ({}));
+
+    type CapturedLoadResult = {
+      id: string;
+      payload: { code?: string; hash?: string };
+    };
+    const captured: CapturedLoadResult[] = [];
+    privateBroker.runnerInputQueue = {
+      write: () => Promise.resolve(),
+    };
+    privateBroker.sendMessage = async (message: unknown) => {
+      const m = message as { type: string } & CapturedLoadResult;
+      if (m.type === 'LOAD_RESULT') {
+        captured.push({ id: m.id, payload: m.payload });
+      }
+    };
+
+    privateBroker.onlyByModule.set(dep, ['*']);
+
+    const entrypointA = Entrypoint.createRoot(
+      services,
+      entryA,
+      ['__wywPreval'],
+      readFileSync(entryA, 'utf-8')
+    );
+    const entrypointB = Entrypoint.createRoot(
+      services,
+      entryB,
+      ['__wywPreval'],
+      readFileSync(entryB, 'utf-8')
+    );
+
+    await privateBroker.initRunner(entrypointA);
+    await privateBroker.handleLoad('msg-1', {
+      id: dep,
+      importerId: entryA,
+      request: null,
+    });
+
+    // Switch to a different entrypoint — initKey changes but globals/happyDOM
+    // are identical, so the runner keeps moduleCache and our mirror must too.
+    await privateBroker.initRunner(entrypointB);
+    expect(privateBroker.lastSentLoadByModule.size).toBeGreaterThan(0);
+
+    await privateBroker.handleLoad('msg-2', {
+      id: dep,
+      importerId: entryB,
+      request: null,
+    });
+
+    expect(captured).toHaveLength(2);
+    expect(captured[0].payload.code).toBe('export const value = 1;');
+    expect(captured[1].payload.code).toBe('');
+    expect(captured[1].payload.hash).toBe(captured[0].payload.hash);
+
+    broker.dispose();
+    rmSync(root, { recursive: true, force: true });
+  });
 });
