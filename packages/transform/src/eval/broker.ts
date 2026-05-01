@@ -1195,6 +1195,17 @@ export class EvalBroker {
 
   private readonly emittedDependencies = new Set<string>();
 
+  // Mirrors the runner's view: for each module id, the (hash, mergedOnly) of
+  // the most recent LoadResult we shipped with non-empty `code`. Subsequent
+  // loads with a matching hash and a subset `only` skip the code transmission
+  // (and the eval dump) — the runner's hash-match branch returns its cached
+  // SourceTextModule. Cleared whenever the runner is killed/respawned so the
+  // mirror cannot drift from the runner's actual moduleCache.
+  private readonly lastSentLoadByModule = new Map<
+    string,
+    { hash: string; only: string[] }
+  >();
+
   private evalSeq = 0;
 
   private happyDomDisabled = false;
@@ -1440,6 +1451,7 @@ export class EvalBroker {
     }
     this.lastInitKey = null;
     this.lastHappyDomEnabled = false;
+    this.lastSentLoadByModule.clear();
     flushDebugStreams();
   }
 
@@ -1486,6 +1498,7 @@ export class EvalBroker {
       this.runnerReady = null;
       this.lastInitKey = null;
       this.lastHappyDomEnabled = false;
+      this.lastSentLoadByModule.clear();
     });
   }
 
@@ -1638,6 +1651,9 @@ export class EvalBroker {
     );
     this.attachRunnerListeners(nextRunner);
     this.runnerReady = Promise.resolve();
+    // New process ⇒ runner's moduleCache/moduleHashes are empty, so our mirror
+    // of "what we already shipped" is stale.
+    this.lastSentLoadByModule.clear();
   }
 
   private async initRunner(entrypoint: Entrypoint) {
@@ -1653,6 +1669,13 @@ export class EvalBroker {
     if (this.lastInitKey === initKey) {
       return;
     }
+    // We're about to send a fresh INIT. The runner may reset its moduleCache
+    // when its context is rebuilt (globals/happyDOM changes). We can't tell
+    // from here whether it actually will, so conservatively drop our
+    // "what runner already has" mirror — at most one redundant retransmission
+    // per init boundary, vs. the alternative of shipping `code: ''` to a
+    // runner that just cleared its cache (which would crash with empty code).
+    this.lastSentLoadByModule.clear();
     const timeoutMs = this.getInitTimeoutMs(entrypoint, features);
 
     if (
@@ -2534,10 +2557,28 @@ export class EvalBroker {
   private async handleLoad(id: string, payload: LoadRequestPayload) {
     const prepared = await this.loadModule(payload);
 
-    if (debugEvalDir && prepared.code) {
+    // Decide once whether the runner already has this exact prepared variant.
+    // The runner caches by id and short-circuits when the LoadResult hash
+    // matches `moduleHashes.get(id)` (runner.js:1834). So when our prior
+    // shipment under the same hash already covered the requested `only`,
+    // re-shipping the code is pure waste — both over IPC and to the dump dir.
+    const previouslySent = prepared.hash
+      ? this.lastSentLoadByModule.get(payload.id)
+      : undefined;
+    const runnerHasCachedVariant = Boolean(
+      prepared.hash &&
+        previouslySent &&
+        previouslySent.hash === prepared.hash &&
+        isSuperSet(previouslySent.only, prepared.only)
+    );
+    const shouldShipCode = Boolean(
+      prepared.code && !prepared.exports && !runnerHasCachedVariant
+    );
+
+    if (shouldShipCode && debugEvalDir) {
       dumpEvalCode(
         payload.id,
-        prepared.code,
+        prepared.code!,
         prepared.only,
         prepared.hash ? `cache:${prepared.hash}` : 'fresh',
         this.evalSeq
@@ -2553,17 +2594,28 @@ export class EvalBroker {
       hasCode: Boolean(prepared.code),
       hasExports: Boolean(prepared.exports),
       hash: prepared.hash ?? null,
+      shipped: shouldShipCode,
       ts: performance.now(),
     });
 
     await this.sendLoadResult(id, {
       id: payload.id,
-      code: prepared.code,
+      code: shouldShipCode ? prepared.code : '',
       map: null,
       hash: prepared.hash,
       only: prepared.only,
       exports: prepared.exports,
     });
+
+    if (shouldShipCode && prepared.hash) {
+      const merged = previouslySent
+        ? mergeOnly(previouslySent.only, prepared.only)
+        : [...prepared.only];
+      this.lastSentLoadByModule.set(payload.id, {
+        hash: prepared.hash,
+        only: merged,
+      });
+    }
   }
 
   private async loadModule({

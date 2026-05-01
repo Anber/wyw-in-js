@@ -3424,4 +3424,93 @@ describe('EvalBroker', () => {
     broker.dispose();
     rmSync(root, { recursive: true, force: true });
   });
+
+  it('skips re-shipping LoadResult code when runner already has matching hash', async () => {
+    // Multiple importers asking for the same dependency in one runner session
+    // produce identical prepared variants (same hash, same `only`). The first
+    // LOAD must ship code; subsequent LOADs must ship `code: ''` so the
+    // runner's hash-match short-circuit (runner.js:1834) reuses its cached
+    // SourceTextModule instead of re-parsing identical bytes.
+    const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
+    const importerA = join(root, 'a.js');
+    const importerB = join(root, 'b.js');
+    const dep = join(root, 'dep.js');
+
+    const customLoader = jest.fn(async () => ({
+      code: 'export const value = 1;',
+    }));
+    const services = createServices(root, importerA, {
+      eval: { customLoader },
+    });
+
+    const broker = new EvalBroker(
+      services,
+      jest.fn(async () => dep)
+    );
+    const privateBroker = broker as unknown as {
+      handleLoad: (
+        id: string,
+        payload: { id: string; importerId: string | null; request: string | null }
+      ) => Promise<void>;
+      onlyByModule: Map<string, string[]>;
+      runnerInputQueue: unknown;
+      sendMessage: (message: unknown) => Promise<void>;
+    };
+
+    type CapturedLoadResult = {
+      id: string;
+      payload: { code?: string; hash?: string; only?: string[] };
+    };
+    const captured: CapturedLoadResult[] = [];
+    privateBroker.runnerInputQueue = {
+      write: () => Promise.resolve(),
+    };
+    privateBroker.sendMessage = async (message: unknown) => {
+      const m = message as { type: string } & CapturedLoadResult;
+      if (m.type === 'LOAD_RESULT') {
+        captured.push({ id: m.id, payload: m.payload });
+      }
+    };
+
+    privateBroker.onlyByModule.set(dep, ['*']);
+
+    await privateBroker.handleLoad('msg-1', {
+      id: dep,
+      importerId: importerA,
+      request: null,
+    });
+    await privateBroker.handleLoad('msg-2', {
+      id: dep,
+      importerId: importerB,
+      request: null,
+    });
+
+    expect(captured).toHaveLength(2);
+    const [first, second] = captured;
+    expect(first.payload.code).toBe('export const value = 1;');
+    expect(first.payload.hash).toBeTruthy();
+    expect(second.payload.code).toBe('');
+    expect(second.payload.hash).toBe(first.payload.hash);
+
+    // Third LOAD with a wider `only` (forces a new prepared variant via the
+    // loadCache miss path) must ship code again.
+    const widerLoader = jest.fn(async () => ({
+      code: 'export const value = 1;\nexport const extra = 2;',
+    }));
+    services.options.pluginOptions.eval = { customLoader: widerLoader };
+    privateBroker.onlyByModule.set(dep, ['*', 'extra']);
+
+    await privateBroker.handleLoad('msg-3', {
+      id: dep,
+      importerId: importerA,
+      request: null,
+    });
+
+    expect(captured).toHaveLength(3);
+    expect(captured[2].payload.code).toContain('extra');
+    expect(captured[2].payload.hash).not.toBe(first.payload.hash);
+
+    broker.dispose();
+    rmSync(root, { recursive: true, force: true });
+  });
 });
