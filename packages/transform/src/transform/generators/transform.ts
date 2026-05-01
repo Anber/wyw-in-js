@@ -41,6 +41,12 @@ const collectImportsFromOxc = (
   return imports;
 };
 
+const hasWywPrevalExport = (code: string, filename: string): boolean =>
+  Object.hasOwn(
+    collectOxcExportsAndImports(code, filename).exports,
+    '__wywPreval'
+  );
+
 type PrepareCodeFn = (
   services: Services,
   item: Entrypoint,
@@ -149,6 +155,7 @@ const prepareOxcCodeImpl = (
   if (
     isPrevalOnly(only) &&
     !transformMetadata &&
+    !hasWywPrevalExport(preevalCode, filename) &&
     options.shortCircuitOnMissingMetadata !== false
   ) {
     log('[evaluator:end] no metadata');
