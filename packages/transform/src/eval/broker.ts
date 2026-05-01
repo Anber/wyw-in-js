@@ -2771,11 +2771,11 @@ export class EvalBroker {
         }
       }
 
-      const prepared = prepareModuleOnDemand(
-        this.services,
-        id,
-        cached ? mergeOnly(cached.only, requiredOnly) : requiredOnly
-      );
+      const prepareOnly =
+        requiredOnly.includes('__wywPreval') || !cached
+          ? requiredOnly
+          : mergeOnly(cached.only, requiredOnly);
+      const prepared = prepareModuleOnDemand(this.services, id, prepareOnly);
 
       this.ensureImportsMapping(id, prepared.imports);
 
