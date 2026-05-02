@@ -88,14 +88,21 @@ type StaticMetadataPreevalCacheEntry =
       result: ReturnType<typeof runOxcPreevalStage>;
     };
 
+// Null entries carry an attempt counter so we can retry a bounded number of
+// times before accepting the failure as stable. This avoids both:
+// (a) poisoning the cache forever from a transient resolver failure
+// (b) thundering-herd retries where every consumer re-walks a stable miss
 type StaticExportCacheEntry =
   | {
+      attempts: number;
       result: null;
     }
   | {
       dependencyHashes: Map<string, string>;
       result: StaticExportResult;
     };
+
+const STATIC_EXPORT_MAX_NULL_ATTEMPTS = 2;
 
 type StaticImportValueFeatures = {
   staticImportValues?: FeatureFlag;
@@ -382,6 +389,12 @@ const getStaticExportCachedResult = (
   }
 
   if (cached.result === null) {
+    // Bounded retry: until the attempt counter has been bumped enough times
+    // that we accept the null as stable, treat it as a cache miss so the
+    // caller re-walks. The counter is updated in setStaticExportCachedResult.
+    if (cached.attempts < STATIC_EXPORT_MAX_NULL_ATTEMPTS) {
+      return undefined;
+    }
     return null;
   }
 
@@ -404,6 +417,7 @@ const setStaticExportCachedResult = (
     return;
   }
 
+  const cache = staticExportResultCache(action);
   const cacheKey = staticExportCacheKey(
     action,
     filename,
@@ -411,7 +425,10 @@ const setStaticExportCachedResult = (
     codeHash
   );
   if (!result) {
-    staticExportResultCache(action).set(cacheKey, { result: null });
+    const existing = cache.get(cacheKey);
+    const attempts =
+      existing && existing.result === null ? existing.attempts + 1 : 1;
+    cache.set(cacheKey, { attempts, result: null });
     return;
   }
 
@@ -423,7 +440,7 @@ const setStaticExportCachedResult = (
     return;
   }
 
-  staticExportResultCache(action).set(cacheKey, {
+  cache.set(cacheKey, {
     dependencyHashes,
     result,
   });
