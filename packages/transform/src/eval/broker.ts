@@ -665,7 +665,7 @@ const buildRunnerInitPayload = (
 
   return {
     evalOptions: {
-      globals: encodeGlobals(sanitizedGlobals) as Record<string, unknown>,
+      globals: encodeGlobalsCached(sanitizedGlobals),
       importOverrides,
       mode: evalOptions.mode ?? 'strict',
       require: evalOptions.require ?? 'warn-and-run',
@@ -1152,6 +1152,38 @@ const getInitPayloadKey = (payload: EvalRunnerInitPayload): string =>
     .update(JSON.stringify(canonicalizeForHash(payload)))
     .digest('hex');
 
+// Hash everything in the init payload that affects whether the runner needs
+// a fresh INIT — i.e. everything except `entrypoint` (which only affects
+// __filename/__dirname rebinding, not context reuse). The broker memoizes
+// this per-services so we replace per-evaluate SHA-256 of the full payload
+// with one SHA-256 of the stable bits + a cheap string concat per
+// entrypoint.
+const getStableInitPayloadHash = (
+  payload: EvalRunnerInitPayload
+): string => {
+  const { entrypoint: _entrypoint, ...stable } = payload;
+  return createHash('sha256')
+    .update(JSON.stringify(canonicalizeForHash(stable)))
+    .digest('hex');
+};
+
+// Memoize encodeGlobals on input reference. The user's globals object is
+// stable across a build, so we can encode it once instead of per evaluate.
+// If the input ref changes, fall through to a fresh encode (and reset the
+// cache).
+const encodeGlobalsMemo = new WeakMap<object, Record<string, unknown>>();
+const encodeGlobalsCached = (input: unknown): Record<string, unknown> => {
+  if (input !== null && typeof input === 'object') {
+    const obj = input as object;
+    const cached = encodeGlobalsMemo.get(obj);
+    if (cached) return cached;
+    const encoded = encodeGlobals(input) as Record<string, unknown>;
+    encodeGlobalsMemo.set(obj, encoded);
+    return encoded;
+  }
+  return encodeGlobals(input) as Record<string, unknown>;
+};
+
 const formatLoaderResult = (code: string, loader?: string | null) => {
   if (loader === 'json') {
     return `export default ${JSON.stringify(JSON.parse(code))};`;
@@ -1233,6 +1265,19 @@ export class EvalBroker {
   private pendingEvals: PendingEval[] = [];
 
   private evalFlushScheduled = false;
+
+  // Cached stable init payload hash. Keyed on the refs that feed the stable
+  // bits (pluginOptions.eval and pluginOptions itself). Any reference change
+  // invalidates the cache. The full per-entrypoint init key is
+  // `${stableHash}::${entrypoint.name}` — cheap string concat instead of
+  // re-canonicalizing+stringifying+SHA-256ing the whole payload per call.
+  private stableInitHashCache: {
+    pluginOptionsRef: unknown;
+    evalOptionsRef: unknown;
+    featuresRef: FeatureFlags<'happyDOM'>;
+    rootRef: string | undefined;
+    hash: string;
+  } | null = null;
 
   private evalSeq = 0;
 
@@ -1511,6 +1556,7 @@ export class EvalBroker {
     this.lastInitKey = null;
     this.lastHappyDomEnabled = false;
     this.lastSentLoadByModule.clear();
+    this.stableInitHashCache = null;
     flushDebugStreams();
   }
 
@@ -1715,19 +1761,57 @@ export class EvalBroker {
     this.lastSentLoadByModule.clear();
   }
 
+  private getStableInitHash(
+    services: Services,
+    features: FeatureFlags<'happyDOM'>
+  ): string {
+    const pluginOptionsRef = services.options.pluginOptions;
+    const evalOptionsRef = pluginOptionsRef.eval;
+    const rootRef = services.options.root;
+    if (
+      this.stableInitHashCache !== null &&
+      this.stableInitHashCache.pluginOptionsRef === pluginOptionsRef &&
+      this.stableInitHashCache.evalOptionsRef === evalOptionsRef &&
+      this.stableInitHashCache.featuresRef === features &&
+      this.stableInitHashCache.rootRef === rootRef
+    ) {
+      return this.stableInitHashCache.hash;
+    }
+    // Build a sample payload (entrypoint name doesn't affect stable hash; we
+    // pass any name and strip it inside getStableInitPayloadHash).
+    // encodeGlobals is memoized so this is the only place it actually runs
+    // per config change.
+    const samplePayload = buildRunnerInitPayload(
+      services,
+      { name: '\0stable-init-sample\0' } as Entrypoint,
+      features
+    );
+    samplePayload.reuseModules = true;
+    const hash = getStableInitPayloadHash(samplePayload);
+    this.stableInitHashCache = {
+      pluginOptionsRef,
+      evalOptionsRef,
+      featuresRef: features,
+      rootRef,
+      hash,
+    };
+    return hash;
+  }
+
   private async initRunner(entrypoint: Entrypoint) {
     const features = this.getRunnerFeatures();
-    const payload = buildRunnerInitPayload(this.services, entrypoint, features);
-    payload.reuseModules = true;
-    const initKey = getInitPayloadKey(payload);
+    const stableHash = this.getStableInitHash(this.currentServices, features);
+    const initKey = `${stableHash}::${entrypoint.name}`;
+    if (this.lastInitKey === initKey) {
+      return;
+    }
     const nextHappyDomEnabled = isFeatureEnabled(
       features,
       'happyDOM',
       entrypoint.name
     );
-    if (this.lastInitKey === initKey) {
-      return;
-    }
+    const payload = buildRunnerInitPayload(this.services, entrypoint, features);
+    payload.reuseModules = true;
     const timeoutMs = this.getInitTimeoutMs(entrypoint, features);
 
     if (
@@ -1755,7 +1839,7 @@ export class EvalBroker {
           );
           fallbackPayload.reuseModules = true;
           await this.request('INIT', fallbackPayload, INIT_TIMEOUT_MS);
-          this.lastInitKey = getInitPayloadKey(fallbackPayload);
+          this.lastInitKey = `${this.getStableInitHash(this.currentServices, fallbackFeatures)}::${entrypoint.name}`;
           this.lastHappyDomEnabled = false;
           return;
         }
