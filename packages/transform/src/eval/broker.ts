@@ -445,6 +445,18 @@ type PendingRequest = {
   timeout: ReturnType<typeof setTimeout>;
 };
 
+type EvaluateResult = {
+  values: Map<string, unknown> | null;
+  dependencies: string[];
+};
+
+type PendingEval = {
+  entrypoint: Entrypoint;
+  services: Services | undefined;
+  resolve: (value: EvaluateResult) => void;
+  reject: (reason?: unknown) => void;
+};
+
 // Mirrors runner.js `isFullModuleLoad`: wildcard `['*']` (or empty) is the
 // only shape stored in the runner's moduleCache; everything else lands in
 // moduleVariants. The shipped-code dedup must respect this shape because the
@@ -1213,6 +1225,15 @@ export class EvalBroker {
     { hash: string; only: string[] }
   >();
 
+  // Batch queue: concurrent evaluate() callers (e.g. parallel webpack-loader
+  // transform() invocations) pile up here within one event-loop turn, then a
+  // microtask flushes them as a single sequential runner pass. Each call
+  // still gets its own resolved Promise; this only collapses the per-call
+  // evalQueue chain + state-clear churn.
+  private pendingEvals: PendingEval[] = [];
+
+  private evalFlushScheduled = false;
+
   private evalSeq = 0;
 
   private happyDomDisabled = false;
@@ -1326,81 +1347,112 @@ export class EvalBroker {
   public async evaluate(
     entrypoint: Entrypoint,
     services?: Services
-  ): Promise<{
-    values: Map<string, unknown> | null;
-    dependencies: string[];
-  }> {
+  ): Promise<EvaluateResult> {
+    return new Promise<EvaluateResult>((resolve, reject) => {
+      this.pendingEvals.push({ entrypoint, services, resolve, reject });
+      this.scheduleEvalFlush();
+    });
+  }
+
+  private scheduleEvalFlush() {
+    if (this.evalFlushScheduled) return;
+    this.evalFlushScheduled = true;
+    queueMicrotask(() => {
+      this.evalFlushScheduled = false;
+      if (this.pendingEvals.length === 0) return;
+      const batch = this.pendingEvals;
+      this.pendingEvals = [];
+      this.evalQueue = this.evalQueue.then(() => this.runEvalBatch(batch));
+    });
+  }
+
+  private async runEvalBatch(batch: PendingEval[]): Promise<void> {
+    try {
+      await this.ensureRunner();
+    } catch (error) {
+      for (const member of batch) member.reject(error);
+      return;
+    }
+    for (const member of batch) {
+      try {
+        const result = await this.runOneEntrypoint(
+          member.entrypoint,
+          member.services
+        );
+        member.resolve(result);
+      } catch (error) {
+        member.reject(error);
+      }
+    }
+  }
+
+  private async runOneEntrypoint(
+    entrypoint: Entrypoint,
+    services: Services | undefined
+  ): Promise<EvaluateResult> {
     const activeServices = services ?? this.currentServices;
     const resolveRootId = getEntrypointResolveRoot(entrypoint);
-    const task = this.evalQueue
-      .then(async () => {
-        this.currentServices = activeServices;
-        this.activeResolveRootId = resolveRootId;
-        this.runtimeDependenciesByModule.clear();
-        this.emittedDependencies.clear();
-        this.importsByModule.clear();
-        this.onlyByModule.clear();
-        this.resolveCache.clear();
-        this.resolveInFlight.clear();
-        this.onlyByModule.set(entrypoint.name, ['__wywPreval']);
-        this.evalSeq += 1;
+    this.currentServices = activeServices;
+    this.activeResolveRootId = resolveRootId;
+    this.resetPerEntrypointState(entrypoint);
+    this.evalSeq += 1;
 
-        debugAction({
-          type: 'eval:start',
-          evalSeq: this.evalSeq,
-          entrypoint: entrypoint.name,
-          ts: performance.now(),
-        });
+    debugAction({
+      type: 'eval:start',
+      evalSeq: this.evalSeq,
+      entrypoint: entrypoint.name,
+      ts: performance.now(),
+    });
 
-        await this.ensureRunner();
-        await this.initRunner(entrypoint);
+    try {
+      await this.initRunner(entrypoint);
 
-        const payload = await this.request<EvalResultPayload>(
-          'EVAL',
-          {
-            id: entrypoint.name,
-          },
-          EVAL_TIMEOUT_MS
-        );
+      const payload = await this.request<EvalResultPayload>(
+        'EVAL',
+        { id: entrypoint.name },
+        EVAL_TIMEOUT_MS
+      );
 
-        debugAction({
-          type: 'eval:finish',
-          evalSeq: this.evalSeq,
-          entrypoint: entrypoint.name,
-          hasValues: Boolean(payload.values),
-          ts: performance.now(),
-        });
-
-        if (payload.modules) {
-          this.applyModuleExports(payload.modules);
-        }
-
-        if (!payload.values) {
-          return { values: null, dependencies: [] };
-        }
-
-        const values = new Map<string, unknown>();
-        Object.entries(payload.values).forEach(([key, serialized]) => {
-          values.set(key, deserializeValue(serialized));
-        });
-
-        return {
-          values,
-          dependencies: this.collectEntrypointDependencies(entrypoint.name),
-        };
-      })
-      .finally(() => {
-        if (this.activeResolveRootId === resolveRootId) {
-          this.activeResolveRootId = null;
-        }
+      debugAction({
+        type: 'eval:finish',
+        evalSeq: this.evalSeq,
+        entrypoint: entrypoint.name,
+        hasValues: Boolean(payload.values),
+        ts: performance.now(),
       });
 
-    this.evalQueue = task.then(
-      () => {},
-      () => {}
-    );
+      if (payload.modules) {
+        this.applyModuleExports(payload.modules);
+      }
 
-    return task;
+      if (!payload.values) {
+        return { values: null, dependencies: [] };
+      }
+
+      const values = new Map<string, unknown>();
+      Object.entries(payload.values).forEach(([key, serialized]) => {
+        values.set(key, deserializeValue(serialized));
+      });
+
+      return {
+        values,
+        dependencies: this.collectEntrypointDependencies(entrypoint.name),
+      };
+    } finally {
+      if (this.activeResolveRootId === resolveRootId) {
+        this.activeResolveRootId = null;
+      }
+    }
+  }
+
+  private resetPerEntrypointState(entrypoint: Entrypoint) {
+    this.runtimeDependenciesByModule.clear();
+    this.emittedDependencies.clear();
+    this.importsByModule.clear();
+    this.onlyByModule.clear();
+    this.resolveCache.clear();
+    this.resolveInFlight.clear();
+    this.onlyByModule.set(entrypoint.name, ['__wywPreval']);
   }
 
   private applyModuleExports(
