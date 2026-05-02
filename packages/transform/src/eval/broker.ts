@@ -2690,9 +2690,6 @@ export class EvalBroker {
         }
       }
     }
-
-    const isSelfLoad = !importerId || importerId === id;
-
     const cachedEntrypoint = this.services.cache.get('entrypoints', id) as
       | {
           evaluated?: boolean;
@@ -2737,17 +2734,15 @@ export class EvalBroker {
         }
       }
     }
-    // Only skip the prepared-load cache for self-loads (the eval entrypoint),
-    // which must always be freshly prepared because __wywPreval evaluation has
-    // side effects. Dependencies propagate __wywPreval in their `only` chain
-    // but don't need fresh preparation — their code is deterministic.
-    const canReusePreparedLoad =
-      !isSelfLoad || !requiredOnly.includes('__wywPreval');
-    if (
-      canReusePreparedLoad &&
-      cached &&
-      isPreparedCacheHit(cached, requiredOnly)
-    ) {
+    // prepareModuleOnDemand is deterministic given (id, requiredOnly): the
+    // shaker output depends only on source bytes (invalidated via
+    // consumeInvalidation when the file changes) and the requested `only`.
+    // Side effects from __wywPreval happen at runtime in the runner, not at
+    // preparation time — so caching prepared bytes is safe even for self-loads
+    // with __wywPreval. This lets incremental rebuilds reuse the prepared
+    // entrypoint when its source is unchanged; my IPC dedup mirror then
+    // suppresses re-shipping to the runner.
+    if (cached && isPreparedCacheHit(cached, requiredOnly)) {
       this.ensureImportsMapping(id, cached.imports);
       return cached;
     }
@@ -2755,7 +2750,7 @@ export class EvalBroker {
     const inflight = this.loadInFlight.get(id);
     if (inflight) {
       const result = await inflight;
-      if (canReusePreparedLoad && isPreparedCacheHit(result, requiredOnly)) {
+      if (isPreparedCacheHit(result, requiredOnly)) {
         this.ensureImportsMapping(id, result.imports);
         return result;
       }
