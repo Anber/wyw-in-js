@@ -391,6 +391,158 @@ describe('design-system chain repro for staticImportValues', () => {
     }
   });
 
+  it('inlines inline ObjectExpression candidates (style={{...}}) with binary/unary/spread', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-ds-repro-'));
+    const dsDir = join(root, 'design-system');
+    const cache = new TransformCacheCollection();
+    const perf = createPerfEventRecorder();
+    const entryFile = join(root, 'entry.tsx');
+
+    require('fs').mkdirSync(dsDir, { recursive: true });
+    writeBarrelChain(root);
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { css } from 'test-css-processor';
+        import { space, textStyles } from './design-system';
+
+        export const className = css\`
+          ${'${{ height: space.s12 + 1, width: space.s12 - 2, margin: -space.s6, padding: (24 - space.s12) / 2 }}'};
+          ${'${{ ...textStyles.heading6, padding: space.s12 }}'};
+        \`;
+      `
+    );
+
+    try {
+      const result = await runTransform(
+        root,
+        entryFile,
+        cache,
+        perf.eventEmitter
+      );
+
+      const rejections = collectStaticResolveEvents(perf.events).filter(
+        (event) => event.status === 'rejected'
+      );
+      expect({ cssText: result.cssText, rejections }).toEqual(
+        expect.objectContaining({ rejections: [] })
+      );
+      expect(result.cssText).toContain('height:13'); // space.s12 + 1
+      expect(result.cssText).toContain('width:10'); // space.s12 - 2
+      expect(result.cssText).toContain('margin:-6'); // -space.s6
+      expect(result.cssText).toContain('padding:6'); // (24 - 12) / 2
+      expect(result.cssText).toContain('font-size:12'); // ...textStyles.heading6
+      expect(result.code).not.toContain('./design-system');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('inlines process.env.X || fallback by treating process.env.X as undefined', async () => {
+    // Ensure the test env var is unrelated to whatever the build machine has.
+    // The contract is that process.env.X is always undefined at build time —
+    // setting it should not affect the inlined value.
+    process.env.WYW_TEST_PREFIX = 'should-be-ignored';
+
+    const root = mkdtempSync(join(tmpdir(), 'wyw-ds-repro-'));
+    const cache = new TransformCacheCollection();
+    const perf = createPerfEventRecorder();
+    const entryFile = join(root, 'entry.tsx');
+    const tokensFile = join(root, 'tokens.ts');
+
+    writeFileSync(
+      tokensFile,
+      `export const varPrefix = process.env.WYW_TEST_PREFIX || 'fibery';\n`
+    );
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { css } from 'test-css-processor';
+        import { varPrefix } from './tokens';
+
+        export const className = css\`
+          --prefix: ${'${varPrefix}'};
+        \`;
+      `
+    );
+
+    try {
+      const result = await runTransform(
+        root,
+        entryFile,
+        cache,
+        perf.eventEmitter
+      );
+
+      const rejections = collectStaticResolveEvents(perf.events).filter(
+        (event) => event.status === 'rejected'
+      );
+      expect({ cssText: result.cssText, rejections }).toEqual(
+        expect.objectContaining({ rejections: [] })
+      );
+      expect(result.cssText).toContain('--prefix:fibery');
+      expect(result.cssText).not.toContain('should-be-ignored');
+      expect(result.code).not.toContain('./tokens');
+    } finally {
+      delete process.env.WYW_TEST_PREFIX;
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('inlines an exported ObjectExpression with template literal values', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-ds-repro-'));
+    const cache = new TransformCacheCollection();
+    const perf = createPerfEventRecorder();
+    const entryFile = join(root, 'entry.tsx');
+    const tokensFile = join(root, 'tokens.ts');
+
+    writeFileSync(
+      tokensFile,
+      dedent`
+        export const themeVars = {
+          surface: 'var(--surface)',
+          border: 'var(--border)',
+        };
+
+        export const shadows = {
+          card: \`0 0 0 1px ${'${themeVars.border}'}\`,
+          panel: \`0 4px 16px ${'${themeVars.surface}'}\`,
+        } as const;
+      `
+    );
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { css } from 'test-css-processor';
+        import { shadows } from './tokens';
+
+        export const className = css\`
+          box-shadow: ${'${shadows.card}'};
+        \`;
+      `
+    );
+
+    try {
+      const result = await runTransform(
+        root,
+        entryFile,
+        cache,
+        perf.eventEmitter
+      );
+
+      const rejections = collectStaticResolveEvents(perf.events).filter(
+        (event) => event.status === 'rejected'
+      );
+      expect({ cssText: result.cssText, rejections }).toEqual(
+        expect.objectContaining({ rejections: [] })
+      );
+      expect(result.cssText).toContain('box-shadow:0 0 0 1px var(--border)');
+      expect(result.code).not.toContain('./tokens');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('inlines logical / conditional / unary expressions', async () => {
     const root = mkdtempSync(join(tmpdir(), 'wyw-ds-repro-'));
     const cache = new TransformCacheCollection();
