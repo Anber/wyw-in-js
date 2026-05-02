@@ -1442,12 +1442,14 @@ export class EvalBroker {
     this.resetPerEntrypointState(entrypoint);
     this.evalSeq += 1;
 
-    debugAction({
-      type: 'eval:start',
-      evalSeq: this.evalSeq,
-      entrypoint: entrypoint.name,
-      ts: performance.now(),
-    });
+    if (debugEvalDir) {
+      debugAction({
+        type: 'eval:start',
+        evalSeq: this.evalSeq,
+        entrypoint: entrypoint.name,
+        ts: performance.now(),
+      });
+    }
 
     try {
       await this.initRunner(entrypoint);
@@ -1458,13 +1460,15 @@ export class EvalBroker {
         EVAL_TIMEOUT_MS
       );
 
-      debugAction({
-        type: 'eval:finish',
-        evalSeq: this.evalSeq,
-        entrypoint: entrypoint.name,
-        hasValues: Boolean(payload.values),
-        ts: performance.now(),
-      });
+      if (debugEvalDir) {
+        debugAction({
+          type: 'eval:finish',
+          evalSeq: this.evalSeq,
+          entrypoint: entrypoint.name,
+          hasValues: Boolean(payload.values),
+          ts: performance.now(),
+        });
+      }
 
       if (payload.modules) {
         this.applyModuleExports(payload.modules);
@@ -2022,16 +2026,18 @@ export class EvalBroker {
   private async handleResolve(id: string, payload: ResolveRequestPayload) {
     const result = await this.resolveImport(payload);
 
-    debugAction({
-      type: 'resolve',
-      evalSeq: this.evalSeq,
-      specifier: payload.specifier,
-      importer: payload.importerId,
-      kind: payload.kind,
-      resolvedId: result.resolvedId ?? null,
-      external: result.external ?? false,
-      ts: performance.now(),
-    });
+    if (debugEvalDir) {
+      debugAction({
+        type: 'resolve',
+        evalSeq: this.evalSeq,
+        specifier: payload.specifier,
+        importer: payload.importerId,
+        kind: payload.kind,
+        resolvedId: result.resolvedId ?? null,
+        external: result.external ?? false,
+        ts: performance.now(),
+      });
+    }
 
     await this.sendMessage({
       type: 'RESOLVE_RESULT',
@@ -2728,28 +2734,30 @@ export class EvalBroker {
       prepared.code && !prepared.exports && !runnerHasCachedVariant
     );
 
-    if (shouldShipCode && debugEvalDir) {
-      dumpEvalCode(
-        payload.id,
-        prepared.code!,
-        prepared.only,
-        prepared.hash ? `cache:${prepared.hash}` : 'fresh',
-        this.evalSeq
-      );
-    }
+    if (debugEvalDir) {
+      if (shouldShipCode) {
+        dumpEvalCode(
+          payload.id,
+          prepared.code!,
+          prepared.only,
+          prepared.hash ? `cache:${prepared.hash}` : 'fresh',
+          this.evalSeq
+        );
+      }
 
-    debugAction({
-      type: 'load',
-      evalSeq: this.evalSeq,
-      id: payload.id,
-      importer: payload.importerId ?? null,
-      only: prepared.only,
-      hasCode: Boolean(prepared.code),
-      hasExports: Boolean(prepared.exports),
-      hash: prepared.hash ?? null,
-      shipped: shouldShipCode,
-      ts: performance.now(),
-    });
+      debugAction({
+        type: 'load',
+        evalSeq: this.evalSeq,
+        id: payload.id,
+        importer: payload.importerId ?? null,
+        only: prepared.only,
+        hasCode: Boolean(prepared.code),
+        hasExports: Boolean(prepared.exports),
+        hash: prepared.hash ?? null,
+        shipped: shouldShipCode,
+        ts: performance.now(),
+      });
+    }
 
     await this.sendLoadResult(id, {
       id: payload.id,

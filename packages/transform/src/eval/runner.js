@@ -988,7 +988,14 @@ const resetModuleState = () => {
   externalInFlight.clear();
   resolveInFlight.clear();
   resolveCache.clear();
+  sentNamespaceIdentifiers.clear();
 };
+
+// Tracks the SourceTextModule identifier (versioned with hash) that was last
+// included in an EVAL_RESULT for each id. Reused module variants don't need
+// re-serialization across eval sessions — same variant = same namespace =
+// same exports the broker already has cached.
+const sentNamespaceIdentifiers = new Map();
 
 const resetSingleModuleState = (id, cachedModule = moduleCache.get(id)) => {
   if (cachedModule) {
@@ -1992,6 +1999,16 @@ const collectModuleExports = () => {
     const data = moduleData.get(id);
     if (!module || !data) return;
 
+    // The broker already has the serialized exports for this exact variant
+    // from a prior eval session. Re-serializing here just wastes CPU on the
+    // runner side and bloats the EVAL_RESULT payload. Same variant identifier
+    // ⇒ same namespace ⇒ no change to send.
+    const moduleIdentifier =
+      typeof module.identifier === 'string' ? module.identifier : id;
+    if (sentNamespaceIdentifiers.get(id) === moduleIdentifier) {
+      return;
+    }
+
     // .namespace is only safe on fully evaluated modules. Modules that
     // errored or were never evaluated (stale from a prior failed session
     // with reuseModules) have TDZ bindings that crash Object.keys().
@@ -2038,6 +2055,7 @@ const collectModuleExports = () => {
 
     if (Object.keys(serialized).length) {
       exportsByModule[id] = serialized;
+      sentNamespaceIdentifiers.set(id, moduleIdentifier);
     }
   });
 
