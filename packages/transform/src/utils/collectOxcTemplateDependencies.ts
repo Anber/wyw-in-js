@@ -1322,14 +1322,16 @@ const collectStaticNamespaceMemberReferences = (
 
 const evaluateBinary = (
   expression: Expression,
-  ctx: ExtractionContext
+  ctx: ExtractionContext,
+  env: EvalEnv = new Map(),
+  stack: string[] = []
 ): unknown | undefined => {
   if (expression.type !== 'BinaryExpression') {
     return undefined;
   }
 
-  const left = evaluateStatic(expression.left as Expression, ctx);
-  const right = evaluateStatic(expression.right as Expression, ctx);
+  const left = evaluateStatic(expression.left as Expression, ctx, env, stack);
+  const right = evaluateStatic(expression.right as Expression, ctx, env, stack);
   if (left === undefined || right === undefined) {
     return undefined;
   }
@@ -1673,7 +1675,7 @@ const evaluateStatic = (
     }
   }
 
-  return evaluateBinary(expression, ctx);
+  return evaluateBinary(expression, ctx, env, stack);
 };
 
 const allocateExpressionName = (ctx: ExtractionContext): string => {
