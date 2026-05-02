@@ -340,4 +340,113 @@ describe('design-system chain repro for staticImportValues', () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it('inlines binary numeric expressions (-, *, /, %, **) over imported tokens', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-ds-repro-'));
+    const dsDir = join(root, 'design-system');
+    const cache = new TransformCacheCollection();
+    const perf = createPerfEventRecorder();
+    const entryFile = join(root, 'entry.tsx');
+
+    require('fs').mkdirSync(dsDir, { recursive: true });
+    writeBarrelChain(root);
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { css } from 'test-css-processor';
+        import { space } from './design-system';
+
+        export const className = css\`
+          padding-top: ${'${space.s12 - space.s6}'}px;
+          padding-right: ${'${space.s12 / 2}'}px;
+          padding-bottom: ${'${space.s12 % 5}'}px;
+          padding-left: ${'${space.s12 * 2}'}px;
+          margin-top: ${'${space.s6 ** 2}'}px;
+        \`;
+      `
+    );
+
+    try {
+      const result = await runTransform(
+        root,
+        entryFile,
+        cache,
+        perf.eventEmitter
+      );
+
+      const rejections = collectStaticResolveEvents(perf.events).filter(
+        (event) => event.status === 'rejected'
+      );
+      expect({ cssText: result.cssText, rejections }).toEqual(
+        expect.objectContaining({ rejections: [] })
+      );
+      expect(result.cssText).toContain('padding-top:6px');
+      expect(result.cssText).toContain('padding-right:6px');
+      expect(result.cssText).toContain('padding-bottom:2px');
+      expect(result.cssText).toContain('padding-left:24px');
+      expect(result.cssText).toContain('margin-top:36px');
+      expect(result.code).not.toContain('./design-system');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('inlines logical / conditional / unary expressions', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-ds-repro-'));
+    const cache = new TransformCacheCollection();
+    const perf = createPerfEventRecorder();
+    const entryFile = join(root, 'entry.tsx');
+    const tokensFile = join(root, 'tokens.ts');
+
+    writeFileSync(
+      tokensFile,
+      dedent`
+        export const empty = null;
+        export const fallback = 'fallback';
+        export const flag = true;
+        export const yes = 'yes';
+        export const no = 'no';
+        export const offset = 12;
+      `
+    );
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { css } from 'test-css-processor';
+        import { empty, fallback, flag, yes, no, offset } from './tokens';
+
+        export const className = css\`
+          --logical: ${'${empty || fallback}'};
+          --nullish: ${'${empty ?? fallback}'};
+          --conditional: ${'${flag ? yes : no}'};
+          --neg: ${'${-offset}'}px;
+          --pos: ${'${+offset}'}px;
+        \`;
+      `
+    );
+
+    try {
+      const result = await runTransform(
+        root,
+        entryFile,
+        cache,
+        perf.eventEmitter
+      );
+
+      const rejections = collectStaticResolveEvents(perf.events).filter(
+        (event) => event.status === 'rejected'
+      );
+      expect({ cssText: result.cssText, rejections }).toEqual(
+        expect.objectContaining({ rejections: [] })
+      );
+      expect(result.cssText).toContain('--logical:fallback');
+      expect(result.cssText).toContain('--nullish:fallback');
+      expect(result.cssText).toContain('--conditional:yes');
+      expect(result.cssText).toContain('--neg:-12px');
+      expect(result.cssText).toContain('--pos:12px');
+      expect(result.code).not.toContain('./tokens');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });

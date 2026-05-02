@@ -839,10 +839,13 @@ const isBindingDeclaredWithin = (binding: Binding, container: Node): boolean =>
   container.start <= binding.declaredAt && binding.declaredAt < container.end;
 
 const literalCode = (value: unknown): string | null => {
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? JSON.stringify(value) : null;
+  }
+
   if (
     value === null ||
     typeof value === 'string' ||
-    typeof value === 'number' ||
     typeof value === 'boolean'
   ) {
     return JSON.stringify(value);
@@ -1349,12 +1352,21 @@ const evaluateBinary = (
     }
   }
 
-  if (
-    expression.operator === '*' &&
-    typeof left === 'number' &&
-    typeof right === 'number'
-  ) {
-    return left * right;
+  if (typeof left === 'number' && typeof right === 'number') {
+    switch (expression.operator) {
+      case '-':
+        return left - right;
+      case '*':
+        return left * right;
+      case '/':
+        return left / right;
+      case '%':
+        return left % right;
+      case '**':
+        return left ** right;
+      default:
+        break;
+    }
   }
 
   return undefined;
@@ -1379,6 +1391,78 @@ const evaluateStatic = (
 
   if (expression.type === 'Literal') {
     return expression.value;
+  }
+
+  if (expression.type === 'UnaryExpression') {
+    if (expression.operator === 'typeof') {
+      const arg = evaluateStatic(
+        expression.argument as Expression,
+        ctx,
+        env,
+        stack
+      );
+      return typeof arg;
+    }
+
+    const arg = evaluateStatic(
+      expression.argument as Expression,
+      ctx,
+      env,
+      stack
+    );
+    if (arg === undefined) {
+      return undefined;
+    }
+
+    switch (expression.operator) {
+      case '-':
+        return typeof arg === 'number' ? -arg : undefined;
+      case '+':
+        return typeof arg === 'number' ? +arg : undefined;
+      case '!':
+        return !arg;
+      case '~':
+        return typeof arg === 'number' ? ~arg : undefined;
+      case 'void':
+        return undefined;
+      default:
+        return undefined;
+    }
+  }
+
+  if (expression.type === 'LogicalExpression') {
+    const left = evaluateStatic(expression.left, ctx, env, stack);
+    if (left === undefined) {
+      return undefined;
+    }
+
+    if (expression.operator === '||') {
+      return left || evaluateStatic(expression.right, ctx, env, stack);
+    }
+
+    if (expression.operator === '??') {
+      return left ?? evaluateStatic(expression.right, ctx, env, stack);
+    }
+
+    if (expression.operator === '&&') {
+      return left && evaluateStatic(expression.right, ctx, env, stack);
+    }
+
+    return undefined;
+  }
+
+  if (expression.type === 'ConditionalExpression') {
+    const test = evaluateStatic(expression.test, ctx, env, stack);
+    if (test === undefined) {
+      return undefined;
+    }
+
+    return evaluateStatic(
+      test ? expression.consequent : expression.alternate,
+      ctx,
+      env,
+      stack
+    );
   }
 
   if (expression.type === 'TemplateLiteral') {
