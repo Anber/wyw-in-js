@@ -543,6 +543,114 @@ describe('design-system chain repro for staticImportValues', () => {
     }
   });
 
+  it('does not poison staticExportCache across transforms when the resolver fails once', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-ds-repro-'));
+    const dsDir = join(root, 'design-system');
+    const cache = new TransformCacheCollection();
+    const perf = createPerfEventRecorder();
+    const firstEntry = join(root, 'first.tsx');
+    const secondEntry = join(root, 'second.tsx');
+
+    require('fs').mkdirSync(dsDir, { recursive: true });
+    writeBarrelChain(root);
+    writeFileSync(
+      firstEntry,
+      dedent`
+        import { css } from 'test-css-processor';
+        import { themeVars } from './design-system';
+
+        export const a = css\` color: ${'${themeVars.accentTextColor}'}; \`;
+      `
+    );
+    writeFileSync(
+      secondEntry,
+      dedent`
+        import { css } from 'test-css-processor';
+        import { themeVars } from './design-system';
+
+        export const b = css\` background: ${'${themeVars.textColor}'}; \`;
+      `
+    );
+
+    // Track resolver calls. The bounded retry should re-call once after a
+    // transient failure but cap retries — never thunder-herd.
+    const baseResolver = createResolver(processorFile);
+    let calls = 0;
+    let trippedThemeFailure = false;
+    const resolver = async (what: string, importer: string) => {
+      calls += 1;
+      if (
+        what === './design-system/theme' &&
+        importer.endsWith('design-system.ts') &&
+        !trippedThemeFailure
+      ) {
+        trippedThemeFailure = true;
+        throw new Error('transient resolver failure');
+      }
+      return baseResolver(what, importer);
+    };
+
+    const runOne = (entryFile: string) =>
+      transform(
+        {
+          cache,
+          eventEmitter: perf.eventEmitter,
+          options: {
+            filename: entryFile,
+            root,
+            pluginOptions: {
+              configFile: false,
+              features: { staticImportValues: true },
+              tagResolver: (source, tag) =>
+                source === 'test-css-processor' && tag === 'css'
+                  ? processorFile
+                  : null,
+            },
+          },
+        },
+        readFileSync(entryFile, 'utf8'),
+        resolver
+      );
+
+    try {
+      await runOne(firstEntry);
+      const eventsAfterFirst = perf.events.length;
+      const callsAfterFirst = calls;
+      const secondResult = await runOne(secondEntry);
+
+      // Second transform should inline cleanly — no cached null poisoning it.
+      const secondEvents = perf.events.slice(eventsAfterFirst);
+      const secondResolveEvents = secondEvents.filter(
+        (event): event is StaticResolveEvent => event.type === 'staticResolve'
+      );
+      const secondCascades = secondResolveEvents.filter(
+        (event) =>
+          event.status === 'rejected' &&
+          (event.reason === 'resolve-failed' ||
+            event.reason === 'candidate-import-unresolved')
+      );
+      expect({
+        cssText: secondResult.cssText,
+        cascades: secondCascades,
+      }).toEqual(
+        expect.objectContaining({
+          cascades: [],
+        })
+      );
+      expect(secondResult.cssText).toContain(
+        'background:var(--fibery-color-textColor)'
+      );
+
+      // Bounded: total resolver calls should NOT scale linearly with consumers.
+      // We measure by checking that the second transform's calls are bounded
+      // (a few extra for fresh imports + at most one bounded retry).
+      const secondTransformCalls = calls - callsAfterFirst;
+      expect(secondTransformCalls).toBeLessThan(20);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('inlines logical / conditional / unary expressions', async () => {
     const root = mkdtempSync(join(tmpdir(), 'wyw-ds-repro-'));
     const cache = new TransformCacheCollection();
