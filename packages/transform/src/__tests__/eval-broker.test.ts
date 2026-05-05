@@ -3424,4 +3424,434 @@ describe('EvalBroker', () => {
     broker.dispose();
     rmSync(root, { recursive: true, force: true });
   });
+
+  it('skips re-shipping LoadResult code when runner already has matching hash', async () => {
+    // Multiple importers asking for the same dependency in one runner session
+    // produce identical prepared variants (same hash, same `only`). The first
+    // LOAD must ship code; subsequent LOADs must ship `code: ''` so the
+    // runner's hash-match short-circuit (runner.js:1834) reuses its cached
+    // SourceTextModule instead of re-parsing identical bytes.
+    const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
+    const importerA = join(root, 'a.js');
+    const importerB = join(root, 'b.js');
+    const dep = join(root, 'dep.js');
+
+    const customLoader = jest.fn(async () => ({
+      code: 'export const value = 1;',
+    }));
+    const services = createServices(root, importerA, {
+      eval: { customLoader },
+    });
+
+    const broker = new EvalBroker(
+      services,
+      jest.fn(async () => dep)
+    );
+    const privateBroker = broker as unknown as {
+      handleLoad: (
+        id: string,
+        payload: {
+          id: string;
+          importerId: string | null;
+          request: string | null;
+        }
+      ) => Promise<void>;
+      onlyByModule: Map<string, string[]>;
+      runnerInputQueue: unknown;
+      sendMessage: (message: unknown) => Promise<void>;
+    };
+
+    type CapturedLoadResult = {
+      id: string;
+      payload: { code?: string; hash?: string; only?: string[] };
+    };
+    const captured: CapturedLoadResult[] = [];
+    privateBroker.runnerInputQueue = {
+      write: () => Promise.resolve(),
+    };
+    privateBroker.sendMessage = async (message: unknown) => {
+      const m = message as { type: string } & CapturedLoadResult;
+      if (m.type === 'LOAD_RESULT') {
+        captured.push({ id: m.id, payload: m.payload });
+      }
+    };
+
+    privateBroker.onlyByModule.set(dep, ['*']);
+
+    await privateBroker.handleLoad('msg-1', {
+      id: dep,
+      importerId: importerA,
+      request: null,
+    });
+    await privateBroker.handleLoad('msg-2', {
+      id: dep,
+      importerId: importerB,
+      request: null,
+    });
+
+    expect(captured).toHaveLength(2);
+    const [first, second] = captured;
+    expect(first.payload.code).toBe('export const value = 1;');
+    expect(first.payload.hash).toBeTruthy();
+    expect(second.payload.code).toBe('');
+    expect(second.payload.hash).toBe(first.payload.hash);
+
+    // Third LOAD with a wider `only` (forces a new prepared variant via the
+    // loadCache miss path) must ship code again.
+    const widerLoader = jest.fn(async () => ({
+      code: 'export const value = 1;\nexport const extra = 2;',
+    }));
+    services.options.pluginOptions.eval = { customLoader: widerLoader };
+    privateBroker.onlyByModule.set(dep, ['*', 'extra']);
+
+    await privateBroker.handleLoad('msg-3', {
+      id: dep,
+      importerId: importerA,
+      request: null,
+    });
+
+    expect(captured).toHaveLength(3);
+    expect(captured[2].payload.code).toContain('extra');
+    expect(captured[2].payload.hash).not.toBe(first.payload.hash);
+
+    broker.dispose();
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('does not carry shipped-code coverage across different load hashes', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
+    const entry = join(root, 'entry.js');
+    const dep = join(root, 'dep.js');
+    writeFileSync(entry, 'export const __wywPreval = {};');
+
+    const services = createServices(root, entry);
+    const broker = new EvalBroker(
+      services,
+      jest.fn(async () => dep)
+    );
+    const privateBroker = broker as unknown as {
+      handleLoad: (
+        id: string,
+        payload: {
+          id: string;
+          importerId: string | null;
+          request: string | null;
+        }
+      ) => Promise<void>;
+      loadModule: jest.Mock;
+      runnerInputQueue: unknown;
+      sendMessage: (message: unknown) => Promise<void>;
+    };
+
+    type CapturedLoadResult = {
+      id: string;
+      payload: { code?: string; hash?: string; only?: string[] };
+    };
+    const captured: CapturedLoadResult[] = [];
+    privateBroker.runnerInputQueue = {
+      write: () => Promise.resolve(),
+    };
+    privateBroker.sendMessage = async (message: unknown) => {
+      const m = message as { type: string } & CapturedLoadResult;
+      if (m.type === 'LOAD_RESULT') {
+        captured.push({ id: m.id, payload: m.payload });
+      }
+    };
+
+    privateBroker.loadModule = jest
+      .fn()
+      .mockResolvedValueOnce({
+        code: 'export const first = 1;',
+        imports: null,
+        only: ['*'],
+        hash: 'hash-a',
+      })
+      .mockResolvedValueOnce({
+        code: 'export const value = 1;',
+        imports: null,
+        only: ['value'],
+        hash: 'hash-b',
+      })
+      .mockResolvedValueOnce({
+        code: 'export const value = 1;',
+        imports: null,
+        only: ['*'],
+        hash: 'hash-b',
+      });
+
+    await privateBroker.handleLoad('msg-1', {
+      id: dep,
+      importerId: entry,
+      request: null,
+    });
+    await privateBroker.handleLoad('msg-2', {
+      id: dep,
+      importerId: entry,
+      request: null,
+    });
+    await privateBroker.handleLoad('msg-3', {
+      id: dep,
+      importerId: entry,
+      request: null,
+    });
+
+    expect(captured).toHaveLength(3);
+    expect(captured[0].payload.code).toContain('first');
+    expect(captured[1].payload.code).toContain('value');
+    // The second load stored hash-b as a module variant. The prior wildcard
+    // coverage from hash-a must not make the broker believe hash-b also exists
+    // in the runner's primary module cache.
+    expect(captured[2].payload.code).toContain('value');
+
+    broker.dispose();
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('keeps shipped-code mirror across evaluate() boundaries with stable globals/happyDOM', async () => {
+    // Real workflows reuse the runner across many entrypoints. The runner
+    // only resets its moduleCache when globals or happyDOM change
+    // (runner.js:2116). When those are stable, INIT just rebinds entrypoint
+    // metadata and the runner keeps every cached module — so the broker's
+    // shipped-code mirror must survive cross-entrypoint INITs.
+    const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
+    const entryA = join(root, 'a.js');
+    const entryB = join(root, 'b.js');
+    const dep = join(root, 'dep.js');
+    writeFileSync(entryA, 'export const __wywPreval = {};');
+    writeFileSync(entryB, 'export const __wywPreval = {};');
+
+    const customLoader = jest.fn(async () => ({
+      code: 'export const value = 1;',
+    }));
+    const services = createServices(root, entryA, {
+      eval: { customLoader },
+    });
+    const broker = new EvalBroker(
+      services,
+      jest.fn(async () => dep)
+    );
+    const privateBroker = broker as unknown as {
+      ensureRunner: () => Promise<void>;
+      handleLoad: (
+        id: string,
+        payload: { id: string; importerId: string | null; request: string | null }
+      ) => Promise<void>;
+      initRunner: (entrypoint: Entrypoint) => Promise<void>;
+      lastInitKey: string | null;
+      lastHappyDomEnabled: boolean;
+      lastSentLoadByModule: Map<string, { hash: string; only: string[] }>;
+      onlyByModule: Map<string, string[]>;
+      request: (
+        type: string,
+        payload: unknown,
+        timeoutMs?: number
+      ) => Promise<unknown>;
+      runnerInputQueue: unknown;
+      sendMessage: (message: unknown) => Promise<void>;
+    };
+    privateBroker.ensureRunner = jest.fn(async () => {});
+    privateBroker.request = jest.fn(async () => ({}));
+
+    type CapturedLoadResult = {
+      id: string;
+      payload: { code?: string; hash?: string };
+    };
+    const captured: CapturedLoadResult[] = [];
+    privateBroker.runnerInputQueue = {
+      write: () => Promise.resolve(),
+    };
+    privateBroker.sendMessage = async (message: unknown) => {
+      const m = message as { type: string } & CapturedLoadResult;
+      if (m.type === 'LOAD_RESULT') {
+        captured.push({ id: m.id, payload: m.payload });
+      }
+    };
+
+    privateBroker.onlyByModule.set(dep, ['*']);
+
+    const entrypointA = Entrypoint.createRoot(
+      services,
+      entryA,
+      ['__wywPreval'],
+      readFileSync(entryA, 'utf-8')
+    );
+    const entrypointB = Entrypoint.createRoot(
+      services,
+      entryB,
+      ['__wywPreval'],
+      readFileSync(entryB, 'utf-8')
+    );
+
+    await privateBroker.initRunner(entrypointA);
+    await privateBroker.handleLoad('msg-1', {
+      id: dep,
+      importerId: entryA,
+      request: null,
+    });
+
+    // Switch to a different entrypoint — initKey changes but globals/happyDOM
+    // are identical, so the runner keeps moduleCache and our mirror must too.
+    await privateBroker.initRunner(entrypointB);
+    expect(privateBroker.lastSentLoadByModule.size).toBeGreaterThan(0);
+
+    await privateBroker.handleLoad('msg-2', {
+      id: dep,
+      importerId: entryB,
+      request: null,
+    });
+
+    expect(captured).toHaveLength(2);
+    expect(captured[0].payload.code).toBe('export const value = 1;');
+    expect(captured[1].payload.code).toBe('');
+    expect(captured[1].payload.hash).toBe(captured[0].payload.hash);
+
+    broker.dispose();
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  describe('evaluate batching', () => {
+    type BatchPrivateBroker = {
+      ensureRunner: () => Promise<void>;
+      initRunner: (entrypoint: Entrypoint) => Promise<void>;
+      onlyByModule: Map<string, string[]>;
+      pendingEvals: unknown[];
+      request: (
+        type: string,
+        payload: unknown,
+        timeoutMs?: number
+      ) => Promise<unknown>;
+    };
+
+    const stubBatchInternals = (
+      broker: EvalBroker,
+      onEval: (id: string) => Promise<{
+        values: Record<string, unknown> | null;
+        modules?: Record<string, unknown>;
+      }>
+    ) => {
+      const pb = broker as unknown as BatchPrivateBroker;
+      pb.ensureRunner = jest.fn(async () => {});
+      pb.initRunner = jest.fn(async () => {});
+      pb.request = jest.fn(async (type, payload) => {
+        if (type !== 'EVAL') {
+          throw new Error(`unexpected request type: ${type}`);
+        }
+        const { id } = payload as { id: string };
+        return onEval(id);
+      });
+      return pb;
+    };
+
+    it('coalesces concurrent evaluate() calls into one runner pass', async () => {
+      const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
+      const entries = ['a', 'b', 'c'].map((n) => join(root, `${n}.js`));
+      entries.forEach((p) => writeFileSync(p, 'export const __wywPreval = {};'));
+
+      const services = createServices(root, entries[0]);
+      const broker = new EvalBroker(
+        services,
+        jest.fn(async () => null)
+      );
+      const entrypoints = entries.map((p) =>
+        Entrypoint.createRoot(services, p, ['__wywPreval'], readFileSync(p, 'utf-8'))
+      );
+
+      const evalOrder: string[] = [];
+      const onlySnapshots: Record<string, string[] | undefined> = {};
+      const pb = stubBatchInternals(broker, async (id) => {
+        evalOrder.push(id);
+        // Capture the broker's onlyByModule for this entrypoint at the moment
+        // EVAL is sent — proves per-entrypoint state-clear runs between
+        // members of the batch.
+        onlySnapshots[id] = pb.onlyByModule.get(id);
+        return {
+          values: { v: serializeValue(`from-${id}`, { allowFunctions: true }) },
+        };
+      });
+
+      const initSpy = pb.initRunner as jest.Mock;
+      const ensureSpy = pb.ensureRunner as jest.Mock;
+
+      const promises = entrypoints.map((ep) => broker.evaluate(ep));
+      const results = await Promise.all(promises);
+
+      expect(evalOrder).toEqual(entries);
+      results.forEach((r, i) => {
+        expect(r.values?.get('v')).toBe(`from-${entries[i]}`);
+      });
+      entries.forEach((p) => {
+        expect(onlySnapshots[p]).toEqual(['__wywPreval']);
+      });
+      // One ensureRunner across the batch; initRunner still per-member
+      // (cheap on the runner side via canReuseContext).
+      expect(ensureSpy).toHaveBeenCalledTimes(1);
+      expect(initSpy).toHaveBeenCalledTimes(3);
+
+      broker.dispose();
+      rmSync(root, { recursive: true, force: true });
+    });
+
+    it('isolates batch-member failures', async () => {
+      const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
+      const entries = ['a', 'b', 'c'].map((n) => join(root, `${n}.js`));
+      entries.forEach((p) => writeFileSync(p, 'export const __wywPreval = {};'));
+
+      const services = createServices(root, entries[0]);
+      const broker = new EvalBroker(
+        services,
+        jest.fn(async () => null)
+      );
+      const entrypoints = entries.map((p) =>
+        Entrypoint.createRoot(services, p, ['__wywPreval'], readFileSync(p, 'utf-8'))
+      );
+
+      stubBatchInternals(broker, async (id) => {
+        if (id === entries[1]) {
+          throw new Error('middle-fail');
+        }
+        return { values: { v: serializeValue(id, { allowFunctions: true }) } };
+      });
+
+      const settled = await Promise.allSettled(
+        entrypoints.map((ep) => broker.evaluate(ep))
+      );
+      expect(settled[0].status).toBe('fulfilled');
+      expect(settled[1].status).toBe('rejected');
+      expect(settled[2].status).toBe('fulfilled');
+      if (settled[1].status === 'rejected') {
+        expect(String(settled[1].reason)).toContain('middle-fail');
+      }
+
+      broker.dispose();
+      rmSync(root, { recursive: true, force: true });
+    });
+
+    it('single evaluate() call still runs (batch of one is a no-op)', async () => {
+      const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
+      const entry = join(root, 'a.js');
+      writeFileSync(entry, 'export const __wywPreval = {};');
+
+      const services = createServices(root, entry);
+      const broker = new EvalBroker(
+        services,
+        jest.fn(async () => null)
+      );
+      const entrypoint = Entrypoint.createRoot(
+        services,
+        entry,
+        ['__wywPreval'],
+        readFileSync(entry, 'utf-8')
+      );
+
+      stubBatchInternals(broker, async (id) => ({
+        values: { v: serializeValue(id, { allowFunctions: true }) },
+      }));
+
+      const result = await broker.evaluate(entrypoint);
+      expect(result.values?.get('v')).toBe(entry);
+
+      broker.dispose();
+      rmSync(root, { recursive: true, force: true });
+    });
+  });
 });

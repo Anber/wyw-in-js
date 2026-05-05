@@ -445,6 +445,25 @@ type PendingRequest = {
   timeout: ReturnType<typeof setTimeout>;
 };
 
+type EvaluateResult = {
+  values: Map<string, unknown> | null;
+  dependencies: string[];
+};
+
+type PendingEval = {
+  entrypoint: Entrypoint;
+  services: Services | undefined;
+  resolve: (value: EvaluateResult) => void;
+  reject: (reason?: unknown) => void;
+};
+
+// Mirrors runner.js `isFullModuleLoad`: wildcard `['*']` (or empty) is the
+// only shape stored in the runner's moduleCache; everything else lands in
+// moduleVariants. The shipped-code dedup must respect this shape because the
+// runner picks its lookup map based on the LoadResult's `only`.
+const isWildcardOnly = (only: string[] | undefined | null): boolean =>
+  !only || only.length === 0 || (only.length === 1 && only[0] === '*');
+
 const isEvalTimeoutError = (error: unknown): boolean => {
   if (!error || typeof error !== 'object') return false;
   if ('code' in error && (error as { code?: string }).code) {
@@ -646,7 +665,7 @@ const buildRunnerInitPayload = (
 
   return {
     evalOptions: {
-      globals: encodeGlobals(sanitizedGlobals) as Record<string, unknown>,
+      globals: encodeGlobalsCached(sanitizedGlobals),
       importOverrides,
       mode: evalOptions.mode ?? 'strict',
       require: evalOptions.require ?? 'warn-and-run',
@@ -1133,6 +1152,38 @@ const getInitPayloadKey = (payload: EvalRunnerInitPayload): string =>
     .update(JSON.stringify(canonicalizeForHash(payload)))
     .digest('hex');
 
+// Hash everything in the init payload that affects whether the runner needs
+// a fresh INIT — i.e. everything except `entrypoint` (which only affects
+// __filename/__dirname rebinding, not context reuse). The broker memoizes
+// this per-services so we replace per-evaluate SHA-256 of the full payload
+// with one SHA-256 of the stable bits + a cheap string concat per
+// entrypoint.
+const getStableInitPayloadHash = (
+  payload: EvalRunnerInitPayload
+): string => {
+  const { entrypoint: _entrypoint, ...stable } = payload;
+  return createHash('sha256')
+    .update(JSON.stringify(canonicalizeForHash(stable)))
+    .digest('hex');
+};
+
+// Memoize encodeGlobals on input reference. The user's globals object is
+// stable across a build, so we can encode it once instead of per evaluate.
+// If the input ref changes, fall through to a fresh encode (and reset the
+// cache).
+const encodeGlobalsMemo = new WeakMap<object, Record<string, unknown>>();
+const encodeGlobalsCached = (input: unknown): Record<string, unknown> => {
+  if (input !== null && typeof input === 'object') {
+    const obj = input as object;
+    const cached = encodeGlobalsMemo.get(obj);
+    if (cached) return cached;
+    const encoded = encodeGlobals(input) as Record<string, unknown>;
+    encodeGlobalsMemo.set(obj, encoded);
+    return encoded;
+  }
+  return encodeGlobals(input) as Record<string, unknown>;
+};
+
 const formatLoaderResult = (code: string, loader?: string | null) => {
   if (loader === 'json') {
     return `export default ${JSON.stringify(JSON.parse(code))};`;
@@ -1194,6 +1245,39 @@ export class EvalBroker {
   private readonly runtimeDependenciesByModule = new Map<string, Set<string>>();
 
   private readonly emittedDependencies = new Set<string>();
+
+  // Mirrors the runner's view: for each module id, the (hash, mergedOnly) of
+  // the most recent LoadResult we shipped with non-empty `code`. Subsequent
+  // loads with a matching hash and a subset `only` skip the code transmission
+  // (and the eval dump) — the runner's hash-match branch returns its cached
+  // SourceTextModule. Cleared whenever the runner is killed/respawned so the
+  // mirror cannot drift from the runner's actual moduleCache.
+  private readonly lastSentLoadByModule = new Map<
+    string,
+    { hash: string; only: string[] }
+  >();
+
+  // Batch queue: concurrent evaluate() callers (e.g. parallel webpack-loader
+  // transform() invocations) pile up here within one event-loop turn, then a
+  // microtask flushes them as a single sequential runner pass. Each call
+  // still gets its own resolved Promise; this only collapses the per-call
+  // evalQueue chain + state-clear churn.
+  private pendingEvals: PendingEval[] = [];
+
+  private evalFlushScheduled = false;
+
+  // Cached stable init payload hash. Keyed on the refs that feed the stable
+  // bits (pluginOptions.eval and pluginOptions itself). Any reference change
+  // invalidates the cache. The full per-entrypoint init key is
+  // `${stableHash}::${entrypoint.name}` — cheap string concat instead of
+  // re-canonicalizing+stringifying+SHA-256ing the whole payload per call.
+  private stableInitHashCache: {
+    pluginOptionsRef: unknown;
+    evalOptionsRef: unknown;
+    featuresRef: FeatureFlags<'happyDOM'>;
+    rootRef: string | undefined;
+    hash: string;
+  } | null = null;
 
   private evalSeq = 0;
 
@@ -1308,43 +1392,75 @@ export class EvalBroker {
   public async evaluate(
     entrypoint: Entrypoint,
     services?: Services
-  ): Promise<{
-    values: Map<string, unknown> | null;
-    dependencies: string[];
-  }> {
+  ): Promise<EvaluateResult> {
+    return new Promise<EvaluateResult>((resolve, reject) => {
+      this.pendingEvals.push({ entrypoint, services, resolve, reject });
+      this.scheduleEvalFlush();
+    });
+  }
+
+  private scheduleEvalFlush() {
+    if (this.evalFlushScheduled) return;
+    this.evalFlushScheduled = true;
+    queueMicrotask(() => {
+      this.evalFlushScheduled = false;
+      if (this.pendingEvals.length === 0) return;
+      const batch = this.pendingEvals;
+      this.pendingEvals = [];
+      this.evalQueue = this.evalQueue.then(() => this.runEvalBatch(batch));
+    });
+  }
+
+  private async runEvalBatch(batch: PendingEval[]): Promise<void> {
+    try {
+      await this.ensureRunner();
+    } catch (error) {
+      for (const member of batch) member.reject(error);
+      return;
+    }
+    for (const member of batch) {
+      try {
+        const result = await this.runOneEntrypoint(
+          member.entrypoint,
+          member.services
+        );
+        member.resolve(result);
+      } catch (error) {
+        member.reject(error);
+      }
+    }
+  }
+
+  private async runOneEntrypoint(
+    entrypoint: Entrypoint,
+    services: Services | undefined
+  ): Promise<EvaluateResult> {
     const activeServices = services ?? this.currentServices;
     const resolveRootId = getEntrypointResolveRoot(entrypoint);
-    const task = this.evalQueue
-      .then(async () => {
-        this.currentServices = activeServices;
-        this.activeResolveRootId = resolveRootId;
-        this.runtimeDependenciesByModule.clear();
-        this.emittedDependencies.clear();
-        this.importsByModule.clear();
-        this.onlyByModule.clear();
-        this.resolveCache.clear();
-        this.resolveInFlight.clear();
-        this.onlyByModule.set(entrypoint.name, ['__wywPreval']);
-        this.evalSeq += 1;
+    this.currentServices = activeServices;
+    this.activeResolveRootId = resolveRootId;
+    this.resetPerEntrypointState(entrypoint);
+    this.evalSeq += 1;
 
-        debugAction({
-          type: 'eval:start',
-          evalSeq: this.evalSeq,
-          entrypoint: entrypoint.name,
-          ts: performance.now(),
-        });
+    if (debugEvalDir) {
+      debugAction({
+        type: 'eval:start',
+        evalSeq: this.evalSeq,
+        entrypoint: entrypoint.name,
+        ts: performance.now(),
+      });
+    }
 
-        await this.ensureRunner();
-        await this.initRunner(entrypoint);
+    try {
+      await this.initRunner(entrypoint);
 
-        const payload = await this.request<EvalResultPayload>(
-          'EVAL',
-          {
-            id: entrypoint.name,
-          },
-          EVAL_TIMEOUT_MS
-        );
+      const payload = await this.request<EvalResultPayload>(
+        'EVAL',
+        { id: entrypoint.name },
+        EVAL_TIMEOUT_MS
+      );
 
+      if (debugEvalDir) {
         debugAction({
           type: 'eval:finish',
           evalSeq: this.evalSeq,
@@ -1352,37 +1468,40 @@ export class EvalBroker {
           hasValues: Boolean(payload.values),
           ts: performance.now(),
         });
+      }
 
-        if (payload.modules) {
-          this.applyModuleExports(payload.modules);
-        }
+      if (payload.modules) {
+        this.applyModuleExports(payload.modules);
+      }
 
-        if (!payload.values) {
-          return { values: null, dependencies: [] };
-        }
+      if (!payload.values) {
+        return { values: null, dependencies: [] };
+      }
 
-        const values = new Map<string, unknown>();
-        Object.entries(payload.values).forEach(([key, serialized]) => {
-          values.set(key, deserializeValue(serialized));
-        });
-
-        return {
-          values,
-          dependencies: this.collectEntrypointDependencies(entrypoint.name),
-        };
-      })
-      .finally(() => {
-        if (this.activeResolveRootId === resolveRootId) {
-          this.activeResolveRootId = null;
-        }
+      const values = new Map<string, unknown>();
+      Object.entries(payload.values).forEach(([key, serialized]) => {
+        values.set(key, deserializeValue(serialized));
       });
 
-    this.evalQueue = task.then(
-      () => {},
-      () => {}
-    );
+      return {
+        values,
+        dependencies: this.collectEntrypointDependencies(entrypoint.name),
+      };
+    } finally {
+      if (this.activeResolveRootId === resolveRootId) {
+        this.activeResolveRootId = null;
+      }
+    }
+  }
 
-    return task;
+  private resetPerEntrypointState(entrypoint: Entrypoint) {
+    this.runtimeDependenciesByModule.clear();
+    this.emittedDependencies.clear();
+    this.importsByModule.clear();
+    this.onlyByModule.clear();
+    this.resolveCache.clear();
+    this.resolveInFlight.clear();
+    this.onlyByModule.set(entrypoint.name, ['__wywPreval']);
   }
 
   private applyModuleExports(
@@ -1440,6 +1559,8 @@ export class EvalBroker {
     }
     this.lastInitKey = null;
     this.lastHappyDomEnabled = false;
+    this.lastSentLoadByModule.clear();
+    this.stableInitHashCache = null;
     flushDebugStreams();
   }
 
@@ -1486,6 +1607,7 @@ export class EvalBroker {
       this.runnerReady = null;
       this.lastInitKey = null;
       this.lastHappyDomEnabled = false;
+      this.lastSentLoadByModule.clear();
     });
   }
 
@@ -1638,21 +1760,62 @@ export class EvalBroker {
     );
     this.attachRunnerListeners(nextRunner);
     this.runnerReady = Promise.resolve();
+    // New process ⇒ runner's moduleCache/moduleHashes are empty, so our mirror
+    // of "what we already shipped" is stale.
+    this.lastSentLoadByModule.clear();
+  }
+
+  private getStableInitHash(
+    services: Services,
+    features: FeatureFlags<'happyDOM'>
+  ): string {
+    const pluginOptionsRef = services.options.pluginOptions;
+    const evalOptionsRef = pluginOptionsRef.eval;
+    const rootRef = services.options.root;
+    if (
+      this.stableInitHashCache !== null &&
+      this.stableInitHashCache.pluginOptionsRef === pluginOptionsRef &&
+      this.stableInitHashCache.evalOptionsRef === evalOptionsRef &&
+      this.stableInitHashCache.featuresRef === features &&
+      this.stableInitHashCache.rootRef === rootRef
+    ) {
+      return this.stableInitHashCache.hash;
+    }
+    // Build a sample payload (entrypoint name doesn't affect stable hash; we
+    // pass any name and strip it inside getStableInitPayloadHash).
+    // encodeGlobals is memoized so this is the only place it actually runs
+    // per config change.
+    const samplePayload = buildRunnerInitPayload(
+      services,
+      { name: '\0stable-init-sample\0' } as Entrypoint,
+      features
+    );
+    samplePayload.reuseModules = true;
+    const hash = getStableInitPayloadHash(samplePayload);
+    this.stableInitHashCache = {
+      pluginOptionsRef,
+      evalOptionsRef,
+      featuresRef: features,
+      rootRef,
+      hash,
+    };
+    return hash;
   }
 
   private async initRunner(entrypoint: Entrypoint) {
     const features = this.getRunnerFeatures();
-    const payload = buildRunnerInitPayload(this.services, entrypoint, features);
-    payload.reuseModules = true;
-    const initKey = getInitPayloadKey(payload);
+    const stableHash = this.getStableInitHash(this.currentServices, features);
+    const initKey = `${stableHash}::${entrypoint.name}`;
+    if (this.lastInitKey === initKey) {
+      return;
+    }
     const nextHappyDomEnabled = isFeatureEnabled(
       features,
       'happyDOM',
       entrypoint.name
     );
-    if (this.lastInitKey === initKey) {
-      return;
-    }
+    const payload = buildRunnerInitPayload(this.services, entrypoint, features);
+    payload.reuseModules = true;
     const timeoutMs = this.getInitTimeoutMs(entrypoint, features);
 
     if (
@@ -1680,7 +1843,7 @@ export class EvalBroker {
           );
           fallbackPayload.reuseModules = true;
           await this.request('INIT', fallbackPayload, INIT_TIMEOUT_MS);
-          this.lastInitKey = getInitPayloadKey(fallbackPayload);
+          this.lastInitKey = `${this.getStableInitHash(this.currentServices, fallbackFeatures)}::${entrypoint.name}`;
           this.lastHappyDomEnabled = false;
           return;
         }
@@ -1790,6 +1953,12 @@ export class EvalBroker {
           this.runner?.kill();
           return;
         }
+        if (message.modulesReset) {
+          // Runner just cleared its moduleCache during this INIT (full
+          // context rebuild or reuseModules:false). Drop our shipped-code
+          // mirror so handleLoad ships fresh code on the next LOAD.
+          this.lastSentLoadByModule.clear();
+        }
         this.resolvePending(message.id, {});
         return;
       case 'EVAL_RESULT':
@@ -1857,16 +2026,18 @@ export class EvalBroker {
   private async handleResolve(id: string, payload: ResolveRequestPayload) {
     const result = await this.resolveImport(payload);
 
-    debugAction({
-      type: 'resolve',
-      evalSeq: this.evalSeq,
-      specifier: payload.specifier,
-      importer: payload.importerId,
-      kind: payload.kind,
-      resolvedId: result.resolvedId ?? null,
-      external: result.external ?? false,
-      ts: performance.now(),
-    });
+    if (debugEvalDir) {
+      debugAction({
+        type: 'resolve',
+        evalSeq: this.evalSeq,
+        specifier: payload.specifier,
+        importer: payload.importerId,
+        kind: payload.kind,
+        resolvedId: result.resolvedId ?? null,
+        external: result.external ?? false,
+        ts: performance.now(),
+      });
+    }
 
     await this.sendMessage({
       type: 'RESOLVE_RESULT',
@@ -2534,36 +2705,79 @@ export class EvalBroker {
   private async handleLoad(id: string, payload: LoadRequestPayload) {
     const prepared = await this.loadModule(payload);
 
-    if (debugEvalDir && prepared.code) {
-      dumpEvalCode(
-        payload.id,
-        prepared.code,
-        prepared.only,
-        prepared.hash ? `cache:${prepared.hash}` : 'fresh',
-        this.evalSeq
-      );
-    }
+    // Decide once whether the runner already has this exact prepared variant.
+    // The runner caches by id and short-circuits when the LoadResult hash
+    // matches `moduleHashes.get(id)` (runner.js:1834). So when our prior
+    // shipment under the same hash already covered the requested `only`,
+    // re-shipping the code is pure waste — both over IPC and to the dump dir.
+    const previouslySent = prepared.hash
+      ? this.lastSentLoadByModule.get(payload.id)
+      : undefined;
+    // Runner stores by hash but classifies storage by `only` shape: wildcard
+    // (`['*']`) ⇒ moduleCache, anything else ⇒ moduleVariants (runner.js
+    // isFullModuleLoad / runner.js:1832-1842). Reusing across shapes would
+    // hit the wrong map and miss. Require the same shape AND the prepared
+    // `only` to be a subset of what we already shipped — same hash already
+    // implies identical bytes.
+    const sameStorageShape = Boolean(
+      previouslySent &&
+        isWildcardOnly(previouslySent.only) === isWildcardOnly(prepared.only)
+    );
+    const runnerHasCachedVariant = Boolean(
+      prepared.hash &&
+        previouslySent &&
+        previouslySent.hash === prepared.hash &&
+        sameStorageShape &&
+        isSuperSet(previouslySent.only, prepared.only)
+    );
+    const shouldShipCode = Boolean(
+      prepared.code && !prepared.exports && !runnerHasCachedVariant
+    );
 
-    debugAction({
-      type: 'load',
-      evalSeq: this.evalSeq,
-      id: payload.id,
-      importer: payload.importerId ?? null,
-      only: prepared.only,
-      hasCode: Boolean(prepared.code),
-      hasExports: Boolean(prepared.exports),
-      hash: prepared.hash ?? null,
-      ts: performance.now(),
-    });
+    if (debugEvalDir) {
+      if (shouldShipCode) {
+        dumpEvalCode(
+          payload.id,
+          prepared.code!,
+          prepared.only,
+          prepared.hash ? `cache:${prepared.hash}` : 'fresh',
+          this.evalSeq
+        );
+      }
+
+      debugAction({
+        type: 'load',
+        evalSeq: this.evalSeq,
+        id: payload.id,
+        importer: payload.importerId ?? null,
+        only: prepared.only,
+        hasCode: Boolean(prepared.code),
+        hasExports: Boolean(prepared.exports),
+        hash: prepared.hash ?? null,
+        shipped: shouldShipCode,
+        ts: performance.now(),
+      });
+    }
 
     await this.sendLoadResult(id, {
       id: payload.id,
-      code: prepared.code,
+      code: shouldShipCode ? prepared.code : '',
       map: null,
       hash: prepared.hash,
       only: prepared.only,
       exports: prepared.exports,
     });
+
+    if (shouldShipCode && prepared.hash) {
+      const merged =
+        previouslySent?.hash === prepared.hash
+          ? mergeOnly(previouslySent.only, prepared.only)
+          : [...prepared.only];
+      this.lastSentLoadByModule.set(payload.id, {
+        hash: prepared.hash,
+        only: merged,
+      });
+    }
   }
 
   private async loadModule({
@@ -2621,9 +2835,6 @@ export class EvalBroker {
         }
       }
     }
-
-    const isSelfLoad = !importerId || importerId === id;
-
     const cachedEntrypoint = this.services.cache.get('entrypoints', id) as
       | {
           evaluated?: boolean;
@@ -2668,17 +2879,15 @@ export class EvalBroker {
         }
       }
     }
-    // Only skip the prepared-load cache for self-loads (the eval entrypoint),
-    // which must always be freshly prepared because __wywPreval evaluation has
-    // side effects. Dependencies propagate __wywPreval in their `only` chain
-    // but don't need fresh preparation — their code is deterministic.
-    const canReusePreparedLoad =
-      !isSelfLoad || !requiredOnly.includes('__wywPreval');
-    if (
-      canReusePreparedLoad &&
-      cached &&
-      isPreparedCacheHit(cached, requiredOnly)
-    ) {
+    // prepareModuleOnDemand is deterministic given (id, requiredOnly): the
+    // shaker output depends only on source bytes (invalidated via
+    // consumeInvalidation when the file changes) and the requested `only`.
+    // Side effects from __wywPreval happen at runtime in the runner, not at
+    // preparation time — so caching prepared bytes is safe even for self-loads
+    // with __wywPreval. This lets incremental rebuilds reuse the prepared
+    // entrypoint when its source is unchanged; my IPC dedup mirror then
+    // suppresses re-shipping to the runner.
+    if (cached && isPreparedCacheHit(cached, requiredOnly)) {
       this.ensureImportsMapping(id, cached.imports);
       return cached;
     }
@@ -2686,7 +2895,7 @@ export class EvalBroker {
     const inflight = this.loadInFlight.get(id);
     if (inflight) {
       const result = await inflight;
-      if (canReusePreparedLoad && isPreparedCacheHit(result, requiredOnly)) {
+      if (isPreparedCacheHit(result, requiredOnly)) {
         this.ensureImportsMapping(id, result.imports);
         return result;
       }

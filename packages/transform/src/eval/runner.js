@@ -988,7 +988,14 @@ const resetModuleState = () => {
   externalInFlight.clear();
   resolveInFlight.clear();
   resolveCache.clear();
+  sentNamespaceIdentifiers.clear();
 };
+
+// Tracks the SourceTextModule identifier (versioned with hash) that was last
+// included in an EVAL_RESULT for each id. Reused module variants don't need
+// re-serialization across eval sessions — same variant = same namespace =
+// same exports the broker already has cached.
+const sentNamespaceIdentifiers = new Map();
 
 const resetSingleModuleState = (id, cachedModule = moduleCache.get(id)) => {
   if (cachedModule) {
@@ -1841,6 +1848,19 @@ loadModule = async (id, importer, requestSpec) => {
       }
     }
 
+    // The broker only ships empty `code` when it expects the runner to reuse
+    // a cached module via the hash-match short-circuit above. Reaching this
+    // point with no code means the broker's "what runner has" mirror is out
+    // of sync with our actual moduleCache/moduleVariants — fail loudly rather
+    // than feeding empty source into vm.SourceTextModule.
+    if (loaded.code == null || loaded.code === '') {
+      throw new Error(
+        `[wyw-in-js] LoadResult for ${id} has empty code but no cached module ` +
+          `matched hash ${loaded.hash ?? '(none)'}. ` +
+          `This indicates a broker/runner cache desync.`
+      );
+    }
+
     if (usePrimaryCache) {
       resetSingleModuleState(id, cached);
     }
@@ -1979,6 +1999,16 @@ const collectModuleExports = () => {
     const data = moduleData.get(id);
     if (!module || !data) return;
 
+    // The broker already has the serialized exports for this exact variant
+    // from a prior eval session. Re-serializing here just wastes CPU on the
+    // runner side and bloats the EVAL_RESULT payload. Same variant identifier
+    // ⇒ same namespace ⇒ no change to send.
+    const moduleIdentifier =
+      typeof module.identifier === 'string' ? module.identifier : id;
+    if (sentNamespaceIdentifiers.get(id) === moduleIdentifier) {
+      return;
+    }
+
     // .namespace is only safe on fully evaluated modules. Modules that
     // errored or were never evaluated (stale from a prior failed session
     // with reuseModules) have TDZ bindings that crash Object.keys().
@@ -2025,6 +2055,7 @@ const collectModuleExports = () => {
 
     if (Object.keys(serialized).length) {
       exportsByModule[id] = serialized;
+      sentNamespaceIdentifiers.set(id, moduleIdentifier);
     }
   });
 
@@ -2120,7 +2151,8 @@ const handleMessage = async (message) => {
         const reuseModules = Boolean(message.payload.reuseModules);
 
         if (canReuseContext) {
-          if (!reuseModules) {
+          const modulesReset = !reuseModules;
+          if (modulesReset) {
             resetModuleState();
           } else {
             // Clear resolution caches between sessions even when reusing modules.
@@ -2146,7 +2178,7 @@ const handleMessage = async (message) => {
           });
           state.globalsSignature = nextGlobalsSignature;
           debug('init:reuse', Date.now() - initStart);
-          sendMessage({ type: 'INIT_ACK', id: message.id });
+          sendMessage({ type: 'INIT_ACK', id: message.id, modulesReset });
           break;
         }
 
@@ -2171,7 +2203,8 @@ const handleMessage = async (message) => {
         state.happyDomEnabled = nextHappyDomEnabled;
         state.globalsSignature = nextGlobalsSignature;
 
-        sendMessage({ type: 'INIT_ACK', id: message.id });
+        // Full context rebuild ⇒ moduleCache was cleared by resetEvaluationState.
+        sendMessage({ type: 'INIT_ACK', id: message.id, modulesReset: true });
         debug('init:done', Date.now() - initStart);
       } catch (error) {
         sendMessage({
