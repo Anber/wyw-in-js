@@ -4,12 +4,14 @@ on:
   push:
     branches:
       - main
+      - v2
 
 concurrency: ${{ github.workflow }}-${{ github.ref }}
 
 permissions:
   contents: write
   id-token: write
+  pull-requests: write
 
 jobs:
   release:
@@ -50,10 +52,23 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Create Release Pull Request or Publish to npm
+        if: github.ref_name == 'main'
         id: changesets
         uses: changesets/action@v1
         with:
           version: bun run version
           publish: bun run release
+        env:
+          GITHUB_TOKEN: ${{ secrets.ANBER_GITHUB_TOKEN }}
+
+      - name: Create Alpha Release Pull Request or Publish to npm
+        if: github.ref_name == 'v2'
+        id: changesets-alpha
+        uses: changesets/action@v1
+        with:
+          version: bun run version:alpha
+          publish: bun run release:alpha
+          title: Version Packages
+          commit: Version Packages
         env:
           GITHUB_TOKEN: ${{ secrets.ANBER_GITHUB_TOKEN }}
