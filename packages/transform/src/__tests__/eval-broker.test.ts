@@ -21,6 +21,7 @@ import {
   EvalBroker,
   stripEntrypointGlobalsFromRunnerContext,
 } from '../eval/broker';
+import { serializeValue } from '../eval/serialize';
 
 const createPluginOptions = (overrides: PartialOptions = {}) =>
   loadWywOptions({
@@ -74,6 +75,10 @@ const getPrivateBroker = (broker: EvalBroker) =>
     lastHappyDomEnabled: boolean;
     lastInitKey: string | null;
     onlyByModule: Map<string, string[]>;
+    ensureImportsMapping: (
+      id: string,
+      imports: Map<string, string[]> | null | undefined
+    ) => void;
     ensureRunner: () => Promise<void>;
     handleRunnerStderr: (chunk: Buffer) => void;
     initIsolatedRunner: (
@@ -2837,6 +2842,519 @@ describe('EvalBroker', () => {
     );
     const resultB = await broker.evaluate(epB);
     expect(resultB.values?.get('s')).toBe(24);
+
+    broker.dispose();
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('reuses evaluated variant modules when broker sends narrow serialized exports', async () => {
+    // Regression test for cache poisoning:
+    //
+    // Session 1 evaluates dep.js as a module variant (only includes __wywPreval,
+    // so isFullModuleLoad is false). The variant has all exports (x, y).
+    //
+    // Session 2 only needs `x` from dep.js. The broker sends serialized exports
+    // { x: ... } (narrow slice). The runner must NOT create a narrow
+    // SyntheticModule — it should reuse the evaluated variant that has both x and y.
+    //
+    // Session 3 needs both x and y from dep.js. If the runner created a narrow
+    // SyntheticModule in session 2 and returned it, session 3's link would fail
+    // because the SyntheticModule doesn't have y. With the fix, the evaluated
+    // variant is returned instead.
+    const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
+
+    const dep = join(root, 'dep.js');
+    writeFileSync(dep, 'export const x = 10;\nexport const y = 20;\n');
+
+    const barrel = join(root, 'barrel.js');
+    writeFileSync(
+      barrel,
+      "export { x, y } from './dep.js';\n"
+    );
+
+    // Session 1: imports both x and y → forces full eval of dep.js
+    const entryA = join(root, 'entry-a.js');
+    writeFileSync(
+      entryA,
+      [
+        "import { x, y } from './barrel.js';",
+        'export const __wywPreval = {',
+        '  sum: () => x + y,',
+        '};',
+      ].join('\n')
+    );
+
+    // Session 2: imports only x → broker can serve serialized exports
+    const entryB = join(root, 'entry-b.js');
+    writeFileSync(
+      entryB,
+      [
+        "import { x } from './barrel.js';",
+        'export const __wywPreval = {',
+        '  val: () => x,',
+        '};',
+      ].join('\n')
+    );
+
+    // Session 3: imports both x and y again → must not fail
+    const entryC = join(root, 'entry-c.js');
+    writeFileSync(
+      entryC,
+      [
+        "import { x, y } from './barrel.js';",
+        'export const __wywPreval = {',
+        '  diff: () => y - x,',
+        '};',
+      ].join('\n')
+    );
+
+    const asyncResolve = jest.fn(async (what: string, importer: string) => {
+      if (what.startsWith('.')) {
+        return resolve(dirname(importer), what);
+      }
+      return null;
+    });
+    const services = createServices(root, entryA);
+    const broker = new EvalBroker(services, asyncResolve);
+
+    const epA = Entrypoint.createRoot(
+      services,
+      entryA,
+      ['__wywPreval'],
+      readFileSync(entryA, 'utf-8')
+    );
+    const resultA = await broker.evaluate(epA);
+    expect(resultA.values?.get('sum')).toBe(30);
+
+    const epB = Entrypoint.createRoot(
+      services,
+      entryB,
+      ['__wywPreval'],
+      readFileSync(entryB, 'utf-8')
+    );
+    const resultB = await broker.evaluate(epB);
+    expect(resultB.values?.get('val')).toBe(10);
+
+    const epC = Entrypoint.createRoot(
+      services,
+      entryC,
+      ['__wywPreval'],
+      readFileSync(entryC, 'utf-8')
+    );
+    const resultC = await broker.evaluate(epC);
+    expect(resultC.values?.get('diff')).toBe(10);
+
+    broker.dispose();
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('does not create narrow SyntheticModule when barrel re-exports more than importer needs', async () => {
+    // Reproduces the real-world failure: design-system.ts (barrel) re-exports
+    // fontFamily+fontWeight+textStyles from typography.ts. Session A evaluates
+    // the full chain. Session B's entrypoint only needs fontWeight+textStyles,
+    // so the broker may serve serialized exports for typography with just those
+    // 2 keys. But the barrel's SourceTextModule still has
+    // `import { fontFamily, fontWeight, textStyles } from './typography.js'`
+    // — it needs fontFamily too. If the runner creates a narrow SyntheticModule
+    // for typography, the barrel's link fails.
+    const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
+
+    const typography = join(root, 'typography.js');
+    writeFileSync(
+      typography,
+      [
+        'export const fontFamily = "sans-serif";',
+        'export const fontWeight = 400;',
+        'export const textStyles = { body: "14px" };',
+      ].join('\n')
+    );
+
+    const barrel = join(root, 'barrel.js');
+    writeFileSync(
+      barrel,
+      [
+        "export { fontFamily, fontWeight, textStyles } from './typography.js';",
+        'export const layout = { gap: 8 };',
+      ].join('\n')
+    );
+
+    // Session A: imports fontFamily + fontWeight + textStyles from barrel
+    // → typography.js is prepared with all 3 exports, evaluated as variant
+    const entryA = join(root, 'entry-a.js');
+    writeFileSync(
+      entryA,
+      [
+        "import { fontFamily, fontWeight, textStyles } from './barrel.js';",
+        'export const __wywPreval = {',
+        '  font: () => `${fontFamily} ${fontWeight} ${JSON.stringify(textStyles)}`,',
+        '};',
+      ].join('\n')
+    );
+
+    // Session B: imports only fontWeight + textStyles from barrel
+    // → broker may serve serialized exports for typography (only fontWeight, textStyles)
+    // → barrel's code still imports fontFamily from typography → must not fail
+    const entryB = join(root, 'entry-b.js');
+    writeFileSync(
+      entryB,
+      [
+        "import { fontWeight, textStyles } from './barrel.js';",
+        'export const __wywPreval = {',
+        '  weight: () => fontWeight,',
+        '};',
+      ].join('\n')
+    );
+
+    // Session C: imports fontFamily again → must not fail
+    const entryC = join(root, 'entry-c.js');
+    writeFileSync(
+      entryC,
+      [
+        "import { fontFamily, fontWeight } from './barrel.js';",
+        'export const __wywPreval = {',
+        '  info: () => `${fontFamily}/${fontWeight}`,',
+        '};',
+      ].join('\n')
+    );
+
+    const asyncResolve = jest.fn(async (what: string, importer: string) => {
+      if (what.startsWith('.')) {
+        return resolve(dirname(importer), what);
+      }
+      return null;
+    });
+    const services = createServices(root, entryA, {
+      features: { staticImportValues: true },
+    });
+    const broker = new EvalBroker(services, asyncResolve);
+
+    const epA = Entrypoint.createRoot(
+      services,
+      entryA,
+      ['__wywPreval'],
+      readFileSync(entryA, 'utf-8')
+    );
+    const resultA = await broker.evaluate(epA);
+    expect(resultA.values?.get('font')).toMatchInlineSnapshot(
+      `"sans-serif 400 {"body":"14px"}"`
+    );
+
+    const epB = Entrypoint.createRoot(
+      services,
+      entryB,
+      ['__wywPreval'],
+      readFileSync(entryB, 'utf-8')
+    );
+    const resultB = await broker.evaluate(epB);
+    expect(resultB.values?.get('weight')).toBe(400);
+
+    const epC = Entrypoint.createRoot(
+      services,
+      entryC,
+      ['__wywPreval'],
+      readFileSync(entryC, 'utf-8')
+    );
+    const resultC = await broker.evaluate(epC);
+    expect(resultC.values?.get('info')).toMatchInlineSnapshot(
+      `"sans-serif/400"`
+    );
+
+    broker.dispose();
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('does not reuse a narrower evaluated variant for wider serialized exports', async () => {
+    // Mirrors the 4df6e915 Fibery dump:
+    //
+    // 1. typography.js is evaluated as a narrow variant with fontWeight only.
+    // 2. typography.js is evaluated as a wider variant with fontFamily,
+    //    fontWeight and textStyles.
+    // 3. A later load gets serialized exports for that wider set, with a hash
+    //    that is not itself cached as a SourceTextModule variant.
+    //
+    // The runner must not satisfy step 3 by returning the first evaluated
+    // variant for the source path if that variant lacks the serialized export
+    // set.
+    const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
+
+    const typography = join(root, 'typography.js');
+    const entryNarrow = join(root, 'entry-narrow.js');
+    const entryWide = join(root, 'entry-wide.js');
+    const entrySerializedWide = join(root, 'entry-serialized-wide.js');
+
+    writeFileSync(
+      entryNarrow,
+      [
+        "import { fontWeight } from './typography.js';",
+        'export const __wywPreval = {',
+        '  value: () => fontWeight,',
+        '};',
+      ].join('\n')
+    );
+    writeFileSync(
+      entryWide,
+      [
+        "import { fontFamily, fontWeight, textStyles } from './typography.js';",
+        'export const __wywPreval = {',
+        '  value: () => `${fontFamily}:${fontWeight}:${textStyles.body}`,',
+        '};',
+      ].join('\n')
+    );
+    writeFileSync(
+      entrySerializedWide,
+      [
+        "import { fontFamily, fontWeight, textStyles } from './typography.js';",
+        'export const __wywPreval = {',
+        '  value: () => `${fontFamily}/${fontWeight}/${textStyles.body}`,',
+        '};',
+      ].join('\n')
+    );
+
+    const asyncResolve = jest.fn(async (what: string, importer: string) => {
+      if (what.startsWith('.')) {
+        return resolve(dirname(importer), what);
+      }
+      return null;
+    });
+    const services = createServices(root, entryNarrow, {
+      features: { staticImportValues: true },
+    });
+    const broker = new EvalBroker(services, asyncResolve);
+    const privateBroker = getPrivateBroker(broker);
+    const originalLoadModule = privateBroker.loadModule.bind(privateBroker);
+    const loadCalls: Array<{
+      id: string;
+      importerId?: string | null;
+      request?: string | null;
+    }> = [];
+
+    privateBroker.loadModule = jest.fn(async (payload) => {
+      loadCalls.push(payload);
+
+      const withImports = (
+        id: string,
+        result: {
+          code: string;
+          imports: Map<string, string[]> | null;
+          only: string[];
+          hash: string;
+          exports?: Record<string, ReturnType<typeof serializeValue>>;
+        }
+      ) => {
+        privateBroker.ensureImportsMapping(id, result.imports);
+        return result;
+      };
+
+      if (payload.id === entryNarrow) {
+        return withImports(entryNarrow, {
+          code: readFileSync(entryNarrow, 'utf-8'),
+          imports: new Map([['./typography.js', ['fontWeight']]]),
+          only: ['__wywPreval'],
+          hash: 'entry-narrow',
+        });
+      }
+
+      if (payload.id === entryWide) {
+        return withImports(entryWide, {
+          code: readFileSync(entryWide, 'utf-8'),
+          imports: new Map([
+            ['./typography.js', ['fontFamily', 'fontWeight', 'textStyles']],
+          ]),
+          only: ['__wywPreval'],
+          hash: 'entry-wide',
+        });
+      }
+
+      if (payload.id === entrySerializedWide) {
+        return withImports(entrySerializedWide, {
+          code: readFileSync(entrySerializedWide, 'utf-8'),
+          imports: new Map([
+            ['./typography.js', ['fontFamily', 'fontWeight', 'textStyles']],
+          ]),
+          only: ['__wywPreval'],
+          hash: 'entry-serialized-wide',
+        });
+      }
+
+      if (payload.id === typography && payload.importerId === entryNarrow) {
+        return withImports(typography, {
+          code: 'export const fontWeight = 400;',
+          imports: null,
+          only: ['fontWeight'],
+          hash: 'typography-narrow-font-weight',
+        });
+      }
+
+      if (payload.id === typography && payload.importerId === entryWide) {
+        return withImports(typography, {
+          code: [
+            'export const fontFamily = "Inter";',
+            'export const fontWeight = 400;',
+            'export const textStyles = { body: "14px" };',
+          ].join('\n'),
+          imports: null,
+          only: ['fontFamily', 'fontWeight', 'textStyles'],
+          hash: 'typography-wide-source',
+        });
+      }
+
+      if (
+        payload.id === typography &&
+        payload.importerId === entrySerializedWide
+      ) {
+        return withImports(typography, {
+          code: '',
+          imports: null,
+          only: ['fontFamily', 'fontWeight', 'textStyles'],
+          hash: 'typography-wide-serialized-exports',
+          exports: {
+            fontFamily: serializeValue('Inter'),
+            fontWeight: serializeValue(400),
+            textStyles: serializeValue({ body: '14px' }),
+          },
+        });
+      }
+
+      return originalLoadModule(payload);
+    });
+
+    try {
+      const narrow = Entrypoint.createRoot(
+        services,
+        entryNarrow,
+        ['__wywPreval'],
+        readFileSync(entryNarrow, 'utf-8')
+      );
+      const narrowResult = await broker.evaluate(narrow);
+      expect(narrowResult.values?.get('value')).toBe(400);
+
+      const wide = Entrypoint.createRoot(
+        services,
+        entryWide,
+        ['__wywPreval'],
+        readFileSync(entryWide, 'utf-8')
+      );
+      const wideResult = await broker.evaluate(wide);
+      expect(wideResult.values?.get('value')).toBe('Inter:400:14px');
+
+      const serializedWide = Entrypoint.createRoot(
+        services,
+        entrySerializedWide,
+        ['__wywPreval'],
+        readFileSync(entrySerializedWide, 'utf-8')
+      );
+      const serializedWideResult = await broker.evaluate(serializedWide);
+      expect(serializedWideResult.values?.get('value')).toBe(
+        'Inter/400/14px'
+      );
+      expect(loadCalls).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: typography,
+            importerId: entrySerializedWide,
+          }),
+        ])
+      );
+    } finally {
+      broker.dispose();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps wide barrel dependency imports when a later narrow variant finishes', async () => {
+    // Models the Fibery failure shape:
+    //
+    // - design-system.ts is a barrel that can be prepared as multiple variants.
+    // - A wide variant imports fontFamily/fontWeight/textStyles from typography.
+    // - A later narrow variant of the same source imports only fontWeight.
+    // - Because importsByModule is keyed only by source path, the narrow map can
+    //   replace the wide map while the wide SourceTextModule is still linking.
+    // - When that wide module then loads typography, the dependency must still
+    //   be prepared with the wide export set.
+    const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
+
+    const entry = join(root, 'entry.js');
+    const barrel = join(root, 'design-system.js');
+    const typography = join(root, 'typography.js');
+    const theme = join(root, 'theme.js');
+
+    writeFileSync(
+      theme,
+      [
+        'export const themeVars = globalThis.__wywThemeVars || { text: "black" };',
+      ].join('\n')
+    );
+    writeFileSync(
+      typography,
+      [
+        "import { themeVars } from './theme.js';",
+        'export const fontFamily = "Inter";',
+        'export const fontWeight = 400;',
+        'export const textStyles = { body: themeVars.text };',
+      ].join('\n')
+    );
+    writeFileSync(
+      barrel,
+      [
+        "export { fontFamily, fontWeight, textStyles } from './typography.js';",
+      ].join('\n')
+    );
+    writeFileSync(
+      entry,
+      [
+        "import { fontFamily, fontWeight, textStyles } from './design-system.js';",
+        'export const __wywPreval = {',
+        '  value: () => `${fontFamily}:${fontWeight}:${textStyles.body}`,',
+        '};',
+      ].join('\n')
+    );
+
+    const services = createServices(root, entry);
+    const broker = new EvalBroker(
+      services,
+      jest.fn(async () => null)
+    );
+    const privateBroker = getPrivateBroker(broker);
+
+    privateBroker.importsByModule.set(
+      entry,
+      new Map([
+        ['./design-system.js', ['fontFamily', 'fontWeight', 'textStyles']],
+      ])
+    );
+
+    const wideBarrel = await privateBroker.loadModule({
+      id: barrel,
+      importerId: entry,
+      request: './design-system.js',
+    });
+
+    expect(wideBarrel.imports?.get('./typography.js')).toEqual([
+      'fontFamily',
+      'fontWeight',
+      'textStyles',
+    ]);
+
+    // Simulate a concurrent/narrow barrel variant completing after the wide
+    // variant. Current code replaces the source-path import map with this
+    // narrower map, which can make the still-linking wide variant load a
+    // typography module that is missing fontFamily/textStyles.
+    privateBroker.ensureImportsMapping(
+      barrel,
+      new Map([['./typography.js', ['fontWeight']]])
+    );
+
+    const typographyForWideBarrel = await privateBroker.loadModule({
+      id: typography,
+      importerId: barrel,
+      request: './typography.js',
+    });
+
+    expect(typographyForWideBarrel.only).toEqual(
+      expect.arrayContaining(['fontFamily', 'fontWeight', 'textStyles'])
+    );
+    expect(typographyForWideBarrel.code).toContain('fontFamily');
+    expect(typographyForWideBarrel.code).toContain('textStyles');
 
     broker.dispose();
     rmSync(root, { recursive: true, force: true });

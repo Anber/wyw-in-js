@@ -54,6 +54,14 @@ export class Entrypoint extends BaseEntrypoint {
     Map<unknown, Map<unknown, BaseAction<ActionQueueItem>>>
   > = new Map();
 
+  // Tracks how many times resolveImports has settled with `resolved: null`
+  // for a given source. Bundler resolvers can return null transiently early
+  // in a build (loader context for that file isn't registered yet); after a
+  // bounded number of retries we accept the null as authoritative.
+  #resolveTaskNullAttempts = new Map<string, number>();
+
+  private static readonly RESOLVE_TASK_MAX_NULL_ATTEMPTS = 2;
+
   #hasWywMetadata: boolean = false;
 
   #hasTransformResult = false;
@@ -266,7 +274,7 @@ export class Entrypoint extends BaseEntrypoint {
         parent ? [parent] : [],
         loadedCode,
         name,
-        cached.only,
+        mergedOnly,
         exports,
         evaluatedOnly,
         cached.loadedAndParsed,
@@ -387,7 +395,28 @@ export class Entrypoint extends BaseEntrypoint {
     name: string,
     dependency: Promise<IEntrypointDependency>
   ): void {
-    this.resolveTasks.set(name, dependency);
+    // Bounded retry of transient null resolutions. The first time a
+    // resolveTask settles to null, evict it from the cache so the next
+    // consumer re-attempts the resolver. After RESOLVE_TASK_MAX_NULL_ATTEMPTS
+    // failures the entry stays cached so we don't thrash. Successful (non-null)
+    // resolutions remain cached normally; this branch only ever fires for null.
+    const tracked = dependency.then((resolved) => {
+      if (resolved.resolved !== null) {
+        return resolved;
+      }
+
+      const attempts = (this.#resolveTaskNullAttempts.get(name) ?? 0) + 1;
+      this.#resolveTaskNullAttempts.set(name, attempts);
+      if (
+        attempts < Entrypoint.RESOLVE_TASK_MAX_NULL_ATTEMPTS &&
+        this.resolveTasks.get(name) === tracked
+      ) {
+        this.resolveTasks.delete(name);
+      }
+
+      return resolved;
+    });
+    this.resolveTasks.set(name, tracked);
   }
 
   public applyDeferredSupersede() {
