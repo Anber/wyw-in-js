@@ -812,10 +812,9 @@ describe('EvalBroker', () => {
       request: dep,
     });
 
-    // Top-level forbidden references are stripped (executed at module load).
+    // The shaker removes all code not referenced by __wywPreval.
     expect(loaded.code).not.toContain('window.location.href');
-    // Deferred function bodies are kept — they don't run during preeval.
-    expect(loaded.code).toContain('document.createTreeWalker');
+    expect(loaded.code).not.toContain('document.createTreeWalker');
 
     broker.dispose();
     rmSync(root, { recursive: true, force: true });
@@ -906,6 +905,81 @@ describe('EvalBroker', () => {
 
     expect(result.values?.get('value')).toBe(1);
     expect(asyncResolve).not.toHaveBeenCalledWith('./dep.js', entry);
+
+    broker.dispose();
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('does not widen preval-only eval loads with cached runtime component exports', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
+    const entry = join(root, 'entry.tsx');
+    const tokens = join(root, 'tokens.ts');
+
+    writeFileSync(
+      tokens,
+      [
+        'export const border = { radius8: 8 };',
+        "export const themeVars = { inputBorderHoverColor: 'red' };",
+      ].join('\n')
+    );
+    writeFileSync(
+      entry,
+      [
+        "import { memo } from 'react';",
+        "import { css } from 'test-css-processor';",
+        "import { border, themeVars } from './tokens';",
+        'const className = css`',
+        '  border-radius: ${border.radius8}px;',
+        '  color: ${themeVars.inputBorderHoverColor};',
+        '`;',
+        'export const Comment = memo(function Comment() {',
+        '  return <div className={className} />;',
+        '});',
+      ].join('\n')
+    );
+
+    const asyncResolve = jest.fn(async (what: string, importer: string) => {
+      if (what === 'test-css-processor') {
+        return testCssProcessorFile;
+      }
+
+      if (what.startsWith('.')) {
+        return resolve(dirname(importer), what);
+      }
+
+      return null;
+    });
+    const services = createServices(root, entry, {
+      tagResolver: (source, tag) => {
+        if (source === 'test-css-processor' && tag === 'css') {
+          return testCssProcessorFile;
+        }
+
+        return null;
+      },
+    });
+    const broker = new EvalBroker(services, asyncResolve);
+    const privateBroker = getPrivateBroker(broker);
+
+    privateBroker.onlyByModule.set(entry, ['Comment']);
+    await privateBroker.loadModule({
+      id: entry,
+      importerId: entry,
+      request: entry,
+    });
+
+    privateBroker.onlyByModule.set(entry, ['__wywPreval']);
+    const loaded = await privateBroker.loadModule({
+      id: entry,
+      importerId: entry,
+      request: entry,
+    });
+
+    expect(loaded.only).toEqual(['__wywPreval']);
+    expect(loaded.code).toContain('export const __wywPreval');
+    expect(loaded.code).not.toContain('memo');
+    expect(loaded.code).not.toContain('Comment');
+    expect(loaded.imports?.has('react')).toBe(false);
 
     broker.dispose();
     rmSync(root, { recursive: true, force: true });
@@ -1433,21 +1507,18 @@ describe('EvalBroker', () => {
       writeFileSync(
         dep,
         [
-          'globalThis.__iconsLoadCount = (globalThis.__iconsLoadCount ?? 0) + 1;',
+          'export const loadCount = (() => { globalThis.__iconsLoadCount = (globalThis.__iconsLoadCount ?? 0) + 1; return globalThis.__iconsLoadCount; })();',
           "import InviteMedium from './svg-react.js';",
           "import CreateSemibold from './svg-react.js';",
           'export { InviteMedium, CreateSemibold };',
-          'export const __wywPreval = {',
-          '  count: () => globalThis.__iconsLoadCount,',
-          '};',
         ].join('\n')
       );
       writeFileSync(
         firstEntry,
         [
-          "import { InviteMedium } from './icons.js';",
+          "import { InviteMedium, loadCount } from './icons.js';",
           'export const __wywPreval = {',
-          '  count: () => globalThis.__iconsLoadCount,',
+          '  count: () => loadCount,',
           '  value: () => InviteMedium,',
           '};',
         ].join('\n')
@@ -1455,9 +1526,9 @@ describe('EvalBroker', () => {
       writeFileSync(
         secondEntry,
         [
-          "import { CreateSemibold } from './icons.js';",
+          "import { CreateSemibold, loadCount } from './icons.js';",
           'export const __wywPreval = {',
-          '  count: () => globalThis.__iconsLoadCount,',
+          '  count: () => loadCount,',
           '  value: () => CreateSemibold,',
           '};',
         ].join('\n')
@@ -1475,12 +1546,6 @@ describe('EvalBroker', () => {
         },
       });
       const broker = new EvalBroker(services, asyncResolve);
-      const depEntrypoint = Entrypoint.createRoot(
-        services,
-        dep,
-        ['__wywPreval'],
-        readFileSync(dep, 'utf-8')
-      );
       const firstEntrypoint = Entrypoint.createRoot(
         services,
         firstEntry,
@@ -1494,13 +1559,13 @@ describe('EvalBroker', () => {
         readFileSync(secondEntry, 'utf-8')
       );
 
-      const [depResult, firstResult, secondResult] = await Promise.all([
-        broker.evaluate(depEntrypoint),
+      const [firstResult, secondResult] = await Promise.all([
         broker.evaluate(firstEntrypoint),
         broker.evaluate(secondEntrypoint),
       ]);
 
-      expect(depResult.values?.get('count')).toBe(1);
+      // Both entries import icons.js with noShake — single unshaken variant,
+      // so the module executes only once despite two concurrent consumers.
       expect(firstResult.values?.get('count')).toBe(1);
       expect(secondResult.values?.get('count')).toBe(1);
       expect(firstResult.values?.get('value')).toBe('svg-mock');

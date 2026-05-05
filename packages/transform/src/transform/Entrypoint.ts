@@ -22,6 +22,10 @@ import { stripQueryAndHash } from '../utils/parseRequest';
 const EMPTY_FILE = '=== empty file ===';
 const DEFAULT_ACTION_CONTEXT = Symbol('defaultActionContext');
 
+type CreateEntrypointOptions = {
+  mergeCachedOnly?: boolean;
+};
+
 function hasLoop(
   name: string,
   parent: ParentEntrypoint,
@@ -176,9 +180,17 @@ export class Entrypoint extends BaseEntrypoint {
     services: Services,
     name: string,
     only: string[],
-    loadedCode: string | undefined
+    loadedCode: string | undefined,
+    options: CreateEntrypointOptions = {}
   ): Entrypoint {
-    const created = Entrypoint.create(services, null, name, only, loadedCode);
+    const created = Entrypoint.create(
+      services,
+      null,
+      name,
+      only,
+      loadedCode,
+      options
+    );
     invariant(created !== 'loop', 'loop detected');
 
     return created;
@@ -189,7 +201,8 @@ export class Entrypoint extends BaseEntrypoint {
     parent: ParentEntrypoint | null,
     name: string,
     only: string[],
-    loadedCode: string | undefined
+    loadedCode: string | undefined,
+    options: CreateEntrypointOptions = {}
   ): Entrypoint | 'loop' {
     const { cache, eventEmitter } = services;
     return eventEmitter.perf('createEntrypoint', () => {
@@ -206,7 +219,8 @@ export class Entrypoint extends BaseEntrypoint {
           : null,
         name,
         only,
-        loadedCode
+        loadedCode,
+        options
       );
 
       if (status !== 'cached') {
@@ -222,7 +236,8 @@ export class Entrypoint extends BaseEntrypoint {
     parent: ParentEntrypoint | null,
     name: string,
     only: string[],
-    loadedCode: string | undefined
+    loadedCode: string | undefined,
+    options: CreateEntrypointOptions
   ): ['loop' | 'created' | 'cached', Entrypoint] {
     const { cache } = services;
 
@@ -254,7 +269,10 @@ export class Entrypoint extends BaseEntrypoint {
 
     const exports = cached?.exports;
     const evaluatedOnly = changed ? [] : cached?.evaluatedOnly ?? [];
-    const mergedOnly = cached?.only ? mergeOnly(cached.only, only) : [...only];
+    const mergedOnly =
+      options.mergeCachedOnly !== false && cached?.only
+        ? mergeOnly(cached.only, only)
+        : [...only];
     const reusableEvaluatedState =
       !changed && cached?.evaluated && cached.loadedAndParsed !== undefined;
     const canReuseEvaluatedTransformResult =
