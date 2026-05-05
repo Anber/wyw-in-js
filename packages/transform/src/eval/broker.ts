@@ -1932,13 +1932,27 @@ export class EvalBroker {
         }
         this.resolvePending(message.id, {});
         return;
-      case 'EVAL_RESULT':
+      case 'EVAL_RESULT': {
+        // Runner reports any ids it dropped from its caches during this
+        // session (e.g. modules whose link errored after a transient missing
+        // import). Mirror those evictions here — otherwise lastSentLoadByModule
+        // would keep claiming the runner has them and handleLoad would ship
+        // empty `code` on the next session, leaving the runner stuck.
+        const evictedIds = (
+          message.payload as { evictedIds?: readonly string[] } | null
+        )?.evictedIds;
+        if (evictedIds && evictedIds.length > 0) {
+          for (const evictedId of evictedIds) {
+            this.lastSentLoadByModule.delete(evictedId);
+          }
+        }
         if (message.error) {
           this.rejectPending(message.id, message.error);
           return;
         }
         this.resolvePending(message.id, message.payload);
         return;
+      }
       case 'RESOLVE':
         this.handleResolve(message.id, message.payload).catch((error) => {
           void this.sendMessage({

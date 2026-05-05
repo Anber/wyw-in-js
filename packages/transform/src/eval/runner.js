@@ -969,6 +969,12 @@ const resolveInFlight = new Map();
 
 const pending = new Map();
 const loadResultChunks = new Map();
+// Ids evicted during the in-flight EVAL session via resetSingleModuleState.
+// Surfaced in EVAL_RESULT so the broker can drop matching entries from its
+// "what runner has" mirror (lastSentLoadByModule) — otherwise the broker would
+// keep short-circuiting subsequent LOADs with empty `code` and the runner
+// would have no way to obtain fresh source.
+const evictedThisSession = new Set();
 let nextId = 0;
 const stdoutWriteQueue = [];
 let stdoutWriteInFlight = false;
@@ -1012,6 +1018,17 @@ const resetSingleModuleState = (id, cachedModule = moduleCache.get(id)) => {
   moduleData.delete(id);
   moduleVariants.delete(id);
   moduleLastVariant.delete(id);
+  sentNamespaceIdentifiers.delete(id);
+};
+
+// Stronger reset for error paths: clears moduleOnly too and records the id so
+// the broker can drop its lastSentLoadByModule entry. Used when a module's
+// SourceTextModule has reached an unrecoverable state (e.g. link errored
+// against a transient missing import) and should not be reused.
+const evictPoisonedModule = (id) => {
+  resetSingleModuleState(id);
+  moduleOnly.delete(id);
+  evictedThisSession.add(id);
 };
 
 const isFullModuleLoad = (loaded) =>
@@ -1584,6 +1601,17 @@ const linkModule = async (module) => {
       );
       return module;
     } catch (error) {
+      // The vm SourceTextModule is now in 'errored' (or partially-linked)
+      // state and can never be re-linked. With reuseModules:true the cached
+      // module would otherwise stick around and short-circuit linkModule's
+      // status guard above on the next session — surfacing the original
+      // failure forever even after the user fixes the underlying problem.
+      // Drop it so the next LOAD rebuilds a fresh SourceTextModule.
+      const identifier =
+        typeof module.identifier === 'string' ? module.identifier : null;
+      if (identifier) {
+        evictPoisonedModule(toSourceModuleId(identifier));
+      }
       // ERR_VM_MODULE_LINK_FAILURE means a dependency is in "errored" state.
       // Node chains .cause through the link failure hierarchy. Walk to the
       // deepest cause to surface the original evaluation error (e.g. a
@@ -1784,6 +1812,15 @@ loadModule = async (id, importer, requestSpec) => {
         `  resolved: ${id}`,
         `  cause:    ${loaded.error.message}`,
       ].join('\n');
+      // The importer's SourceTextModule (if it was already created and
+      // cached) compiled this `import` against `id`; reusing it next session
+      // would link against the same id and either re-trigger the failure or
+      // skip linking via the status guard. Drop both so the next session
+      // pulls fresh code for both ends of the broken edge.
+      if (importer && importer !== id) {
+        evictPoisonedModule(toSourceModuleId(importer));
+      }
+      evictPoisonedModule(id);
       const enhanced = new Error(detail);
       enhanced.cause = loaded.error;
       throw enhanced;
@@ -2229,6 +2266,7 @@ const handleMessage = async (message) => {
       break;
     }
     case 'EVAL': {
+      evictedThisSession.clear();
       try {
         const { values, modules } = await evaluateEntrypoint(
           message.payload.id
@@ -2239,13 +2277,17 @@ const handleMessage = async (message) => {
           payload: {
             values,
             modules,
+            evictedIds: Array.from(evictedThisSession),
           },
         });
       } catch (error) {
         sendMessage({
           type: 'EVAL_RESULT',
           id: message.id,
-          payload: { values: null },
+          payload: {
+            values: null,
+            evictedIds: Array.from(evictedThisSession),
+          },
           error: serializeError(error),
         });
       }
