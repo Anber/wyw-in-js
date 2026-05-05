@@ -1,5 +1,58 @@
 # @wyw-in-js/shared
 
+## 2.0.0-alpha.0
+
+### Major Changes
+
+- bd2a46a: WyW-in-JS packages are now ESM-only and require Node.js >= 22.0.0.
+
+  Breaking changes in v2:
+
+  - CJS `require()` package entrypoints were removed; migrate configs/tooling to ESM (`import()` / `.mjs`).
+  - Eval moved to the async ESM runner-based pipeline (`vm.SourceTextModule` + broker RPC), which is now the default path in v2.
+  - Eval IPC and Babel preset config handling are stricter:
+    - unsupported values in `__wywPreval` now fail explicitly instead of being silently coerced through JSON
+    - function-valued preset/plugin options are supported when loaded from config files, while inline non-serializable options now error with migration guidance
+    - `eval.globals` encoding and invalidation are more predictable and reject unsupported values earlier
+  - `require()` inside eval now follows fallback semantics controlled by `eval.require` (`warn-and-run` / `error` / `off`).
+
+  This release also updates the published bundler integrations, adapter coverage,
+  and migration/docs around the v2 evaluator contract, and includes cache and
+  warm-runner reuse fixes to keep the new evaluator on the expected performance
+  path.
+
+  Migration guide: https://wyw-in-js.dev/migration/v2
+
+- d553b68: Complete the v2 Oxc migration across the core transform and evaluator pipeline.
+
+  This cutover moves the runtime transform path to the Oxc-backed implementation, including module analysis, preeval rewrites, dangerous-code removal, processor application, template dependency extraction, shaker, collect, emit, and the async ESM evaluator flow.
+
+  The public configuration contract is now Oxc-first, with `oxcOptions`, `EvalRule.oxcOptions`, and the `hybrid` resolver mode available across the updated packages. Processor integrations now rely on the engine-neutral `AstService` surface, and the migration includes cache, concurrency, and hot-path performance fixes needed to keep downstream behavior stable after the cutover. `@wyw-in-js/babel-preset` stays available only as a deprecated compatibility wrapper around the Oxc pipeline.
+
+### Minor Changes
+
+- 7754792: Expose the public Oxc configuration surface for the v2 transform path.
+
+  This introduces `oxcOptions`, per-rule `EvalRule.oxcOptions`, and the opt-in `hybrid` eval resolver mode contract used by the Oxc-first pipeline. The default resolver remains `bundler`.
+
+- 1a72b47: Inline statically resolvable imported literals, fixed objects, compiled TypeScript enum objects, zero-argument helper returns, compound component alias metadata, same-module and post-declaration alias metadata, primitive processor metadata, and static metadata helper chains during Oxc pre-evaluation. The optimization is controlled by the opt-in `features.staticImportValues` flag.
+
+  Cache per-file static metadata pre-evaluation results so multiple static exports from the same module do not repeat the same processor pre-evaluation work.
+
+- 69004e7: Add opt-in metadata manifest output across `@wyw-in-js/shared`, `@wyw-in-js/transform`, `@wyw-in-js/vite`, and `@wyw-in-js/cli`.
+
+  When `outputMetadata` is enabled:
+
+  - `@wyw-in-js/transform` now returns normalized, public metadata alongside the existing transform result.
+  - `@wyw-in-js/vite` emits `.wyw-in-js.json` sidecar assets during build.
+  - `@wyw-in-js/cli` writes matching `.wyw-in-js.json` sidecar files and supports an `--output-metadata` flag.
+
+  This keeps default JS/CSS output unchanged while exposing stable metadata artifacts for CLI, Vite, and transform consumers.
+
+### Patch Changes
+
+- d553b68: Fix several remaining Oxc parity gaps around processor-added imports, hoisted template dependencies, CommonJS export analysis, runtime source map composition, and live-binding CommonJS emit behavior.
+
 ## 1.0.5
 
 ### Patch Changes

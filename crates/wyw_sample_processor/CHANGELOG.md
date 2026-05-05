@@ -1,5 +1,11 @@
 # @wyw-in-js/sample-processor
 
+## 2.0.0-alpha.0
+
+### Major Changes
+
+- Bump versions
+
 ## 1.0.2
 
 ### Patch Changes

@@ -34,5 +34,14 @@
     "@wyw-in-js/vite": "1.0.9",
     "@wyw-in-js/webpack-loader": "1.0.8"
   },
-  "changesets": []
+  "changesets": [
+    "fair-radios-fail",
+    "oxc-config-foundation",
+    "processor-diagnostics-reporting",
+    "purple-bears-peel",
+    "spotty-moments-bow",
+    "static-import-values",
+    "steady-trains-smoke",
+    "transform-metadata-manifests"
+  ]
 }

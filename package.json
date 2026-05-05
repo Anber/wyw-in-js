@@ -1,7 +1,7 @@
 {
   "name": "wyw-in-js",
   "description": "",
-  "version": "1.0.2",
+  "version": "2.0.0-alpha.0",
   "author": "Anton Evzhakov",
   "bugs": "https://github.com/Anber/wyw-in-js/issues",
   "devDependencies": {
