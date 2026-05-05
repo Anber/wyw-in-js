@@ -1410,12 +1410,19 @@ const evaluateStatic = (
 
   if (expression.type === 'UnaryExpression') {
     if (expression.operator === 'typeof') {
+      const argIsProcessEnvAccess =
+        expression.argument.type === 'MemberExpression' &&
+        isProcessEnvMember(expression.argument.object);
       const arg = evaluateStatic(
         expression.argument as Expression,
         ctx,
         env,
         stack
       );
+      if (arg === undefined) {
+        return argIsProcessEnvAccess ? 'undefined' : undefined;
+      }
+
       return typeof arg;
     }
 
