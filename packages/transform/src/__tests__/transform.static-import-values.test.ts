@@ -605,54 +605,7 @@ describe('transform static import value inlining', () => {
     }
   });
 
-  it('keeps static resolve debug events disabled by default', async () => {
-    const previousDebug = process.env.WYW_DEBUG_STATIC_RESOLVE;
-    delete process.env.WYW_DEBUG_STATIC_RESOLVE;
-
-    const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
-    const entryFile = join(root, 'entry.js');
-    const depFile = join(root, 'unsafe.js');
-    const cache = new TransformCacheCollection();
-    const perf = createPerfEventRecorder();
-
-    writeFileSync(
-      depFile,
-      dedent`
-        const color = String('red');
-        export { color };
-      `
-    );
-    writeFileSync(
-      entryFile,
-      dedent`
-        import { css } from 'test-css-processor';
-        import { color } from './unsafe.js';
-
-        export const className = css\`
-          color: ${'${color}'};
-        \`;
-      `
-    );
-
-    try {
-      await runTransform(root, entryFile, cache, perf.eventEmitter);
-
-      expect(
-        perf.events.filter((event) => event.type === 'staticResolve')
-      ).toEqual([]);
-    } finally {
-      if (previousDebug === undefined) {
-        delete process.env.WYW_DEBUG_STATIC_RESOLVE;
-      } else {
-        process.env.WYW_DEBUG_STATIC_RESOLVE = previousDebug;
-      }
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  it('emits static resolve debug rejection reasons when requested', async () => {
-    const previousDebug = process.env.WYW_DEBUG_STATIC_RESOLVE;
-    process.env.WYW_DEBUG_STATIC_RESOLVE = '1';
+  it('emits static resolve debug rejection reasons whenever the feature is enabled', async () => {
     const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
 
     const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
@@ -696,20 +649,52 @@ describe('transform static import value inlining', () => {
           }),
         ])
       );
-      expect(warnSpy).toHaveBeenCalledWith(
-        '[wyw-static-resolve]',
-        expect.objectContaining({
-          reason: 'unsupported-expression',
-          type: 'staticResolve',
-        })
-      );
+      expect(warnSpy).not.toHaveBeenCalled();
     } finally {
       warnSpy.mockRestore();
-      if (previousDebug === undefined) {
-        delete process.env.WYW_DEBUG_STATIC_RESOLVE;
-      } else {
-        process.env.WYW_DEBUG_STATIC_RESOLVE = previousDebug;
-      }
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('does not emit static resolve debug events when the feature is disabled', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
+    const entryFile = join(root, 'entry.js');
+    const depFile = join(root, 'unsafe.js');
+    const cache = new TransformCacheCollection();
+    const perf = createPerfEventRecorder();
+
+    writeFileSync(
+      depFile,
+      dedent`
+        const color = String('red');
+        export { color };
+      `
+    );
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { css } from 'test-css-processor';
+        import { color } from './unsafe.js';
+
+        export const className = css\`
+          color: ${'${color}'};
+        \`;
+      `
+    );
+
+    try {
+      await runTransformWithOptions(
+        root,
+        entryFile,
+        cache,
+        perf.eventEmitter,
+        { features: { staticImportValues: false } }
+      );
+
+      expect(
+        perf.events.filter((event) => event.type === 'staticResolve')
+      ).toEqual([]);
+    } finally {
       rmSync(root, { recursive: true, force: true });
     }
   });

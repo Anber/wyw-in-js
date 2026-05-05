@@ -177,19 +177,10 @@ const isStaticImportValuesEnabled = (
   );
 };
 
-const isStaticResolveDebugEnabled = (): boolean => {
-  const envValue = process.env.WYW_DEBUG_STATIC_RESOLVE?.trim().toLowerCase();
-  return !!envValue && !isEnvDisabled(envValue);
-};
-
 const debugStaticResolve = (
   action: ITransformAction,
   event: StaticResolveDebugEvent
 ): void => {
-  if (!isStaticResolveDebugEnabled()) {
-    return;
-  }
-
   const labels = Object.fromEntries(
     Object.entries({
       ...event,
@@ -198,8 +189,6 @@ const debugStaticResolve = (
   );
 
   action.services.eventEmitter.single(labels);
-  // eslint-disable-next-line no-console
-  console.warn('[wyw-static-resolve]', labels);
 };
 
 const parseProgram = (code: string, filename: string): Program =>
@@ -247,7 +236,7 @@ const isStaticResolveCacheEnabled = (): boolean => {
     return !isEnvDisabled(envValue);
   }
 
-  return !isStaticResolveDebugEnabled();
+  return true;
 };
 
 const staticCachePrefix = (action: ITransformAction): string =>
