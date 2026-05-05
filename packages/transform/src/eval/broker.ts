@@ -2769,9 +2769,10 @@ export class EvalBroker {
     });
 
     if (shouldShipCode && prepared.hash) {
-      const merged = previouslySent
-        ? mergeOnly(previouslySent.only, prepared.only)
-        : [...prepared.only];
+      const merged =
+        previouslySent?.hash === prepared.hash
+          ? mergeOnly(previouslySent.only, prepared.only)
+          : [...prepared.only];
       this.lastSentLoadByModule.set(payload.id, {
         hash: prepared.hash,
         only: merged,

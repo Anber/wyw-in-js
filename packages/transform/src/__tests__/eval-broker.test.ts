@@ -3450,7 +3450,11 @@ describe('EvalBroker', () => {
     const privateBroker = broker as unknown as {
       handleLoad: (
         id: string,
-        payload: { id: string; importerId: string | null; request: string | null }
+        payload: {
+          id: string;
+          importerId: string | null;
+          request: string | null;
+        }
       ) => Promise<void>;
       onlyByModule: Map<string, string[]>;
       runnerInputQueue: unknown;
@@ -3509,6 +3513,95 @@ describe('EvalBroker', () => {
     expect(captured).toHaveLength(3);
     expect(captured[2].payload.code).toContain('extra');
     expect(captured[2].payload.hash).not.toBe(first.payload.hash);
+
+    broker.dispose();
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('does not carry shipped-code coverage across different load hashes', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
+    const entry = join(root, 'entry.js');
+    const dep = join(root, 'dep.js');
+    writeFileSync(entry, 'export const __wywPreval = {};');
+
+    const services = createServices(root, entry);
+    const broker = new EvalBroker(
+      services,
+      jest.fn(async () => dep)
+    );
+    const privateBroker = broker as unknown as {
+      handleLoad: (
+        id: string,
+        payload: {
+          id: string;
+          importerId: string | null;
+          request: string | null;
+        }
+      ) => Promise<void>;
+      loadModule: jest.Mock;
+      runnerInputQueue: unknown;
+      sendMessage: (message: unknown) => Promise<void>;
+    };
+
+    type CapturedLoadResult = {
+      id: string;
+      payload: { code?: string; hash?: string; only?: string[] };
+    };
+    const captured: CapturedLoadResult[] = [];
+    privateBroker.runnerInputQueue = {
+      write: () => Promise.resolve(),
+    };
+    privateBroker.sendMessage = async (message: unknown) => {
+      const m = message as { type: string } & CapturedLoadResult;
+      if (m.type === 'LOAD_RESULT') {
+        captured.push({ id: m.id, payload: m.payload });
+      }
+    };
+
+    privateBroker.loadModule = jest
+      .fn()
+      .mockResolvedValueOnce({
+        code: 'export const first = 1;',
+        imports: null,
+        only: ['*'],
+        hash: 'hash-a',
+      })
+      .mockResolvedValueOnce({
+        code: 'export const value = 1;',
+        imports: null,
+        only: ['value'],
+        hash: 'hash-b',
+      })
+      .mockResolvedValueOnce({
+        code: 'export const value = 1;',
+        imports: null,
+        only: ['*'],
+        hash: 'hash-b',
+      });
+
+    await privateBroker.handleLoad('msg-1', {
+      id: dep,
+      importerId: entry,
+      request: null,
+    });
+    await privateBroker.handleLoad('msg-2', {
+      id: dep,
+      importerId: entry,
+      request: null,
+    });
+    await privateBroker.handleLoad('msg-3', {
+      id: dep,
+      importerId: entry,
+      request: null,
+    });
+
+    expect(captured).toHaveLength(3);
+    expect(captured[0].payload.code).toContain('first');
+    expect(captured[1].payload.code).toContain('value');
+    // The second load stored hash-b as a module variant. The prior wildcard
+    // coverage from hash-a must not make the broker believe hash-b also exists
+    // in the runner's primary module cache.
+    expect(captured[2].payload.code).toContain('value');
 
     broker.dispose();
     rmSync(root, { recursive: true, force: true });
