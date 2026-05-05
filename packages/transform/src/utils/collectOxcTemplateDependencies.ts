@@ -839,10 +839,13 @@ const isBindingDeclaredWithin = (binding: Binding, container: Node): boolean =>
   container.start <= binding.declaredAt && binding.declaredAt < container.end;
 
 const literalCode = (value: unknown): string | null => {
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? JSON.stringify(value) : null;
+  }
+
   if (
     value === null ||
     typeof value === 'string' ||
-    typeof value === 'number' ||
     typeof value === 'boolean'
   ) {
     return JSON.stringify(value);
@@ -1320,16 +1323,33 @@ const collectStaticNamespaceMemberReferences = (
   };
 };
 
+const isProcessEnvMember = (node: Node): boolean => {
+  if (node.type !== 'MemberExpression' || node.computed) {
+    return false;
+  }
+
+  if (
+    node.property.type !== 'Identifier' ||
+    node.property.name !== 'env'
+  ) {
+    return false;
+  }
+
+  return node.object.type === 'Identifier' && node.object.name === 'process';
+};
+
 const evaluateBinary = (
   expression: Expression,
-  ctx: ExtractionContext
+  ctx: ExtractionContext,
+  env: EvalEnv = new Map(),
+  stack: string[] = []
 ): unknown | undefined => {
   if (expression.type !== 'BinaryExpression') {
     return undefined;
   }
 
-  const left = evaluateStatic(expression.left as Expression, ctx);
-  const right = evaluateStatic(expression.right as Expression, ctx);
+  const left = evaluateStatic(expression.left as Expression, ctx, env, stack);
+  const right = evaluateStatic(expression.right as Expression, ctx, env, stack);
   if (left === undefined || right === undefined) {
     return undefined;
   }
@@ -1347,12 +1367,21 @@ const evaluateBinary = (
     }
   }
 
-  if (
-    expression.operator === '*' &&
-    typeof left === 'number' &&
-    typeof right === 'number'
-  ) {
-    return left * right;
+  if (typeof left === 'number' && typeof right === 'number') {
+    switch (expression.operator) {
+      case '-':
+        return left - right;
+      case '*':
+        return left * right;
+      case '/':
+        return left / right;
+      case '%':
+        return left % right;
+      case '**':
+        return left ** right;
+      default:
+        break;
+    }
   }
 
   return undefined;
@@ -1377,6 +1406,93 @@ const evaluateStatic = (
 
   if (expression.type === 'Literal') {
     return expression.value;
+  }
+
+  if (expression.type === 'UnaryExpression') {
+    if (expression.operator === 'typeof') {
+      const argIsProcessEnvAccess =
+        expression.argument.type === 'MemberExpression' &&
+        isProcessEnvMember(expression.argument.object);
+      const arg = evaluateStatic(
+        expression.argument as Expression,
+        ctx,
+        env,
+        stack
+      );
+      if (arg === undefined) {
+        return argIsProcessEnvAccess ? 'undefined' : undefined;
+      }
+
+      return typeof arg;
+    }
+
+    const arg = evaluateStatic(
+      expression.argument as Expression,
+      ctx,
+      env,
+      stack
+    );
+    if (arg === undefined) {
+      return undefined;
+    }
+
+    switch (expression.operator) {
+      case '-':
+        return typeof arg === 'number' ? -arg : undefined;
+      case '+':
+        return typeof arg === 'number' ? +arg : undefined;
+      case '!':
+        return !arg;
+      case '~':
+        return typeof arg === 'number' ? ~arg : undefined;
+      case 'void':
+        return undefined;
+      default:
+        return undefined;
+    }
+  }
+
+  if (expression.type === 'LogicalExpression') {
+    const left = evaluateStatic(expression.left, ctx, env, stack);
+    // process.env.X access is the only source we trust as "deterministically
+    // undefined" — it's a build-time lookup we control. For everything else,
+    // undefined means "couldn't evaluate" and we must bail to avoid inlining
+    // a wrong fallback when the runtime value isn't actually nullish.
+    const leftIsProcessEnvAccess =
+      expression.left.type === 'MemberExpression' &&
+      isProcessEnvMember(expression.left.object);
+
+    if (left === undefined && !leftIsProcessEnvAccess) {
+      return undefined;
+    }
+
+    if (expression.operator === '||') {
+      return left || evaluateStatic(expression.right, ctx, env, stack);
+    }
+
+    if (expression.operator === '??') {
+      return left ?? evaluateStatic(expression.right, ctx, env, stack);
+    }
+
+    if (expression.operator === '&&') {
+      return left && evaluateStatic(expression.right, ctx, env, stack);
+    }
+
+    return undefined;
+  }
+
+  if (expression.type === 'ConditionalExpression') {
+    const test = evaluateStatic(expression.test, ctx, env, stack);
+    if (test === undefined) {
+      return undefined;
+    }
+
+    return evaluateStatic(
+      test ? expression.consequent : expression.alternate,
+      ctx,
+      env,
+      stack
+    );
   }
 
   if (expression.type === 'TemplateLiteral') {
@@ -1541,7 +1657,6 @@ const evaluateStatic = (
   }
 
   if (expression.type === 'MemberExpression') {
-    const objectValue = evaluateStatic(expression.object, ctx, env, stack);
     let key: unknown;
     if (expression.computed) {
       key = evaluateStatic(expression.property as Expression, ctx, env, stack);
@@ -1549,11 +1664,27 @@ const evaluateStatic = (
       key = expression.property.name;
     }
     if (
-      objectValue === undefined ||
       key === undefined ||
       key === null ||
       (typeof key !== 'string' && typeof key !== 'number')
     ) {
+      return undefined;
+    }
+
+    if (
+      isProcessEnvMember(expression.object) &&
+      typeof key === 'string' &&
+      !env.has('process')
+    ) {
+      // Treat process.env.X as deterministically undefined at build time.
+      // Reading from real process.env would couple the bundle to whatever
+      // happens to be set on the build machine; falling back to the
+      // ?? / || branch (or a runtime read) is more predictable.
+      return undefined;
+    }
+
+    const objectValue = evaluateStatic(expression.object, ctx, env, stack);
+    if (objectValue === undefined) {
       return undefined;
     }
 
@@ -1673,7 +1804,7 @@ const evaluateStatic = (
     }
   }
 
-  return evaluateBinary(expression, ctx);
+  return evaluateBinary(expression, ctx, env, stack);
 };
 
 const allocateExpressionName = (ctx: ExtractionContext): string => {

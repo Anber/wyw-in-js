@@ -571,6 +571,18 @@ const unwrapExpression = (expr: Node): Node => {
   }
 };
 
+const isProcessEnvMember = (node: Node): boolean => {
+  if (node.type !== 'MemberExpression' || node.computed) {
+    return false;
+  }
+
+  if (node.property.type !== 'Identifier' || node.property.name !== 'env') {
+    return false;
+  }
+
+  return node.object.type === 'Identifier' && node.object.name === 'process';
+};
+
 const isSafeLiteral = (
   node: Node
 ): node is Node & {
@@ -1873,6 +1885,12 @@ const collectStaticExpressionReferences = (
   }
 
   if (unwrapped.type === 'MemberExpression') {
+    if (isProcessEnvMember(unwrapped) || isProcessEnvMember(unwrapped.object)) {
+      // process.env / process.env.X is an opaque build-time global —
+      // don't treat `process` as an unresolved local reference.
+      return true;
+    }
+
     return (
       collectStaticExpressionReferences(
         unwrapped.object,
