@@ -1,6 +1,6 @@
 {
   "name": "@wyw-in-js/e2e-next-webpack",
-  "version": "1.0.0",
+  "version": "2.0.0-alpha.0",
   "dependencies": {
     "@wyw-in-js/nextjs": "workspace:*",
     "@wyw-in-js/template-tag-syntax": "workspace:*",
