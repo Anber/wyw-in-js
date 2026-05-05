@@ -56,7 +56,7 @@ jobs:
         with:
           version: bun run version:alpha
           publish: bun run release:alpha
-          title: Version Packages (alpha)
-          commit: Version Packages (alpha)
+          title: Version Packages
+          commit: Version Packages
         env:
           GITHUB_TOKEN: ${{ secrets.ANBER_GITHUB_TOKEN }}
