@@ -100,7 +100,11 @@ describe('applyOxcProcessors', () => {
     let resolverCalls = 0;
     const cachedOptions: Pick<
       StrictOptions,
-      'classNameSlug' | 'displayName' | 'extensions' | 'evaluate' | 'tagResolver'
+      | 'classNameSlug'
+      | 'displayName'
+      | 'extensions'
+      | 'evaluate'
+      | 'tagResolver'
     > = {
       displayName: false,
       evaluate: true,
@@ -122,8 +126,18 @@ describe('applyOxcProcessors', () => {
       \`;
     `;
 
-    const first = applyOxcProcessors(source, fileContext, cachedOptions, () => {});
-    const second = applyOxcProcessors(source, fileContext, cachedOptions, () => {});
+    const first = applyOxcProcessors(
+      source,
+      fileContext,
+      cachedOptions,
+      () => {}
+    );
+    const second = applyOxcProcessors(
+      source,
+      fileContext,
+      cachedOptions,
+      () => {}
+    );
 
     expect(first.processors).toHaveLength(1);
     expect(second.processors).toHaveLength(1);
@@ -454,7 +468,7 @@ describe('applyOxcProcessors', () => {
         }
         const obj = copyAndExtend({ a: 1 }, { a: 2 });
         export const title = css\`
-          color: ${"${obj.a}"};
+          color: ${'${obj.a}'};
         \`;
       `,
       fileContext,
@@ -614,9 +628,9 @@ describe('applyOxcProcessors', () => {
       () => {}
     );
 
-    expect(result.processors[0]?.dependencies.map((item) => item.ex.name)).toEqual(
-      ['_exp']
-    );
+    expect(
+      result.processors[0]?.dependencies.map((item) => item.ex.name)
+    ).toEqual(['_exp']);
     expect(result.processors[0]?.dependencies[0]).toMatchObject({
       importedFrom: ['./base'],
       kind: ValueType.LAZY,
@@ -647,7 +661,9 @@ describe('applyOxcProcessors', () => {
       'var React = _interopRequireWildcard(require("react"));'
     );
     expect(result.code).toContain('const _exp = () => (Component);');
-    expect(result.code).toContain('export const styles = /*#__PURE__*/__callRuntime(_exp());');
+    expect(result.code).toContain(
+      'export const styles = /*#__PURE__*/__callRuntime(_exp());'
+    );
   });
 
   it('keeps runtime helpers referenced only from function parameter defaults', () => {
@@ -682,9 +698,7 @@ describe('applyOxcProcessors', () => {
       true
     );
 
-    expect(result.code).toContain(
-      "import SelectOption from './SelectOption';"
-    );
+    expect(result.code).toContain("import SelectOption from './SelectOption';");
     expect(result.code).toContain('const formatOptionLabelDefault =');
     expect(result.code).toContain(
       'formatOptionLabel = formatOptionLabelDefault'
@@ -702,15 +716,13 @@ describe('applyOxcProcessors', () => {
       (processor) => processor.doRuntimeReplacement()
     );
 
-    expect(result.code).toContain(
-      'import { __styles } from "@griffel/react";'
-    );
+    expect(result.code).toContain('import { __styles } from "@griffel/react";');
     expect(result.code).toContain(
       "export const useStyles = /*#__PURE__*/__styles('x');"
     );
   });
 
-  it("throws when it cannot derive a display name from ownership or filename", () => {
+  it('throws when it cannot derive a display name from ownership or filename', () => {
     expect(() =>
       applyOxcProcessors(
         `

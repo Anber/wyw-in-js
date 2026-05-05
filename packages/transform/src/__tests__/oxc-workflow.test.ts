@@ -375,7 +375,9 @@ describe('explicit Oxc workflow', () => {
       const base = result.values?.get('_exp');
 
       expect(preparedEntry.code).toContain('var _exp = () => Base;');
-      expect(preparedEntry.code).toContain('export const __wywPreval = { _exp };');
+      expect(preparedEntry.code).toContain(
+        'export const __wywPreval = { _exp };'
+      );
       expect(preparedBase.code).toContain('__wyw_meta');
       expect(base).toMatchObject({
         __wyw_meta: {
@@ -422,7 +424,10 @@ describe('explicit Oxc workflow', () => {
       ),
       { recursive: true }
     );
-    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'portal-app' }));
+    writeFileSync(
+      join(root, 'package.json'),
+      JSON.stringify({ name: 'portal-app' })
+    );
     writeFileSync(
       baseFile,
       dedent`
@@ -519,7 +524,10 @@ describe('explicit Oxc workflow', () => {
       ),
       { recursive: true }
     );
-    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'portal-app' }));
+    writeFileSync(
+      join(root, 'package.json'),
+      JSON.stringify({ name: 'portal-app' })
+    );
     writeFileSync(
       baseFile,
       dedent`
@@ -656,7 +664,10 @@ describe('explicit Oxc workflow', () => {
     mkdirSync(join(root, 'node_modules', 'animated-scroll-to'), {
       recursive: true,
     });
-    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'portal-app' }));
+    writeFileSync(
+      join(root, 'package.json'),
+      JSON.stringify({ name: 'portal-app' })
+    );
     writeFileSync(
       baseFile,
       dedent`

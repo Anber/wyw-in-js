@@ -21,9 +21,7 @@ export const hasCachedWywPrevalExport = (
     | string[]
     | undefined;
   if (knownExports) {
-    return (
-      knownExports.includes('__wywPreval') || knownExports.includes('*')
-    );
+    return knownExports.includes('__wywPreval') || knownExports.includes('*');
   }
 
   const filename = stripQueryAndHash(resolved);

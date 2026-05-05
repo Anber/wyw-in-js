@@ -116,9 +116,10 @@ describe('oxc preeval transforms', () => {
           filename
         )
       ).toBe(
-        ['const url = "./__fixtures__/FOO";', 'require("./__fixtures__/foo");'].join(
-          '\n'
-        )
+        [
+          'const url = "./__fixtures__/FOO";',
+          'require("./__fixtures__/foo");',
+        ].join('\n')
       );
     });
 
@@ -197,6 +198,22 @@ describe('oxc preeval transforms', () => {
       expect(code).not.toContain('import {  as CommentComponent');
       expect(code).not.toContain('window.Comment');
       expect(code).toContain('export const keep = CommentComponent');
+    });
+
+    it('preserves imported names in aliased import specifiers', () => {
+      const code = removeDangerousCodeWithOxc(
+        [
+          'import { jsx as _jsx } from "react/jsx-runtime";',
+          'import { Range as RcRange } from "rc-slider";',
+          'const Range = () => _jsx(RcRange, {});',
+          'export default Range;',
+        ].join('\n'),
+        filename
+      );
+
+      expect(code).toContain('import { Range as RcRange } from "rc-slider";');
+      expect(code).toContain('const Range = () => { return null; };');
+      expect(() => stripTypesAndJsxWithOxc(code, filename)).not.toThrow();
     });
 
     it('removes exported browser-global declarations without leaving dangling export syntax', () => {
@@ -540,10 +557,7 @@ describe('oxc preeval transforms', () => {
 
     it('does not skip computed property keys that reference forbidden globals', () => {
       const code = removeDangerousCodeWithOxc(
-        [
-          'const dangerous = { [fetch]: 1 };',
-          'const keep = 1;',
-        ].join('\n'),
+        ['const dangerous = { [fetch]: 1 };', 'const keep = 1;'].join('\n'),
         filename
       );
 
@@ -619,7 +633,9 @@ describe('oxc preeval transforms', () => {
         filename
       );
 
-      expect(code).toContain('export const fetchProxy = (...args) => fetch(...args)');
+      expect(code).toContain(
+        'export const fetchProxy = (...args) => fetch(...args)'
+      );
       expect(() => stripTypesAndJsxWithOxc(code, filename)).not.toThrow();
     });
 
@@ -647,7 +663,9 @@ describe('oxc preeval transforms', () => {
         filename
       );
 
-      expect(code).toContain('const isFlagPresent = (flag) => window.location.search.includes(flag)');
+      expect(code).toContain(
+        'const isFlagPresent = (flag) => window.location.search.includes(flag)'
+      );
       expect(code).toContain('export { isFlagPresent }');
       expect(() => stripTypesAndJsxWithOxc(code, filename)).not.toThrow();
     });
@@ -706,10 +724,7 @@ describe('oxc preeval transforms', () => {
 
     it('does not leave a bare await when removing a top-level forbidden fetch call', () => {
       const code = removeDangerousCodeWithOxc(
-        [
-          'await fetch("/api");',
-          'const keep = 1;',
-        ].join('\n'),
+        ['await fetch("/api");', 'const keep = 1;'].join('\n'),
         filename
       );
 

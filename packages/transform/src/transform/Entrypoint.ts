@@ -22,6 +22,10 @@ import { stripQueryAndHash } from '../utils/parseRequest';
 const EMPTY_FILE = '=== empty file ===';
 const DEFAULT_ACTION_CONTEXT = Symbol('defaultActionContext');
 
+type CreateEntrypointOptions = {
+  mergeCachedOnly?: boolean;
+};
+
 function hasLoop(
   name: string,
   parent: ParentEntrypoint,
@@ -53,6 +57,14 @@ export class Entrypoint extends BaseEntrypoint {
     ActionTypes,
     Map<unknown, Map<unknown, BaseAction<ActionQueueItem>>>
   > = new Map();
+
+  // Tracks how many times resolveImports has settled with `resolved: null`
+  // for a given source. Bundler resolvers can return null transiently early
+  // in a build (loader context for that file isn't registered yet); after a
+  // bounded number of retries we accept the null as authoritative.
+  #resolveTaskNullAttempts = new Map<string, number>();
+
+  private static readonly RESOLVE_TASK_MAX_NULL_ATTEMPTS = 2;
 
   #hasWywMetadata: boolean = false;
 
@@ -168,9 +180,17 @@ export class Entrypoint extends BaseEntrypoint {
     services: Services,
     name: string,
     only: string[],
-    loadedCode: string | undefined
+    loadedCode: string | undefined,
+    options: CreateEntrypointOptions = {}
   ): Entrypoint {
-    const created = Entrypoint.create(services, null, name, only, loadedCode);
+    const created = Entrypoint.create(
+      services,
+      null,
+      name,
+      only,
+      loadedCode,
+      options
+    );
     invariant(created !== 'loop', 'loop detected');
 
     return created;
@@ -181,7 +201,8 @@ export class Entrypoint extends BaseEntrypoint {
     parent: ParentEntrypoint | null,
     name: string,
     only: string[],
-    loadedCode: string | undefined
+    loadedCode: string | undefined,
+    options: CreateEntrypointOptions = {}
   ): Entrypoint | 'loop' {
     const { cache, eventEmitter } = services;
     return eventEmitter.perf('createEntrypoint', () => {
@@ -198,7 +219,8 @@ export class Entrypoint extends BaseEntrypoint {
           : null,
         name,
         only,
-        loadedCode
+        loadedCode,
+        options
       );
 
       if (status !== 'cached') {
@@ -214,7 +236,8 @@ export class Entrypoint extends BaseEntrypoint {
     parent: ParentEntrypoint | null,
     name: string,
     only: string[],
-    loadedCode: string | undefined
+    loadedCode: string | undefined,
+    options: CreateEntrypointOptions
   ): ['loop' | 'created' | 'cached', Entrypoint] {
     const { cache } = services;
 
@@ -246,7 +269,10 @@ export class Entrypoint extends BaseEntrypoint {
 
     const exports = cached?.exports;
     const evaluatedOnly = changed ? [] : cached?.evaluatedOnly ?? [];
-    const mergedOnly = cached?.only ? mergeOnly(cached.only, only) : [...only];
+    const mergedOnly =
+      options.mergeCachedOnly !== false && cached?.only
+        ? mergeOnly(cached.only, only)
+        : [...only];
     const reusableEvaluatedState =
       !changed && cached?.evaluated && cached.loadedAndParsed !== undefined;
     const canReuseEvaluatedTransformResult =
@@ -266,7 +292,7 @@ export class Entrypoint extends BaseEntrypoint {
         parent ? [parent] : [],
         loadedCode,
         name,
-        cached.only,
+        mergedOnly,
         exports,
         evaluatedOnly,
         cached.loadedAndParsed,
@@ -282,6 +308,13 @@ export class Entrypoint extends BaseEntrypoint {
         cached.transformResultCode,
         cached.hasWywMetadata
       );
+      if (
+        'preevalResult' in cached &&
+        cached.preevalResult !== null &&
+        cached.preevalResult !== undefined
+      ) {
+        reusedEntrypoint.setPreevalResult(cached.preevalResult);
+      }
 
       return [isLoop ? 'loop' : 'cached', reusedEntrypoint];
     }
@@ -380,7 +413,28 @@ export class Entrypoint extends BaseEntrypoint {
     name: string,
     dependency: Promise<IEntrypointDependency>
   ): void {
-    this.resolveTasks.set(name, dependency);
+    // Bounded retry of transient null resolutions. The first time a
+    // resolveTask settles to null, evict it from the cache so the next
+    // consumer re-attempts the resolver. After RESOLVE_TASK_MAX_NULL_ATTEMPTS
+    // failures the entry stays cached so we don't thrash. Successful (non-null)
+    // resolutions remain cached normally; this branch only ever fires for null.
+    const tracked = dependency.then((resolved) => {
+      if (resolved.resolved !== null) {
+        return resolved;
+      }
+
+      const attempts = (this.#resolveTaskNullAttempts.get(name) ?? 0) + 1;
+      this.#resolveTaskNullAttempts.set(name, attempts);
+      if (
+        attempts < Entrypoint.RESOLVE_TASK_MAX_NULL_ATTEMPTS &&
+        this.resolveTasks.get(name) === tracked
+      ) {
+        this.resolveTasks.delete(name);
+      }
+
+      return resolved;
+    });
+    this.resolveTasks.set(name, tracked);
   }
 
   public applyDeferredSupersede() {

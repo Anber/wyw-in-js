@@ -332,7 +332,11 @@ const evaluateStaticValue = (
       return undefined;
     }
 
-    return evaluateStaticValue(binding, scope, new Set([...seen, expression.name]));
+    return evaluateStaticValue(
+      binding,
+      scope,
+      new Set([...seen, expression.name])
+    );
   }
 
   if (expression.type === 'BinaryExpression' && expression.operator === '+') {
@@ -359,7 +363,11 @@ const evaluateStaticValue = (
     expression.type === 'CallExpression' &&
     expression.callee.type === 'MemberExpression'
   ) {
-    const objectValue = evaluateStaticValue(expression.callee.object, scope, seen);
+    const objectValue = evaluateStaticValue(
+      expression.callee.object,
+      scope,
+      seen
+    );
     const propertyName = getMemberPropertyName(expression.callee);
     if (!propertyName) {
       return undefined;
@@ -603,10 +611,7 @@ const visit = (
 ): void => {
   let currentScope = scope;
   if (createsScope(node)) {
-    currentScope = createScope(
-      scope,
-      `${node.type}:${node.start}:${node.end}`
-    );
+    currentScope = createScope(scope, `${node.type}:${node.start}:${node.end}`);
     predeclareScopeNames(node, currentScope);
   }
 
@@ -643,38 +648,6 @@ export const replaceImportMetaEnvWithOxc = (
   return applyReplacements(code, replacements);
 };
 
-export const rewriteDynamicImportsWithOxc = (
-  code: string,
-  filename: string
-): string => {
-  const replacements = collectDynamicImportAndRequireFallbackReplacements(
-    code,
-    filename,
-    {
-      addRequireFallback: false,
-      rewriteDynamicImports: true,
-    }
-  );
-
-  return applyReplacements(code, replacements);
-};
-
-export const addRequireFallbackWithOxc = (
-  code: string,
-  filename: string
-): string => {
-  const replacements = collectDynamicImportAndRequireFallbackReplacements(
-    code,
-    filename,
-    {
-      addRequireFallback: true,
-      rewriteDynamicImports: false,
-    }
-  );
-
-  return applyReplacements(code, replacements);
-};
-
 type CombinedSyntaxRewriteOptions = {
   addRequireFallback: boolean;
   eventEmitter?: EventEmitter;
@@ -686,49 +659,60 @@ type RequireFallbackCandidate = {
   scope: Scope;
 };
 
-const collectDynamicImportAndRequireFallbackReplacements = (
+function collectDynamicImportAndRequireFallbackReplacements(
   code: string,
   filename: string,
   options: CombinedSyntaxRewriteOptions
-): Replacement[] => {
+): Replacement[] {
   const eventEmitter = options.eventEmitter ?? EventEmitter.dummy;
   const dynamicImportCandidates: ImportExpression[] = [];
   const requireFallbackCandidates: RequireFallbackCandidate[] = [];
 
-  eventEmitter.perf('transform:preeval:dynamicImportRequireFallback:scan', () => {
-    visit(parseOxc(code, filename), createScope(null, 'root'), (node, scope) => {
-      if (options.rewriteDynamicImports && node.type === 'ImportExpression') {
-        dynamicImportCandidates.push(node as ImportExpression);
-      }
+  eventEmitter.perf(
+    'transform:preeval:dynamicImportRequireFallback:scan',
+    () => {
+      visit(
+        parseOxc(code, filename),
+        createScope(null, 'root'),
+        (node, scope) => {
+          if (
+            options.rewriteDynamicImports &&
+            node.type === 'ImportExpression'
+          ) {
+            dynamicImportCandidates.push(node as ImportExpression);
+          }
 
-      if (
-        !options.addRequireFallback ||
-        node.type !== 'CallExpression'
-      ) {
-        return;
-      }
+          if (!options.addRequireFallback || node.type !== 'CallExpression') {
+            return;
+          }
 
-      const call = node as CallExpression;
-      if (
-        call.callee.type !== 'Identifier' ||
-        call.callee.name !== 'require' ||
-        hasBinding(scope, 'require') ||
-        call.arguments.length !== 1
-      ) {
-        return;
-      }
+          const call = node as CallExpression;
+          if (
+            call.callee.type !== 'Identifier' ||
+            call.callee.name !== 'require' ||
+            hasBinding(scope, 'require') ||
+            call.arguments.length !== 1
+          ) {
+            return;
+          }
 
-      const [firstArg] = call.arguments;
-      if (!firstArg || firstArg.type === 'SpreadElement' || isLiteralRequireArg(firstArg)) {
-        return;
-      }
+          const [firstArg] = call.arguments;
+          if (
+            !firstArg ||
+            firstArg.type === 'SpreadElement' ||
+            isLiteralRequireArg(firstArg)
+          ) {
+            return;
+          }
 
-      requireFallbackCandidates.push({
-        call,
-        scope,
-      });
-    });
-  });
+          requireFallbackCandidates.push({
+            call,
+            scope,
+          });
+        }
+      );
+    }
+  );
 
   const replacements: Replacement[] = [];
 
@@ -779,6 +763,38 @@ const collectDynamicImportAndRequireFallbackReplacements = (
   });
 
   return replacements;
+}
+
+export const rewriteDynamicImportsWithOxc = (
+  code: string,
+  filename: string
+): string => {
+  const replacements = collectDynamicImportAndRequireFallbackReplacements(
+    code,
+    filename,
+    {
+      addRequireFallback: false,
+      rewriteDynamicImports: true,
+    }
+  );
+
+  return applyReplacements(code, replacements);
+};
+
+export const addRequireFallbackWithOxc = (
+  code: string,
+  filename: string
+): string => {
+  const replacements = collectDynamicImportAndRequireFallbackReplacements(
+    code,
+    filename,
+    {
+      addRequireFallback: true,
+      rewriteDynamicImports: false,
+    }
+  );
+
+  return applyReplacements(code, replacements);
 };
 
 export const rewriteDynamicImportsAndAddRequireFallbackWithOxc = (
@@ -815,10 +831,15 @@ const isBindingPosition = (node: Node, parent: Node | null): boolean => {
   }
 
   if (
-    (parent.type === 'ImportSpecifier' ||
-      parent.type === 'ImportDefaultSpecifier' ||
+    parent.type === 'ImportSpecifier' &&
+    (parent.local === node || parent.imported === node)
+  ) {
+    return true;
+  }
+
+  if (
+    (parent.type === 'ImportDefaultSpecifier' ||
       parent.type === 'ImportNamespaceSpecifier') &&
-    'local' in parent &&
     parent.local === node
   ) {
     return true;
@@ -912,7 +933,8 @@ const findRemovableOwner = (node: Node, ancestors: Node[]): Node => {
     }
   }
 
-  const parent = ownerAncestorIndex > 0 ? ancestors[ownerAncestorIndex - 1] : null;
+  const parent =
+    ownerAncestorIndex > 0 ? ancestors[ownerAncestorIndex - 1] : null;
   if (
     parent?.type === 'ExportNamedDeclaration' &&
     'declaration' in parent &&
@@ -941,10 +963,7 @@ const collectReExportedLocalNames = (program: Program): Set<string> => {
       continue;
     }
     for (const spec of stmt.specifiers) {
-      if (
-        spec.type === 'ExportSpecifier' &&
-        spec.local.type === 'Identifier'
-      ) {
+      if (spec.type === 'ExportSpecifier' && spec.local.type === 'Identifier') {
         names.add(spec.local.name);
       }
     }
@@ -1090,8 +1109,10 @@ const containsForbiddenReference = (
     const bindingKey = getBindingKey(childScope, child.name);
     if (
       alwaysForbiddenIdentifiers.has(child.name) ||
-      (forbiddenGlobals.has(child.name) && !hasBinding(childScope, child.name)) ||
-      (windowScopedNames.has(child.name) && !hasBinding(childScope, child.name)) ||
+      (forbiddenGlobals.has(child.name) &&
+        !hasBinding(childScope, child.name)) ||
+      (windowScopedNames.has(child.name) &&
+        !hasBinding(childScope, child.name)) ||
       (bindingKey !== null && derivedForbiddenBindings.has(bindingKey))
     ) {
       found = true;
@@ -1120,7 +1141,10 @@ const collectImportBindings = (
 ): ImportBinding[] => {
   const bindings = new Map<string, ImportBinding>();
   const addBinding = (binding: ImportBinding): void => {
-    bindings.set(`${binding.local}\0${binding.source}\0${binding.imported}`, binding);
+    bindings.set(
+      `${binding.local}\0${binding.source}\0${binding.imported}`,
+      binding
+    );
   };
 
   program.body.forEach((statement) => {
@@ -1193,6 +1217,19 @@ const getImportBinding = (
   local: string
 ): ImportBinding | undefined => imports.find((item) => item.local === local);
 
+function unwrapSequenceCallee(node: Expression): Expression {
+  if (
+    node.type === 'SequenceExpression' &&
+    node.expressions.length === 2 &&
+    node.expressions[0]?.type === 'Literal' &&
+    node.expressions[0].value === 0
+  ) {
+    return node.expressions[1] as Expression;
+  }
+
+  return node;
+}
+
 const getExpressionImportKey = (node: Expression): string | null => {
   const expression = unwrapSequenceCallee(node);
 
@@ -1214,19 +1251,6 @@ const getExpressionImportKey = (node: Expression): string | null => {
 
 const isHookOrCreateElement = (name: string): boolean =>
   name === 'createElement' || /use[A-Z]/.test(name);
-
-const unwrapSequenceCallee = (node: Expression): Expression => {
-  if (
-    node.type === 'SequenceExpression' &&
-    node.expressions.length === 2 &&
-    node.expressions[0]?.type === 'Literal' &&
-    node.expressions[0].value === 0
-  ) {
-    return node.expressions[1] as Expression;
-  }
-
-  return node;
-};
 
 const getInnermostCallee = (call: CallExpression): Expression => {
   let callee = unwrapSequenceCallee(call.callee);
@@ -1524,9 +1548,9 @@ export const removeDangerousCodeWithOxc = (
     : new Set<string>();
   const reExportedLocalNames = collectReExportedLocalNames(program);
 
-  let discoveredNewDerivedBinding = true;
-  while (discoveredNewDerivedBinding) {
-    discoveredNewDerivedBinding = false;
+  const derivedBindingDiscovery = { found: true };
+  while (derivedBindingDiscovery.found) {
+    derivedBindingDiscovery.found = false;
 
     visit(program, createScope(null, 'root'), (node, scope) => {
       if (
@@ -1552,187 +1576,194 @@ export const removeDangerousCodeWithOxc = (
         )
       ) {
         derivedForbiddenBindings.add(bindingKey);
-        discoveredNewDerivedBinding = true;
+        derivedBindingDiscovery.found = true;
       }
     });
   }
 
-  visit(program, createScope(null, 'root'), (node, scope, parent, ancestors) => {
-    if (node.type === 'JSXElement' || node.type === 'JSXFragment') {
-      replacements.push(
-        findFunctionReplacement(ancestors) ?? {
-          start: node.start,
-          end: node.end,
-          value: 'null',
-        }
-      );
-      return;
-    }
-
-    if (node.type === 'CallExpression') {
-      if (isReactRuntimeCall(node, imports)) {
-        const replacement = findFunctionReplacement(ancestors);
-        if (replacement) {
-          replacements.push(replacement);
-        }
-
+  visit(
+    program,
+    createScope(null, 'root'),
+    (node, scope, parent, ancestors) => {
+      if (node.type === 'JSXElement' || node.type === 'JSXFragment') {
+        replacements.push(
+          findFunctionReplacement(ancestors) ?? {
+            start: node.start,
+            end: node.end,
+            value: 'null',
+          }
+        );
         return;
       }
 
-      if (hasHocs && isHocCall(node, hocs, imports)) {
+      if (node.type === 'CallExpression') {
+        if (isReactRuntimeCall(node, imports)) {
+          const replacement = findFunctionReplacement(ancestors);
+          if (replacement) {
+            replacements.push(replacement);
+          }
+
+          return;
+        }
+
+        if (hasHocs && isHocCall(node, hocs, imports)) {
+          replacements.push({
+            start: node.start,
+            end: node.end,
+            value: '() => null',
+          });
+          return;
+        }
+      }
+
+      if (
+        node.type === 'VariableDeclarator' &&
+        node.id.type === 'Identifier' &&
+        node.init &&
+        isComponentTypeMatch(node.id, componentTypes, imports)
+      ) {
         replacements.push({
-          start: node.start,
-          end: node.end,
+          start: node.init.start,
+          end: node.init.end,
           value: '() => null',
         });
         return;
       }
-    }
 
-    if (
-      node.type === 'VariableDeclarator' &&
-      node.id.type === 'Identifier' &&
-      node.init &&
-      isComponentTypeMatch(node.id, componentTypes, imports)
-    ) {
-      replacements.push({
-        start: node.init.start,
-        end: node.init.end,
-        value: '() => null',
-      });
-      return;
-    }
+      if (
+        node.type === 'UnaryExpression' &&
+        node.operator === 'typeof' &&
+        node.argument.type === 'Identifier' &&
+        ssrCheckFields.has(node.argument.name) &&
+        !hasBinding(scope, node.argument.name)
+      ) {
+        replacements.push({
+          start: node.start,
+          end: node.end,
+          value: '"undefined"',
+        });
+        return;
+      }
 
-    if (
-      node.type === 'UnaryExpression' &&
-      node.operator === 'typeof' &&
-      node.argument.type === 'Identifier' &&
-      ssrCheckFields.has(node.argument.name) &&
-      !hasBinding(scope, node.argument.name)
-    ) {
-      replacements.push({
-        start: node.start,
-        end: node.end,
-        value: '"undefined"',
-      });
-      return;
-    }
+      if (node.type === 'MetaProperty') {
+        const owner = findRemovableOwner(node, ancestors);
+        replacements.push({ start: owner.start, end: owner.end, value: '' });
+        return;
+      }
 
-    if (node.type === 'MetaProperty') {
-      const owner = findRemovableOwner(node, ancestors);
+      if (
+        node.type !== 'Identifier' ||
+        isTypeContext(ancestors) ||
+        isInsideTypeof(ancestors) ||
+        isInsideImportDeclaration(ancestors)
+      ) {
+        return;
+      }
+
+      if (isPropertyOnlyIdentifier(node, parent)) {
+        return;
+      }
+
+      const isAlwaysForbidden = alwaysForbiddenIdentifiers.has(node.name);
+      const bindingKey = getBindingKey(scope, node.name);
+      const isDerivedForbidden =
+        bindingKey !== null && derivedForbiddenBindings.has(bindingKey);
+      const isWindowScoped =
+        windowScopedNames.has(node.name) && !hasBinding(scope, node.name);
+      const isForbiddenGlobal =
+        forbiddenGlobals.has(node.name) && !hasBinding(scope, node.name);
+
+      if (
+        !isAlwaysForbidden &&
+        !isDerivedForbidden &&
+        !isWindowScoped &&
+        !isForbiddenGlobal
+      ) {
+        return;
+      }
+
+      if (!isAlwaysForbidden && isInDeferredFunctionScope(ancestors)) {
+        return;
+      }
+
+      if (isBindingPosition(node, parent) && !isAlwaysForbidden) {
+        return;
+      }
+
+      if (
+        parent?.type === 'ExportDefaultDeclaration' &&
+        parent.declaration === node
+      ) {
+        return;
+      }
+
+      if (
+        generatedProcessorHelperNameRe.test(node.name) &&
+        hasBinding(scope, node.name)
+      ) {
+        return;
+      }
+
+      const generatedHelperDeclarator = findLastAncestor(
+        ancestors,
+        (ancestor) =>
+          ancestor.type === 'VariableDeclarator' &&
+          ancestor.id.type === 'Identifier' &&
+          generatedProcessorHelperNameRe.test(ancestor.id.name)
+      );
+      if (generatedHelperDeclarator) {
+        return;
+      }
+
+      if (
+        parent?.type === 'Property' &&
+        parent.value === node &&
+        hasBinding(scope, node.name)
+      ) {
+        return;
+      }
+
+      if (parent?.type === 'Property' && parent.value === node) {
+        replacements.push({
+          start: node.start,
+          end: node.end,
+          value: parent.shorthand ? `${node.name}: undefined` : 'undefined',
+        });
+        return;
+      }
+
+      const grandparent = ancestors[ancestors.length - 2] ?? null;
+      if (
+        parent?.type === 'MemberExpression' &&
+        parent.object === node &&
+        grandparent?.type === 'SpreadElement' &&
+        grandparent.argument === parent
+      ) {
+        replacements.push({
+          start: grandparent.start,
+          end: grandparent.end,
+          value: '...{}',
+        });
+        return;
+      }
+
+      const exportProtection = findExportedBindingProtection(
+        node,
+        ancestors,
+        reExportedLocalNames
+      );
+      if (exportProtection) {
+        replacements.push(exportProtection);
+        return;
+      }
+
+      const promiseOwner = findPromiseCallbackOwner(ancestors);
+      const owner = promiseOwner
+        ? findRemovableOwner(promiseOwner, ancestors)
+        : findRemovableOwner(node, ancestors);
       replacements.push({ start: owner.start, end: owner.end, value: '' });
-      return;
     }
-
-    if (
-      node.type !== 'Identifier' ||
-      isTypeContext(ancestors) ||
-      isInsideTypeof(ancestors) ||
-      isInsideImportDeclaration(ancestors)
-    ) {
-      return;
-    }
-
-    if (isPropertyOnlyIdentifier(node, parent)) {
-      return;
-    }
-
-    const isAlwaysForbidden = alwaysForbiddenIdentifiers.has(node.name);
-    const bindingKey = getBindingKey(scope, node.name);
-    const isDerivedForbidden =
-      bindingKey !== null && derivedForbiddenBindings.has(bindingKey);
-    const isWindowScoped =
-      windowScopedNames.has(node.name) && !hasBinding(scope, node.name);
-    const isForbiddenGlobal =
-      forbiddenGlobals.has(node.name) && !hasBinding(scope, node.name);
-
-    if (
-      !isAlwaysForbidden &&
-      !isDerivedForbidden &&
-      !isWindowScoped &&
-      !isForbiddenGlobal
-    ) {
-      return;
-    }
-
-    if (!isAlwaysForbidden && isInDeferredFunctionScope(ancestors)) {
-      return;
-    }
-
-    if (isBindingPosition(node, parent) && !isAlwaysForbidden) {
-      return;
-    }
-
-    if (
-      parent?.type === 'ExportDefaultDeclaration' &&
-      parent.declaration === node
-    ) {
-      return;
-    }
-
-    if (generatedProcessorHelperNameRe.test(node.name) && hasBinding(scope, node.name)) {
-      return;
-    }
-
-    const generatedHelperDeclarator = findLastAncestor(
-      ancestors,
-      (ancestor) =>
-        ancestor.type === 'VariableDeclarator' &&
-        ancestor.id.type === 'Identifier' &&
-        generatedProcessorHelperNameRe.test(ancestor.id.name)
-    );
-    if (generatedHelperDeclarator) {
-      return;
-    }
-
-    if (
-      parent?.type === 'Property' &&
-      parent.value === node &&
-      hasBinding(scope, node.name)
-    ) {
-      return;
-    }
-
-    if (parent?.type === 'Property' && parent.value === node) {
-      replacements.push({
-        start: node.start,
-        end: node.end,
-        value: parent.shorthand ? `${node.name}: undefined` : 'undefined',
-      });
-      return;
-    }
-
-    const grandparent = ancestors[ancestors.length - 2] ?? null;
-    if (
-      parent?.type === 'MemberExpression' &&
-      parent.object === node &&
-      grandparent?.type === 'SpreadElement' &&
-      grandparent.argument === parent
-    ) {
-      replacements.push({
-        start: grandparent.start,
-        end: grandparent.end,
-        value: '...{}',
-      });
-      return;
-    }
-
-    const exportProtection = findExportedBindingProtection(
-      node,
-      ancestors,
-      reExportedLocalNames
-    );
-    if (exportProtection) {
-      replacements.push(exportProtection);
-      return;
-    }
-
-    const promiseOwner = findPromiseCallbackOwner(ancestors);
-    const owner = promiseOwner
-      ? findRemovableOwner(promiseOwner, ancestors)
-      : findRemovableOwner(node, ancestors);
-    replacements.push({ start: owner.start, end: owner.end, value: '' });
-  });
+  );
 
   return applyReplacements(code, normalizeReplacements(replacements));
 };

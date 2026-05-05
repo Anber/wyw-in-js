@@ -141,14 +141,14 @@ export function loadWywOptions(
     ...rest
   } = overrides;
 
-  const defaultFeatures: FeatureFlags = {
+  const defaultFeatures = {
     dangerousCodeRemover: true,
     globalCache: true,
     happyDOM: true,
     softErrors: false,
-    staticImportValues: true,
+    staticImportValues: false,
     useWeakRefInEval: true,
-  };
+  } satisfies FeatureFlags & { staticImportValues: boolean };
   const defaultEval: EvalOptionsV2 = {
     mode: 'strict',
     require: 'warn-and-run',

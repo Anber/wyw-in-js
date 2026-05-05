@@ -7,10 +7,10 @@ import type { Node, Program } from 'oxc-parser';
 
 import { syncResolve, type ImportOverrides } from '@wyw-in-js/shared';
 
-import {
+import { collectOxcExportsAndImportsFromProgram } from './collectOxcExportsAndImports';
+import type {
   collectOxcExportsAndImports,
-  collectOxcExportsAndImportsFromProgram,
-  type OxcCollectedImport,
+  OxcCollectedImport,
 } from './collectOxcExportsAndImports';
 import { getImportOverride, toImportKey } from './importOverrides';
 import { parseOxcCached } from './parseOxc';
@@ -100,11 +100,15 @@ const parseOxc = (
     if (process.env.WYW_DEBUG_SHAKER_DUMP) {
       const dumpFile = path.join(
         '/tmp',
-        `wyw-oxc-shaker-${path.basename(filename).replace(/[^a-z0-9_.-]/gi, '_')}-${Date.now()}.js`
+        `wyw-oxc-shaker-${path
+          .basename(filename)
+          .replace(/[^a-z0-9_.-]/gi, '_')}-${Date.now()}.js`
       );
       fs.writeFileSync(dumpFile, code);
       const message =
-        error instanceof Error ? error.message : 'Unknown Oxc shaker parse error';
+        error instanceof Error
+          ? error.message
+          : 'Unknown Oxc shaker parse error';
       throw new Error(`${message} [${filename}] [dump: ${dumpFile}]`);
     }
 
@@ -261,10 +265,7 @@ const isIdentifierReference = (
     return false;
   }
 
-  if (
-    parent.type === 'ExportSpecifier' &&
-    parentNode.exported === node
-  ) {
+  if (parent.type === 'ExportSpecifier' && parentNode.exported === node) {
     return false;
   }
 
@@ -272,6 +273,12 @@ const isIdentifierReference = (
     return grandparent?.type === 'ExportNamedDeclaration'
       ? !grandparent.source
       : true;
+  }
+
+  // The `imported` name of `import { X as Y }` is what to take from the source
+  // module — it does not reference a local binding `X` in the current module.
+  if (parent.type === 'ImportSpecifier' && parentNode.imported === node) {
+    return false;
   }
 
   return true;
@@ -486,7 +493,7 @@ const collectImportLocalNames = (node: Node): string[] => {
 };
 
 const getImportSpecifierLocalName = (node: Node): string | null => {
-  const local = (node as AnyNode).local;
+  const { local } = node as AnyNode;
   return isNode(local) && 'name' in local && typeof local.name === 'string'
     ? local.name
     : null;

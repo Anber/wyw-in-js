@@ -5,6 +5,10 @@ import { ValueType } from '@wyw-in-js/shared';
 import type {
   AssignmentExpression,
   Expression,
+  ImportDeclaration,
+  ImportSpecifier,
+  MemberExpression,
+  ModuleExportName,
   Node,
   Program,
   TemplateLiteral,
@@ -31,6 +35,7 @@ type Binding = {
   declaration: VariableDeclaration | null;
   declarator: VariableDeclarator | null;
   functionNode?: OxcFunctionLikeNode | null;
+  imported?: 'default' | '*' | string;
   importedFrom?: string;
   isRoot: boolean;
   kind: BindingKind;
@@ -77,10 +82,30 @@ type ReferenceIdentifier = {
   start: number;
 };
 
+export type OxcStaticImportReference = {
+  imported: 'default' | string;
+  importLocal?: string;
+  local: string;
+  source: string;
+};
+
+export type OxcStaticValue = {
+  name: string;
+  value: unknown;
+};
+
+export type OxcStaticValueCandidate = {
+  imports: OxcStaticImportReference[];
+  name: string;
+  source: string;
+};
+
 type TemplateExtractionResult = {
   code: string;
   dependencyNames: string[];
   expressionValues: Omit<ExpressionValue, 'buildCodeFrameError'>[];
+  staticValueCandidates: OxcStaticValueCandidate[];
+  staticValues: OxcStaticValue[];
 };
 
 type ExtractionContext = {
@@ -98,7 +123,13 @@ type ExtractionContext = {
   loc: LocationLookup;
   referencesByNode: WeakMap<Node, ReferenceIdentifier[]>;
   replacements: Replacement[];
-  rootMutationsByBinding: Map<string, Array<AssignmentExpression | UpdateExpression>>;
+  rootMutationsByBinding: Map<
+    string,
+    Array<AssignmentExpression | UpdateExpression>
+  >;
+  staticImportAliases: Map<string, string>;
+  staticValueCandidates: OxcStaticValueCandidate[];
+  staticValues: OxcStaticValue[];
   usedNames: Set<string>;
 };
 
@@ -106,11 +137,17 @@ type ExtractedExpression = {
   expressionCode: string;
   importedFrom: string[];
   kind: ValueType.FUNCTION | ValueType.LAZY;
+  staticExpressionCode?: string;
+  staticImports: OxcStaticImportReference[];
+  staticValue?: unknown;
 };
 
 type ProgramAnalysis = {
   bindingsByName: Map<string, Binding[]>;
-  rootMutationsByBinding: Map<string, Array<AssignmentExpression | UpdateExpression>>;
+  rootMutationsByBinding: Map<
+    string,
+    Array<AssignmentExpression | UpdateExpression>
+  >;
   targetExpressions: Expression[];
   templateLiterals: TemplateLiteral[];
   usedNames: Set<string>;
@@ -244,6 +281,45 @@ const normalizeDeclarationKind = (
   }
 
   return 'const';
+};
+
+const moduleExportName = (node: ModuleExportName): string =>
+  node.type === 'Literal' ? String(node.value) : node.name;
+
+const getImportSpecifierInfo = (
+  statement: ImportDeclaration,
+  specifier: ImportDeclaration['specifiers'][number]
+): { imported: 'default' | '*' | string; local: string } | null => {
+  const local = specifier.local?.name;
+  if (!local) {
+    return null;
+  }
+
+  if (specifier.type === 'ImportDefaultSpecifier') {
+    return {
+      imported: 'default',
+      local,
+    };
+  }
+
+  if (specifier.type === 'ImportNamespaceSpecifier') {
+    return {
+      imported: '*',
+      local,
+    };
+  }
+
+  if (
+    statement.importKind === 'type' ||
+    (specifier as ImportSpecifier).importKind === 'type'
+  ) {
+    return null;
+  }
+
+  return {
+    imported: moduleExportName((specifier as ImportSpecifier).imported),
+    local,
+  };
 };
 
 const getDeclarationScope = (
@@ -494,15 +570,21 @@ const analyzeProgram = (
     if (node.type === 'ImportDeclaration') {
       const source = node.source.value;
       node.specifiers.forEach((specifier) => {
+        const importInfo = getImportSpecifierInfo(node, specifier);
+        if (!importInfo) {
+          return;
+        }
+
         addBinding(scope, {
           declaredAt: specifier.start,
           declaration: null,
           declarator: null,
           functionNode: null,
+          imported: importInfo.imported,
           importedFrom: source,
           isRoot: scope.root,
           kind: 'import',
-          name: specifier.local.name,
+          name: importInfo.local,
           scope,
         });
       });
@@ -604,7 +686,10 @@ const resolveBindingAt = (
 const collectRootMutations = (
   program: Program
 ): Map<string, Array<AssignmentExpression | UpdateExpression>> => {
-  const mutations = new Map<string, Array<AssignmentExpression | UpdateExpression>>();
+  const mutations = new Map<
+    string,
+    Array<AssignmentExpression | UpdateExpression>
+  >();
 
   const getRootMutationTarget = (
     node: Node
@@ -625,15 +710,17 @@ const collectRootMutations = (
       return null;
     }
 
-    const key = node.computed
-      ? node.property.type === 'Literal' &&
-        (typeof node.property.value === 'string' ||
-          typeof node.property.value === 'number')
-        ? node.property.value
-        : null
-      : node.property.type === 'Identifier'
-        ? node.property.name
-        : null;
+    let key: string | number | null = null;
+    if (
+      node.computed &&
+      node.property.type === 'Literal' &&
+      (typeof node.property.value === 'string' ||
+        typeof node.property.value === 'number')
+    ) {
+      key = node.property.value;
+    } else if (!node.computed && node.property.type === 'Identifier') {
+      key = node.property.name;
+    }
     if (key === null) {
       return null;
     }
@@ -649,7 +736,7 @@ const collectRootMutations = (
       return;
     }
 
-    const expression = statement.expression;
+    const { expression } = statement;
     if (expression.type === 'AssignmentExpression') {
       const target = getRootMutationTarget(expression.left);
       if (!target || target.path.length === 0) {
@@ -752,10 +839,13 @@ const isBindingDeclaredWithin = (binding: Binding, container: Node): boolean =>
   container.start <= binding.declaredAt && binding.declaredAt < container.end;
 
 const literalCode = (value: unknown): string | null => {
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? JSON.stringify(value) : null;
+  }
+
   if (
     value === null ||
     typeof value === 'string' ||
-    typeof value === 'number' ||
     typeof value === 'boolean'
   ) {
     return JSON.stringify(value);
@@ -771,6 +861,9 @@ const literalCode = (value: unknown): string | null => {
 
   return null;
 };
+
+const isStaticSerializableValue = (value: unknown): boolean =>
+  literalCode(value) !== null;
 
 const cloneStaticValue = (value: unknown): unknown => {
   if (Array.isArray(value)) {
@@ -806,6 +899,28 @@ const getObjectMember = (
 
 type EvalEnv = Map<string, unknown>;
 
+const oxcStaticCallableValue = Symbol('wyw.oxc.staticCallableValue');
+
+type OxcStaticCallableValue = {
+  [oxcStaticCallableValue]: unknown;
+};
+
+const isOxcStaticCallableValue = (
+  value: unknown
+): value is OxcStaticCallableValue =>
+  typeof value === 'object' &&
+  value !== null &&
+  oxcStaticCallableValue in value;
+
+const unwrapOxcStaticCallableValue = (value: unknown): unknown =>
+  isOxcStaticCallableValue(value) ? value[oxcStaticCallableValue] : value;
+
+export const createOxcStaticCallableValue = (
+  value: unknown
+): OxcStaticCallableValue => ({
+  [oxcStaticCallableValue]: value,
+});
+
 const assignPatternValue = (
   pattern: Node,
   value: unknown,
@@ -821,7 +936,9 @@ const assignPatternValue = (
   if (pattern.type === 'AssignmentPattern') {
     return assignPatternValue(
       pattern.left,
-      value === undefined ? evaluateStatic(pattern.right, ctx, env, stack) : value,
+      value === undefined
+        ? evaluateStatic(pattern.right, ctx, env, stack)
+        : value,
       ctx,
       env,
       stack
@@ -838,13 +955,14 @@ const assignPatternValue = (
         return false;
       }
 
-      const key = property.computed
-        ? evaluateStatic(property.key as Expression, ctx, env, stack)
-        : property.key.type === 'Identifier'
-          ? property.key.name
-          : property.key.type === 'Literal'
-            ? property.key.value
-            : undefined;
+      let key: unknown;
+      if (property.computed) {
+        key = evaluateStatic(property.key as Expression, ctx, env, stack);
+      } else if (property.key.type === 'Identifier') {
+        key = property.key.name;
+      } else if (property.key.type === 'Literal') {
+        key = property.key.value;
+      }
       if (key === undefined || key === null) {
         return false;
       }
@@ -882,9 +1000,7 @@ const applyRootMutation = (
   env: EvalEnv,
   stack: string[]
 ): unknown | undefined => {
-  const resolvePath = (
-    node: Node
-  ): { path: Array<string | number> } | null => {
+  const resolvePath = (node: Node): { path: Array<string | number> } | null => {
     if (node.type === 'Identifier') {
       return node.name === bindingName ? { path: [] } : null;
     }
@@ -898,11 +1014,12 @@ const applyRootMutation = (
       return null;
     }
 
-    const key = node.computed
-      ? evaluateStatic(node.property as Expression, ctx, env, stack)
-      : node.property.type === 'Identifier'
-        ? node.property.name
-        : undefined;
+    let key: unknown;
+    if (node.computed) {
+      key = evaluateStatic(node.property as Expression, ctx, env, stack);
+    } else if (node.property.type === 'Identifier') {
+      key = node.property.name;
+    }
     if (
       key === undefined ||
       key === null ||
@@ -1091,16 +1208,148 @@ const replaceIdentifierReferences = (
   return result;
 };
 
-const evaluateBinary = (
+const applyExpressionReplacements = (
+  expression: Expression,
+  replacements: Replacement[],
+  code: string
+): string => {
+  let result = code.slice(expression.start, expression.end);
+  replacements
+    .sort((a, b) => b.start - a.start)
+    .forEach((replacement) => {
+      const start = replacement.start - expression.start;
+      const end = replacement.end - expression.start;
+      result = result.slice(0, start) + replacement.value + result.slice(end);
+    });
+  return result;
+};
+
+const staticImportAliasPart = (value: string): string =>
+  value.replace(/[^A-Za-z0-9_$]/g, '_') || 'value';
+
+const allocateStaticImportAlias = (
+  binding: Binding,
+  imported: string,
+  ctx: ExtractionContext
+): string => {
+  const key = `${binding.importedFrom ?? ''}\0${binding.name}\0${imported}`;
+  const existing = ctx.staticImportAliases.get(key);
+  if (existing) {
+    return existing;
+  }
+
+  const namespacePart = staticImportAliasPart(binding.name);
+  const importedPart = staticImportAliasPart(imported);
+  let alias = `_wyw_static_${namespacePart}_${importedPart}`;
+  let idx = 1;
+  while (ctx.usedNames.has(alias)) {
+    idx += 1;
+    alias = `_wyw_static_${namespacePart}_${importedPart}_${idx}`;
+  }
+
+  ctx.usedNames.add(alias);
+  ctx.staticImportAliases.set(key, alias);
+  return alias;
+};
+
+const staticMemberPropertyName = (
+  expression: MemberExpression
+): string | null => {
+  if (!expression.computed && expression.property.type === 'Identifier') {
+    return expression.property.name;
+  }
+
+  if (
+    expression.computed &&
+    expression.property.type === 'Literal' &&
+    typeof expression.property.value === 'string'
+  ) {
+    return expression.property.value;
+  }
+
+  return null;
+};
+
+const collectStaticNamespaceMemberReferences = (
   expression: Expression,
   ctx: ExtractionContext
+): {
+  coveredReferenceStarts: Set<number>;
+  imports: OxcStaticImportReference[];
+  replacements: Replacement[];
+} => {
+  const coveredReferenceStarts = new Set<number>();
+  const imports = new Map<string, OxcStaticImportReference>();
+  const replacements: Replacement[] = [];
+
+  const walk = (node: Node): void => {
+    if (node.type === 'MemberExpression' && node.object.type === 'Identifier') {
+      const binding = resolveBindingAt(
+        ctx,
+        node.object.name,
+        node.object.start
+      );
+      const imported = staticMemberPropertyName(node);
+      if (
+        binding?.importedFrom &&
+        binding.imported === '*' &&
+        imported !== null
+      ) {
+        const alias = allocateStaticImportAlias(binding, imported, ctx);
+        imports.set(`${binding.importedFrom}\0${imported}\0${alias}`, {
+          imported,
+          importLocal: binding.name,
+          local: alias,
+          source: binding.importedFrom,
+        });
+        replacements.push({
+          end: node.end,
+          start: node.start,
+          value: alias,
+        });
+        coveredReferenceStarts.add(node.object.start);
+      }
+    }
+
+    getChildren(node).forEach(walk);
+  };
+
+  walk(expression);
+
+  return {
+    coveredReferenceStarts,
+    imports: [...imports.values()],
+    replacements,
+  };
+};
+
+const isProcessEnvMember = (node: Node): boolean => {
+  if (node.type !== 'MemberExpression' || node.computed) {
+    return false;
+  }
+
+  if (
+    node.property.type !== 'Identifier' ||
+    node.property.name !== 'env'
+  ) {
+    return false;
+  }
+
+  return node.object.type === 'Identifier' && node.object.name === 'process';
+};
+
+const evaluateBinary = (
+  expression: Expression,
+  ctx: ExtractionContext,
+  env: EvalEnv = new Map(),
+  stack: string[] = []
 ): unknown | undefined => {
   if (expression.type !== 'BinaryExpression') {
     return undefined;
   }
 
-  const left = evaluateStatic(expression.left as Expression, ctx);
-  const right = evaluateStatic(expression.right as Expression, ctx);
+  const left = evaluateStatic(expression.left as Expression, ctx, env, stack);
+  const right = evaluateStatic(expression.right as Expression, ctx, env, stack);
   if (left === undefined || right === undefined) {
     return undefined;
   }
@@ -1118,12 +1367,21 @@ const evaluateBinary = (
     }
   }
 
-  if (
-    expression.operator === '*' &&
-    typeof left === 'number' &&
-    typeof right === 'number'
-  ) {
-    return left * right;
+  if (typeof left === 'number' && typeof right === 'number') {
+    switch (expression.operator) {
+      case '-':
+        return left - right;
+      case '*':
+        return left * right;
+      case '/':
+        return left / right;
+      case '%':
+        return left % right;
+      case '**':
+        return left ** right;
+      default:
+        break;
+    }
   }
 
   return undefined;
@@ -1135,8 +1393,106 @@ const evaluateStatic = (
   env: EvalEnv = new Map(),
   stack: string[] = []
 ): unknown | undefined => {
+  if (
+    expression.type === 'TSAsExpression' ||
+    expression.type === 'TSSatisfiesExpression' ||
+    expression.type === 'TSNonNullExpression' ||
+    expression.type === 'TSInstantiationExpression' ||
+    expression.type === 'TSTypeAssertion' ||
+    expression.type === 'ParenthesizedExpression'
+  ) {
+    return evaluateStatic(expression.expression as Expression, ctx, env, stack);
+  }
+
   if (expression.type === 'Literal') {
     return expression.value;
+  }
+
+  if (expression.type === 'UnaryExpression') {
+    if (expression.operator === 'typeof') {
+      const argIsProcessEnvAccess =
+        expression.argument.type === 'MemberExpression' &&
+        isProcessEnvMember(expression.argument.object);
+      const arg = evaluateStatic(
+        expression.argument as Expression,
+        ctx,
+        env,
+        stack
+      );
+      if (arg === undefined) {
+        return argIsProcessEnvAccess ? 'undefined' : undefined;
+      }
+
+      return typeof arg;
+    }
+
+    const arg = evaluateStatic(
+      expression.argument as Expression,
+      ctx,
+      env,
+      stack
+    );
+    if (arg === undefined) {
+      return undefined;
+    }
+
+    switch (expression.operator) {
+      case '-':
+        return typeof arg === 'number' ? -arg : undefined;
+      case '+':
+        return typeof arg === 'number' ? +arg : undefined;
+      case '!':
+        return !arg;
+      case '~':
+        return typeof arg === 'number' ? ~arg : undefined;
+      case 'void':
+        return undefined;
+      default:
+        return undefined;
+    }
+  }
+
+  if (expression.type === 'LogicalExpression') {
+    const left = evaluateStatic(expression.left, ctx, env, stack);
+    // process.env.X access is the only source we trust as "deterministically
+    // undefined" — it's a build-time lookup we control. For everything else,
+    // undefined means "couldn't evaluate" and we must bail to avoid inlining
+    // a wrong fallback when the runtime value isn't actually nullish.
+    const leftIsProcessEnvAccess =
+      expression.left.type === 'MemberExpression' &&
+      isProcessEnvMember(expression.left.object);
+
+    if (left === undefined && !leftIsProcessEnvAccess) {
+      return undefined;
+    }
+
+    if (expression.operator === '||') {
+      return left || evaluateStatic(expression.right, ctx, env, stack);
+    }
+
+    if (expression.operator === '??') {
+      return left ?? evaluateStatic(expression.right, ctx, env, stack);
+    }
+
+    if (expression.operator === '&&') {
+      return left && evaluateStatic(expression.right, ctx, env, stack);
+    }
+
+    return undefined;
+  }
+
+  if (expression.type === 'ConditionalExpression') {
+    const test = evaluateStatic(expression.test, ctx, env, stack);
+    if (test === undefined) {
+      return undefined;
+    }
+
+    return evaluateStatic(
+      test ? expression.consequent : expression.alternate,
+      ctx,
+      env,
+      stack
+    );
   }
 
   if (expression.type === 'TemplateLiteral') {
@@ -1166,7 +1522,7 @@ const evaluateStatic = (
 
   if (expression.type === 'Identifier') {
     if (env.has(expression.name)) {
-      return env.get(expression.name);
+      return unwrapOxcStaticCallableValue(env.get(expression.name));
     }
 
     const binding = resolveBindingAt(ctx, expression.name, expression.start);
@@ -1183,19 +1539,14 @@ const evaluateStatic = (
     }
 
     let value: unknown | undefined;
-    const declarator = binding.declarator;
+    const { declarator } = binding;
     const init = declarator?.init;
     if (init) {
       if (declarator.id.type !== 'Identifier') {
         return undefined;
       }
 
-      value = evaluateStatic(
-        init,
-        ctx,
-        env,
-        [...stack, binding.name]
-      );
+      value = evaluateStatic(init, ctx, env, [...stack, binding.name]);
     } else if (binding.functionNode) {
       value = binding.functionNode;
     }
@@ -1249,13 +1600,14 @@ const evaluateStatic = (
         continue;
       }
 
-      const key = property.computed
-        ? evaluateStatic(property.key as Expression, ctx, env, stack)
-        : property.key.type === 'Identifier'
-          ? property.key.name
-          : property.key.type === 'Literal'
-            ? property.key.value
-            : undefined;
+      let key: unknown;
+      if (property.computed) {
+        key = evaluateStatic(property.key as Expression, ctx, env, stack);
+      } else if (property.key.type === 'Identifier') {
+        key = property.key.name;
+      } else if (property.key.type === 'Literal') {
+        key = property.key.value;
+      }
       if (
         key === undefined ||
         key === null ||
@@ -1279,8 +1631,18 @@ const evaluateStatic = (
     const result: unknown[] = [];
 
     for (const element of expression.elements) {
-      if (!element || element.type === 'SpreadElement') {
+      if (!element) {
         return undefined;
+      }
+
+      if (element.type === 'SpreadElement') {
+        const spreadValue = evaluateStatic(element.argument, ctx, env, stack);
+        if (!Array.isArray(spreadValue)) {
+          return undefined;
+        }
+
+        result.push(...spreadValue);
+        continue;
       }
 
       const value = evaluateStatic(element, ctx, env, stack);
@@ -1295,14 +1657,13 @@ const evaluateStatic = (
   }
 
   if (expression.type === 'MemberExpression') {
-    const objectValue = evaluateStatic(expression.object, ctx, env, stack);
-    const key = expression.computed
-      ? evaluateStatic(expression.property as Expression, ctx, env, stack)
-      : expression.property.type === 'Identifier'
-        ? expression.property.name
-        : undefined;
+    let key: unknown;
+    if (expression.computed) {
+      key = evaluateStatic(expression.property as Expression, ctx, env, stack);
+    } else if (expression.property.type === 'Identifier') {
+      key = expression.property.name;
+    }
     if (
-      objectValue === undefined ||
       key === undefined ||
       key === null ||
       (typeof key !== 'string' && typeof key !== 'number')
@@ -1310,11 +1671,31 @@ const evaluateStatic = (
       return undefined;
     }
 
+    if (
+      isProcessEnvMember(expression.object) &&
+      typeof key === 'string' &&
+      !env.has('process')
+    ) {
+      // Treat process.env.X as deterministically undefined at build time.
+      // Reading from real process.env would couple the bundle to whatever
+      // happens to be set on the build machine; falling back to the
+      // ?? / || branch (or a runtime read) is more predictable.
+      return undefined;
+    }
+
+    const objectValue = evaluateStatic(expression.object, ctx, env, stack);
+    if (objectValue === undefined) {
+      return undefined;
+    }
+
     return getObjectMember(objectValue, key);
   }
 
   if (expression.type === 'NewExpression') {
-    if (expression.callee.type !== 'Identifier' || expression.arguments.length !== 1) {
+    if (
+      expression.callee.type !== 'Identifier' ||
+      expression.arguments.length !== 1
+    ) {
       return undefined;
     }
 
@@ -1354,6 +1735,14 @@ const evaluateStatic = (
         return undefined;
       }
 
+      const staticCallable = env.get(expression.callee.name);
+      if (
+        isOxcStaticCallableValue(staticCallable) &&
+        expression.arguments.length === 0
+      ) {
+        return unwrapOxcStaticCallableValue(staticCallable);
+      }
+
       if (expression.callee.name === 'String' && args.length === 1) {
         return String(args[0]);
       }
@@ -1378,23 +1767,31 @@ const evaluateStatic = (
           fn.type === 'FunctionDeclaration' ||
           fn.type === 'FunctionExpression')
       ) {
-        return evaluateFunctionCall(
-          fn,
-          args,
-          ctx,
-          env,
-          [...stack, expression.callee.name]
-        );
+        return evaluateFunctionCall(fn, args, ctx, env, [
+          ...stack,
+          expression.callee.name,
+        ]);
       }
     }
 
     if (expression.callee.type === 'MemberExpression') {
-      const objectValue = evaluateStatic(expression.callee.object, ctx, env, stack);
-      const key = expression.callee.computed
-        ? evaluateStatic(expression.callee.property as Expression, ctx, env, stack)
-        : expression.callee.property.type === 'Identifier'
-          ? expression.callee.property.name
-          : undefined;
+      const objectValue = evaluateStatic(
+        expression.callee.object,
+        ctx,
+        env,
+        stack
+      );
+      let key: unknown;
+      if (expression.callee.computed) {
+        key = evaluateStatic(
+          expression.callee.property as Expression,
+          ctx,
+          env,
+          stack
+        );
+      } else if (expression.callee.property.type === 'Identifier') {
+        key = expression.callee.property.name;
+      }
       if (typeof objectValue === 'string') {
         if (key === 'toLowerCase' && expression.arguments.length === 0) {
           return objectValue.toLowerCase();
@@ -1407,25 +1804,7 @@ const evaluateStatic = (
     }
   }
 
-  return evaluateBinary(expression, ctx);
-};
-
-const substituteConstants = (
-  expression: Expression,
-  ctx: ExtractionContext
-): string => {
-  const replacements = new Map<string, string>();
-  findReferences(expression, ctx.referencesByNode).forEach(({ name, start }) => {
-    const replacement = getConstantReplacement(
-      resolveBindingAt(ctx, name, start),
-      ctx
-    );
-    if (replacement) {
-      replacements.set(name, replacement);
-    }
-  });
-
-  return replaceIdentifierReferences(expression, replacements, ctx.code);
+  return evaluateBinary(expression, ctx, env, stack);
 };
 
 const allocateExpressionName = (ctx: ExtractionContext): string => {
@@ -1476,6 +1855,30 @@ const getHoistedBindingName = (
   return next;
 };
 
+const declarationInitCode = (
+  init: Expression,
+  ctx: ExtractionContext
+): string => {
+  const renamedDependencies = new Map<string, string>();
+  findReferences(init, ctx.referencesByNode).forEach(({ name, start }) => {
+    const dependency = resolveBindingAt(ctx, name, start);
+    if (
+      !dependency ||
+      dependency.importedFrom ||
+      dependency.isRoot ||
+      dependency.declarator?.id.type !== 'Identifier'
+    ) {
+      return;
+    }
+
+    renamedDependencies.set(name, getHoistedBindingName(dependency, ctx));
+  });
+
+  return renamedDependencies.size > 0
+    ? replaceIdentifierReferences(init, renamedDependencies, ctx.code)
+    : ctx.code.slice(init.start, init.end);
+};
+
 const addHoistedCode = (
   key: string,
   code: string,
@@ -1497,14 +1900,19 @@ const addHoistedCode = (
 };
 
 const declarationCode = (binding: Binding, ctx: ExtractionContext): string => {
-  const declarator = binding.declarator;
+  const { declarator } = binding;
   if (!declarator) {
     return '';
   }
 
-  if (declarator.id.type !== 'Identifier') {
-    const source = ctx.code.slice(declarator.start, declarator.end);
-    return `let ${source};`;
+  const { id } = declarator;
+  if (id.type !== 'Identifier') {
+    const idCode = ctx.code.slice(id.start, id.end);
+    if (!declarator.init) {
+      return `let ${idCode};`;
+    }
+
+    return `let ${idCode} = ${declarationInitCode(declarator.init, ctx)};`;
   }
 
   const hoistedName = getHoistedBindingName(binding, ctx);
@@ -1512,22 +1920,7 @@ const declarationCode = (binding: Binding, ctx: ExtractionContext): string => {
     return `let ${hoistedName};`;
   }
 
-  const renamedDependencies = new Map<string, string>();
-  findReferences(declarator.init, ctx.referencesByNode).forEach(({ name, start }) => {
-    const dependency = resolveBindingAt(ctx, name, start);
-    if (!dependency || dependency.importedFrom || dependency.isRoot) {
-      return;
-    }
-
-    renamedDependencies.set(name, getHoistedBindingName(dependency, ctx));
-  });
-
-  const initCode =
-    renamedDependencies.size > 0
-      ? replaceIdentifierReferences(declarator.init, renamedDependencies, ctx.code)
-      : ctx.code.slice(declarator.init.start, declarator.init.end);
-
-  return `let ${hoistedName} = ${initCode};`;
+  return `let ${hoistedName} = ${declarationInitCode(declarator.init, ctx)};`;
 };
 
 const assertHoistable = (
@@ -1576,19 +1969,17 @@ const addHoistedDeclaration = (
   }
 
   const hoistSource = binding.declarator.init ?? binding.declarator;
-  findReferences(hoistSource, ctx.referencesByNode).forEach(({ name, start }) => {
+  findReferences(hoistSource, ctx.referencesByNode).forEach(
+    ({ name, start }) => {
       const dependency = resolveBindingAt(ctx, name, start);
       if (dependency) {
         addHoistedDeclaration(dependency, ctx, [...stack, binding.name]);
       }
-    });
+    }
+  );
 
   if (!ctx.hoistedDeclarations.has(binding.name)) {
-    addHoistedCode(
-      binding.name,
-      declarationCode(binding, ctx),
-      ctx
-    );
+    addHoistedCode(binding.name, declarationCode(binding, ctx), ctx);
   }
 };
 
@@ -1663,68 +2054,94 @@ const extractExpression = (
         expressionCode: literal,
         importedFrom: [],
         kind: isFunction ? ValueType.FUNCTION : ValueType.LAZY,
+        staticImports: [],
+        staticValue: isStaticSerializableValue(evaluated)
+          ? cloneStaticValue(evaluated)
+          : undefined,
       };
     }
   }
 
   const identifierReplacements = new Map<string, string>();
   const importedFrom: string[] = [];
+  const namespaceStatic = collectStaticNamespaceMemberReferences(
+    expression,
+    ctx
+  );
+  const staticImports: OxcStaticImportReference[] = [
+    ...namespaceStatic.imports,
+  ];
+  let hasNonStaticLocalReference = false;
 
-  findReferences(expression, ctx.referencesByNode).forEach(({ name, start }) => {
-    const binding = resolveBindingAt(ctx, name, start);
-    if (!binding) {
-      return;
+  findReferences(expression, ctx.referencesByNode).forEach(
+    ({ name, start }) => {
+      const binding = resolveBindingAt(ctx, name, start);
+      if (!binding) {
+        return;
+      }
+
+      if (isFunction && isBindingDeclaredWithin(binding, expression)) {
+        return;
+      }
+
+      ctx.dependencyNames.add(name);
+
+      if (binding.importedFrom) {
+        importedFrom.push(binding.importedFrom);
+        if (binding.imported && binding.imported !== '*') {
+          staticImports.push({
+            imported: binding.imported,
+            local: binding.name,
+            source: binding.importedFrom,
+          });
+        } else if (
+          binding.imported === '*' &&
+          namespaceStatic.coveredReferenceStarts.has(start)
+        ) {
+          // The static candidate source gets a synthetic named import alias,
+          // while the eval fallback keeps the original namespace expression.
+        } else {
+          hasNonStaticLocalReference = true;
+        }
+        return;
+      }
+
+      const replacement = getConstantReplacement(binding, ctx);
+      if (evaluate && replacement) {
+        identifierReplacements.set(name, replacement);
+        return;
+      }
+
+      hasNonStaticLocalReference = true;
+      assertHoistable(binding, ctx);
+      addHoistedDeclaration(binding, ctx);
+      if (!binding.isRoot && binding.declarator?.id.type === 'Identifier') {
+        identifierReplacements.set(name, getHoistedBindingName(binding, ctx));
+      }
     }
-
-    if (isFunction && isBindingDeclaredWithin(binding, expression)) {
-      return;
-    }
-
-    ctx.dependencyNames.add(name);
-
-    if (binding.importedFrom) {
-      importedFrom.push(binding.importedFrom);
-      return;
-    }
-
-    const replacement = getConstantReplacement(binding, ctx);
-    if (evaluate && replacement) {
-      identifierReplacements.set(name, replacement);
-      return;
-    }
-
-    assertHoistable(binding, ctx);
-    addHoistedDeclaration(binding, ctx);
-    if (!binding.isRoot && binding.declarator?.id.type === 'Identifier') {
-      identifierReplacements.set(name, getHoistedBindingName(binding, ctx));
-    }
-  });
+  );
 
   return {
     expressionCode:
       identifierReplacements.size > 0
-        ? replaceIdentifierReferences(expression, identifierReplacements, ctx.code)
+        ? replaceIdentifierReferences(
+            expression,
+            identifierReplacements,
+            ctx.code
+          )
         : source,
     importedFrom,
     kind: isFunction ? ValueType.FUNCTION : ValueType.LAZY,
+    staticExpressionCode:
+      namespaceStatic.replacements.length > 0
+        ? applyExpressionReplacements(
+            expression,
+            namespaceStatic.replacements,
+            ctx.code
+          )
+        : undefined,
+    staticImports: hasNonStaticLocalReference ? [] : staticImports,
   };
-};
-
-const getInsertionPoint = (
-  program: Program,
-  expression: Expression
-): number => {
-  const owner =
-    program.body.find(
-      (statement) =>
-        statement.start <= expression.start && statement.end >= expression.end
-    ) ?? program.body[0];
-
-  if (!owner) {
-    return 0;
-  }
-
-  return owner.start;
 };
 
 const getInsertionPoints = (
@@ -1797,7 +2214,13 @@ const extractExpressions = (
   expressions: Expression[]
 ): TemplateExtractionResult => {
   if (expressions.length === 0) {
-    return { code, dependencyNames: [], expressionValues: [] };
+    return {
+      code,
+      dependencyNames: [],
+      expressionValues: [],
+      staticValueCandidates: [],
+      staticValues: [],
+    };
   }
 
   const insertionPoints = getInsertionPoints(program, expressions);
@@ -1817,6 +2240,9 @@ const extractExpressions = (
     referencesByNode: new WeakMap(),
     replacements: [],
     rootMutationsByBinding: analysis.rootMutationsByBinding,
+    staticImportAliases: new Map(),
+    staticValueCandidates: [],
+    staticValues: [],
     usedNames: new Set(analysis.usedNames),
   };
 
@@ -1830,11 +2256,14 @@ const extractExpressions = (
       return;
     }
 
-    const { expressionCode, importedFrom, kind } = extractExpression(
-      expression,
-      ctx,
-      evaluate
-    );
+    const {
+      expressionCode,
+      importedFrom,
+      kind,
+      staticExpressionCode,
+      staticImports,
+      staticValue,
+    } = extractExpression(expression, ctx, evaluate);
     const expName = allocateExpressionName(ctx);
 
     addHoistedCode(
@@ -1842,6 +2271,27 @@ const extractExpressions = (
       `const ${expName} = () => (${expressionCode});`,
       ctx
     );
+    if (staticValue !== undefined && kind !== ValueType.FUNCTION) {
+      ctx.staticValues.push({
+        name: expName,
+        value: staticValue,
+      });
+    } else if (staticImports.length > 0 && kind !== ValueType.FUNCTION) {
+      const uniqueImports = new Map<string, OxcStaticImportReference>();
+      staticImports.forEach((item) => {
+        uniqueImports.set(
+          `${item.local}\0${item.importLocal ?? ''}\0${item.source}\0${
+            item.imported
+          }`,
+          item
+        );
+      });
+      ctx.staticValueCandidates.push({
+        imports: [...uniqueImports.values()],
+        name: expName,
+        source: staticExpressionCode ?? expressionCode,
+      });
+    }
     ctx.replacements.push({
       start: expression.start,
       end: expression.end,
@@ -1871,7 +2321,81 @@ const extractExpressions = (
     code: applyReplacements(code, ctx.replacements),
     dependencyNames: [...ctx.dependencyNames],
     expressionValues: ctx.expressionValues,
+    staticValueCandidates: ctx.staticValueCandidates,
+    staticValues: ctx.staticValues,
   };
+};
+
+export const isOxcStaticSerializableValue = (value: unknown): boolean =>
+  isStaticSerializableValue(value);
+
+export const evaluateOxcStaticExpressionAt = (
+  code: string,
+  filename: string,
+  expressionSpan: ExpressionSpan,
+  staticBindings: Map<string, unknown> = new Map()
+): unknown | undefined => {
+  const program = parseOxc(code, filename);
+  const analysis = analyzeProgram(program, {
+    collectTargetExpressions: true,
+    expressionSpanLookup: createSpanLookup([expressionSpan]),
+  });
+  const [expression] = analysis.targetExpressions;
+  if (!expression) {
+    return undefined;
+  }
+
+  const ctx: ExtractionContext = {
+    bindingResolutionCache: new Map(),
+    bindingsByName: analysis.bindingsByName,
+    code,
+    currentInsertionPoint: 0,
+    currentExpressionStart: expression.start,
+    dependencyNames: new Set(),
+    expressionValues: [],
+    filename,
+    hoistedBindingNames: new Map(),
+    hoistedDeclarations: new Map(),
+    hoistedDeclarationsByInsertionPoint: new Map(),
+    loc: createLocationLookup(code),
+    referencesByNode: new WeakMap(),
+    replacements: [],
+    rootMutationsByBinding: analysis.rootMutationsByBinding,
+    staticImportAliases: new Map(),
+    staticValueCandidates: [],
+    staticValues: [],
+    usedNames: new Set(analysis.usedNames),
+  };
+
+  return evaluateStatic(expression, ctx, new Map(staticBindings));
+};
+
+export const evaluateOxcStaticExpression = (
+  source: string,
+  filename: string,
+  staticBindings: Map<string, unknown> = new Map()
+): unknown | undefined => {
+  const code = `const __wyw_static_value = ${source};`;
+  const program = parseOxc(code, filename);
+  const declaration = program.body[0];
+  if (declaration?.type !== 'VariableDeclaration') {
+    return undefined;
+  }
+
+  const [declarator] = declaration.declarations;
+  if (!declarator?.init) {
+    return undefined;
+  }
+
+  return evaluateOxcStaticExpressionAt(
+    code,
+    filename,
+    {
+      end: declarator.init.end,
+      start: declarator.init.start,
+    },
+    staticBindings
+  );
 };
 
 export const collectOxcExpressionDependencies = (
@@ -1911,5 +2435,12 @@ export const collectOxcTemplateDependencies = (
     (template) => template.expressions
   );
 
-  return extractExpressions(code, filename, evaluate, program, analysis, expressions);
+  return extractExpressions(
+    code,
+    filename,
+    evaluate,
+    program,
+    analysis,
+    expressions
+  );
 };

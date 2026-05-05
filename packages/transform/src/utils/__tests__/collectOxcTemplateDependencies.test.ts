@@ -29,6 +29,36 @@ describe('collectOxcTemplateDependencies', () => {
     expect(result.code).toContain(
       'tag`${_exp()}${_exp2()}${_exp3()}${_exp4()}`'
     );
+    expect(result.staticValues).toEqual(
+      expect.arrayContaining([
+        { name: '_exp', value: 42 },
+        { name: '_exp2', value: 'test' },
+      ])
+    );
+  });
+
+  it('records imported static candidates by generated helper name', () => {
+    const code = dedent`
+      import { color } from './tokens';
+
+      const template = tag\`${'${color}'}\`;
+    `;
+
+    const result = collectOxcTemplateDependencies(code, filename, true);
+
+    expect(result.staticValueCandidates).toEqual([
+      {
+        imports: [
+          {
+            imported: 'color',
+            local: 'color',
+            source: './tokens',
+          },
+        ],
+        name: '_exp',
+        source: 'color',
+      },
+    ]);
   });
 
   it('inserts hoisted expressions after imports and before the owner statement', () => {
@@ -132,7 +162,9 @@ describe('collectOxcTemplateDependencies', () => {
       ].join('\n'),
     });
     expect(result.code).toContain('const _exp = () => ((props) => {');
-    expect(result.code).toContain('const lines = Math.ceil(props.value.length / 55);');
+    expect(result.code).toContain(
+      'const lines = Math.ceil(props.value.length / 55);'
+    );
     expect(result.code).toContain('return `');
     expect(result.code).toContain('${11 + lines * 24}px');
   });
@@ -152,9 +184,9 @@ describe('collectOxcTemplateDependencies', () => {
 
     const result = collectOxcTemplateDependencies(code, filename, true);
 
-    expect(result.code).toContain('let arg = str;');
-    expect(result.code).toContain('let variable = arg + "2";');
-    expect(result.code).toContain('const _exp = () => (variable);');
+    expect(result.code).toContain('let _arg = str;');
+    expect(result.code).toContain('let _variable = _arg + "2";');
+    expect(result.code).toContain('const _exp = () => (_variable);');
     expect(result.code).toContain('tag`${_exp()}`');
   });
 
@@ -169,8 +201,8 @@ describe('collectOxcTemplateDependencies', () => {
 
     const result = collectOxcTemplateDependencies(code, filename, true);
 
-    expect(result.code).toContain('let result = "result";');
-    expect(result.code).toContain('let { variable } = { variable: result };');
+    expect(result.code).toContain('let _result = "result";');
+    expect(result.code).toContain('let { variable } = { variable: _result };');
     expect(result.code).toContain('const _exp = () => (variable);');
   });
 
@@ -243,7 +275,7 @@ describe('collectOxcTemplateDependencies', () => {
     const result = collectOxcTemplateDependencies(code, filename, true);
 
     expect(result.code).toContain(
-      `const _exp = () => (({\"fontSize\":12,\"fontWeight\":\"bold\"}));`
+      'const _exp = () => (({"fontSize":12,"fontWeight":"bold"}));'
     );
   });
 
@@ -274,7 +306,7 @@ describe('collectOxcTemplateDependencies', () => {
     expect(result.code).toContain('const _exp = () => ({ value: dynamic });');
     expect(result.code).not.toContain('const _exp = () => { value: dynamic };');
     expect(() =>
-      // eslint-disable-next-line no-new-func
+      // eslint-disable-next-line no-new-func,@typescript-eslint/no-implied-eval
       new Function(`const dynamic = 1; return (() => ({ value: dynamic }))()`)()
     ).not.toThrow();
   });
@@ -288,7 +320,9 @@ describe('collectOxcTemplateDependencies', () => {
 
     const result = collectOxcTemplateDependencies(code, filename, true);
 
-    expect(result.code).toContain('const _exp = () => ((sideEffect(), value));');
+    expect(result.code).toContain(
+      'const _exp = () => ((sideEffect(), value));'
+    );
   });
 
   it('does not inline tagged-template root objects into selector helpers', () => {

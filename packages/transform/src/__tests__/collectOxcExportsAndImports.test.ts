@@ -127,7 +127,9 @@ describe('collectOxcExportsAndImports', () => {
   });
 
   it('collects require-backed namespace reexports from the compiled CommonJS corpus', () => {
-    expect(runFixture('re-export_named_namespace.input.ts').reexports).toMatchObject([
+    expect(
+      runFixture('re-export_named_namespace.input.ts').reexports
+    ).toMatchObject([
       { exported: 'ns', imported: '*', source: 'unknown-package' },
     ]);
 

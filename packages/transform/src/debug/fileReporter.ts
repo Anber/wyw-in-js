@@ -116,6 +116,10 @@ export const createFileReporter = (
     path.join(options.dir, 'entrypoints.jsonl')
   );
 
+  const staticResolveStream = createWriteStream(
+    path.join(options.dir, 'static-resolve.jsonl')
+  );
+
   const startedAt = performance.now();
   const timings: Timings = new Map();
   const addTiming = (label: string, key: string, value: number) => {
@@ -146,6 +150,11 @@ export const createFileReporter = (
   ) => {
     if (meta.type === 'dependency') {
       processDependencyEvent(meta as IProcessedEvent);
+      return;
+    }
+
+    if (meta.type === 'staticResolve') {
+      writeJSONl(staticResolveStream, meta);
     }
   };
 
@@ -224,6 +233,8 @@ export const createFileReporter = (
 
       actionStream.end();
       dependenciesStream.end();
+      entrypointStream.end();
+      staticResolveStream.end();
       timings.clear();
     },
   };

@@ -14,6 +14,7 @@ export function* collect(
   const { valueCache } = this.data;
   const { entrypoint } = this;
   const { loadedAndParsed, name } = entrypoint;
+  const preevalResult = entrypoint.getPreevalResult();
 
   if (loadedAndParsed.evaluator === 'ignored') {
     throw new Error('entrypoint was ignored');
@@ -29,7 +30,12 @@ export function* collect(
     loadedAndParsed.code,
     name,
     options.root ?? process.cwd(),
-    options.pluginOptions,
+    {
+      ...options.pluginOptions,
+      preserveSideEffectImportLocals: new Set(
+        preevalResult?.staticSideEffectImportLocals ?? []
+      ),
+    },
     valueCache,
     options.inputSourceMap
   );

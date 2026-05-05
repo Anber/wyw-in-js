@@ -31,8 +31,25 @@ export interface IEntrypointDependency {
 
 export interface IPreevalResult {
   ast: ParsedAst | null;
+  baseCode?: string;
   code: string;
+  dependencyNames?: string[];
+  evalCode?: string;
   metadata: WYWTransformMetadata | null;
+  staticSideEffectImportLocals?: string[];
+  staticDependencies?: string[];
+  staticNullWYWMetaExtendsHelpers?: string[];
+  staticValueCache?: Map<string, unknown>;
+  staticValueCandidates?: Array<{
+    imports: Array<{
+      imported: 'default' | string;
+      importLocal?: string;
+      local: string;
+      source: string;
+    }>;
+    name: string;
+    source: string;
+  }>;
 }
 
 export type LoadAndParseFn = (

@@ -11,11 +11,7 @@ import { transform } from '../transform';
 import { Entrypoint } from '../transform/Entrypoint';
 import type { IEvaluatedEntrypoint } from '../transform/EvaluatedEntrypoint';
 
-const processorFile = join(
-  __dirname,
-  '__fixtures__',
-  'test-css-processor.js'
-);
+const processorFile = join(__dirname, '__fixtures__', 'test-css-processor.js');
 
 const createResolver =
   (processorPath: string) => async (what: string, importer: string) => {
@@ -95,7 +91,7 @@ const runTransform = async (
   );
 
 describe('transform partial evaluated cache reuse', () => {
-  it('reuses cached evaluated dependency exports when the dependency has no __wywPreval export', async () => {
+  it('reprocesses partial cached evaluated dependency exports for static import loads', async () => {
     const root = mkdtempSync(join(tmpdir(), 'wyw-partial-cache-'));
     const entryFile = join(root, 'entry.js');
     const depFile = join(root, 'dep.js');
@@ -121,6 +117,50 @@ describe('transform partial evaluated cache reuse', () => {
     );
 
     seedEvaluatedCache(cache, depFile, { foo1: 'cached-foo1' });
+
+    try {
+      const result = await runTransform(root, entryFile, cache);
+      const cachedDep = cache.get('entrypoints', depFile) as
+        | IEvaluatedEntrypoint
+        | undefined;
+
+      expect(result.cssText).toContain('foo1');
+      expect(result.cssText).not.toContain('cached-foo1');
+      expect(cachedDep?.exports.foo1).toBe('foo1');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('reuses complete cached evaluated dependency exports for static import loads', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-partial-cache-'));
+    const entryFile = join(root, 'entry.js');
+    const depFile = join(root, 'dep.js');
+    const cache = new TransformCacheCollection();
+
+    writeFileSync(
+      depFile,
+      dedent`
+        export const foo1 = String('foo1');
+        export const foo2 = String('foo2');
+      `
+    );
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { css } from 'test-css-processor';
+        import { foo1 } from './dep.js';
+
+        export const className = css\`
+          font-size: \${foo1};
+        \`;
+      `
+    );
+
+    seedEvaluatedCache(cache, depFile, {
+      foo1: 'cached-foo1',
+      foo2: 'cached-foo2',
+    });
 
     try {
       const result = await runTransform(root, entryFile, cache);

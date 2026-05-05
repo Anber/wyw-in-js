@@ -45,6 +45,7 @@ type ScenarioDefinition = {
 type ScenarioRun = {
   cssBytes: number;
   cssFiles: number;
+  methodCounts: Record<string, number>;
   methodTotals: Record<string, number>;
   wallMs: number;
 };
@@ -87,6 +88,7 @@ const SUMMARY_METHODS = [
   'transform:preeval:processTemplate:processors',
   'transform:preeval:removeDangerousCode',
   'transform:evaluator',
+  'transform:evalFile',
   'transform:emitCommonJS',
 ] as const;
 
@@ -632,6 +634,7 @@ class PerfRecorder {
       }
 
       if (type === 'start') {
+        this.counts.set(method, (this.counts.get(method) ?? 0) + 1);
         const stack = this.stacks.get(method) ?? [];
         stack.push(performance.now());
         this.stacks.set(method, stack);
@@ -655,9 +658,15 @@ class PerfRecorder {
     () => {}
   );
 
+  private readonly counts = new Map<string, number>();
+
   private readonly stacks = new Map<string, number[]>();
 
   private readonly totals = new Map<string, number>();
+
+  public countsSnapshot() {
+    return Object.fromEntries(this.counts.entries());
+  }
 
   public snapshot() {
     return Object.fromEntries(
@@ -777,6 +786,7 @@ const runScenarioOnce = async (
   return {
     cssBytes,
     cssFiles,
+    methodCounts: recorder.countsSnapshot(),
     methodTotals: recorder.snapshot(),
     wallMs: round(performance.now() - startedAt),
   };
@@ -884,7 +894,9 @@ const printSummary = (
     'lookup'.padStart(10),
     'procs'.padStart(10),
     'danger'.padStart(10),
-    'eval'.padStart(10),
+    'shake'.padStart(10),
+    'eval ms'.padStart(10),
+    'eval #'.padStart(8),
   ].join(' ');
 
   console.log(header);
@@ -896,6 +908,12 @@ const printSummary = (
       SUMMARY_METHODS.map((method) => [
         method,
         round(mean(summary.runs.map((run) => run.methodTotals[method] ?? 0))),
+      ])
+    );
+    const counts = Object.fromEntries(
+      SUMMARY_METHODS.map((method) => [
+        method,
+        round(mean(summary.runs.map((run) => run.methodCounts[method] ?? 0))),
       ])
     );
 
@@ -921,6 +939,8 @@ const printSummary = (
           10
         ),
         `${means['transform:evaluator'].toFixed(1)}`.padStart(10),
+        `${means['transform:evalFile'].toFixed(1)}`.padStart(10),
+        `${counts['transform:evalFile'].toFixed(1)}`.padStart(8),
       ].join(' ')
     );
 

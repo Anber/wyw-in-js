@@ -111,6 +111,7 @@ const builtins = {
 
 const RESOLVE_CACHE_SIZE = 5000;
 const LOAD_CACHE_SIZE = 1000;
+const MODULE_VARIANT_LIMIT = 8;
 
 const isBuiltinSpecifier = (specifier) => {
   const normalized = specifier.startsWith('node:')
@@ -958,6 +959,8 @@ const moduleCache = new LruCache(LOAD_CACHE_SIZE);
 const moduleHashes = new Map();
 const moduleData = new Map();
 const moduleOnly = new Map();
+const moduleVariants = new Map();
+const moduleLastVariant = new Map();
 const linkPromises = new Map();
 const loadInFlight = new Map();
 const externalInFlight = new Map();
@@ -978,21 +981,63 @@ const resetModuleState = () => {
   moduleHashes.clear();
   moduleData.clear();
   moduleOnly.clear();
+  moduleVariants.clear();
+  moduleLastVariant.clear();
   linkPromises.clear();
   loadInFlight.clear();
   externalInFlight.clear();
   resolveInFlight.clear();
   resolveCache.clear();
+  sentNamespaceIdentifiers.clear();
 };
+
+// Tracks the SourceTextModule identifier (versioned with hash) that was last
+// included in an EVAL_RESULT for each id. Reused module variants don't need
+// re-serialization across eval sessions — same variant = same namespace =
+// same exports the broker already has cached.
+const sentNamespaceIdentifiers = new Map();
 
 const resetSingleModuleState = (id, cachedModule = moduleCache.get(id)) => {
   if (cachedModule) {
     linkPromises.delete(cachedModule);
   }
 
+  const variants = moduleVariants.get(id);
+  if (variants) {
+    variants.forEach((variant) => linkPromises.delete(variant));
+  }
+
   moduleCache.delete(id);
   moduleHashes.delete(id);
   moduleData.delete(id);
+  moduleVariants.delete(id);
+  moduleLastVariant.delete(id);
+};
+
+const isFullModuleLoad = (loaded) =>
+  !loaded.only || (loaded.only.length === 1 && loaded.only[0] === '*');
+
+const getModuleVariant = (id, hash) => moduleVariants.get(id)?.get(hash);
+
+const setModuleVariant = (id, hash, module) => {
+  let variants = moduleVariants.get(id);
+  if (!variants) {
+    variants = new Map();
+    moduleVariants.set(id, variants);
+  }
+  variants.set(hash, module);
+  moduleLastVariant.set(id, module);
+
+  if (variants.size > MODULE_VARIANT_LIMIT) {
+    const oldestHash = variants.keys().next().value;
+    if (oldestHash !== undefined) {
+      const oldest = variants.get(oldestHash);
+      if (oldest) {
+        linkPromises.delete(oldest);
+      }
+      variants.delete(oldestHash);
+    }
+  }
 };
 
 const toSourceModuleId = (id) => stripQueryAndHash(String(id));
@@ -1413,7 +1458,7 @@ const createRequireFn = (importer) => {
   };
 };
 
-function createSyntheticModule(id, exportsValue) {
+function createSyntheticModule(id, exportsValue, cache = true) {
   const exportNames = new Set(Object.keys(exportsValue));
   if (!exportNames.has('default')) {
     exportNames.add('default');
@@ -1431,7 +1476,9 @@ function createSyntheticModule(id, exportsValue) {
     { context: state.context, identifier: id }
   );
 
-  moduleCache.set(id, module);
+  if (cache) {
+    moduleCache.set(id, module);
+  }
   return module;
 }
 
@@ -1725,7 +1772,6 @@ loadModule = async (id, importer, requestSpec) => {
       importer,
       durationMs: Date.now() - loadStart,
     });
-
     if (loaded.error) {
       throw new Error(loaded.error.message);
     }
@@ -1736,28 +1782,88 @@ loadModule = async (id, importer, requestSpec) => {
     }
 
     if (loaded.exports) {
-      if (cached && loaded.hash && moduleHashes.get(id) === loaded.hash) {
-        return cached;
+      // Serialized exports are a narrow slice — only the keys the importer
+      // requested. If we have a fully evaluated module (in moduleCache or as
+      // a variant), prefer it: its namespace has ALL exports, so any consumer
+      // can link against it without "does not provide export" errors.
+      //
+      // An evaluated variant is only safe to reuse when its namespace covers
+      // the serialized key set. A narrow variant that was evaluated first may
+      // lack exports that a wider consumer needs (the 4df6e915 race).
+      const requiredKeys = Object.keys(loaded.exports);
+      const coversKeys = (mod) => {
+        const ns = mod.namespace;
+        return requiredKeys.every((k) => k in ns);
+      };
+
+      let evaluated =
+        cached && cached.status === 'evaluated' && coversKeys(cached)
+          ? cached
+          : undefined;
+
+      if (!evaluated) {
+        const variants = moduleVariants.get(id);
+        if (variants) {
+          for (const variant of variants.values()) {
+            if (variant.status === 'evaluated' && coversKeys(variant)) {
+              evaluated = variant;
+              break;
+            }
+          }
+        }
       }
 
-      resetSingleModuleState(id, cached);
+      if (evaluated) {
+        return evaluated;
+      }
+
+      // Reuse a previously created SyntheticModule for this exact serialized set
+      if (loaded.hash) {
+        const existing = getModuleVariant(id, loaded.hash);
+        if (existing) {
+          return existing;
+        }
+      }
 
       const exportsValue = {};
       Object.entries(loaded.exports).forEach(([key, serialized]) => {
         exportsValue[key] = deserializeValue(serialized);
       });
-      const module = createSyntheticModule(id, exportsValue);
+      const module = createSyntheticModule(id, exportsValue, false);
       if (loaded.hash) {
-        moduleHashes.set(id, loaded.hash);
+        setModuleVariant(id, loaded.hash, module);
       }
       return module;
     }
 
-    if (cached && loaded.hash && moduleHashes.get(id) === loaded.hash) {
-      return cached;
+    const usePrimaryCache = isFullModuleLoad(loaded);
+    if (usePrimaryCache) {
+      if (cached && loaded.hash && moduleHashes.get(id) === loaded.hash) {
+        return cached;
+      }
+    } else if (loaded.hash) {
+      const variant = getModuleVariant(id, loaded.hash);
+      if (variant) {
+        return variant;
+      }
     }
 
-    resetSingleModuleState(id, cached);
+    // The broker only ships empty `code` when it expects the runner to reuse
+    // a cached module via the hash-match short-circuit above. Reaching this
+    // point with no code means the broker's "what runner has" mirror is out
+    // of sync with our actual moduleCache/moduleVariants — fail loudly rather
+    // than feeding empty source into vm.SourceTextModule.
+    if (loaded.code == null || loaded.code === '') {
+      throw new Error(
+        `[wyw-in-js] LoadResult for ${id} has empty code but no cached module ` +
+          `matched hash ${loaded.hash ?? '(none)'}. ` +
+          `This indicates a broker/runner cache desync.`
+      );
+    }
+
+    if (usePrimaryCache) {
+      resetSingleModuleState(id, cached);
+    }
 
     const module = new vm.SourceTextModule(
       `${buildPreamble(id)}${loaded.code ?? ''}`,
@@ -1785,9 +1891,13 @@ loadModule = async (id, importer, requestSpec) => {
       }
     );
 
-    moduleCache.set(id, module);
-    if (loaded.hash) {
-      moduleHashes.set(id, loaded.hash);
+    if (usePrimaryCache) {
+      moduleCache.set(id, module);
+      if (loaded.hash) {
+        moduleHashes.set(id, loaded.hash);
+      }
+    } else if (loaded.hash) {
+      setModuleVariant(id, loaded.hash, module);
     }
     return module;
   })();
@@ -1885,9 +1995,19 @@ const collectModuleExports = () => {
   moduleOnly.forEach((only, id) => {
     if (!only || only.length === 0) return;
 
-    const module = moduleCache.get(id);
+    const module = moduleCache.get(id) ?? moduleLastVariant.get(id);
     const data = moduleData.get(id);
     if (!module || !data) return;
+
+    // The broker already has the serialized exports for this exact variant
+    // from a prior eval session. Re-serializing here just wastes CPU on the
+    // runner side and bloats the EVAL_RESULT payload. Same variant identifier
+    // ⇒ same namespace ⇒ no change to send.
+    const moduleIdentifier =
+      typeof module.identifier === 'string' ? module.identifier : id;
+    if (sentNamespaceIdentifiers.get(id) === moduleIdentifier) {
+      return;
+    }
 
     // .namespace is only safe on fully evaluated modules. Modules that
     // errored or were never evaluated (stale from a prior failed session
@@ -1935,6 +2055,7 @@ const collectModuleExports = () => {
 
     if (Object.keys(serialized).length) {
       exportsByModule[id] = serialized;
+      sentNamespaceIdentifiers.set(id, moduleIdentifier);
     }
   });
 
@@ -2030,7 +2151,8 @@ const handleMessage = async (message) => {
         const reuseModules = Boolean(message.payload.reuseModules);
 
         if (canReuseContext) {
-          if (!reuseModules) {
+          const modulesReset = !reuseModules;
+          if (modulesReset) {
             resetModuleState();
           } else {
             // Clear resolution caches between sessions even when reusing modules.
@@ -2056,7 +2178,7 @@ const handleMessage = async (message) => {
           });
           state.globalsSignature = nextGlobalsSignature;
           debug('init:reuse', Date.now() - initStart);
-          sendMessage({ type: 'INIT_ACK', id: message.id });
+          sendMessage({ type: 'INIT_ACK', id: message.id, modulesReset });
           break;
         }
 
@@ -2081,7 +2203,8 @@ const handleMessage = async (message) => {
         state.happyDomEnabled = nextHappyDomEnabled;
         state.globalsSignature = nextGlobalsSignature;
 
-        sendMessage({ type: 'INIT_ACK', id: message.id });
+        // Full context rebuild ⇒ moduleCache was cleared by resetEvaluationState.
+        sendMessage({ type: 'INIT_ACK', id: message.id, modulesReset: true });
         debug('init:done', Date.now() - initStart);
       } catch (error) {
         sendMessage({

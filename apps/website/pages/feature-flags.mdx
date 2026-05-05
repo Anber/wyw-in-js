@@ -69,6 +69,30 @@ so `happy-dom` is loaded via `import()` and works on Node 22+.
 
 The `softErrors` is disabled by default. It is designed to provide a more lenient evaluation of styles and values that are interpolated in styles. This flag is useful for debugging and prevents the build from failing even if some files cannot be processed with WyW-in-JS.
 
+# `staticImportValues` Feature
+
+The `staticImportValues` feature is disabled by default. It lets the Oxc transform inline values that can be proven static, such as primitives, `null`, arrays, and plain objects, without sending those bindings through build-time evaluation.
+
+Enable it when your project has many style interpolations that point at static design tokens, constant objects, constant arrays, compiled enum objects, or simple static metadata chains. In those cases, WyW-in-JS can skip some eval work and can avoid importing token-only modules during eval.
+
+Keep it disabled when a project has few static imports, when most candidate modules are runtime-heavy, or when you are comparing build performance with and without the extra static analysis. The pass has to parse and resolve extra modules before it can prove that a value is safe, so codebases with little static data may see extra build overhead.
+
+## Limitations
+
+The resolver is intentionally conservative. If it cannot prove a value is static and serializable, WyW-in-JS falls back to the existing eval path.
+
+It does not inline arbitrary runtime-created values. Functions, classes, symbols, getters, non-plain objects, mutable bindings, dynamic imports, unresolved imports, cycles, side-effectful module shapes, and ambiguous computed or namespace access stay in eval.
+
+```js
+{
+  features: {
+    staticImportValues: true,
+  },
+}
+```
+
+You can also use `WYW_STATIC_IMPORT_VALUES=1` to force the feature on for local validation or performance comparison. `0`, `false`, `no`, and `off` force it off.
+
 # `useWeakRefInEval` Feature
 
 The `useWeakRefInEval` feature is enabled by default. With it on, WyW-in-JS wraps evaluated modules in `WeakRef` to reduce memory usage during long-running builds. Garbage collection can reclaim these weak references in some environments, which may surface as `EvalError: Module X is disposed` when a disposed module is accessed again. If you encounter that error pattern, disable this flag to keep strong references (at the cost of higher memory usage).

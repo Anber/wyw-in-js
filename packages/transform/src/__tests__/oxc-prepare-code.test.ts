@@ -38,6 +38,9 @@ const createServices = (filename: string, root: string) =>
       root,
       pluginOptions: loadWywOptions({
         configFile: false,
+        features: {
+          staticImportValues: true,
+        },
         rules: [
           {
             action: oxcShaker,
@@ -106,7 +109,8 @@ describe('prepareCode with explicit oxcShaker action', () => {
     const [code, imports, metadata] = prepareCode(services, entrypoint, null);
 
     expect(code).toContain('export const __wywPreval =');
-    expect(code).toContain('var _exp =');
+    expect(code).toContain('export const __wywPreval = {};');
+    expect(code).not.toContain('var _exp =');
     expect(code).not.toContain('runtime-only');
     expect(code).not.toContain('test-css-processor');
     expect(imports?.size).toBe(0);
@@ -260,6 +264,51 @@ describe('prepareCode with explicit oxcShaker action', () => {
     expect(code).not.toContain(': Props');
     expect(code).not.toContain(': string');
     expect(imports?.size).toBe(0);
+    expect(metadata).toBeNull();
+  });
+
+  it('shakes no-metadata eval runtime modules that already export __wywPreval', () => {
+    const root = __dirname;
+    const filename = join(root, 'prepared-preval.tsx');
+    const source = dedent`
+      import { themeVars } from '@fibery/ui-kit/src/design-system';
+      import { memo } from 'react';
+
+      var _exp = () => themeVars.inputBorderHoverColor;
+      var Comment = memo(function Comment() {
+        return null;
+      });
+
+      export const __wywPreval = {
+        _exp,
+      };
+    `;
+    const services = createServices(filename, root);
+    const entrypoint = Entrypoint.createRoot(
+      services,
+      filename,
+      ['__wywPreval'],
+      source
+    );
+
+    if (entrypoint.ignored) {
+      throw new Error('Ignored');
+    }
+
+    const [code, imports, metadata] = prepareCodeForEvalRuntime(
+      services,
+      entrypoint,
+      null
+    );
+
+    expect(code).toContain('export const __wywPreval');
+    expect(code).toContain('_exp');
+    expect(code).not.toContain('memo');
+    expect(code).not.toContain('Comment');
+    expect(imports?.get('@fibery/ui-kit/src/design-system')).toEqual([
+      'themeVars',
+    ]);
+    expect(imports?.has('react')).toBe(false);
     expect(metadata).toBeNull();
   });
 

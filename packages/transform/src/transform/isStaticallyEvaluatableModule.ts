@@ -49,30 +49,28 @@ const isTypeOnlyImport = (statement: ImportDeclaration): boolean => {
 const isTypeOnlyReExport = (statement: ExportNamedDeclaration): boolean =>
   !!statement.source && statement.exportKind === 'type';
 
+const isWrapperExpression = (node: Node): node is Node & { expression: Node } =>
+  node.type === 'TSAsExpression' ||
+  node.type === 'TSSatisfiesExpression' ||
+  node.type === 'TSNonNullExpression' ||
+  node.type === 'TSInstantiationExpression' ||
+  node.type === 'TSTypeAssertion' ||
+  node.type === 'ParenthesizedExpression';
+
 const unwrapExpression = (expr: Node): Node => {
   let current = expr;
 
-  for (;;) {
-    if (
-      current.type === 'TSAsExpression' ||
-      current.type === 'TSSatisfiesExpression' ||
-      current.type === 'TSNonNullExpression' ||
-      current.type === 'TSInstantiationExpression' ||
-      current.type === 'TSTypeAssertion' ||
-      current.type === 'ParenthesizedExpression'
-    ) {
-      current = current.expression;
-      continue;
-    }
-
-    return current;
+  while (isWrapperExpression(current)) {
+    current = current.expression;
   }
+
+  return current;
 };
 
 const isSafeLiteral = (expr: Node): boolean =>
   getNodeType(expr) === 'Literal' &&
   (() => {
-    const value = (expr as Node & { value?: unknown }).value;
+    const { value } = expr as Node & { value?: unknown };
     return (
       value === null ||
       typeof value === 'string' ||
@@ -104,8 +102,8 @@ const isSafeExpression = (expr: Node): boolean => {
   }
 
   if (type === 'TemplateLiteral') {
-    return (unwrapped as Node & { expressions: Node[] }).expressions.every((item) =>
-      isSafeExpression(item)
+    return (unwrapped as Node & { expressions: Node[] }).expressions.every(
+      (item) => isSafeExpression(item)
     );
   }
 
@@ -116,8 +114,7 @@ const isSafeExpression = (expr: Node): boolean => {
   if (type === 'BinaryExpression' || type === 'LogicalExpression') {
     const binaryLike = unwrapped as Node & { left: Node; right: Node };
     return (
-      isSafeExpression(binaryLike.left) &&
-      isSafeExpression(binaryLike.right)
+      isSafeExpression(binaryLike.left) && isSafeExpression(binaryLike.right)
     );
   }
 
@@ -135,43 +132,47 @@ const isSafeExpression = (expr: Node): boolean => {
   }
 
   if (type === 'ArrayExpression') {
-    return (unwrapped as Node & { elements: Array<Node | null> }).elements.every(
-      (item) => {
-        if (!item) {
-          return true;
-        }
-
-        if (item.type === 'SpreadElement') {
-          return false;
-        }
-
-        return isSafeExpression(item);
-      }
-    );
-  }
-
-  if (type === 'ObjectExpression') {
-    return (unwrapped as Node & { properties: Node[] }).properties.every((property) => {
-      if (property.type === 'SpreadElement') {
-        return false;
-      }
-
-      const propertyNode = property as Node & {
-        computed?: boolean;
-        method?: boolean;
-        value?: Node;
-      };
-
-      if (propertyNode.computed) {
-        return false;
-      }
-
-      if (propertyNode.method) {
+    return (
+      unwrapped as Node & { elements: Array<Node | null> }
+    ).elements.every((item) => {
+      if (!item) {
         return true;
       }
 
-      return isNode(propertyNode.value) && isSafeExpression(propertyNode.value);
+      if (item.type === 'SpreadElement') {
+        return false;
+      }
+
+      return isSafeExpression(item);
     });
+  }
+
+  if (type === 'ObjectExpression') {
+    return (unwrapped as Node & { properties: Node[] }).properties.every(
+      (property) => {
+        if (property.type === 'SpreadElement') {
+          return false;
+        }
+
+        const propertyNode = property as Node & {
+          computed?: boolean;
+          method?: boolean;
+          value?: Node;
+        };
+
+        if (propertyNode.computed) {
+          return false;
+        }
+
+        if (propertyNode.method) {
+          return true;
+        }
+
+        return (
+          isNode(propertyNode.value) && isSafeExpression(propertyNode.value)
+        );
+      }
+    );
   }
 
   if (
@@ -231,7 +232,7 @@ const isSafeStatement = (statement: Node): boolean => {
   }
 
   if (statement.type === 'ExportDefaultDeclaration') {
-    const declaration = statement.declaration;
+    const { declaration } = statement;
     if (!isNode(declaration)) {
       return false;
     }
@@ -253,7 +254,10 @@ const isSafeStatement = (statement: Node): boolean => {
     return isSafeVariableDeclaration(statement);
   }
 
-  if (statement.type === 'FunctionDeclaration' || statement.type === 'EmptyStatement') {
+  if (
+    statement.type === 'FunctionDeclaration' ||
+    statement.type === 'EmptyStatement'
+  ) {
     return true;
   }
 
@@ -268,5 +272,7 @@ export function isStaticallyEvaluatableModule(
   code: string,
   filename: string
 ): boolean {
-  return parseOxc(code, filename).body.every((statement) => isSafeStatement(statement));
+  return parseOxc(code, filename).body.every((statement) =>
+    isSafeStatement(statement)
+  );
 }
