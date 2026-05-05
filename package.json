@@ -78,7 +78,9 @@
     "idea-exclude:nm": "idea-exclude node_modules \"**/node_modules\"",
     "lint": "bun run lint:scripts && bun run --filter './apps/*' --filter './e2e/*' --filter './examples/*' --filter './packages/*' --if-present lint",
     "lint:scripts": "eslint --ext .js,.ts,.mjs scripts",
+    "pre:alpha": "changeset pre enter alpha",
     "release": "bun run build && node ./scripts/prepare-publish.mjs && changeset publish",
+    "release:alpha": "node ./scripts/ensure-prerelease-mode.mjs alpha && bun run release",
     "sp:check": "syncpack",
     "sp:fix": "syncpack format && syncpack fix-mismatches",
     "sp:format": "syncpack format",
@@ -86,6 +88,7 @@
     "validate-versions": "node ./scripts/validate-versions.mjs",
     "test": "bun run --filter './apps/*' --filter './e2e/*' --filter './examples/*' --filter './packages/*' --if-present test",
     "version": "node ./scripts/bump-versions.mjs && changeset version",
+    "version:alpha": "node ./scripts/ensure-prerelease-mode.mjs alpha && bun run version",
     "website": "bun run --filter @wyw-in-js/website deploy"
   },
   "workspaces": [
