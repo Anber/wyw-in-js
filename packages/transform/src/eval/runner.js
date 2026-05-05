@@ -1773,7 +1773,20 @@ loadModule = async (id, importer, requestSpec) => {
       durationMs: Date.now() - loadStart,
     });
     if (loaded.error) {
-      throw new Error(loaded.error.message);
+      // Surface the importer + specifier alongside the broker's message.
+      // Without this, ENOENT and similar load failures bubble up as a bare
+      // path (or, after Node's VM wraps them, as the opaque
+      // ERR_VM_MODULE_STATUS) leaving no clue which file's import is broken.
+      const detail = [
+        `[wyw-in-js] Failed to load module during evaluation.`,
+        `  importer: ${importer ?? '(unknown)'}`,
+        `  request:  ${requestSpec ?? id}`,
+        `  resolved: ${id}`,
+        `  cause:    ${loaded.error.message}`,
+      ].join('\n');
+      const enhanced = new Error(detail);
+      enhanced.cause = loaded.error;
+      throw enhanced;
     }
 
     if (loaded.only) {
