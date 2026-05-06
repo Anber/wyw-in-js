@@ -38,6 +38,13 @@ module.exports = {
 
   Controls v2 evaluator behavior (`resolver`, `require`, `mode`, `globals`, `onWarn`, and custom resolver/loader hooks).
 
+  For `eval.resolver`:
+
+  - `bundler` (default): use the bundler resolver first, then native fallback when enabled by `eval.require`.
+  - `native`: resolve eval imports with `oxc-resolver`. Native resolution discovers `tsconfig.json` by default, so TypeScript `baseUrl`/`paths` aliases are available unless `oxcOptions.resolver.tsconfig` overrides that behavior.
+  - `hybrid`: try `eval.customResolver`, then native `oxc-resolver`, then the bundler resolver. This keeps package/relative imports and TypeScript aliases native-first while still allowing bundler aliases and virtual modules to resolve.
+  - `custom`: use only `eval.customResolver`.
+
   For `eval.globals`:
 
   - Values are injected into the eval VM context for each transform run.
@@ -258,7 +265,7 @@ module.exports = {
 
       - `mock`: replace the resolved target for the import (raw `source` stays intact).
       - `noShake`: disable tree-shaking for this import (forces `only=['*']`).
-      - `unknown`: controls behavior when an import reaches eval-time Node resolver fallback (`warn` by default).
+      - `unknown`: controls behavior when an import reaches eval-time native resolver fallback (`warn` by default).
 
   Example:
 
@@ -489,6 +496,9 @@ module.exports = {
 - `oxcOptions: Object`
 
   Oxc-first parser, resolver, and transform options used by WyW when parsing, preparing, and evaluating modules.
+  `oxcOptions.resolver` is also used by `eval.resolver: "native"` and the native step of `eval.resolver: "hybrid"`.
+  By default, WyW passes `tsconfig: "auto"` to the native resolver. Bundler integrations may add static aliases from their
+  own config; explicitly configured `oxcOptions.resolver.alias` entries take precedence.
 
   ```js
   export default {

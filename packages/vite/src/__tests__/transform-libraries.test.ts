@@ -16,7 +16,9 @@ jest.mock('@wyw-in-js/shared', () => ({
   __esModule: true,
   asyncResolverFactory: jest.fn(() => jest.fn()),
   logger: createLogger(),
+  mergeOxcResolverAlias: (oxcOptions: any) => oxcOptions,
   syncResolve: jest.fn(),
+  toNativeResolverAlias: jest.fn(() => ({})),
 }));
 
 jest.mock('vite', () =>

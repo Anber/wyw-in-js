@@ -6,6 +6,8 @@
 - **Node.js >= 22** is required for evaluation.
 - Evaluation runs in an async **Node ESM runner** (vm.SourceTextModule).
 - `eval.require` defaults to **warn-and-run**; use `importOverrides` to avoid runtime-only code during eval.
+- `eval.resolver: "node"` was replaced by `eval.resolver: "native"`, backed by `oxc-resolver`.
+- `eval.resolver: "hybrid"` now tries `eval.customResolver`, then native resolution, then the bundler resolver.
 - `eval.globals` updates are supported between runs (value changes and removals both trigger re-init).
 - Turbopack loader options must be **JSON-serializable**.
 - `@wyw-in-js/babel-preset` is still supported, but runs evaluation in a separate Node process.
@@ -41,6 +43,25 @@ export default {
   },
 };
 ```
+
+### Native eval resolution
+
+Use `eval.resolver: "native"` to resolve eval imports with `oxc-resolver`.
+The default remains `"bundler"`.
+Native resolution discovers `tsconfig.json` by default, so TypeScript `baseUrl`/`paths` aliases work without additional
+WyW config unless `oxcOptions.resolver.tsconfig` overrides that behavior.
+
+```js
+// wyw-in-js.config.mjs
+export default {
+  eval: {
+    resolver: 'native',
+  },
+};
+```
+
+`hybrid` mode is native-first in v2: WyW tries `eval.customResolver`, then native resolution, then the bundler resolver for
+bundler-only aliases and virtual modules. The old `"node"` resolver mode is removed.
 
 ### `eval.globals` lifecycle (watch/dev)
 

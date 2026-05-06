@@ -4,6 +4,7 @@
 
 - [Svelte with Rollup](#Rollup-1)
 - [Svelte with Webpack](#Webpack-1)
+- [Eval resolver modes](#eval-resolver-modes)
 
 #### Rollup
 
@@ -35,6 +36,15 @@ export default {
   ],
 };
 ```
+
+#### Eval resolver modes
+
+Svelte setups use either the Rollup plugin or the webpack loader, so `eval.resolver: 'native'` and the native step of
+`eval.resolver: 'hybrid'` use the same `oxc-resolver` behavior documented for those integrations. TypeScript
+`baseUrl`/`paths` aliases are discovered from `tsconfig.json` by default.
+
+With Rollup, resolver-plugin aliases are available only through `hybrid` fallback. With webpack, static string
+`resolve.alias` entries are forwarded into native resolver options.
 
 **IMPORTANT**: `rollup-plugin-css-only` generates incorrect sourcemaps (see [thgh/rollup-plugin-css-only#10](https://github.com/thgh/rollup-plugin-css-only/issues/10)). Use an alternative CSS plugin such as [`rollup-plugin-postcss`](https://github.com/egoist/rollup-plugin-postcss) instead in the same way as above.
 

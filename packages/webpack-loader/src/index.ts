@@ -11,7 +11,11 @@ import { fileURLToPath } from 'url';
 import type { RawSourceMap } from 'source-map';
 import type { Compiler, RawLoaderDefinitionFunction, Stats } from 'webpack';
 
-import { logger } from '@wyw-in-js/shared';
+import {
+  logger,
+  mergeOxcResolverAlias,
+  toNativeResolverAlias,
+} from '@wyw-in-js/shared';
 import type { PluginOptions, Preprocessor, Result } from '@wyw-in-js/transform';
 import {
   disposeEvalBroker,
@@ -309,6 +313,9 @@ const webpack5Loader: Loader = function webpack5LoaderPlugin(
     cache: transformCache,
     key: asyncResolveKey,
   } = compilerState;
+  const nativeResolverAlias = toNativeResolverAlias(
+    compiler?.options?.resolve?.alias
+  );
 
   logger('loader %s', this.resourcePath);
 
@@ -329,7 +336,13 @@ const webpack5Loader: Loader = function webpack5LoaderPlugin(
     options: {
       filename: this.resourcePath,
       inputSourceMap: convertSourceMap(inputSourceMap, this.resourcePath),
-      pluginOptions: rest,
+      pluginOptions: {
+        ...rest,
+        oxcOptions: mergeOxcResolverAlias(
+          rest.oxcOptions,
+          nativeResolverAlias
+        ),
+      },
       prefixer,
       keepComments,
       preprocessor,

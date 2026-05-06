@@ -38,6 +38,17 @@ By default, the plugin:
 - keeps generated class names stable under Next CSS Modules (selectors are emitted as `:global(...)`).
 - parses and evaluates JS/TS/JSX/TSX through the Oxc-backed WyW transform.
 
+## Eval resolver modes
+
+`eval.resolver: 'native'` and the native step of `eval.resolver: 'hybrid'` use `oxc-resolver` with automatic
+`tsconfig.json` discovery.
+
+The webpack path inherits `@wyw-in-js/webpack-loader` static `resolve.alias` forwarding. The Turbopack path forwards
+string aliases from `turbopack.resolveAlias` or `experimental.turbo.resolveAlias` when configured through `withWyw()`.
+
+Use `hybrid` when evaluated imports may rely on Next, webpack, or Turbopack resolver behavior. Use `native` only when
+`oxc-resolver` can resolve all evaluated imports, or mirror bundler-only aliases in `oxcOptions.resolver.alias`.
+
 ## Options
 
 ```ts

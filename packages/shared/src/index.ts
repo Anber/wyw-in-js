@@ -7,6 +7,11 @@ export { findPackageJSON } from './findPackageJSON';
 export { isBoxedPrimitive } from './isBoxedPrimitive';
 export { enableDebug, logger } from './logger';
 export { isFeatureEnabled } from './options/isFeatureEnabled';
+export {
+  mergeOxcResolverAlias,
+  toNativeResolverAlias,
+} from './options/nativeResolverOptions';
+export type { NativeResolverAlias } from './options/nativeResolverOptions';
 export { slugify } from './slugify';
 export { ValueType } from './types';
 

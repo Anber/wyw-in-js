@@ -157,6 +157,41 @@ describe('EvalBroker', () => {
     rmSync(root, { recursive: true, force: true });
   });
 
+  it('prefers native resolver over bundler resolver in hybrid mode', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
+    const importer = join(root, 'entry.js');
+    const bundlerDep = join(root, 'bundler.js');
+    const nativeDep = join(root, 'node_modules', 'dep', 'index.js');
+
+    mkdirSync(dirname(nativeDep), { recursive: true });
+    writeFileSync(importer, 'export const value = true;');
+    writeFileSync(bundlerDep, 'export const value = "bundler";');
+    writeFileSync(nativeDep, 'export const value = "native";');
+
+    const asyncResolve = jest.fn(async () => bundlerDep);
+    const services = createServices(root, importer, {
+      eval: {
+        resolver: 'hybrid',
+      },
+    });
+
+    const broker = new EvalBroker(services, asyncResolve);
+    const privateBroker = getPrivateBroker(broker);
+    privateBroker.importsByModule.set(importer, new Map([['dep', ['*']]]));
+
+    const result = await privateBroker.resolveImport({
+      specifier: 'dep',
+      importerId: importer,
+      kind: 'import',
+    });
+
+    expect(realpathSync(result.resolvedId!)).toBe(realpathSync(nativeDep));
+    expect(asyncResolve).not.toHaveBeenCalled();
+
+    broker.dispose();
+    rmSync(root, { recursive: true, force: true });
+  });
+
   it('keeps active eval services while later evals wait in queue', async () => {
     const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
     const firstEntry = join(root, 'first.js');
@@ -395,7 +430,7 @@ describe('EvalBroker', () => {
     rmSync(root, { recursive: true, force: true });
   });
 
-  it('passes conditionNames to node fallback resolution', async () => {
+  it('passes conditionNames to native fallback resolution', async () => {
     const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
     const importer = join(root, 'entry.js');
     const pkgDir = join(root, 'node_modules', '@test', 'helpers');

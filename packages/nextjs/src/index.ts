@@ -1,5 +1,9 @@
 import { createRequire } from 'module';
 
+import {
+  mergeOxcResolverAlias,
+  toNativeResolverAlias,
+} from '@wyw-in-js/shared';
 import type { LoaderOptions as WywTurbopackLoaderOptions } from '@wyw-in-js/turbopack-loader';
 import type { LoaderOptions as WywWebpackLoaderOptions } from '@wyw-in-js/webpack-loader';
 import type { NextConfig } from 'next';
@@ -357,6 +361,24 @@ function injectWywTurbopackRules(
 
   assertJsonSerializable(userOptions, 'turbopackLoaderOptions');
 
+  const turbopackConfig = (nextConfig as unknown as Record<string, unknown>)
+    .turbopack;
+  const userTurbopack = isPlainObject(turbopackConfig) ? turbopackConfig : {};
+  const userExperimental = isPlainObject(nextConfig.experimental)
+    ? (nextConfig.experimental as Record<string, unknown>)
+    : {};
+  const userTurbo = isPlainObject(userExperimental.turbo)
+    ? (userExperimental.turbo as Record<string, unknown>)
+    : {};
+
+  const nativeResolverAlias = toNativeResolverAlias(
+    userTurbopack.resolveAlias ?? userTurbo.resolveAlias
+  );
+  const oxcOptions = mergeOxcResolverAlias(
+    userOptions.oxcOptions,
+    nativeResolverAlias
+  );
+
   const userImportOverrides = isPlainObject(userOptions.importOverrides)
     ? (userOptions.importOverrides as Record<string, unknown>)
     : undefined;
@@ -364,6 +386,7 @@ function injectWywTurbopackRules(
   const loaderOptions = {
     sourceMap: process.env.NODE_ENV !== 'production',
     ...userOptions,
+    ...(oxcOptions ? { oxcOptions } : {}),
     importOverrides: userImportOverrides
       ? { ...DEFAULT_REACT_IMPORT_OVERRIDES, ...userImportOverrides }
       : DEFAULT_REACT_IMPORT_OVERRIDES,
@@ -388,10 +411,6 @@ function injectWywTurbopackRules(
   );
 
   if (useTurbopackConfig) {
-    const turbopackConfig = (nextConfig as unknown as Record<string, unknown>)
-      .turbopack;
-    const userTurbopack = isPlainObject(turbopackConfig) ? turbopackConfig : {};
-
     const userRules = isPlainObject(userTurbopack.rules)
       ? (userTurbopack.rules as Record<string, unknown>)
       : {};
@@ -407,14 +426,6 @@ function injectWywTurbopackRules(
       },
     } as NextConfig;
   }
-
-  const userExperimental = isPlainObject(nextConfig.experimental)
-    ? (nextConfig.experimental as Record<string, unknown>)
-    : {};
-
-  const userTurbo = isPlainObject(userExperimental.turbo)
-    ? (userExperimental.turbo as Record<string, unknown>)
-    : {};
 
   const userRules = isPlainObject(userTurbo.rules)
     ? (userTurbo.rules as Record<string, unknown>)

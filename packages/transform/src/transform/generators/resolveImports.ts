@@ -1,4 +1,6 @@
 /* eslint-disable no-continue,no-await-in-loop,require-yield */
+import type { EvalOptionsV2 } from '@wyw-in-js/shared';
+
 import { getFileIdx } from '../../utils/getFileIdx';
 import type { Entrypoint } from '../Entrypoint';
 import { getStack, isSuperSet, mergeOnly } from '../Entrypoint.helpers';
@@ -9,12 +11,85 @@ import {
   resolveMockSpecifier,
   toImportKey,
 } from '../../utils/importOverrides';
+import { resolveWithNativeResolver } from '../../utils/nativeResolver';
 import type {
   AsyncScenarioForAction,
   IResolveImportsAction,
   Services,
   SyncScenarioForAction,
 } from '../types';
+
+type AsyncResolve = (
+  what: string,
+  importer: string,
+  stack: string[]
+) => Promise<string | null>;
+
+const DEFAULT_EVAL_OPTIONS: Required<
+  Pick<EvalOptionsV2, 'mode' | 'require' | 'resolver'>
+> = {
+  mode: 'strict',
+  require: 'warn-and-run',
+  resolver: 'bundler',
+};
+
+const getEvalOptions = (services: Services): EvalOptionsV2 => ({
+  ...DEFAULT_EVAL_OPTIONS,
+  ...(services.options.pluginOptions.eval ?? {}),
+});
+
+const resolveWithConfiguredEvalResolver = async (
+  services: Services,
+  source: string,
+  importer: string,
+  stack: string[],
+  resolve: AsyncResolve
+): Promise<string | null> => {
+  const evalOptions = getEvalOptions(services);
+
+  if (evalOptions.customResolver) {
+    const customResolved = await evalOptions.customResolver(
+      source,
+      importer,
+      'import'
+    );
+    if (customResolved) {
+      return customResolved.external ? null : customResolved.id;
+    }
+
+    if (evalOptions.resolver === 'custom') {
+      return null;
+    }
+  }
+
+  if (evalOptions.resolver === 'hybrid') {
+    try {
+      return resolveWithNativeResolver({
+        conditionNames: services.options.pluginOptions.conditionNames,
+        extensions: services.options.pluginOptions.extensions,
+        importer,
+        kind: 'import',
+        oxcOptions: services.options.pluginOptions.oxcOptions,
+        specifier: source,
+      });
+    } catch {
+      return resolve(source, importer, stack);
+    }
+  }
+
+  if (evalOptions.resolver === 'native') {
+    return resolveWithNativeResolver({
+      conditionNames: services.options.pluginOptions.conditionNames,
+      extensions: services.options.pluginOptions.extensions,
+      importer,
+      kind: 'import',
+      oxcOptions: services.options.pluginOptions.oxcOptions,
+      specifier: source,
+    });
+  }
+
+  return resolve(source, importer, stack);
+};
 
 function applyImportOverrides(
   services: Services,
@@ -174,11 +249,7 @@ export function* syncResolveImports(
  */
 export async function* asyncResolveImports(
   this: IResolveImportsAction,
-  resolve: (
-    what: string,
-    importer: string,
-    stack: string[]
-  ) => Promise<string | null>
+  resolve: AsyncResolve
 ): AsyncScenarioForAction<IResolveImportsAction> {
   const {
     data: { imports },
@@ -204,7 +275,13 @@ export async function* asyncResolveImports(
   ): Promise<IEntrypointDependency> => {
     let resolved: string | null = null;
     try {
-      resolved = await resolve(source, entrypoint.name, getStack(entrypoint));
+      resolved = await resolveWithConfiguredEvalResolver(
+        this.services,
+        source,
+        entrypoint.name,
+        getStack(entrypoint),
+        resolve
+      );
     } catch (err) {
       log(
         '[async-resolve] ❌ cannot resolve %s in %s: %O',

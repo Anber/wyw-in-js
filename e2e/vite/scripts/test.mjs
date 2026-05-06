@@ -252,6 +252,11 @@ const main = async () => {
       fixturePath: path.resolve(PKG_DIR, 'fixture.css'),
       pluginOptions: { outputMetadata: true },
     },
+    {
+      name: 'hybridResolver',
+      fixturePath: path.resolve(PKG_DIR, 'fixture.css'),
+      pluginOptions: { eval: { resolver: 'hybrid' } },
+    },
   ];
 
   for (const testCase of testCases) {

@@ -5,6 +5,22 @@ const transformMock = jest.fn();
 jest.mock('@wyw-in-js/shared', () => ({
   __esModule: true,
   logger: jest.fn(),
+  mergeOxcResolverAlias: (oxcOptions: any, nativeAlias: any) => ({
+    ...oxcOptions,
+    resolver: {
+      ...(oxcOptions?.resolver ?? {}),
+      alias: {
+        ...nativeAlias,
+        ...(oxcOptions?.resolver?.alias ?? {}),
+      },
+    },
+  }),
+  toNativeResolverAlias: (alias: any) =>
+    Object.fromEntries(
+      Object.entries(alias ?? {})
+        .filter(([, replacement]) => typeof replacement === 'string')
+        .map(([find, replacement]) => [find, [replacement]])
+    ),
 }));
 
 jest.mock('@wyw-in-js/transform', () => ({
@@ -175,6 +191,67 @@ describe('webpack-loader asyncResolve', () => {
     expect(transformMock.mock.calls[0][0].asyncResolveKey).toBe(
       transformMock.mock.calls[1][0].asyncResolveKey
     );
+  });
+
+  it('passes static webpack aliases to native resolver options', async () => {
+    const { default: webpackLoader } = await import('../index');
+    const compiler = {
+      ...createCompiler(),
+      options: {
+        resolve: {
+          alias: {
+            '@': '/project/src',
+            disabled: false,
+            existing: '/project/ignored',
+          },
+        },
+      },
+    };
+
+    transformMock.mockResolvedValue({
+      code: 'module.exports = 1;',
+      sourceMap: null,
+      cssText: undefined,
+      dependencies: [],
+    });
+
+    await new Promise<void>((resolve, reject) => {
+      webpackLoader.call(
+        {
+          _compiler: compiler,
+          addDependency: jest.fn(),
+          async: jest.fn(),
+          callback: (err: Error | null) => (err ? reject(err) : resolve()),
+          emitWarning: jest.fn(),
+          getOptions: () => ({
+            oxcOptions: {
+              resolver: {
+                alias: {
+                  existing: ['/custom-existing'],
+                },
+                conditionNames: ['...'],
+              },
+            },
+          }),
+          getResolve: () => jest.fn((_ctx, _token, cb) => cb(null, '/abs/a')),
+          resourcePath: '/abs/entry.tsx',
+        } as any,
+        'module.exports = 1;',
+        null
+      );
+    });
+
+    expect(
+      transformMock.mock.calls[0][0].options.pluginOptions.oxcOptions
+    ).toEqual({
+      resolver: {
+        alias: {
+          '@': ['/project/src'],
+          existing: ['/custom-existing'],
+        },
+        conditionNames: ['...'],
+      },
+    });
   });
 
   it('keeps the stacked root resolver alive until compiler completion', async () => {

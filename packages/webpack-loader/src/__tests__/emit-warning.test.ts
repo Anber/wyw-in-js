@@ -3,6 +3,8 @@ const transformMock = jest.fn();
 jest.mock('@wyw-in-js/shared', () => ({
   __esModule: true,
   logger: jest.fn(),
+  mergeOxcResolverAlias: (oxcOptions: any) => oxcOptions,
+  toNativeResolverAlias: jest.fn(() => ({})),
 }));
 
 jest.mock('@wyw-in-js/transform', () => ({

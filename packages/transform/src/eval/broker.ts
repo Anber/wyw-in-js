@@ -29,8 +29,8 @@ import {
 } from '../utils/importOverrides';
 import { getFileIdx } from '../utils/getFileIdx';
 import { collectOxcExportsAndImports } from '../utils/collectOxcExportsAndImports';
+import { resolveWithNativeResolver } from '../utils/nativeResolver';
 import { parseRequest, stripQueryAndHash } from '../utils/parseRequest';
-import { resolveFilenameWithConditions } from '../utils/resolveWithConditions';
 import {
   hasCachedWywPrevalExport,
   type CachedEntrypointLike,
@@ -61,38 +61,9 @@ import {
 } from './serialize';
 import { createWriteQueue, type WriteQueue, writeToStream } from './writeQueue';
 
-type HiddenModuleMembers = {
-  _extensions: Record<string, () => void>;
-  _resolveFilename: (
-    id: string,
-    options: { filename: string; id: string; paths: string[] },
-    isMain?: boolean,
-    resolveOptions?: { conditions?: Set<string> }
-  ) => string;
-  _nodeModulePaths(filename: string): string[];
+const DefaultModuleImplementation = NativeModule as typeof NativeModule & {
+  builtinModules?: string[];
 };
-
-const DefaultModuleImplementation = NativeModule as typeof NativeModule &
-  HiddenModuleMembers;
-
-const CJS_DEFAULT_CONDITIONS = ['require', 'node', 'default'] as const;
-
-const expandConditions = (conditionNames: string[]): Set<string> => {
-  const result = new Set<string>();
-
-  conditionNames.forEach((name) => {
-    if (name === '...') {
-      CJS_DEFAULT_CONDITIONS.forEach((condition) => result.add(condition));
-      return;
-    }
-
-    result.add(name);
-  });
-
-  return result;
-};
-
-const NOOP = () => {};
 
 const isBuiltinSpecifier = (specifier: string) => {
   const normalized = specifier.startsWith('node:')
@@ -379,7 +350,7 @@ const HAPPYDOM_INIT_TIMEOUT_MS = Number(
 type ResolveCacheEntry = {
   resolvedId: string | null;
   external?: boolean;
-  usedNodeFallback?: boolean;
+  usedNativeFallback?: boolean;
 };
 
 type ResolveResult = ResolveCacheEntry & {
@@ -2052,7 +2023,8 @@ export class EvalBroker {
   private normalizeResolvedId(
     resolvedId: string,
     specifier: string,
-    importerId?: string
+    importerId: string | undefined,
+    kind: ResolveRequestPayload['kind']
   ): string {
     const stripped = stripQueryAndHash(resolvedId);
     if (!stripped) return resolvedId;
@@ -2089,18 +2061,18 @@ export class EvalBroker {
     if (importerId) {
       try {
         const importerFile = stripQueryAndHash(importerId);
-        const resolved = DefaultModuleImplementation._resolveFilename(
-          stripped,
-          {
-            id: importerFile,
-            filename: importerFile,
-            paths: DefaultModuleImplementation._nodeModulePaths(
-              path.dirname(importerFile)
-            ),
-          }
-        );
+        const { conditionNames, extensions, oxcOptions } =
+          this.services.options.pluginOptions;
+        const resolved = resolveWithNativeResolver({
+          conditionNames,
+          extensions,
+          importer: importerFile,
+          kind,
+          oxcOptions,
+          specifier: resolvedId,
+        });
         if (resolved && resolved !== stripped) {
-          return `${resolved}${suffix}`;
+          return resolved;
         }
       } catch {
         // ignore fallback failures
@@ -2158,7 +2130,8 @@ export class EvalBroker {
       const normalized = this.normalizeResolvedId(
         specifier,
         specifier,
-        importerId
+        importerId,
+        kind
       );
       const overridden = this.applyImportOverrides(
         {
@@ -2186,7 +2159,8 @@ export class EvalBroker {
       const normalized = this.normalizeResolvedId(
         cached.resolvedId,
         specifier,
-        importerId
+        importerId,
+        kind
       );
       const overridden = this.applyImportOverrides(
         {
@@ -2198,8 +2172,8 @@ export class EvalBroker {
         importerId,
         stack
       );
-      if (cached.usedNodeFallback) {
-        this.maybeWarnNodeFallback({
+      if (cached.usedNativeFallback) {
+        this.maybeWarnNativeFallback({
           importerId,
           specifier,
           resolvedId: normalized,
@@ -2221,7 +2195,8 @@ export class EvalBroker {
       const normalized = this.normalizeResolvedId(
         cachedResult.resolvedId,
         specifier,
-        importerId
+        importerId,
+        kind
       );
       const overridden = this.applyImportOverrides(
         {
@@ -2233,8 +2208,8 @@ export class EvalBroker {
         importerId,
         stack
       );
-      if (cachedResult.usedNodeFallback) {
-        this.maybeWarnNodeFallback({
+      if (cachedResult.usedNativeFallback) {
+        this.maybeWarnNativeFallback({
           importerId,
           specifier,
           resolvedId: normalized,
@@ -2255,7 +2230,8 @@ export class EvalBroker {
           const normalized = this.normalizeResolvedId(
             customResolved.id,
             specifier,
-            importerId
+            importerId,
+            kind
           );
           if (process.env.WYW_DEBUG_EVAL_RESOLVE) {
             // eslint-disable-next-line no-console
@@ -2278,7 +2254,49 @@ export class EvalBroker {
         }
       }
 
-      if (evalOptions.resolver !== 'node') {
+      if (evalOptions.resolver === 'hybrid') {
+        try {
+          const nativeResolved = this.resolveWithNativeFallback(
+            specifier,
+            importerId,
+            kind
+          );
+          if (process.env.WYW_DEBUG_EVAL_RESOLVE) {
+            // eslint-disable-next-line no-console
+            console.warn('[wyw-eval:resolve:native]', {
+              specifier,
+              importerId,
+              resolved: nativeResolved.resolvedId,
+            });
+          }
+          return nativeResolved;
+        } catch {
+          // Hybrid mode lets the bundler resolver handle aliases, virtual IDs,
+          // and other specifiers that the native resolver cannot resolve.
+        }
+      }
+
+      if (evalOptions.resolver === 'native') {
+        const nativeResolved = this.resolveWithNativeFallback(
+          specifier,
+          importerId,
+          kind
+        );
+        if (process.env.WYW_DEBUG_EVAL_RESOLVE) {
+          // eslint-disable-next-line no-console
+          console.warn('[wyw-eval:resolve:native]', {
+            specifier,
+            importerId,
+            resolved: nativeResolved.resolvedId,
+          });
+        }
+        return nativeResolved;
+      }
+
+      if (
+        evalOptions.resolver === 'bundler' ||
+        evalOptions.resolver === 'hybrid'
+      ) {
         let resolved: string | null = null;
         try {
           resolved = await this.asyncResolve(specifier, importerId, stack);
@@ -2289,7 +2307,8 @@ export class EvalBroker {
           const normalized = this.normalizeResolvedId(
             resolved,
             specifier,
-            importerId
+            importerId,
+            kind
           );
           if (process.env.WYW_DEBUG_EVAL_RESOLVE) {
             // eslint-disable-next-line no-console
@@ -2306,22 +2325,23 @@ export class EvalBroker {
         }
       }
 
-      if (evalOptions.resolver === 'node' || evalOptions.require !== 'off') {
-        const nodeResolved = this.resolveWithNodeFallback(
+      if (evalOptions.resolver === 'bundler' && evalOptions.require !== 'off') {
+        const nativeResolved = this.resolveWithNativeFallback(
           specifier,
-          importerId
+          importerId,
+          kind
         );
         if (process.env.WYW_DEBUG_EVAL_RESOLVE) {
           // eslint-disable-next-line no-console
-          console.warn('[wyw-eval:resolve:node]', {
+          console.warn('[wyw-eval:resolve:native-fallback]', {
             specifier,
             importerId,
-            resolved: nodeResolved.resolvedId,
+            resolved: nativeResolved.resolvedId,
           });
         }
         return {
-          ...nodeResolved,
-          usedNodeFallback: evalOptions.resolver !== 'node',
+          ...nativeResolved,
+          usedNativeFallback: true,
         };
       }
 
@@ -2359,8 +2379,8 @@ export class EvalBroker {
         stack
       );
 
-      if (result.usedNodeFallback && result.resolvedId) {
-        this.maybeWarnNodeFallback({
+      if (result.usedNativeFallback && result.resolvedId) {
+        this.maybeWarnNativeFallback({
           importerId,
           specifier,
           resolvedId: result.resolvedId,
@@ -2551,75 +2571,46 @@ export class EvalBroker {
     };
   }
 
-  private resolveWithNodeFallback(
+  private resolveWithNativeFallback(
     specifier: string,
-    importerId: string
+    importerId: string,
+    kind: ResolveRequestPayload['kind']
   ): ResolveCacheEntry {
-    const extensions = DefaultModuleImplementation._extensions;
-    const added: string[] = [];
-    const { conditionNames } = this.services.options.pluginOptions;
-    const conditions = conditionNames?.length
-      ? expandConditions(conditionNames)
-      : undefined;
+    const { conditionNames, extensions, oxcOptions } =
+      this.services.options.pluginOptions;
 
     try {
-      this.services.options.pluginOptions.extensions.forEach((ext) => {
-        if (ext in extensions) return;
-        extensions[ext] = NOOP;
-        added.push(ext);
+      const resolved = resolveWithNativeResolver({
+        conditionNames,
+        extensions,
+        importer: importerId,
+        kind,
+        oxcOptions,
+        specifier,
       });
-
-      const filename = importerId;
-      const strippedId = stripQueryAndHash(specifier);
-
-      let resolved: string;
-      try {
-        resolved = resolveFilenameWithConditions(
-          DefaultModuleImplementation,
-          strippedId,
-          {
-            id: filename,
-            filename,
-            paths: DefaultModuleImplementation._nodeModulePaths(
-              path.dirname(filename)
-            ),
-          },
-          conditions
-        );
-      } catch (error) {
-        throw new Error(
-          [
-            `[wyw-in-js] Node resolver failed during eval.`,
-            ``,
-            `importer: ${filename}`,
-            `source:   ${specifier}`,
-            ``,
-            `error: ${error instanceof Error ? error.message : String(error)}`,
-          ].join('\n')
-        );
-      }
-
-      const isFileSpecifier =
-        strippedId.startsWith('.') || path.isAbsolute(strippedId);
-
-      if (
-        isFileSpecifier &&
-        path.extname(strippedId) === '' &&
-        resolved.endsWith('.cjs') &&
-        fs.existsSync(`${resolved.slice(0, -4)}.js`)
-      ) {
-        resolved = `${resolved.slice(0, -4)}.js`;
-      }
-
       return {
-        resolvedId: this.normalizeResolvedId(resolved, specifier, importerId),
+        resolvedId: this.normalizeResolvedId(
+          resolved,
+          specifier,
+          importerId,
+          kind
+        ),
       };
-    } finally {
-      added.forEach((ext) => delete extensions[ext]);
+    } catch (error) {
+      throw new Error(
+        [
+          `[wyw-in-js] Native resolver failed during eval.`,
+          ``,
+          `importer: ${importerId}`,
+          `source:   ${specifier}`,
+          ``,
+          `error: ${error instanceof Error ? error.message : String(error)}`,
+        ].join('\n')
+      );
     }
   }
 
-  private maybeWarnNodeFallback({
+  private maybeWarnNativeFallback({
     importerId,
     specifier,
     resolvedId,
@@ -2657,7 +2648,7 @@ export class EvalBroker {
     if (policy === 'error') {
       throw new Error(
         [
-          `[wyw-in-js] Unknown import reached during eval (Node resolver fallback)`,
+          `[wyw-in-js] Unknown import reached during eval (native resolver fallback)`,
           ``,
           `importer: ${importerId}`,
           `source:   ${specifier}`,
@@ -2675,7 +2666,7 @@ export class EvalBroker {
     if (policy === 'warn' && !warnedUnknownImports.has(keyInfo.key)) {
       warnedUnknownImports.add(keyInfo.key);
       const warningMessage = [
-        `[wyw-in-js] Unknown import reached during eval (Node resolver fallback)`,
+        `[wyw-in-js] Unknown import reached during eval (native resolver fallback)`,
         ``,
         `importer: ${importerId}`,
         `source:   ${specifier}`,

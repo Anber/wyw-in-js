@@ -47,6 +47,7 @@ export type PartialOptions = Partial<Omit<PluginOptions, 'features'>> & {
 const cache = new WeakMap<Partial<PartialOptions>, StrictOptions>();
 const defaultOverrides = {};
 const nodeModulesRegExp = /[\\/]node_modules[\\/]/;
+const evalResolverModes = new Set(['bundler', 'hybrid', 'native', 'custom']);
 const defaultImportLoaders: ImportLoaders = {
   raw: 'raw',
   url: 'url',
@@ -218,6 +219,13 @@ export function loadWywOptions(
       ...rest.features,
     },
   };
+
+  const evalResolver = options.eval?.resolver;
+  if (evalResolver && !evalResolverModes.has(evalResolver)) {
+    throw new Error(
+      `[wyw-in-js] Unsupported eval.resolver "${evalResolver}". Use "bundler", "hybrid", "native", or "custom".`
+    );
+  }
 
   cache.set(overrides, options);
 

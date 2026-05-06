@@ -774,7 +774,7 @@ describe('ESM resolver order', () => {
     expect(customResolver).toHaveBeenCalledWith('dep', entryFile, 'import');
   });
 
-  it('falls back to bundler before node resolver', async () => {
+  it('falls back to bundler before native resolver in bundler mode', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wyw-esm-bundler-'));
     const entryFile = path.join(root, 'entry.js');
     const bundlerFile = path.join(root, 'bundler.js');
@@ -810,7 +810,7 @@ describe('ESM resolver order', () => {
     });
 
     const mod = new Module(services, entrypoint);
-    const fallbackSpy = jest.spyOn(mod, 'resolveWithNodeFallback');
+    const fallbackSpy = jest.spyOn(mod, 'resolveWithNativeFallback');
 
     await safeEvaluate(mod);
 
@@ -819,12 +819,13 @@ describe('ESM resolver order', () => {
     expect(fallbackSpy).not.toHaveBeenCalled();
   });
 
-  it('uses node resolver when bundler data is missing', async () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wyw-esm-node-'));
+  it('uses native resolver when bundler data is missing', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wyw-esm-native-'));
     const entryFile = path.join(root, 'entry.js');
-    const nodeFile = path.join(root, 'node.js');
+    const nativeFile = path.join(root, 'node_modules', 'dep', 'index.js');
 
-    fs.writeFileSync(nodeFile, `export default 'node';`);
+    fs.mkdirSync(path.dirname(nativeFile), { recursive: true });
+    fs.writeFileSync(nativeFile, `export default 'native';`);
 
     const code = dedent`
       import value from 'dep';
@@ -845,28 +846,56 @@ describe('ESM resolver order', () => {
       },
     });
 
-    const moduleImpl = {
-      _extensions: DefaultModuleImplementation._extensions,
-      _nodeModulePaths: DefaultModuleImplementation._nodeModulePaths.bind(
-        DefaultModuleImplementation
-      ),
-      _resolveFilename: jest.fn((id: string) => {
-        if (id === 'dep') {
-          return nodeFile;
-        }
-
-        return id;
-      }),
-    };
-
     const entrypoint = createEntrypoint(services, entryFile, ['*'], code);
-    const mod = new Module(services, entrypoint, undefined, moduleImpl as any);
-    const fallbackSpy = jest.spyOn(mod, 'resolveWithNodeFallback');
+    const mod = new Module(services, entrypoint);
+    const fallbackSpy = jest.spyOn(mod, 'resolveWithNativeFallback');
 
     await safeEvaluate(mod);
 
-    expect(entrypoint.exports.result).toBe('node');
+    expect(entrypoint.exports.result).toBe('native');
     expect(fallbackSpy).toHaveBeenCalled();
+  });
+
+  it('prefers native resolver over bundler dependencies in hybrid mode', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wyw-esm-hybrid-'));
+    const entryFile = path.join(root, 'entry.js');
+    const bundlerFile = path.join(root, 'bundler.js');
+    const nativeFile = path.join(root, 'node_modules', 'dep', 'index.js');
+
+    fs.mkdirSync(path.dirname(nativeFile), { recursive: true });
+    fs.writeFileSync(bundlerFile, `export default 'bundler';`);
+    fs.writeFileSync(nativeFile, `export default 'native';`);
+
+    const code = dedent`
+      import value from 'dep';
+      export const result = value;
+    `;
+
+    const cache = new TransformCacheCollection();
+    const services = createServices({
+      cache,
+      options: {
+        filename: entryFile,
+        pluginOptions: {
+          ...options,
+          eval: {
+            resolver: 'hybrid',
+          },
+        },
+      },
+    });
+
+    const entrypoint = createEntrypoint(services, entryFile, ['*'], code);
+    entrypoint.addDependency({
+      source: 'dep',
+      resolved: bundlerFile,
+      only: ['*'],
+    });
+
+    const mod = new Module(services, entrypoint);
+    await safeEvaluate(mod);
+
+    expect(entrypoint.exports.result).toBe('native');
   });
 });
 
@@ -1289,7 +1318,9 @@ describe('conditionNames', () => {
       moduleImpl as never
     );
 
-    expect(() => mod.resolve('./foo.js')).toThrow(missing);
+    expect(() => mod.resolve('./foo.js')).toThrow(
+      'Native resolver failed during eval'
+    );
     expect(resolveFilename.mock.calls.map(([id]) => id)).toEqual(['./foo.js']);
   });
 
@@ -1341,7 +1372,9 @@ describe('conditionNames', () => {
       moduleImpl as never
     );
 
-    expect(() => mod.resolve('@scope/pkg')).toThrow(missing);
+    expect(() => mod.resolve('@scope/pkg')).toThrow(
+      'Native resolver failed during eval'
+    );
     expect(resolveFilename.mock.calls.map(([id]) => id)).toEqual([
       '@scope/pkg',
     ]);
