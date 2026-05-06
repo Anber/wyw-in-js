@@ -96,6 +96,7 @@ export type OxcStaticValue = {
 
 export type OxcStaticValueCandidate = {
   imports: OxcStaticImportReference[];
+  inlineConstants?: Record<string, unknown>;
   name: string;
   source: string;
 };
@@ -135,6 +136,7 @@ type ExtractionContext = {
 
 type ExtractedExpression = {
   expressionCode: string;
+  hasInlinableLocalReference?: boolean;
   importedFrom: string[];
   kind: ValueType.FUNCTION | ValueType.LAZY;
   staticExpressionCode?: string;
@@ -2185,6 +2187,7 @@ const extractExpression = (
     ...namespaceStatic.imports,
   ];
   let hasNonStaticLocalReference = false;
+  let hasInlinableLocalReference = false;
 
   findReferences(expression, ctx.referencesByNode).forEach(
     ({ name, start }) => {
@@ -2225,16 +2228,25 @@ const extractExpression = (
         return;
       }
 
+      const init = binding.declarator?.init;
+      // Processor-managed bindings (const x = css``) carry a value (the
+      // generated class name) that only becomes known after processors run.
+      // Leave the identifier free in the candidate source so the resolver
+      // can supply it via inlineConstants at evaluation time. Substituting
+      // the TaggedTemplateExpression text would just guarantee evaluator
+      // failure since evaluateStatic can't fold tagged templates.
+      const isProcessorTagged =
+        evaluate && init?.type === 'TaggedTemplateExpression';
       const staticLocalExpression =
-        evaluate && binding.declarator?.init
-          ? collectStaticLocalExpression(binding.declarator.init, ctx, [
-              hoistedBindingKey(binding),
-            ])
+        evaluate && init && !isProcessorTagged
+          ? collectStaticLocalExpression(init, ctx, [hoistedBindingKey(binding)])
           : null;
       if (staticLocalExpression) {
         staticIdentifierReplacements.set(name, staticLocalExpression.source);
         importedFrom.push(...staticLocalExpression.importedFrom);
         staticImports.push(...staticLocalExpression.imports);
+      } else if (isProcessorTagged) {
+        hasInlinableLocalReference = true;
       } else {
         hasNonStaticLocalReference = true;
       }
@@ -2273,6 +2285,8 @@ const extractExpression = (
             ctx.code
           )
         : undefined,
+    hasInlinableLocalReference:
+      !hasNonStaticLocalReference && hasInlinableLocalReference,
     staticImports: hasNonStaticLocalReference ? [] : staticImports,
   };
 };
@@ -2391,6 +2405,7 @@ const extractExpressions = (
 
     const {
       expressionCode,
+      hasInlinableLocalReference,
       importedFrom,
       kind,
       staticExpressionCode,
@@ -2409,7 +2424,10 @@ const extractExpressions = (
         name: expName,
         value: staticValue,
       });
-    } else if (staticImports.length > 0 && kind !== ValueType.FUNCTION) {
+    } else if (
+      (staticImports.length > 0 || hasInlinableLocalReference) &&
+      kind !== ValueType.FUNCTION
+    ) {
       const uniqueImports = new Map<string, OxcStaticImportReference>();
       staticImports.forEach((item) => {
         uniqueImports.set(

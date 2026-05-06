@@ -2372,7 +2372,13 @@ export const applyOxcProcessors = (
         )
       : codeWithAddedImports,
     processors,
-    staticValueCandidates: extracted.staticValueCandidates,
+    staticValueCandidates:
+      processorClassNamesByLocal.size > 0
+        ? extracted.staticValueCandidates.map((candidate) => ({
+            ...candidate,
+            inlineConstants: Object.fromEntries(processorClassNamesByLocal),
+          }))
+        : extracted.staticValueCandidates,
     staticValues: [
       ...extracted.staticValues,
       ...collectSameFileProcessorStaticValues(

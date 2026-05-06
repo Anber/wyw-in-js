@@ -5048,6 +5048,12 @@ function* resolveCandidateValue(
   const sideEffectImportLocals = new Set<string>();
   let candidateExpression: Expression | null | undefined;
 
+  if (candidate.inlineConstants) {
+    for (const [name, value] of Object.entries(candidate.inlineConstants)) {
+      env.set(name, value);
+    }
+  }
+
   for (const item of candidate.imports) {
     const resolved = yield* resolveImportValue(
       action,
