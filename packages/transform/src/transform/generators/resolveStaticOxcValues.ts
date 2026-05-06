@@ -63,6 +63,12 @@ type ExportTarget =
 type StaticExportResult = {
   callable?: 'zero-arg';
   dependencies: string[];
+  // True when the candidate's value is a runtime callback (function)
+  // already represented in the bundle as the locally-defined `_exp =
+  // () => ...` arrow. The file does not need evalFile because of this
+  // candidate, but the helper declaration must NOT be pruned — the
+  // runtime call site relies on it.
+  runtimeOnly?: boolean;
   sideEffectDependencies?: string[];
   sideEffectImportLocals?: string[];
   value: unknown;
@@ -5236,6 +5242,29 @@ function* resolveCandidateValue(
   }
 
   const value = evaluateOxcStaticExpression(candidate.source, filename, env);
+  // Function-valued candidates are runtime callbacks (e.g. styled-
+  // component dynamic prop interpolations like `${props => ...}`). The
+  // value isn't serializable, but the candidate IS resolved — the
+  // local `_exp = () => target` arrow already lives in the bundle, so
+  // the file does not need evalFile to compute it. Mark the result as
+  // runtimeOnly so the helper declaration survives pruning.
+  if (typeof value === 'function') {
+    debugStaticResolve(action, {
+      candidate: candidate.name,
+      filename,
+      phase: 'candidate',
+      reason: 'runtime-callback',
+      status: 'resolved',
+    });
+    return {
+      dependencies: [...dependencies],
+      runtimeOnly: true,
+      sideEffectDependencies: [...sideEffectDependencies],
+      sideEffectImportLocals: [...sideEffectImportLocals],
+      value,
+    };
+  }
+
   if (!isOxcStaticSerializableValue(value)) {
     debugStaticResolve(action, {
       candidate: candidate.name,
@@ -5332,6 +5361,10 @@ export function* resolveStaticOxcPreevalValues(
     parseProgram(preevalResult.baseCode ?? preevalResult.code, filename)
   );
   const evalDependencyNames = new Set(preevalResult.dependencyNames ?? []);
+  // Names of candidates resolved to runtime callbacks (function values).
+  // They keep the file out of evalFile but their helper declarations must
+  // not be pruned — the runtime call site relies on them.
+  const runtimeOnlyCandidateNames = new Set<string>();
   let changed = false;
   let hasKnownStaticCandidate = false;
 
@@ -5410,7 +5443,14 @@ export function* resolveStaticOxcPreevalValues(
       staticNullWYWMetaExtendsHelpers.add(candidate.name);
     }
 
-    staticValueCache.set(candidate.name, resolved.value);
+    if (resolved.runtimeOnly) {
+      // Runtime callback — don't seed staticValueCache (which gates
+      // pruning of the `_exp = () => target` helper). Track separately
+      // so dependencyNames still gets filtered and evalFile is skipped.
+      runtimeOnlyCandidateNames.add(candidate.name);
+    } else {
+      staticValueCache.set(candidate.name, resolved.value);
+    }
     hasKnownStaticCandidate = true;
     candidate.imports.forEach((item) =>
       staticImportLocals.add(item.importLocal ?? item.local)
@@ -5432,7 +5472,8 @@ export function* resolveStaticOxcPreevalValues(
   }
 
   const dependencyNames = (preevalResult.dependencyNames ?? []).filter(
-    (name) => !staticValueCache.has(name)
+    (name) =>
+      !staticValueCache.has(name) && !runtimeOnlyCandidateNames.has(name)
   );
   preevalResult.dependencyNames = dependencyNames;
   preevalResult.staticValueCache = staticValueCache;

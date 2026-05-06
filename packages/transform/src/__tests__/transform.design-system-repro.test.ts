@@ -2187,22 +2187,114 @@ describe('design-system chain repro for staticImportValues', () => {
     }
   });
 
-  // FIXME: seq00040/seq00041 (unit-content-layout.tsx, transitively
-  // unit/styles.ts) — styled-component templates with runtime-callback
-  // dynamic prop interpolations (`${(props) => ...}`) extract candidates
-  // whose evaluated values are functions. The candidate evaluator marks
-  // them candidate-expression-non-serializable and the consumer falls
-  // back to evalFile, transitively pulling in every dependency module
-  // (unit/styles.ts, design-system, etc.).
-  //
-  // The fix needs to distinguish "the candidate's value is needed as a
-  // serialized literal for css extraction" from "the candidate is a
-  // runtime callback the styled processor handles directly". The
-  // test-styled-processor fixture rejects all interpolations
-  // (addInterpolation throws), so this specific shape can't be
-  // reproduced in a unit test against the existing fixtures.
-  it.skip('does not fall back to evalFile for styled dynamic-prop function candidates (UnitContentLayout)', async () => {
-    // Placeholder — see FIXME above.
+  it('does not fall back to evalFile for styled dynamic-prop function candidates (UnitContentLayout)', async () => {
+    // ui-kit/src/unit/unit-content-layout.tsx pattern (seq00040/00041
+    // in the bench, transitively pulling in unit/styles.ts):
+    //   export const UnitContentLayout = styled.div\`
+    //     grid-template-rows: \${getRows};
+    //     grid-template-columns: \${getCols};
+    //   \`;
+    //
+    // The candidates `_exp = () => getRows` resolve to function values.
+    // The evaluator should accept them as runtime callbacks (not as
+    // values needing eval), keep the helper arrow alive in the bundle,
+    // and skip evalFile.
+    const root = mkdtempSync(join(tmpdir(), 'wyw-spread-repro-'));
+    const cache = new TransformCacheCollection();
+    const perf = createPerfEventRecorder();
+    const entryFile = join(root, 'unit-content-layout.tsx');
+    const stylesFile = join(root, 'styles.ts');
+    const dsFile = join(root, 'design-system.ts');
+    const styledProcessorFile = join(
+      __dirname,
+      '__fixtures__',
+      'test-styled-processor.js'
+    );
+
+    writeFileSync(
+      dsFile,
+      dedent`
+        export const space = { s2: 2, s8: 8 } as const;
+        export const fontSize = { sm: 14, xs: 12 } as const;
+      `
+    );
+    writeFileSync(
+      stylesFile,
+      dedent`
+        import { fontSize, space } from './design-system';
+
+        export const regularTextUnitSize = fontSize.sm + space.s8;
+        export const smallTextUnitSize = fontSize.xs + space.s8;
+      `
+    );
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { styled } from 'test-styled-processor';
+
+        import { regularTextUnitSize, smallTextUnitSize } from './styles';
+
+        export const getHeight = (big) =>
+          big ? regularTextUnitSize : smallTextUnitSize;
+
+        const getRows = ({ big }) => 'minmax(' + getHeight(big) + 'px, max-content)';
+        const getCols = ({ iconsLength }) => 'repeat(' + iconsLength + ', auto)';
+
+        export const UnitContentLayout = styled.div\`
+          grid-template-rows: ${'${getRows}'};
+          grid-template-columns: ${'${getCols}'};
+        \`;
+      `
+    );
+
+    const styledAwareResolver = async (what: string, importer: string) => {
+      if (what === 'test-css-processor') {
+        return processorFile;
+      }
+      if (what === 'test-styled-processor') {
+        return styledProcessorFile;
+      }
+      if (what.startsWith('.')) {
+        const base = resolve(dirname(importer), what);
+        for (const ext of ['.ts', '.tsx', '.js']) {
+          const candidate = `${base}${ext}`;
+          if (existsSync(candidate) && statSync(candidate).isFile()) {
+            return candidate;
+          }
+        }
+        return base;
+      }
+      return null;
+    };
+
+    try {
+      await transform(
+        {
+          cache,
+          eventEmitter: perf.eventEmitter,
+          options: {
+            filename: entryFile,
+            root,
+            pluginOptions: {
+              configFile: false,
+              features: { staticImportValues: true },
+              tagResolver: (source, tag) => {
+                if (source === 'test-styled-processor' && tag === 'styled') {
+                  return styledProcessorFile;
+                }
+                return null;
+              },
+            },
+          },
+        },
+        readFileSync(entryFile, 'utf8'),
+        styledAwareResolver
+      );
+
+      expect(perf.counts.get('transform:evalFile') ?? 0).toBe(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it('inlines mixed same-file + cross-file spread chain (typeBadge pattern)', async () => {
