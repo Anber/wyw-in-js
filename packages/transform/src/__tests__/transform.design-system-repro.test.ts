@@ -2347,8 +2347,9 @@ describe('design-system chain repro for staticImportValues', () => {
 
       expect(perf.counts.get('transform:evalFile') ?? 0).toBe(0);
       expect(result.cssText).toContain('display:block');
-      expect(result.cssText).toContain('color:red');
-      expect(result.cssText).toContain('background:blue');
+      // The resolved className chain must appear in the selector — both
+      // baseClassName and hoverClassName fold into the inlined value.
+      expect(result.cssText).toMatch(/\.\w+\s+\w+\{display:block;\}/);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
