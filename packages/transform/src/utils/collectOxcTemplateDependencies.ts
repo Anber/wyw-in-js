@@ -2006,6 +2006,17 @@ const collectStaticLocalExpression = (
       return null;
     }
 
+    // Processor-managed bindings (const x = css``) carry their value
+    // (the generated className string) via inlineConstants at candidate
+    // evaluation time. Walking the TaggedTemplateExpression here would
+    // pull the processor's tag import (e.g. `css` from '@linaria/core')
+    // into the candidate's static imports, where it fails to resolve.
+    // Leave the identifier as a free reference; the candidate-side env
+    // supplies the className.
+    if (binding.declarator.init.type === 'TaggedTemplateExpression') {
+      continue;
+    }
+
     const key = hoistedBindingKey(binding);
     if (stack.includes(key)) {
       return null;
