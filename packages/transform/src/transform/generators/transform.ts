@@ -114,6 +114,7 @@ const ensureOxcPreevalResult = (
       dependencyNames: result.dependencyNames,
       evalCode: result.code,
       metadata: result.metadata,
+      processorClassNames: result.processorClassNames,
       staticSideEffectImportLocals: [],
       staticDependencies: result.staticDependencies,
       staticValuesApplied: false,
