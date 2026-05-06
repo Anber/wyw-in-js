@@ -1495,6 +1495,79 @@ describe('design-system chain repro for staticImportValues', () => {
     }
   });
 
+  it('inlines cross-file css class name interpolated as a bare identifier', async () => {
+    // search-on-view.tsx pattern: another file exports a css\`\` class name,
+    // a consumer interpolates it directly as ${searchInputClassName} or
+    // uses it as a value in an object interp. Should inline to the
+    // generated class-name string without falling back to evalFile.
+    const root = mkdtempSync(join(tmpdir(), 'wyw-spread-repro-'));
+    const cache = new TransformCacheCollection();
+    const perf = createPerfEventRecorder();
+    const sourceFile = join(root, 'search-on-view.tsx');
+    const entryFile = join(root, 'view-panel.tsx');
+
+    const mobileFile = join(root, 'mobile-styles.ts');
+    writeFileSync(
+      mobileFile,
+      dedent`
+        export const mobileRootSelector = '.mobile-root';
+      `
+    );
+    writeFileSync(
+      sourceFile,
+      dedent`
+        import { css } from 'test-css-processor';
+        import { mobileRootSelector } from './mobile-styles';
+
+        export const searchInputClassName = css\`
+          ${'${mobileRootSelector}'} & .ant-input-prefix { margin-right: 6px; }
+          ${'${mobileRootSelector}'} & .ant-input { font-size: 16px; }
+        \`;
+
+        export function SearchOnView() {
+          const value = Math.random();
+          return value > 0.5 ? 'a' : 'b';
+        }
+      `
+    );
+
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { css } from 'test-css-processor';
+        import { searchInputClassName } from './search-on-view';
+
+        export const panelClassName = css\`
+          .${'${searchInputClassName}'} {
+            background: blue;
+          }
+        \`;
+      `
+    );
+
+    try {
+      const result = await runTransform(
+        root,
+        entryFile,
+        cache,
+        perf.eventEmitter
+      );
+
+      expect(perf.counts.get('transform:evalFile') ?? 0).toBe(0);
+      // The compiled selector for the consumer must reference the source
+      // module's generated class name as a literal, not a runtime ref.
+      expect(result.cssText).toContain('background:blue');
+      expect(result.cssText).toMatch(/\.s\w+\s*\{/);
+      // Side-effect import is OK (so the source module's CSS still
+      // registers), but the named-binding import must be gone.
+      expect(result.code).not.toContain(
+        "import { searchInputClassName } from './search-on-view'"
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('inlines mixed same-file + cross-file spread chain (typeBadge pattern)', async () => {
     const root = mkdtempSync(join(tmpdir(), 'wyw-spread-repro-'));
     const dsDir = join(root, 'design-system');
