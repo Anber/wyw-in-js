@@ -61,6 +61,38 @@ describe('collectOxcTemplateDependencies', () => {
     ]);
   });
 
+  it('records imported static candidates through hoisted local declarations', () => {
+    const code = dedent`
+      import { themeVars } from './tokens';
+
+      const gradient = \`linear-gradient(${'${themeVars.from}'}, ${'${themeVars.to}'})\`;
+      const template = tag\`${'${gradient}'}\`;
+    `;
+
+    const targetStart = code.indexOf('`${gradient}`');
+    const result = collectOxcTemplateDependencies(code, filename, true, [
+      { start: targetStart, end: targetStart + '`${gradient}`'.length },
+    ]);
+
+    expect(result.staticValueCandidates).toEqual([
+      {
+        imports: [
+          {
+            imported: 'themeVars',
+            local: 'themeVars',
+            source: './tokens',
+          },
+        ],
+        name: '_exp',
+        source: '`linear-gradient(${themeVars.from}, ${themeVars.to})`',
+      },
+    ]);
+    expect(result.expressionValues[0]).toMatchObject({
+      importedFrom: ['./tokens'],
+      source: 'gradient',
+    });
+  });
+
   it('inserts hoisted expressions after imports and before the owner statement', () => {
     const code = dedent`
       import { styled } from '@linaria/react';
