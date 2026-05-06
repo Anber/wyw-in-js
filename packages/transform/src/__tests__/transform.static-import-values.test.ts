@@ -1921,7 +1921,9 @@ describe('transform static import value inlining', () => {
 
       expect(result.cssText).toContain('color:red');
       expect(result.cssText).toContain('font-size:12px');
-      expect(perf.counts.get('transform:evalFile') ?? 0).toBeGreaterThan(0);
+      // Inliner now resolves both styled() candidates statically; the SVG
+      // resolver guard (failOnRuntimeSvgResolve) still ensures eval never
+      // reaches the .svg?react import.
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

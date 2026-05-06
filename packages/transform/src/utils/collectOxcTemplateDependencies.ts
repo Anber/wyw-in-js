@@ -1910,10 +1910,6 @@ const collectStaticLocalExpression = (
   ctx: ExtractionContext,
   stack: string[] = []
 ): StaticLocalExpression | null => {
-  if (expression.type !== 'TemplateLiteral') {
-    return null;
-  }
-
   const replacements = new Map<string, string>();
   const importedFrom = new Set<string>();
   const imports: OxcStaticImportReference[] = [];
