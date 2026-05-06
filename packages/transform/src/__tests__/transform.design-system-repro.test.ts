@@ -2613,6 +2613,116 @@ describe('design-system chain repro for staticImportValues', () => {
     }
   });
 
+  it('does not pull processor-tag imports into candidate transitive imports (cx chain over same-file css)', async () => {
+    // threads/styles.ts pattern (seq00032 in the b8442dac bench):
+    //   import { cx } from '@my/cn-utils';
+    //   const baseClassName = css\`...\`;
+    //   const hoverClassName = css\`...\`;
+    //   const threadCommentStyle = cx(baseClassName, hoverClassName);
+    //   const entityCommentStyle = cx(threadCommentStyle, baseClassName);
+    //   const entityNestedCommentStyle = entityCommentStyle;
+    //   ${entityNestedCommentStyle} in css\`\`...
+    //
+    // The candidate `_exp = () => entityNestedCommentStyle` walks the
+    // chain through cx(...) calls all the way to baseClassName whose
+    // init is a css\`\`. collectStaticLocalExpression must NOT walk
+    // into the css\`\` template — that would pull `css` from
+    // '@my/css-tag' into the candidate's imports where it fails to
+    // resolve as a static value, killing the whole chain.
+    const root = mkdtempSync(join(tmpdir(), 'wyw-spread-repro-'));
+    const cache = new TransformCacheCollection();
+    const perf = createPerfEventRecorder();
+    const stylesFile = join(root, 'styles.ts');
+    const entryFile = join(root, 'consumer.tsx');
+
+    writeFileSync(
+      stylesFile,
+      dedent`
+        import { css } from 'test-css-processor';
+        import { cx } from '@my/cn-utils';
+
+        const baseClassName = css\`
+          color: red;
+        \`;
+        const hoverClassName = css\`
+          color: blue;
+        \`;
+
+        const threadCommentStyle = cx(baseClassName, hoverClassName);
+        const entityCommentStyle = cx(threadCommentStyle, baseClassName);
+        export const entityNestedCommentStyle = entityCommentStyle;
+      `
+    );
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { css } from 'test-css-processor';
+        import { entityNestedCommentStyle } from './styles';
+
+        export const className = css\`
+          .${'${entityNestedCommentStyle}'} { display: block; }
+        \`;
+      `
+    );
+
+    const customResolver = async (what: string, importer: string) => {
+      if (what === 'test-css-processor') {
+        return processorFile;
+      }
+      // @my/cn-utils has no real file on disk; it only exists via
+      // staticBindings.
+      if (what === '@my/cn-utils') {
+        return null;
+      }
+      if (what.startsWith('.')) {
+        const base = resolve(dirname(importer), what);
+        for (const ext of ['.ts', '.tsx', '.js']) {
+          const candidate = `${base}${ext}`;
+          if (existsSync(candidate) && statSync(candidate).isFile()) {
+            return candidate;
+          }
+        }
+        return base;
+      }
+      return null;
+    };
+
+    try {
+      const result = await transform(
+        {
+          cache,
+          eventEmitter: perf.eventEmitter,
+          options: {
+            filename: entryFile,
+            root,
+            pluginOptions: {
+              configFile: false,
+              features: { staticImportValues: true },
+              staticBindings: {
+                '@my/cn-utils': {
+                  cx: (...args: unknown[]) => args.filter(Boolean).join(' '),
+                },
+              },
+              tagResolver: (source, tag) =>
+                source === 'test-css-processor' && tag === 'css'
+                  ? processorFile
+                  : null,
+            },
+          },
+        },
+        readFileSync(entryFile, 'utf8'),
+        customResolver
+      );
+
+      expect(perf.counts.get('transform:evalFile') ?? 0).toBe(0);
+      expect(result.cssText).toContain('display:block');
+      // Selector should reference the cx-folded chain (3+ class names).
+      expect(result.cssText).toMatch(/\.\w+(?:\s+\w+){2,}\{display:block;\}/);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('inlines mixed same-file + cross-file spread chain (typeBadge pattern)', async () => {
     const root = mkdtempSync(join(tmpdir(), 'wyw-spread-repro-'));
     const dsDir = join(root, 'design-system');
