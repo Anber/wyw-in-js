@@ -4974,17 +4974,24 @@ function* resolveStaticExport(
     // binding during applyOxcProcessors; surface it as the export's
     // value. Keep the source file in sideEffectDependencies so its CSS
     // registers at runtime.
-    if (
-      target.expression.type === 'TaggedTemplateExpression' &&
-      target.localName
-    ) {
+    //
+    // Two shapes resolve here:
+    //   export const x = css\`...\`         (TaggedTemplateExpression init)
+    //   export const x = sameFileCssConst   (Identifier alias)
+    let lookupName: string | null = null;
+    if (target.expression.type === 'TaggedTemplateExpression') {
+      lookupName = target.localName ?? null;
+    } else if (target.expression.type === 'Identifier') {
+      lookupName = target.expression.name;
+    }
+    if (lookupName) {
       const sourcePreeval = getStaticMetadataPreevalResult(
         action,
         filename,
         code,
         codeHash
       );
-      const className = sourcePreeval?.processorClassNames[target.localName];
+      const className = sourcePreeval?.processorClassNames[lookupName];
       if (className) {
         debugStaticResolve(action, {
           exported: exportedName,
