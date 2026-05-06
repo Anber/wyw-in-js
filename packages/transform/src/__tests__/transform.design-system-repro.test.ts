@@ -2716,6 +2716,114 @@ describe('design-system chain repro for staticImportValues', () => {
     }
   });
 
+  it('folds typeof-undeclared-global guards combined with staticBindings flag overrides (phoneMediaQuery)', async () => {
+    // use-is-phone.tsx pattern (seq00033 in the wyw-8650d20b bench):
+    //   export const phoneMediaQuery =
+    //     typeof __DISABLE_VERTICAL_MOBILE_BREAKPOINT__ !== 'undefined' &&
+    //     __DISABLE_VERTICAL_MOBILE_BREAKPOINT__ ||
+    //     isFlagPresent('no-vertical-mobile-breakpoint')
+    //       ? '(max-width: 450px)'
+    //       : '(max-width: 450px), (max-height: 450px)';
+    //
+    // Two concerns:
+    //   1. `typeof someUndeclaredGlobal` must fold to 'undefined' so the
+    //      short-circuit && drops out of the test.
+    //   2. The dependency walker must not reject the whole expression
+    //      because of the unknown-Identifier reference inside the
+    //      typeof guard.
+    const root = mkdtempSync(join(tmpdir(), 'wyw-spread-repro-'));
+    const cache = new TransformCacheCollection();
+    const perf = createPerfEventRecorder();
+    const flagsFile = join(root, 'flags.ts');
+    const useIsPhoneFile = join(root, 'use-is-phone.ts');
+    const entryFile = join(root, 'consumer.tsx');
+
+    writeFileSync(
+      flagsFile,
+      dedent`
+        export const isFlagPresent = (flag) => false;
+      `
+    );
+    writeFileSync(
+      useIsPhoneFile,
+      dedent`
+        import { isFlagPresent } from './flags';
+
+        export const phoneMediaQuery =
+          (typeof __DISABLE_VERTICAL_MOBILE_BREAKPOINT__ !== 'undefined' &&
+            __DISABLE_VERTICAL_MOBILE_BREAKPOINT__) ||
+          isFlagPresent('no-vertical-mobile-breakpoint')
+            ? '(max-width: 450px)'
+            : '(max-width: 450px), (max-height: 450px)';
+      `
+    );
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { css } from 'test-css-processor';
+        import { phoneMediaQuery } from './use-is-phone';
+
+        export const className = css\`
+          @media ${'${phoneMediaQuery}'} { display: none; }
+        \`;
+      `
+    );
+
+    const customResolver = async (what: string, importer: string) => {
+      if (what === 'test-css-processor') {
+        return processorFile;
+      }
+      if (what.startsWith('.')) {
+        const base = resolve(dirname(importer), what);
+        for (const ext of ['.ts', '.tsx', '.js']) {
+          const candidate = `${base}${ext}`;
+          if (existsSync(candidate) && statSync(candidate).isFile()) {
+            return candidate;
+          }
+        }
+        return base;
+      }
+      return null;
+    };
+
+    try {
+      const result = await transform(
+        {
+          cache,
+          eventEmitter: perf.eventEmitter,
+          options: {
+            filename: entryFile,
+            root,
+            pluginOptions: {
+              configFile: false,
+              features: { staticImportValues: true },
+              staticBindings: {
+                [flagsFile]: {
+                  isFlagPresent: () => false,
+                },
+              },
+              tagResolver: (source, tag) =>
+                source === 'test-css-processor' && tag === 'css'
+                  ? processorFile
+                  : null,
+            },
+          },
+        },
+        readFileSync(entryFile, 'utf8'),
+        customResolver
+      );
+
+      expect(perf.counts.get('transform:evalFile') ?? 0).toBe(0);
+      // Conditional alternate folded in (typeof guard short-circuits,
+      // isFlagPresent('...') folds to false).
+      expect(result.cssText).toContain('max-width: 450px');
+      expect(result.cssText).toContain('max-height: 450px');
+      expect(result.cssText).toContain('display:none');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('inlines mixed same-file + cross-file spread chain (typeBadge pattern)', async () => {
     const root = mkdtempSync(join(tmpdir(), 'wyw-spread-repro-'));
     const dsDir = join(root, 'design-system');

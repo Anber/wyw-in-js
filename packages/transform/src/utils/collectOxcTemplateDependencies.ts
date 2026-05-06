@@ -1380,6 +1380,24 @@ const evaluateBinary = (
 
   const left = evaluateStatic(expression.left as Expression, ctx, env, stack);
   const right = evaluateStatic(expression.right as Expression, ctx, env, stack);
+
+  // Equality / inequality operators tolerate undefined operands —
+  // `typeof X === 'undefined'` is the canonical undeclared-global probe.
+  switch (expression.operator) {
+    case '===':
+      return left === right;
+    case '!==':
+      return left !== right;
+    case '==':
+      // eslint-disable-next-line eqeqeq
+      return left == right;
+    case '!=':
+      // eslint-disable-next-line eqeqeq
+      return left != right;
+    default:
+      break;
+  }
+
   if (left === undefined || right === undefined) {
     return undefined;
   }
@@ -1399,6 +1417,14 @@ const evaluateBinary = (
 
   if (typeof left === 'number' && typeof right === 'number') {
     switch (expression.operator) {
+      case '<':
+        return left < right;
+      case '<=':
+        return left <= right;
+      case '>':
+        return left > right;
+      case '>=':
+        return left >= right;
       case '-':
         return left - right;
       case '*':
@@ -1443,6 +1469,13 @@ const evaluateStatic = (
       const argIsProcessEnvAccess =
         expression.argument.type === 'MemberExpression' &&
         isProcessEnvMember(expression.argument.object);
+      // `typeof someIdentifier` is the canonical undeclared-global
+      // probe — it returns 'undefined' regardless of whether the
+      // symbol is declared. We don't model TDZ, but const/let in the
+      // file's top-level scope have bindings findReferences sees, so
+      // an Identifier here that evaluates to undefined is genuinely
+      // unbound from wyw's perspective.
+      const argIsBareIdentifier = expression.argument.type === 'Identifier';
       const arg = evaluateStatic(
         expression.argument as Expression,
         ctx,
@@ -1450,7 +1483,9 @@ const evaluateStatic = (
         stack
       );
       if (arg === undefined) {
-        return argIsProcessEnvAccess ? 'undefined' : undefined;
+        return argIsProcessEnvAccess || argIsBareIdentifier
+          ? 'undefined'
+          : undefined;
       }
 
       return typeof arg;
