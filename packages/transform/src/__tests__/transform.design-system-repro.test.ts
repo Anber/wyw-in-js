@@ -1969,6 +1969,205 @@ describe('design-system chain repro for staticImportValues', () => {
     }
   });
 
+  it('inlines cross-file MemberExpression on a plain ObjectExpression even when source-side import resolution flickers (cssConstants)', async () => {
+    // canvas/components/{comments-sidebar,activity}.tsx pattern (seq00033/00038):
+    //   // css-constants.ts
+    //   import { space } from '@fibery/ui-kit/src/design-system';
+    //   export const cssConstants = { common: space.s10, sidebarWidth: 340 };
+    //
+    //   // consumer
+    //   ${cssConstants.common}
+    //
+    // In the bench, the resolver returns null when css-constants.ts asks
+    // for design-system, even though every other file in the project gets
+    // it back fine. wyw should still resolve cssConstants if a) the
+    // resolver succeeds even once for the same source/imported pair, or
+    // b) we can fall back to the consumer's resolver call.
+    const root = mkdtempSync(join(tmpdir(), 'wyw-spread-repro-'));
+    const cache = new TransformCacheCollection();
+    const perf = createPerfEventRecorder();
+    const tokensFile = join(root, 'design-system.ts');
+    const sourceFile = join(root, 'css-constants.ts');
+    const entryFile = join(root, 'comments-sidebar.tsx');
+
+    writeFileSync(
+      tokensFile,
+      dedent`
+        export const space = { s10: 10 } as const;
+      `
+    );
+    writeFileSync(
+      sourceFile,
+      dedent`
+        import { space } from './design-system';
+
+        export const cssConstants = {
+          common: space.s10,
+          sidebarWidth: 340,
+        };
+      `
+    );
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { css } from 'test-css-processor';
+        import { cssConstants } from './css-constants';
+
+        export const className = css\`
+          padding: ${'${cssConstants.common}'}px;
+          width: ${'${cssConstants.sidebarWidth}'}px;
+        \`;
+      `
+    );
+
+    // Resolver that consistently returns null for the
+    // css-constants.ts → ./design-system pair (mimicking the bench's
+    // dependency-unresolved symptom for this specific importer).
+    // Other importers can still resolve design-system fine.
+    const flakyResolver = async (what: string, importer: string) => {
+      if (
+        what === './design-system' &&
+        importer.endsWith('css-constants.ts')
+      ) {
+        return null;
+      }
+      if (what === 'test-css-processor') {
+        return processorFile;
+      }
+      if (what.startsWith('.')) {
+        const base = resolve(dirname(importer), what);
+        for (const ext of ['.ts', '.tsx', '.js']) {
+          const candidate = `${base}${ext}`;
+          if (existsSync(candidate) && statSync(candidate).isFile()) {
+            return candidate;
+          }
+        }
+        return base;
+      }
+      return null;
+    };
+
+    try {
+      const result = await transform(
+        {
+          cache,
+          eventEmitter: perf.eventEmitter,
+          options: {
+            filename: entryFile,
+            root,
+            pluginOptions: {
+              configFile: false,
+              features: { staticImportValues: true },
+              tagResolver: (source, tag) =>
+                source === 'test-css-processor' && tag === 'css'
+                  ? processorFile
+                  : null,
+            },
+          },
+        },
+        readFileSync(entryFile, 'utf8'),
+        flakyResolver
+      );
+
+      expect(perf.counts.get('transform:evalFile') ?? 0).toBe(0);
+      expect(result.cssText).toContain('padding:10px');
+      expect(result.cssText).toContain('width:340px');
+      expect(result.code).not.toContain('./css-constants');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('inlines same-file styled-component className referenced in own css template (box.tsx BoxRoot)', async () => {
+    // box.tsx pattern (seq00039): a styled component declared in the
+    // same module is interpolated into another css template in the same
+    // module. The candidate _exp = () => BoxRoot needs BoxRoot's value
+    // — which for css interpolation is its className string. The
+    // current fix excludes styled processors from
+    // processorClassNamesByLocal (because their value is richer
+    // metadata used for composition), so the candidate evaluator can't
+    // fold ${BoxRoot} as a className inside a sibling css template.
+    const root = mkdtempSync(join(tmpdir(), 'wyw-spread-repro-'));
+    const cache = new TransformCacheCollection();
+    const perf = createPerfEventRecorder();
+    const entryFile = join(root, 'box.tsx');
+    const styledProcessorFile = join(
+      __dirname,
+      '__fixtures__',
+      'test-styled-processor.js'
+    );
+
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { css } from 'test-css-processor';
+        import { styled } from 'test-styled-processor';
+
+        const BoxRoot = styled.div\`
+          padding: 8px;
+        \`;
+
+        export const BoxHover = css\`
+          ${'${BoxRoot}'}:hover { background: yellow; }
+        \`;
+      `
+    );
+
+    const styledAwareResolver = async (what: string, importer: string) => {
+      if (what === 'test-css-processor') {
+        return processorFile;
+      }
+      if (what === 'test-styled-processor') {
+        return styledProcessorFile;
+      }
+      if (what.startsWith('.')) {
+        const base = resolve(dirname(importer), what);
+        for (const ext of ['.ts', '.tsx', '.js']) {
+          const candidate = `${base}${ext}`;
+          if (existsSync(candidate) && statSync(candidate).isFile()) {
+            return candidate;
+          }
+        }
+        return base;
+      }
+      return null;
+    };
+
+    try {
+      const result = await transform(
+        {
+          cache,
+          eventEmitter: perf.eventEmitter,
+          options: {
+            filename: entryFile,
+            root,
+            pluginOptions: {
+              configFile: false,
+              features: { staticImportValues: true },
+              tagResolver: (source, tag) => {
+                if (source === 'test-css-processor' && tag === 'css') {
+                  return processorFile;
+                }
+                if (source === 'test-styled-processor' && tag === 'styled') {
+                  return styledProcessorFile;
+                }
+                return null;
+              },
+            },
+          },
+        },
+        readFileSync(entryFile, 'utf8'),
+        styledAwareResolver
+      );
+
+      expect(perf.counts.get('transform:evalFile') ?? 0).toBe(0);
+      expect(result.cssText).toContain('padding:8px');
+      expect(result.cssText).toContain('background:yellow');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('inlines mixed same-file + cross-file spread chain (typeBadge pattern)', async () => {
     const root = mkdtempSync(join(tmpdir(), 'wyw-spread-repro-'));
     const dsDir = join(root, 'design-system');
