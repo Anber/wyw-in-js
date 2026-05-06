@@ -1064,6 +1064,45 @@ describe('design-system chain repro for staticImportValues', () => {
     }
   });
 
+  it('inlines same-file css class name used as computed key inside object interp', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-spread-repro-'));
+    const cache = new TransformCacheCollection();
+    const perf = createPerfEventRecorder();
+    const entryFile = join(root, 'entry.tsx');
+
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { css } from 'test-css-processor';
+
+        const pageCss = css\`\`;
+
+        export const printOnly = css\`
+          ${'${{'} '@media print': {
+            [\`.${'${pageCss}'}.${'${pageCss}'}\`]: {
+              appearance: 'none',
+            },
+          } ${'}}'};
+        \`;
+      `
+    );
+
+    try {
+      const result = await runTransform(
+        root,
+        entryFile,
+        cache,
+        perf.eventEmitter
+      );
+
+      expect(perf.counts.get('transform:evalFile') ?? 0).toBe(0);
+      expect(result.cssText).toContain('@media print');
+      expect(result.cssText).toContain('appearance:none');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('inlines mixed same-file + cross-file spread chain (typeBadge pattern)', async () => {
     const root = mkdtempSync(join(tmpdir(), 'wyw-spread-repro-'));
     const dsDir = join(root, 'design-system');
