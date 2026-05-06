@@ -853,4 +853,265 @@ describe('design-system chain repro for staticImportValues', () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it('inlines same-file const-of-const object spread referenced from css', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-spread-repro-'));
+    const cache = new TransformCacheCollection();
+    const perf = createPerfEventRecorder();
+    const entryFile = join(root, 'entry.tsx');
+
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { css } from 'test-css-processor';
+
+        const base = { fontSize: 12, color: 'red' };
+        const extended = { ...base, padding: 4 };
+
+        export const className = css\`
+          ${'${extended}'};
+        \`;
+      `
+    );
+
+    try {
+      const result = await runTransform(
+        root,
+        entryFile,
+        cache,
+        perf.eventEmitter
+      );
+
+      expect(perf.counts.get('transform:evalFile') ?? 0).toBe(0);
+      expect(result.cssText).toContain('font-size:12');
+      expect(result.cssText).toContain('color:red');
+      expect(result.cssText).toContain('padding:4');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('inlines chained same-file const spreads (a -> b -> c)', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-spread-repro-'));
+    const cache = new TransformCacheCollection();
+    const perf = createPerfEventRecorder();
+    const entryFile = join(root, 'entry.tsx');
+
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { css } from 'test-css-processor';
+
+        const a = { fontSize: 12 };
+        const b = { ...a, color: 'red' };
+        const c = { ...b, padding: 4 };
+
+        export const className = css\`
+          ${'${c}'};
+        \`;
+      `
+    );
+
+    try {
+      const result = await runTransform(
+        root,
+        entryFile,
+        cache,
+        perf.eventEmitter
+      );
+
+      expect(perf.counts.get('transform:evalFile') ?? 0).toBe(0);
+      expect(result.cssText).toContain('font-size:12');
+      expect(result.cssText).toContain('color:red');
+      expect(result.cssText).toContain('padding:4');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('inlines top-level const that spreads imported member access', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-spread-repro-'));
+    const dsDir = join(root, 'design-system');
+    const cache = new TransformCacheCollection();
+    const perf = createPerfEventRecorder();
+    const entryFile = join(root, 'entry.tsx');
+
+    require('fs').mkdirSync(dsDir, { recursive: true });
+    writeBarrelChain(root);
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { css } from 'test-css-processor';
+        import { textStyles, space } from './design-system';
+
+        const local = { ...textStyles.heading6, padding: space.s12 };
+
+        export const className = css\`
+          ${'${local}'};
+        \`;
+      `
+    );
+
+    try {
+      const result = await runTransform(
+        root,
+        entryFile,
+        cache,
+        perf.eventEmitter
+      );
+
+      expect(perf.counts.get('transform:evalFile') ?? 0).toBe(0);
+      expect(result.cssText).toContain('font-size:12');
+      expect(result.cssText).toContain('color:var(--fibery-color-textColor)');
+      expect(result.cssText).toContain('padding:12');
+      expect(result.code).not.toContain('./design-system');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('inlines spread of bare imported binding (no member access)', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-spread-repro-'));
+    const cache = new TransformCacheCollection();
+    const perf = createPerfEventRecorder();
+    const entryFile = join(root, 'entry.tsx');
+    const tokensFile = join(root, 'tokens.ts');
+
+    writeFileSync(
+      tokensFile,
+      dedent`
+        export const tabularNumsOn = {
+          fontVariantNumeric: 'tabular-nums',
+          fontFeatureSettings: '"tnum" 1',
+        };
+      `
+    );
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { css } from 'test-css-processor';
+        import { tabularNumsOn } from './tokens';
+
+        const numericRow = { ...tabularNumsOn, fontSize: 14 };
+
+        export const className = css\`
+          ${'${numericRow}'};
+        \`;
+      `
+    );
+
+    try {
+      const result = await runTransform(
+        root,
+        entryFile,
+        cache,
+        perf.eventEmitter
+      );
+
+      expect(perf.counts.get('transform:evalFile') ?? 0).toBe(0);
+      expect(result.cssText).toContain('font-variant-numeric:tabular-nums');
+      expect(result.cssText).toContain('font-size:14');
+      expect(result.code).not.toContain('./tokens');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('inlines spread inside a nested object property (deep css selector)', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-spread-repro-'));
+    const dsDir = join(root, 'design-system');
+    const cache = new TransformCacheCollection();
+    const perf = createPerfEventRecorder();
+    const entryFile = join(root, 'entry.tsx');
+
+    require('fs').mkdirSync(dsDir, { recursive: true });
+    writeBarrelChain(root);
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { css } from 'test-css-processor';
+        import { textStyles, space } from './design-system';
+
+        const htmlStyles = {
+          fontSize: 16,
+          '& ul': {
+            margin: space.s6,
+            ...textStyles.heading6,
+          },
+        };
+
+        export const className = css\`
+          ${'${htmlStyles}'};
+        \`;
+      `
+    );
+
+    try {
+      const result = await runTransform(
+        root,
+        entryFile,
+        cache,
+        perf.eventEmitter
+      );
+
+      expect(perf.counts.get('transform:evalFile') ?? 0).toBe(0);
+      expect(result.cssText).toContain(' ul{');
+      expect(result.cssText).toContain('margin:6');
+      expect(result.cssText).toContain('font-size:12');
+      expect(result.code).not.toContain('./design-system');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('inlines mixed same-file + cross-file spread chain (typeBadge pattern)', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-spread-repro-'));
+    const dsDir = join(root, 'design-system');
+    const cache = new TransformCacheCollection();
+    const perf = createPerfEventRecorder();
+    const entryFile = join(root, 'entry.tsx');
+
+    require('fs').mkdirSync(dsDir, { recursive: true });
+    writeBarrelChain(root);
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { css } from 'test-css-processor';
+        import { textStyles, space } from './design-system';
+
+        const typeBadgeStaticStyle = {
+          display: 'inline-grid',
+          ...textStyles.heading6,
+          letterSpacing: 1.5,
+        };
+
+        const normalTypeBadgeStyleObject = {
+          ...typeBadgeStaticStyle,
+          paddingLeft: space.s6,
+        };
+
+        export const className = css\`
+          ${'${normalTypeBadgeStyleObject}'};
+        \`;
+      `
+    );
+
+    try {
+      const result = await runTransform(
+        root,
+        entryFile,
+        cache,
+        perf.eventEmitter
+      );
+
+      expect(perf.counts.get('transform:evalFile') ?? 0).toBe(0);
+      expect(result.cssText).toContain('display:inline-grid');
+      expect(result.cssText).toContain('font-size:12');
+      expect(result.cssText).toContain('letter-spacing:1.5');
+      expect(result.cssText).toContain('padding-left:6');
+      expect(result.code).not.toContain('./design-system');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
