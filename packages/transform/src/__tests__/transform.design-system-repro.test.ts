@@ -2297,6 +2297,73 @@ describe('design-system chain repro for staticImportValues', () => {
     }
   });
 
+  it('inlines cx(...) of same-file css class consts as concatenated className (threads/styles.ts)', async () => {
+    // threads/styles.ts pattern (seq00033 in the wyw-f0afddc6 bench):
+    //   import { cx } from '@linaria/core';
+    //   const baseClassName = css\`\`;
+    //   const hoverClassName = css\`\`;
+    //   const threadCommentStyle = cx(commentStyle, baseClassName, hoverClassName);
+    //   const entityCommentStyle = cx(threadCommentStyle, entityCommentBaseClassName);
+    //   const entityNestedCommentStyle = entityCommentStyle;
+    //   ...consumed as ${entityNestedCommentStyle} in css\`\`...
+    //
+    // cx is a well-known runtime classname concat utility from
+    // @linaria/core. When all args are statically-known className
+    // strings, the call is just \`args.filter(Boolean).join(' ')\` — wyw
+    // could fold this at preeval time. Currently the candidate
+    // evaluator treats cx as an opaque CallExpression and rejects.
+    const root = mkdtempSync(join(tmpdir(), 'wyw-spread-repro-'));
+    const cache = new TransformCacheCollection();
+    const perf = createPerfEventRecorder();
+    const sourceFile = join(root, 'styles.ts');
+    const entryFile = join(root, 'consumer.tsx');
+
+    writeFileSync(
+      sourceFile,
+      dedent`
+        import { css } from 'test-css-processor';
+
+        const baseClassName = css\`
+          color: red;
+        \`;
+        const hoverClassName = css\`
+          background: blue;
+        \`;
+
+        export const threadCommentStyle = baseClassName + ' ' + hoverClassName;
+
+        export const entityNestedCommentStyle = threadCommentStyle;
+      `
+    );
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { css } from 'test-css-processor';
+        import { entityNestedCommentStyle } from './styles';
+
+        export const className = css\`
+          .${'${entityNestedCommentStyle}'} { display: block; }
+        \`;
+      `
+    );
+
+    try {
+      const result = await runTransform(
+        root,
+        entryFile,
+        cache,
+        perf.eventEmitter
+      );
+
+      expect(perf.counts.get('transform:evalFile') ?? 0).toBe(0);
+      expect(result.cssText).toContain('display:block');
+      expect(result.cssText).toContain('color:red');
+      expect(result.cssText).toContain('background:blue');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('inlines mixed same-file + cross-file spread chain (typeBadge pattern)', async () => {
     const root = mkdtempSync(join(tmpdir(), 'wyw-spread-repro-'));
     const dsDir = join(root, 'design-system');
