@@ -48,7 +48,17 @@ type Replacement = {
 
 type ApplyOxcProcessorsResult = {
   code: string;
+  // Selector-only processor class names (css`...`-style). Safe to use as
+  // a class-name fallback in cross-file static-export resolution because
+  // the runtime value of the binding IS this string.
   processorClassNamesByLocal: Map<string, string>;
+  // Class names of every processor binding (selector-only AND styled).
+  // Only safe to use within the SAME file (inlineConstants on candidates,
+  // collectSameFileProcessorStaticValues), where css interpolation
+  // contexts treat the binding's runtime value as its className. Cross-
+  // file consumers must go through resolveProcessorStaticExport so they
+  // receive the rich styled metadata for composition.
+  sameFileProcessorClassNamesByLocal: Map<string, string>;
   processors: BaseProcessor[];
   staticValueCandidates: OxcStaticValueCandidate[];
   staticValues: OxcStaticValue[];
@@ -2298,6 +2308,7 @@ export const applyOxcProcessors = (
   const replacements: Replacement[] = [];
   const processors: BaseProcessor[] = [];
   const processorClassNamesByLocal = new Map<string, string>();
+  const sameFileProcessorClassNamesByLocal = new Map<string, string>();
   extracted.dependencyNames.forEach((name: string) =>
     removableImportLocals.add(name)
   );
@@ -2343,11 +2354,15 @@ export const applyOxcProcessors = (
         const { id } = owner;
         if (isNode(id) && id.type === 'Identifier') {
           removableExpressionRefs.add(id.name);
-          // Only record processors whose runtime value is the className
-          // string itself (selector-only `css\`\``-style processors).
-          // Styled components emit a richer value (component + metadata)
-          // and must not be short-circuited to a bare className — their
-          // consumers compose through the metadata.
+          // Same-file map records every processor binding — within the
+          // file, css interpolation contexts treat the binding's value
+          // as its className regardless of processor kind.
+          sameFileProcessorClassNamesByLocal.set(id.name, processor.className);
+          // Cross-file map (used as a className-only fallback in
+          // resolveStaticExport) is restricted to processors whose
+          // runtime value IS the className string. Styled-component
+          // bindings emit a richer value and must reach consumers via
+          // resolveProcessorStaticExport so composition still works.
           const replacement = processor.value as {
             type?: string;
             value?: unknown;
@@ -2388,19 +2403,22 @@ export const applyOxcProcessors = (
         )
       : codeWithAddedImports,
     processorClassNamesByLocal,
+    sameFileProcessorClassNamesByLocal,
     processors,
     staticValueCandidates:
-      processorClassNamesByLocal.size > 0
+      sameFileProcessorClassNamesByLocal.size > 0
         ? extracted.staticValueCandidates.map((candidate) => ({
             ...candidate,
-            inlineConstants: Object.fromEntries(processorClassNamesByLocal),
+            inlineConstants: Object.fromEntries(
+              sameFileProcessorClassNamesByLocal
+            ),
           }))
         : extracted.staticValueCandidates,
     staticValues: [
       ...extracted.staticValues,
       ...collectSameFileProcessorStaticValues(
         extracted.expressionValues,
-        processorClassNamesByLocal
+        sameFileProcessorClassNamesByLocal
       ),
     ],
   };
