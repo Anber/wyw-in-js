@@ -2167,13 +2167,21 @@ const collectExpressionMutationHints = (
 };
 
 const collectTopLevelMutationHints = (
-  program: Program
+  program: Program,
+  closureNames: ReadonlySet<string> | null = null
 ): { callArgumentNames: Set<string>; mutatedNames: Set<string> } => {
   const callArgumentNames = new Set<string>();
   const mutatedNames = new Set<string>();
 
   const collectDeclaration = (declaration: VariableDeclaration): void => {
     declaration.declarations.forEach((declarator) => {
+      if (closureNames) {
+        const declaredName =
+          declarator.id.type === 'Identifier' ? declarator.id.name : null;
+        if (!declaredName || !closureNames.has(declaredName)) {
+          return;
+        }
+      }
       if (declarator.init) {
         collectExpressionMutationHints(
           declarator.init,
@@ -3486,7 +3494,11 @@ const collectStaticExpressionDependencies = (
     return null;
   }
 
-  const mutationHints = collectTopLevelMutationHints(program);
+  const closureNames = new Set(referencedNames);
+  if (target.localName) {
+    closureNames.add(target.localName);
+  }
+  const mutationHints = collectTopLevelMutationHints(program, closureNames);
   for (const name of referencedNames) {
     if (mutationHints.mutatedNames.has(name)) {
       return null;
