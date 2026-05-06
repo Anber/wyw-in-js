@@ -23,6 +23,7 @@ import {
   evaluateOxcStaticExpression,
   evaluateOxcStaticExpressionAt,
   isOxcStaticSerializableValue,
+  lookupStaticBinding,
   type OxcStaticValueCandidate,
 } from '../../utils/collectOxcTemplateDependencies';
 import {
@@ -257,6 +258,11 @@ const staticCachePrefix = (action: ITransformAction): string =>
   `${action.services.cache.getKeySalt() ?? ''}\0${
     action.services.options.root ?? ''
   }`;
+
+const getStaticBindings = (
+  action: ITransformAction
+): Record<string, Record<string, unknown>> | undefined =>
+  action.services.options.pluginOptions?.staticBindings;
 
 const staticFileAnalysisCache = (
   action: ITransformAction
@@ -2957,7 +2963,8 @@ function* resolveObjectAssignAliasExpressionValue(
       end: expression.end,
       start: expression.start,
     },
-    env
+    env,
+    getStaticBindings(action)
   );
   return isStaticObjectAssignAliasValue(value)
     ? {
@@ -4506,7 +4513,8 @@ function* resolveProcessorStaticExport(
           preparedTarget.evaluationCode,
           filename,
           preparedTarget.evaluationSpan,
-          env
+          env,
+          getStaticBindings(action)
         )
       : evaluateOxcStaticExpressionAt(
           preevalCode,
@@ -4515,7 +4523,8 @@ function* resolveProcessorStaticExport(
             end: preparedTarget.expression.end,
             start: preparedTarget.expression.start,
           },
-          env
+          env,
+          getStaticBindings(action)
         );
   if (!isOxcStaticSerializableValue(value)) {
     debugStaticResolve(action, {
@@ -4724,7 +4733,8 @@ function* resolveObjectAssignStaticExport(
       end: expression.end,
       start: expression.start,
     },
-    env
+    env,
+    getStaticBindings(action)
   );
   if (!isStaticWYWMetaValue(value)) {
     return null;
@@ -4846,7 +4856,8 @@ function* resolveZeroArgFunctionStaticExport(
       end: returnExpression.end,
       start: returnExpression.start,
     },
-    env
+    env,
+    getStaticBindings(action)
   );
   return isOxcStaticSerializableValue(value)
     ? {
@@ -5178,7 +5189,8 @@ function* resolveStaticExport(
       end: target.expression.end,
       start: target.expression.start,
     },
-    env
+    env,
+    getStaticBindings(action)
   );
   if (!isOxcStaticSerializableValue(value)) {
     debugStaticResolve(action, {
@@ -5223,7 +5235,23 @@ function* resolveCandidateValue(
     }
   }
 
+  const staticBindingsForCandidate = getStaticBindings(action);
+
   for (const item of candidate.imports) {
+    // staticBindings overrides take precedence over actual import
+    // resolution: a registered value (or function) replaces whatever
+    // the source module would otherwise provide. Useful for prototyping
+    // / SSR theming and for opaque utilities like `cx`.
+    const override = lookupStaticBinding(
+      staticBindingsForCandidate,
+      item.source,
+      item.imported
+    );
+    if (override.found) {
+      env.set(item.local, override.value);
+      continue;
+    }
+
     const resolved = yield* resolveImportValue(
       action,
       filename,
@@ -5286,7 +5314,12 @@ function* resolveCandidateValue(
     });
   }
 
-  const value = evaluateOxcStaticExpression(candidate.source, filename, env);
+  const value = evaluateOxcStaticExpression(
+    candidate.source,
+    filename,
+    env,
+    getStaticBindings(action)
+  );
   // Function-valued candidates are runtime callbacks (e.g. styled-
   // component dynamic prop interpolations like `${props => ...}`). The
   // value isn't serializable, but the candidate IS resolved — the
