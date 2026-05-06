@@ -3941,6 +3941,17 @@ const typeScriptEnumStaticExportValue = (
   return null;
 };
 
+const isRelativeSource = (source: string): boolean =>
+  source.startsWith('./') ||
+  source.startsWith('../') ||
+  source === '.' ||
+  source === '..';
+
+const dependencyResolutionCaches = new WeakMap<
+  object,
+  Map<string, IEntrypointDependency>
+>();
+
 function* resolveDependency(
   action: ITransformAction,
   importer: string,
@@ -3956,6 +3967,30 @@ function* resolveDependency(
     imports,
     phase: 'initial',
   });
+
+  // Non-relative sources (package names, aliases) resolve deterministically
+  // within a project — the same `source` always points to the same file
+  // regardless of importer. Cache successful resolutions and fall back to
+  // them when an individual importer's resolver call returns null. This
+  // recovers from resolver-side flakiness where one importer hits a
+  // negative cache while every other importer for the same source resolves
+  // fine.
+  if (!isRelativeSource(source)) {
+    const cache = getWeakCacheMap(
+      dependencyResolutionCaches,
+      action.services.cache
+    );
+    const cacheKey = `${source}\0${imported}`;
+    if (resolved?.resolved) {
+      cache.set(cacheKey, resolved);
+      return resolved;
+    }
+
+    const cached = cache.get(cacheKey);
+    if (cached?.resolved) {
+      return cached;
+    }
+  }
 
   return resolved ?? null;
 }
