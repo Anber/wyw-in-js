@@ -39,6 +39,7 @@ export interface IPreevalResult {
   staticSideEffectImportLocals?: string[];
   staticDependencies?: string[];
   staticNullWYWMetaExtendsHelpers?: string[];
+  staticValuesApplied?: boolean;
   staticValueCache?: Map<string, unknown>;
   staticValueCandidates?: Array<{
     imports: Array<{
