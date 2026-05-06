@@ -5242,11 +5242,32 @@ function* resolveCandidateValue(
     // resolution: a registered value (or function) replaces whatever
     // the source module would otherwise provide. Useful for prototyping
     // / SSR theming and for opaque utilities like `cx`.
-    const override = lookupStaticBinding(
+    //
+    // Match the override map first by the raw specifier as written
+    // (`@linaria/core`, `./flags`, …). If that misses, resolve to an
+    // absolute path and try again — this lets the host key by
+    // absolute file path so a single entry covers every relative
+    // variant of the same module.
+    let override = lookupStaticBinding(
       staticBindingsForCandidate,
       item.source,
       item.imported
     );
+    if (!override.found && staticBindingsForCandidate) {
+      const dep = yield* resolveDependency(
+        action,
+        filename,
+        item.source,
+        item.imported
+      );
+      if (dep?.resolved) {
+        override = lookupStaticBinding(
+          staticBindingsForCandidate,
+          dep.resolved,
+          item.imported
+        );
+      }
+    }
     if (override.found) {
       env.set(item.local, override.value);
       continue;
