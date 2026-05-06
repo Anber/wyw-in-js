@@ -3568,7 +3568,13 @@ const collectStaticExpressionDependencies = (
       }
 
       if (!collectLocal(reference)) {
-        return false;
+        // Unknown identifier — neither an import nor a same-file local.
+        // Common case: undeclared globals like __DEV__ used in
+        // `typeof __DEV__ !== "undefined"` short-circuit guards. The
+        // evaluator returns undefined for unknowns, which the outer
+        // expression's logical short-circuits handle correctly. Don't
+        // reject the whole walk upfront — let the evaluator decide.
+        continue;
       }
     }
 
