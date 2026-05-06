@@ -2283,21 +2283,38 @@ const extractExpression = (
         : source,
     importedFrom,
     kind: isFunction ? ValueType.FUNCTION : ValueType.LAZY,
-    staticExpressionCode:
-      staticIdentifierReplacements.size > 0
-        ? replaceStaticLocalReferences(
-            expression,
-            staticIdentifierReplacements,
-            ctx,
-            namespaceStatic.replacements
-          )
-        : namespaceStatic.replacements.length > 0
-        ? applyExpressionReplacements(
-            expression,
-            namespaceStatic.replacements,
-            ctx.code
-          )
-        : undefined,
+    staticExpressionCode: (() => {
+      // Merge literal-const inlines (e.g. `const A = 32` → "32") with
+      // local-to-imported substitutions (e.g. `const X = imp.y` → "imp.y").
+      // Both must reach the candidate source so the resolver's evaluator
+      // can fold every Identifier in the expression — env only carries
+      // imported bindings, never same-file locals.
+      const mergedReplacements = new Map(staticIdentifierReplacements);
+      identifierReplacements.forEach((value, key) => {
+        if (!mergedReplacements.has(key)) {
+          mergedReplacements.set(key, value);
+        }
+      });
+
+      if (mergedReplacements.size > 0) {
+        return replaceStaticLocalReferences(
+          expression,
+          mergedReplacements,
+          ctx,
+          namespaceStatic.replacements
+        );
+      }
+
+      if (namespaceStatic.replacements.length > 0) {
+        return applyExpressionReplacements(
+          expression,
+          namespaceStatic.replacements,
+          ctx.code
+        );
+      }
+
+      return undefined;
+    })(),
     hasInlinableLocalReference:
       !hasNonStaticLocalReference && hasInlinableLocalReference,
     staticImports: hasNonStaticLocalReference ? [] : staticImports,
