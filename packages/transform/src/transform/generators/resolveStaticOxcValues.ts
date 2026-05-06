@@ -117,6 +117,14 @@ type StaticImportValueFeatures = {
 type StaticExpressionOptions = {
   allowMetadataCalls?: boolean;
   ignoredMutableCallArgumentNames?: Set<string>;
+  // Names of same-file locals whose value the resolver already knows
+  // out-of-band (e.g. processor className strings from
+  // applyOxcProcessors). Skip walking into their inits during
+  // dependency collection — `const x = css\`...\`` has a
+  // TaggedTemplateExpression init that fails isSafeStaticExpression,
+  // but we don't need to walk it because `x`'s value is already
+  // resolved.
+  preResolvedLocals?: ReadonlySet<string>;
 };
 
 type StaticResolveDebugPhase =
@@ -3458,6 +3466,16 @@ const collectStaticExpressionDependencies = (
   };
 
   const collectLocal = (name: string): boolean => {
+    // Pre-resolved locals (e.g. `const x = css\`\``) have a known value
+    // (the className string). Skip walking their init — its
+    // TaggedTemplateExpression isn't safe-static by itself, but the
+    // value is already determined.
+    if (options.preResolvedLocals?.has(name)) {
+      referencedNames.add(name);
+      visitedLocals.add(name);
+      return true;
+    }
+
     const expression = locals.get(name);
     if (!expression || visitingLocals.has(name)) {
       return false;
@@ -4995,9 +5013,24 @@ function* resolveStaticExport(
     return finish(zeroArgFunctionResult);
   }
 
+  // Pre-fetch the source file's preeval result so processor className
+  // bindings (`const x = css\`\``) can short-circuit dependency walks
+  // and seed the evaluator's env. The TaggedTemplateExpression init
+  // isn't safe-static by itself; the className IS.
+  const sourcePreevalForExpression = getStaticMetadataPreevalResult(
+    action,
+    filename,
+    code,
+    codeHash
+  );
+  const preResolvedLocals = sourcePreevalForExpression?.processorClassNames
+    ? new Set(Object.keys(sourcePreevalForExpression.processorClassNames))
+    : undefined;
+
   const staticDependencies = collectStaticExpressionDependencies(
     program,
-    target
+    target,
+    preResolvedLocals ? { preResolvedLocals } : {}
   );
   if (!staticDependencies) {
     debugStaticResolve(action, {
@@ -5121,6 +5154,21 @@ function* resolveStaticExport(
     resolved.sideEffectDependencies?.forEach((item) =>
       sideEffectDependencies.add(item)
     );
+  }
+
+  // Seed env with the source file's selector-only processor class names
+  // so expressions like `baseClassName + ' ' + hoverClassName` can fold
+  // — `baseClassName`'s init is a TaggedTemplateExpression the evaluator
+  // can't unfold by walking the AST, but its className is already known
+  // from applyOxcProcessors.
+  if (sourcePreevalForExpression?.processorClassNames) {
+    for (const [name, className] of Object.entries(
+      sourcePreevalForExpression.processorClassNames
+    )) {
+      if (!env.has(name)) {
+        env.set(name, className);
+      }
+    }
   }
 
   const value = evaluateOxcStaticExpressionAt(
