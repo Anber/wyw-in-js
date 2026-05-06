@@ -1103,6 +1103,307 @@ describe('design-system chain repro for staticImportValues', () => {
     }
   });
 
+  it('inlines two-level same-file consts that spread imported tokens (antd input pattern)', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-spread-repro-'));
+    const cache = new TransformCacheCollection();
+    const perf = createPerfEventRecorder();
+    const antdDir = join(root, 'antd');
+    const dsDir = join(root, 'design-system');
+    const entryFile = join(antdDir, 'styles.ts');
+    const dsBarrel = join(root, 'design-system.ts');
+
+    require('fs').mkdirSync(antdDir, { recursive: true });
+    require('fs').mkdirSync(dsDir, { recursive: true });
+
+    writeFileSync(
+      dsBarrel,
+      dedent`
+        export { space, border, layout, transition } from './design-system/layout';
+        export { textStyles } from './design-system/typography';
+        export { themeVars, shadows } from './design-system/theme';
+      `
+    );
+    writeFileSync(
+      join(dsDir, 'layout.ts'),
+      dedent`
+        export const space = { s4: 4, s6: 6, s8: 8, s12: 12, s24: 24 } as const;
+        export const border = { radius6: 6 } as const;
+        export const layout = { inputHeight: 32 } as const;
+        export const transition = '160ms ease' as const;
+      `
+    );
+    writeFileSync(
+      join(dsDir, 'typography.ts'),
+      dedent`
+        export const textStyles = {
+          regular: { fontSize: 14, color: 'var(--text)' },
+        };
+      `
+    );
+    writeFileSync(
+      join(dsDir, 'theme.ts'),
+      dedent`
+        export const themeVars = {
+          textColor: 'var(--text)',
+          accentTextColor: 'var(--accent-text)',
+          inputBgColor: 'var(--input-bg)',
+          inputBorderColor: 'var(--input-border)',
+          inputBorderWarningColor: 'var(--input-border-warning)',
+          inputDisabledBgColor: 'var(--input-disabled-bg)',
+          inputDisabledBorderColor: 'var(--input-disabled-border)',
+          inputPlaceholderTextColor: 'var(--input-placeholder)',
+          colorAccentStroke: 'var(--accent-stroke)',
+          colorAccentStrokeHover: 'var(--accent-stroke-hover)',
+          colorAccentStrokeFocus: 'var(--accent-stroke-focus)',
+          transparent: 'transparent',
+          warning: 'var(--warning)',
+        };
+        export const shadows = { border: '0 0 0 1px var(--shadow-border)' } as const;
+      `
+    );
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { css } from 'test-css-processor';
+        import { border, layout, shadows, space, textStyles, themeVars, transition } from '../design-system';
+
+        const inputVariables = {
+          default: {
+            '--input-border': \`${'${themeVars.inputBorderColor}'} inset\`,
+            '--input-hover-border': \`0 0 0 1px ${'${themeVars.colorAccentStrokeHover}'} inset\`,
+            '--input-focus-border': \`0 0 0 1px ${'${themeVars.colorAccentStrokeFocus}'} inset\`,
+            '--input-focus-shadow': \`0 0 0 2px ${'${themeVars.colorAccentStroke}'}\`,
+          },
+          error: {
+            '--input-border': \`${'${themeVars.inputBorderWarningColor}'} inset\`,
+            '--input-focus-shadow': \`0 0 0 2px ${'${themeVars.warning}'}\`,
+          },
+        };
+
+        export const inputOverrides = {
+          main: {
+            ...inputVariables.default,
+            font: 'inherit',
+            color: themeVars.textColor,
+            outline: 'none',
+            backgroundColor: \`${'${themeVars.inputBgColor}'} !important\`,
+            borderRadius: border.radius6,
+            minHeight: layout.inputHeight,
+            paddingLeft: space.s12,
+            paddingRight: space.s12,
+            border: 0,
+            borderColor: themeVars.transparent,
+            transition: \`box-shadow ${'${transition}'}\`,
+            boxShadow: \`var(--input-border, ${'${themeVars.inputBorderColor}'})\`,
+            letterSpacing: 0,
+            '&::placeholder': { color: themeVars.inputPlaceholderTextColor },
+          },
+          hover: {
+            boxShadow: \`var(--input-hover-border, 0 0 0 1px ${'${themeVars.colorAccentStrokeHover}'}) !important\`,
+            transition: \`box-shadow ${'${transition}'}\`,
+          },
+          focus: {
+            boxShadow: \`var(--input-focus-border, 0 0 0 1px ${'${themeVars.colorAccentStroke}'}), var(--input-focus-shadow) !important\`,
+            transition: \`box-shadow ${'${transition}'}\`,
+          },
+          disabled: {
+            color: \`${'${themeVars.textColor}'}\`,
+            backgroundColor: \`${'${themeVars.inputDisabledBgColor}'} !important\`,
+            borderColor: themeVars.transparent,
+            boxShadow: \`${'${themeVars.inputDisabledBorderColor}'} !important\`,
+            transition: \`box-shadow ${'${transition}'}\`,
+            cursor: 'default',
+            '&:hover': { boxShadow: \`${'${themeVars.inputDisabledBorderColor}'}\` },
+          },
+        };
+
+        export const inputStyles = css\`
+          & .ant-input-prefix { margin-right: -24px; }
+          ${'${{'}
+            ...textStyles.regular,
+            '& .ant-input-group-addon': {
+              backgroundColor: themeVars.transparent,
+              boxShadow: shadows.border,
+              '&:hover': inputOverrides.hover,
+              '&:focus': inputOverrides.focus,
+            },
+            '& .ant-input-group': { borderSpacing: 1, ...textStyles.regular },
+            '& .ant-input': inputOverrides.main,
+            '& .ant-input-status-error': inputVariables.error,
+            '& .ant-input[readonly]': { ...inputOverrides.disabled, cursor: 'inherit' },
+            '& .ant-cascader-picker:focus': inputOverrides.focus,
+            '& textarea.ant-input': { paddingTop: space.s8, paddingBottom: space.s8 },
+            '&& input:hover': inputOverrides.hover,
+            '&& input:focus': inputOverrides.focus,
+            '&& .ant-input-disabled': inputOverrides.disabled,
+            '& .ant-input-affix-wrapper .ant-input:not(:first-child)': {
+              paddingLeft: space.s6 + space.s24 + space.s8,
+            },
+          ${'}}'};
+        \`;
+      `
+    );
+
+    try {
+      const result = await runTransform(
+        root,
+        entryFile,
+        cache,
+        perf.eventEmitter
+      );
+
+      expect(perf.counts.get('transform:evalFile') ?? 0).toBe(0);
+      expect(result.cssText).toContain('--input-border');
+      expect(result.cssText).toContain('padding-left:38');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('resolves cross-file imported const that spreads non-exported sibling const', async () => {
+    // date-picker/styles.ts pattern: imports inputOverrides from antd/styles.ts;
+    // inputOverrides.main spreads non-exported sibling inputVariables.default.
+    const root = mkdtempSync(join(tmpdir(), 'wyw-spread-repro-'));
+    const cache = new TransformCacheCollection();
+    const perf = createPerfEventRecorder();
+    const entryFile = join(root, 'date-picker.ts');
+    const antdFile = join(root, 'antd-styles.ts');
+    const dsFile = join(root, 'design-system.ts');
+
+    writeFileSync(
+      dsFile,
+      dedent`
+        export const space = { s12: 12 } as const;
+        export const themeVars = {
+          textColor: 'var(--text)',
+          inputBgColor: 'var(--input-bg)',
+          inputBorderColor: 'var(--input-border)',
+        };
+      `
+    );
+
+    writeFileSync(
+      antdFile,
+      dedent`
+        import { space, themeVars } from './design-system';
+
+        const inputVariables = {
+          default: {
+            '--input-border': \`${'${themeVars.inputBorderColor}'} inset\`,
+          },
+        };
+
+        export const inputOverrides = {
+          main: {
+            ...inputVariables.default,
+            color: themeVars.textColor,
+            paddingLeft: space.s12,
+          },
+          focus: {
+            boxShadow: \`var(--input-focus, 0 0 0 1px ${'${themeVars.textColor}'})\`,
+          },
+        };
+      `
+    );
+
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { css } from 'test-css-processor';
+        import { inputOverrides } from './antd-styles';
+
+        export const fakeDateInputStyle = css\`
+          ${'${{'} ...inputOverrides.main, display: 'flex' ${'}}'};
+        \`;
+        export const activeClassName = css\`
+          ${'${{'} '&:focus': inputOverrides.focus ${'}}'};
+        \`;
+      `
+    );
+
+    try {
+      const result = await runTransform(
+        root,
+        entryFile,
+        cache,
+        perf.eventEmitter
+      );
+
+      expect(perf.counts.get('transform:evalFile') ?? 0).toBe(0);
+      expect(result.cssText).toContain(
+        '--input-border:var(--input-border) inset'
+      );
+      expect(result.cssText).toContain('color:var(--text)');
+      expect(result.cssText).toContain('padding-left:12');
+      expect(result.cssText).toContain('display:flex');
+      expect(result.cssText).toContain(':focus{box-shadow:var(--input-focus');
+      expect(result.code).not.toContain('./antd-styles');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('resolves a static export from a module that also has non-static sibling exports', async () => {
+    // colors-css.ts pattern: shadows is a literal object, but a sibling
+    // const dropCursorColor = themeVarWithAlpha(...) is a call expression.
+    // Static resolution of shadows must not be poisoned by the non-static
+    // sibling.
+    const root = mkdtempSync(join(tmpdir(), 'wyw-spread-repro-'));
+    const cache = new TransformCacheCollection();
+    const perf = createPerfEventRecorder();
+    const entryFile = join(root, 'entry.ts');
+    const tokensFile = join(root, 'tokens.ts');
+
+    writeFileSync(
+      tokensFile,
+      dedent`
+        export const themeVars = {
+          colorShadowBorder: 'var(--shadow-border)',
+          colorAccent: 'var(--accent)',
+        };
+
+        function themeVarWithAlpha(themeVar, alpha) {
+          return \`color-mix(in srgb, ${'${themeVar}'} ${'${alpha * 100}'}%, transparent)\`;
+        }
+
+        // Non-static sibling: must not poison resolution of shadows below.
+        export const dropCursorColor = themeVarWithAlpha(themeVars.colorAccent, 0.7);
+
+        export const shadows = {
+          border: \`0 0 0 1px ${'${themeVars.colorShadowBorder}'}\`,
+        } as const;
+      `
+    );
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { css } from 'test-css-processor';
+        import { shadows } from './tokens';
+
+        export const className = css\`
+          ${'${{'} boxShadow: shadows.border ${'}}'};
+        \`;
+      `
+    );
+
+    try {
+      const result = await runTransform(
+        root,
+        entryFile,
+        cache,
+        perf.eventEmitter
+      );
+
+      expect(perf.counts.get('transform:evalFile') ?? 0).toBe(0);
+      expect(result.cssText).toContain(
+        'box-shadow:0 0 0 1px var(--shadow-border)'
+      );
+      expect(result.code).not.toContain('./tokens');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('inlines mixed same-file + cross-file spread chain (typeBadge pattern)', async () => {
     const root = mkdtempSync(join(tmpdir(), 'wyw-spread-repro-'));
     const dsDir = join(root, 'design-system');
