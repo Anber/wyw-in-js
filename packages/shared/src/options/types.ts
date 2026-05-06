@@ -227,6 +227,34 @@ export type StrictOptions = {
   ignore?: RegExp;
   importLoaders?: ImportLoaders;
   importOverrides?: ImportOverrides;
+  /**
+   * Per-source map of imported names to statically-known values. Used by
+   * the static evaluator when resolving imports from the listed sources.
+   *
+   * Each entry maps an import source (a package name or absolute file
+   * path) to a record of imported names. Each name's value is either:
+   *   - a function: treated as a pure helper. Called at every CallExpression
+   *     site whose callee resolves to this binding, with evaluator-resolved
+   *     args. Result is treated as a static value.
+   *   - any other value: treated as a literal binding override. Returned
+   *     wherever the binding is referenced.
+   *
+   * Trust model is the same as importOverrides / tagResolver: the user
+   * vouches that pure helpers are deterministic and that literal
+   * overrides reflect the runtime value (or knowingly diverge for
+   * prototyping / SSR theming).
+   *
+   * Example:
+   *   staticBindings: {
+   *     '@linaria/core': {
+   *       cx: (...args) => args.filter(Boolean).join(' '),
+   *     },
+   *     '/abs/path/to/theme.ts': {
+   *       themeVars: { panelBg: '#f00' },
+   *     },
+   *   }
+   */
+  staticBindings?: Record<string, Record<string, unknown>>;
   outputMetadata: boolean;
   overrideContext?: (
     context: Partial<VmContext>,

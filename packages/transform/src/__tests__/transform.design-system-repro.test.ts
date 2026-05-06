@@ -2365,6 +2365,115 @@ describe('design-system chain repro for staticImportValues', () => {
     }
   });
 
+  it('applies pluginOptions.staticBindings function helpers (cx) and value overrides', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-spread-repro-'));
+    const cache = new TransformCacheCollection();
+    const perf = createPerfEventRecorder();
+    const entryFile = join(root, 'entry.ts');
+    const stylesFile = join(root, 'styles.ts');
+    const themeFile = join(root, 'theme.ts');
+
+    writeFileSync(
+      themeFile,
+      dedent`
+        // Real value would be a runtime React context lookup; staticBindings
+        // overrides it with a literal at preeval time.
+        export const themeVars = { panelBg: 'runtime-only' };
+      `
+    );
+    writeFileSync(
+      stylesFile,
+      dedent`
+        import { css } from 'test-css-processor';
+        export const baseClassName = css\`
+          color: red;
+        \`;
+        export const hoverClassName = css\`
+          color: blue;
+        \`;
+      `
+    );
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { css } from 'test-css-processor';
+        import { cx } from '@my/cn-utils';
+        import { baseClassName, hoverClassName } from './styles';
+        import { themeVars } from './theme';
+
+        export const className = css\`
+          .${'${cx(baseClassName, hoverClassName)}'} {
+            background: ${'${themeVars.panelBg}'};
+          }
+        \`;
+      `
+    );
+
+    const customResolver = async (what: string, importer: string) => {
+      if (what === 'test-css-processor') {
+        return processorFile;
+      }
+      // @my/cn-utils is virtual — no file. staticBindings supplies cx.
+      // Returning null here lets resolveImports treat it as unresolved
+      // for value resolution, but the binding still exists in the AST.
+      if (what === '@my/cn-utils') {
+        return null;
+      }
+      if (what.startsWith('.')) {
+        const base = resolve(dirname(importer), what);
+        for (const ext of ['.ts', '.tsx', '.js']) {
+          const candidate = `${base}${ext}`;
+          if (existsSync(candidate) && statSync(candidate).isFile()) {
+            return candidate;
+          }
+        }
+        return base;
+      }
+      return null;
+    };
+
+    try {
+      const result = await transform(
+        {
+          cache,
+          eventEmitter: perf.eventEmitter,
+          options: {
+            filename: entryFile,
+            root,
+            pluginOptions: {
+              configFile: false,
+              features: { staticImportValues: true },
+              staticBindings: {
+                '@my/cn-utils': {
+                  cx: (...args: unknown[]) => args.filter(Boolean).join(' '),
+                },
+                './theme': {
+                  themeVars: { panelBg: '#f00' },
+                },
+              },
+              tagResolver: (source, tag) =>
+                source === 'test-css-processor' && tag === 'css'
+                  ? processorFile
+                  : null,
+            },
+          },
+        },
+        readFileSync(entryFile, 'utf8'),
+        customResolver
+      );
+
+      expect(perf.counts.get('transform:evalFile') ?? 0).toBe(0);
+      // cx folded the two css class names into a space-separated selector.
+      expect(result.cssText).toMatch(/\.\w+\s+\w+\{/);
+      // Value override applied — the runtime value 'runtime-only' is NOT
+      // present, the override '#f00' IS.
+      expect(result.cssText).toContain('background:#f00');
+      expect(result.cssText).not.toContain('runtime-only');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('inlines mixed same-file + cross-file spread chain (typeBadge pattern)', async () => {
     const root = mkdtempSync(join(tmpdir(), 'wyw-spread-repro-'));
     const dsDir = join(root, 'design-system');
