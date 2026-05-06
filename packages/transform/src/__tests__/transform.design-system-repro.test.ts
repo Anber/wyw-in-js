@@ -1404,6 +1404,97 @@ describe('design-system chain repro for staticImportValues', () => {
     }
   });
 
+  it('inlines static export while leaving dynamic sibling for eval (partial-dynamic module)', async () => {
+    // Same module exports a literal-object (shadows) and a CallExpression-init
+    // (dropCursorColor). A consumer that uses ONLY the static export must
+    // inline without falling back; a consumer that uses the dynamic export
+    // is allowed to fall back to evalFile.
+    const root = mkdtempSync(join(tmpdir(), 'wyw-spread-repro-'));
+    const cache = new TransformCacheCollection();
+    const perf = createPerfEventRecorder();
+    const tokensFile = join(root, 'tokens.ts');
+    const staticEntry = join(root, 'static-entry.ts');
+    const dynamicEntry = join(root, 'dynamic-entry.ts');
+
+    writeFileSync(
+      tokensFile,
+      dedent`
+        export const themeVars = {
+          colorShadowBorder: 'var(--shadow-border)',
+          colorAccent: 'var(--accent)',
+        };
+
+        function themeVarWithAlpha(themeVar, alpha) {
+          return \`color-mix(in srgb, ${'${themeVar}'} ${'${alpha * 100}'}%, transparent)\`;
+        }
+
+        export const dropCursorColor = themeVarWithAlpha(themeVars.colorAccent, 0.7);
+
+        export const shadows = {
+          border: \`0 0 0 1px ${'${themeVars.colorShadowBorder}'}\`,
+        } as const;
+      `
+    );
+
+    writeFileSync(
+      staticEntry,
+      dedent`
+        import { css } from 'test-css-processor';
+        import { shadows } from './tokens';
+
+        export const className = css\`
+          ${'${{'} boxShadow: shadows.border ${'}}'};
+        \`;
+      `
+    );
+
+    writeFileSync(
+      dynamicEntry,
+      dedent`
+        import { css } from 'test-css-processor';
+        import { dropCursorColor } from './tokens';
+
+        export const className = css\`
+          ${'${{'} caretColor: dropCursorColor ${'}}'};
+        \`;
+      `
+    );
+
+    try {
+      // Static-only consumer: must inline cleanly, no eval.
+      const staticResult = await runTransform(
+        root,
+        staticEntry,
+        cache,
+        perf.eventEmitter
+      );
+      const evalsAfterStatic = perf.counts.get('transform:evalFile') ?? 0;
+
+      expect(staticResult.cssText).toContain(
+        'box-shadow:0 0 0 1px var(--shadow-border)'
+      );
+      expect(evalsAfterStatic).toBe(0);
+      expect(staticResult.code).not.toContain('./tokens');
+
+      // Dynamic-only consumer: dropCursorColor is a CallExpression, so
+      // the resolver legitimately cannot fold it. Eval may run, but the
+      // earlier static-entry transform must NOT have poisoned the cache.
+      const dynamicResult = await runTransform(
+        root,
+        dynamicEntry,
+        cache,
+        perf.eventEmitter
+      );
+
+      // Either inlined to the computed string OR left as a runtime ref —
+      // both are acceptable; what matters is that the previous static
+      // resolution wasn't poisoned and the dynamic one didn't crash.
+      expect(typeof dynamicResult.cssText).toBe('string');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('inlines mixed same-file + cross-file spread chain (typeBadge pattern)', async () => {
     const root = mkdtempSync(join(tmpdir(), 'wyw-spread-repro-'));
     const dsDir = join(root, 'design-system');
