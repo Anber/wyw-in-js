@@ -126,6 +126,13 @@ type StaticExpressionOptions = {
   // but we don't need to walk it because `x`'s value is already
   // resolved.
   preResolvedLocals?: ReadonlySet<string>;
+  // Local names of imports registered as pure helpers via
+  // pluginOptions.staticBindings (e.g. `cx` from '@linaria/core',
+  // `isFlagPresent` from './flags'). CallExpressions whose callee is
+  // in this set are admitted by isSafeStaticExpression provided every
+  // arg is itself safe-static. The actual invocation happens in
+  // evaluateStatic via the env-bound function.
+  staticHelperLocals?: ReadonlySet<string>;
 };
 
 type StaticResolveDebugPhase =
@@ -665,6 +672,19 @@ const isSafeStaticExpression = (
   if (options.allowMetadataCalls && unwrapped.type === 'CallExpression') {
     return (
       unwrapped.callee.type === 'Identifier' && unwrapped.arguments.length === 0
+    );
+  }
+
+  if (
+    unwrapped.type === 'CallExpression' &&
+    options.staticHelperLocals &&
+    unwrapped.callee.type === 'Identifier' &&
+    options.staticHelperLocals.has(unwrapped.callee.name)
+  ) {
+    return unwrapped.arguments.every((argument) =>
+      argument.type === 'SpreadElement'
+        ? isSafeStaticExpression(argument.argument, options)
+        : isSafeStaticExpression(argument as Node, options)
     );
   }
 
@@ -1937,6 +1957,28 @@ const collectStaticExpressionReferences = (
 
     references.add(unwrapped.callee.name);
     return true;
+  }
+
+  if (
+    unwrapped.type === 'CallExpression' &&
+    options.staticHelperLocals &&
+    unwrapped.callee.type === 'Identifier' &&
+    options.staticHelperLocals.has(unwrapped.callee.name)
+  ) {
+    references.add(unwrapped.callee.name);
+    return unwrapped.arguments.every((argument) =>
+      argument.type === 'SpreadElement'
+        ? collectStaticExpressionReferences(
+            argument.argument,
+            references,
+            options
+          )
+        : collectStaticExpressionReferences(
+            argument as Node,
+            references,
+            options
+          )
+    );
   }
 
   if (
@@ -5041,10 +5083,55 @@ function* resolveStaticExport(
     ? new Set(Object.keys(sourcePreevalForExpression.processorClassNames))
     : undefined;
 
+  // Build the set of import-local names registered as pure helpers via
+  // pluginOptions.staticBindings. The dependency walker admits
+  // CallExpressions whose callee is one of these so `cx(a, b)` and
+  // `isFlagPresent('x')` stop tripping isSafeStaticExpression.
+  const staticBindingsForExportShape = getStaticBindings(action);
+  const staticHelperLocals = new Set<string>();
+  if (staticBindingsForExportShape) {
+    const fileImports = collectImportBindings(program);
+    for (const [local, binding] of fileImports) {
+      if (
+        !binding.imported ||
+        binding.imported === '*' ||
+        binding.imported === 'default'
+      ) {
+        continue;
+      }
+      let override = lookupStaticBinding(
+        staticBindingsForExportShape,
+        binding.source,
+        binding.imported
+      );
+      if (!override.found) {
+        const dep = yield* resolveDependency(
+          action,
+          filename,
+          binding.source,
+          binding.imported
+        );
+        if (dep?.resolved) {
+          override = lookupStaticBinding(
+            staticBindingsForExportShape,
+            dep.resolved,
+            binding.imported
+          );
+        }
+      }
+      if (override.found && typeof override.value === 'function') {
+        staticHelperLocals.add(local);
+      }
+    }
+  }
+
   const staticDependencies = collectStaticExpressionDependencies(
     program,
     target,
-    preResolvedLocals ? { preResolvedLocals } : {}
+    {
+      ...(preResolvedLocals ? { preResolvedLocals } : {}),
+      ...(staticHelperLocals.size > 0 ? { staticHelperLocals } : {}),
+    }
   );
   if (!staticDependencies) {
     debugStaticResolve(action, {
@@ -5127,8 +5214,37 @@ function* resolveStaticExport(
   const env = new Map<string, unknown>();
   const dependencies = new Set<string>([filename]);
   const sideEffectDependencies = new Set<string>();
+  const staticBindingsForExport = getStaticBindings(action);
 
   for (const binding of staticDependencies.imports) {
+    // staticBindings overrides take precedence here too — same shape as
+    // the candidate path. Try the raw specifier first, then the
+    // resolved absolute path on miss.
+    let override = lookupStaticBinding(
+      staticBindingsForExport,
+      binding.source,
+      binding.imported
+    );
+    if (!override.found && staticBindingsForExport) {
+      const dep = yield* resolveDependency(
+        action,
+        filename,
+        binding.source,
+        binding.imported
+      );
+      if (dep?.resolved) {
+        override = lookupStaticBinding(
+          staticBindingsForExport,
+          dep.resolved,
+          binding.imported
+        );
+      }
+    }
+    if (override.found) {
+      env.set(binding.local, override.value);
+      continue;
+    }
+
     const resolved = yield* resolveImportValue(
       action,
       filename,

@@ -2474,6 +2474,145 @@ describe('design-system chain repro for staticImportValues', () => {
     }
   });
 
+  it('admits staticBindings function helpers in exported expressions (cx, isFlagPresent)', async () => {
+    // rich-text-editor-styles.ts pattern (seq00035 in the bench):
+    //   import { cx } from '@linaria/core';
+    //   const minHeightStyle = css\`\`;
+    //   const customStyle = css\`\`;
+    //   export const richTextEditorEnabled = cx(minHeightStyle, customStyle);
+    //
+    // use-is-phone.tsx pattern (seq00037):
+    //   import { isFlagPresent } from './flags';
+    //   export const phoneMediaQuery = isFlagPresent('no-vertical-mobile-breakpoint')
+    //     ? '(max-width: 450px)'
+    //     : '(max-width: 450px), (max-height: 450px)';
+    //
+    // Both fail isSafeStaticExpression at the export level because
+    // CallExpressions are rejected unless allowMetadataCalls. With
+    // pluginOptions.staticBindings registering pure helpers,
+    // isSafeStaticExpression must admit calls whose callee is one of
+    // those locals.
+    const root = mkdtempSync(join(tmpdir(), 'wyw-spread-repro-'));
+    const cache = new TransformCacheCollection();
+    const perf = createPerfEventRecorder();
+    const stylesFile = join(root, 'styles.ts');
+    const flagsFile = join(root, 'flags.ts');
+    const useIsPhoneFile = join(root, 'use-is-phone.ts');
+    const entryFile = join(root, 'consumer.tsx');
+
+    writeFileSync(
+      flagsFile,
+      dedent`
+        export const isFlagPresent = (flag) => {
+          return globalThis?.window?.location?.search?.includes(flag) ?? false;
+        };
+      `
+    );
+    writeFileSync(
+      stylesFile,
+      dedent`
+        import { css } from 'test-css-processor';
+        import { cx } from '@my/cn-utils';
+
+        const minHeightStyle = css\`
+          min-height: 100px;
+        \`;
+        const customStyle = css\`
+          color: red;
+        \`;
+
+        export const richTextEditorEnabled = cx(minHeightStyle, customStyle);
+      `
+    );
+    writeFileSync(
+      useIsPhoneFile,
+      dedent`
+        import { isFlagPresent } from './flags';
+
+        export const phoneMediaQuery = isFlagPresent('no-vertical-mobile-breakpoint')
+          ? '(max-width: 450px)'
+          : '(max-width: 450px), (max-height: 450px)';
+      `
+    );
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { css } from 'test-css-processor';
+        import { richTextEditorEnabled } from './styles';
+        import { phoneMediaQuery } from './use-is-phone';
+
+        export const className = css\`
+          .${'${richTextEditorEnabled}'} {
+            display: block;
+          }
+          @media ${'${phoneMediaQuery}'} {
+            display: none;
+          }
+        \`;
+      `
+    );
+
+    const customResolver = async (what: string, importer: string) => {
+      if (what === 'test-css-processor') {
+        return processorFile;
+      }
+      if (what === '@my/cn-utils') {
+        return null;
+      }
+      if (what.startsWith('.')) {
+        const base = resolve(dirname(importer), what);
+        for (const ext of ['.ts', '.tsx', '.js']) {
+          const candidate = `${base}${ext}`;
+          if (existsSync(candidate) && statSync(candidate).isFile()) {
+            return candidate;
+          }
+        }
+        return base;
+      }
+      return null;
+    };
+
+    try {
+      const result = await transform(
+        {
+          cache,
+          eventEmitter: perf.eventEmitter,
+          options: {
+            filename: entryFile,
+            root,
+            pluginOptions: {
+              configFile: false,
+              features: { staticImportValues: true },
+              staticBindings: {
+                '@my/cn-utils': {
+                  cx: (...args: unknown[]) => args.filter(Boolean).join(' '),
+                },
+                [flagsFile]: {
+                  isFlagPresent: () => false,
+                },
+              },
+              tagResolver: (source, tag) =>
+                source === 'test-css-processor' && tag === 'css'
+                  ? processorFile
+                  : null,
+            },
+          },
+        },
+        readFileSync(entryFile, 'utf8'),
+        customResolver
+      );
+
+      expect(perf.counts.get('transform:evalFile') ?? 0).toBe(0);
+      expect(result.cssText).toContain('display:block');
+      // isFlagPresent('...') folded to false → second branch.
+      expect(result.cssText).toContain('max-width: 450px');
+      expect(result.cssText).toContain('max-height: 450px');
+      expect(result.cssText).toContain('display:none');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('inlines mixed same-file + cross-file spread chain (typeBadge pattern)', async () => {
     const root = mkdtempSync(join(tmpdir(), 'wyw-spread-repro-'));
     const dsDir = join(root, 'design-system');
