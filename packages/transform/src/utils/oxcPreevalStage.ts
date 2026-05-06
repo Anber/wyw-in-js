@@ -30,6 +30,7 @@ type OxcPreevalResult = {
   code: string;
   dependencyNames: string[];
   metadata: WYWTransformMetadata | null;
+  processorClassNames: Record<string, string>;
   staticDependencies: string[];
   staticValueCache: Map<string, unknown>;
   staticValueCandidates: OxcStaticValueCandidate[];
@@ -148,6 +149,7 @@ export const runOxcPreevalStage = (
       code: nextCode,
       dependencyNames: [],
       metadata: null,
+      processorClassNames: {},
       staticDependencies: [],
       staticValueCandidates: [],
       staticValueCache: new Map(),
@@ -171,6 +173,9 @@ export const runOxcPreevalStage = (
       replacements: [],
       rules: {},
     },
+    processorClassNames: Object.fromEntries(
+      processed.processorClassNamesByLocal
+    ),
     staticDependencies: [],
     staticValueCandidates: staticValuesEnabled
       ? processed.staticValueCandidates
