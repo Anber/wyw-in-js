@@ -109,6 +109,8 @@ type TemplateExtractionResult = {
   staticValues: OxcStaticValue[];
 };
 
+export type StaticBindings = Record<string, Record<string, unknown>>;
+
 type ExtractionContext = {
   bindingResolutionCache: Map<string, Map<number, Binding | null>>;
   bindingsByName: Map<string, Binding[]>;
@@ -128,10 +130,29 @@ type ExtractionContext = {
     string,
     Array<AssignmentExpression | UpdateExpression>
   >;
+  staticBindings?: StaticBindings;
   staticImportAliases: Map<string, string>;
   staticValueCandidates: OxcStaticValueCandidate[];
   staticValues: OxcStaticValue[];
   usedNames: Set<string>;
+};
+
+export const lookupStaticBinding = (
+  staticBindings: StaticBindings | undefined,
+  source: string | undefined,
+  imported: string | undefined
+): { found: true; value: unknown } | { found: false } => {
+  if (!staticBindings || !source || !imported) {
+    return { found: false };
+  }
+  const sourceMap = staticBindings[source];
+  if (!sourceMap) {
+    return { found: false };
+  }
+  if (!Object.prototype.hasOwnProperty.call(sourceMap, imported)) {
+    return { found: false };
+  }
+  return { found: true, value: sourceMap[imported] };
 };
 
 type ExtractedExpression = {
@@ -1548,7 +1569,21 @@ const evaluateStatic = (
     }
 
     const binding = resolveBindingAt(ctx, expression.name, expression.start);
-    if (!binding || binding.importedFrom) {
+    if (binding?.importedFrom) {
+      // staticBindings can supply a literal value for an imported name,
+      // bypassing whatever the source module would otherwise resolve to.
+      // Function values are deferred to the CallExpression branch.
+      const override = lookupStaticBinding(
+        ctx.staticBindings,
+        binding.importedFrom,
+        binding.imported
+      );
+      if (override.found && typeof override.value !== 'function') {
+        return override.value;
+      }
+      return undefined;
+    }
+    if (!binding) {
       return undefined;
     }
 
@@ -1765,6 +1800,16 @@ const evaluateStatic = (
         return unwrapOxcStaticCallableValue(staticCallable);
       }
 
+      // Plain function in env (e.g. supplied via staticBindings as a
+      // pure helper). Invoke with already-evaluated args.
+      if (typeof staticCallable === 'function') {
+        try {
+          return (staticCallable as (...a: unknown[]) => unknown)(...args);
+        } catch {
+          return undefined;
+        }
+      }
+
       if (expression.callee.name === 'String' && args.length === 1) {
         return String(args[0]);
       }
@@ -1782,6 +1827,26 @@ const evaluateStatic = (
         expression.callee.name,
         expression.callee.start
       );
+
+      // staticBindings can register a pure helper for an imported name
+      // (e.g. linaria's `cx` from '@linaria/core'). When the callee
+      // resolves to such an import and every arg evaluated, invoke the
+      // helper and return its result as a static value.
+      if (binding?.importedFrom) {
+        const override = lookupStaticBinding(
+          ctx.staticBindings,
+          binding.importedFrom,
+          binding.imported
+        );
+        if (override.found && typeof override.value === 'function') {
+          try {
+            return (override.value as (...a: unknown[]) => unknown)(...args);
+          } catch {
+            return undefined;
+          }
+        }
+      }
+
       const fn = binding?.functionNode ?? binding?.declarator?.init;
       if (
         fn &&
@@ -2416,7 +2481,8 @@ const extractExpressions = (
     ProgramAnalysis,
     'bindingsByName' | 'rootMutationsByBinding' | 'usedNames'
   >,
-  expressions: Expression[]
+  expressions: Expression[],
+  staticBindings?: StaticBindings
 ): TemplateExtractionResult => {
   if (expressions.length === 0) {
     return {
@@ -2445,6 +2511,7 @@ const extractExpressions = (
     referencesByNode: new WeakMap(),
     replacements: [],
     rootMutationsByBinding: analysis.rootMutationsByBinding,
+    staticBindings,
     staticImportAliases: new Map(),
     staticValueCandidates: [],
     staticValues: [],
@@ -2542,7 +2609,8 @@ export const evaluateOxcStaticExpressionAt = (
   code: string,
   filename: string,
   expressionSpan: ExpressionSpan,
-  staticBindings: Map<string, unknown> = new Map()
+  env: Map<string, unknown> = new Map(),
+  staticBindings?: StaticBindings
 ): unknown | undefined => {
   const program = parseOxc(code, filename);
   const analysis = analyzeProgram(program, {
@@ -2570,19 +2638,21 @@ export const evaluateOxcStaticExpressionAt = (
     referencesByNode: new WeakMap(),
     replacements: [],
     rootMutationsByBinding: analysis.rootMutationsByBinding,
+    staticBindings,
     staticImportAliases: new Map(),
     staticValueCandidates: [],
     staticValues: [],
     usedNames: new Set(analysis.usedNames),
   };
 
-  return evaluateStatic(expression, ctx, new Map(staticBindings));
+  return evaluateStatic(expression, ctx, new Map(env));
 };
 
 export const evaluateOxcStaticExpression = (
   source: string,
   filename: string,
-  staticBindings: Map<string, unknown> = new Map()
+  env: Map<string, unknown> = new Map(),
+  staticBindings?: StaticBindings
 ): unknown | undefined => {
   const code = `const __wyw_static_value = ${source};`;
   const program = parseOxc(code, filename);
@@ -2603,6 +2673,7 @@ export const evaluateOxcStaticExpression = (
       end: declarator.init.end,
       start: declarator.init.start,
     },
+    env,
     staticBindings
   );
 };
@@ -2611,7 +2682,8 @@ export const collectOxcExpressionDependencies = (
   code: string,
   filename: string,
   evaluate = false,
-  targetExpressionSpans?: ExpressionSpan[]
+  targetExpressionSpans?: ExpressionSpan[],
+  staticBindings?: StaticBindings
 ): TemplateExtractionResult => {
   const program = parseOxc(code, filename);
   const analysis = analyzeProgram(program, {
@@ -2625,7 +2697,8 @@ export const collectOxcExpressionDependencies = (
     evaluate,
     program,
     analysis,
-    analysis.targetExpressions
+    analysis.targetExpressions,
+    staticBindings
   );
 };
 

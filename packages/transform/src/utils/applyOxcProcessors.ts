@@ -2182,7 +2182,12 @@ export const applyOxcProcessors = (
   fileContext: IFileContext,
   options: Pick<
     StrictOptions,
-    'classNameSlug' | 'displayName' | 'extensions' | 'evaluate' | 'tagResolver'
+    | 'classNameSlug'
+    | 'displayName'
+    | 'extensions'
+    | 'evaluate'
+    | 'staticBindings'
+    | 'tagResolver'
   > & {
     eventEmitter?: EventEmitter;
     preserveSideEffectImportLocals?: Set<string>;
@@ -2238,6 +2243,8 @@ export const applyOxcProcessors = (
   if (definedProcessors.size === 0) {
     return {
       code: workingCode,
+      processorClassNamesByLocal: new Map(),
+      sameFileProcessorClassNamesByLocal: new Map(),
       processors: [],
       staticValueCandidates: [],
       staticValues: [],
@@ -2251,6 +2258,8 @@ export const applyOxcProcessors = (
   if (processorUsages.length === 0) {
     return {
       code: workingCode,
+      processorClassNamesByLocal: new Map(),
+      sameFileProcessorClassNamesByLocal: new Map(),
       processors: [],
       staticValueCandidates: [],
       staticValues: [],
@@ -2268,7 +2277,8 @@ export const applyOxcProcessors = (
             workingCode,
             filename,
             options.evaluate,
-            targetExpressionSpans
+            targetExpressionSpans,
+            options.staticBindings
           )
         )
       : {
