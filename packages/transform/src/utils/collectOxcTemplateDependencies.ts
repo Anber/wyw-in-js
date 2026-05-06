@@ -142,6 +142,12 @@ type ExtractedExpression = {
   staticValue?: unknown;
 };
 
+type StaticLocalExpression = {
+  importedFrom: string[];
+  imports: OxcStaticImportReference[];
+  source: string;
+};
+
 type ProgramAnalysis = {
   bindingsByName: Map<string, Binding[]>;
   rootMutationsByBinding: Map<
@@ -1155,11 +1161,10 @@ const getConstantReplacement = (
   return null;
 };
 
-const replaceIdentifierReferences = (
+const collectIdentifierReferenceReplacements = (
   expression: Expression,
-  replacements: Map<string, string>,
-  code: string
-): string => {
+  replacements: Map<string, string>
+): Replacement[] => {
   const localReplacements: Replacement[] = [];
   const ancestors: Node[] = [];
 
@@ -1195,17 +1200,7 @@ const replaceIdentifierReferences = (
   };
 
   walk(expression, null);
-
-  let result = code.slice(expression.start, expression.end);
-  localReplacements
-    .sort((a, b) => b.start - a.start)
-    .forEach((replacement) => {
-      const start = replacement.start - expression.start;
-      const end = replacement.end - expression.start;
-      result = result.slice(0, start) + replacement.value + result.slice(end);
-    });
-
-  return result;
+  return localReplacements;
 };
 
 const applyExpressionReplacements = (
@@ -1222,6 +1217,18 @@ const applyExpressionReplacements = (
       result = result.slice(0, start) + replacement.value + result.slice(end);
     });
   return result;
+};
+
+const replaceIdentifierReferences = (
+  expression: Expression,
+  replacements: Map<string, string>,
+  code: string
+): string => {
+  return applyExpressionReplacements(
+    expression,
+    collectIdentifierReferenceReplacements(expression, replacements),
+    code
+  );
 };
 
 const staticImportAliasPart = (value: string): string =>
@@ -1855,6 +1862,115 @@ const getHoistedBindingName = (
   return next;
 };
 
+const parenthesizeStaticReplacement = (source: string): string => `(${source})`;
+
+const replaceStaticLocalReferences = (
+  expression: Expression,
+  replacements: Map<string, string>,
+  ctx: ExtractionContext,
+  extraReplacements: Replacement[] = []
+): string => {
+  if (expression.type === 'Identifier' && extraReplacements.length === 0) {
+    return (
+      replacements.get(expression.name) ??
+      ctx.code.slice(expression.start, expression.end)
+    );
+  }
+
+  const parenthesized = new Map<string, string>();
+  replacements.forEach((value, key) => {
+    parenthesized.set(key, parenthesizeStaticReplacement(value));
+  });
+
+  return applyExpressionReplacements(
+    expression,
+    [
+      ...extraReplacements,
+      ...collectIdentifierReferenceReplacements(expression, parenthesized),
+    ],
+    ctx.code
+  );
+};
+
+const collectStaticLocalExpression = (
+  expression: Expression,
+  ctx: ExtractionContext,
+  stack: string[] = []
+): StaticLocalExpression | null => {
+  if (expression.type !== 'TemplateLiteral') {
+    return null;
+  }
+
+  const replacements = new Map<string, string>();
+  const importedFrom = new Set<string>();
+  const imports: OxcStaticImportReference[] = [];
+
+  for (const { name, start } of findReferences(
+    expression,
+    ctx.referencesByNode
+  )) {
+    const binding = resolveBindingAt(ctx, name, start);
+    if (!binding) {
+      return null;
+    }
+
+    if (binding.importedFrom) {
+      importedFrom.add(binding.importedFrom);
+      if (binding.imported && binding.imported !== '*') {
+        imports.push({
+          imported: binding.imported,
+          local: binding.name,
+          source: binding.importedFrom,
+        });
+        continue;
+      }
+
+      return null;
+    }
+
+    const replacement = getConstantReplacement(binding, ctx);
+    if (replacement) {
+      replacements.set(name, replacement);
+      continue;
+    }
+
+    if (
+      binding.kind === 'param' ||
+      binding.declarationKind !== 'const' ||
+      !binding.declarator?.init ||
+      binding.declarator.id.type !== 'Identifier'
+    ) {
+      return null;
+    }
+
+    const key = hoistedBindingKey(binding);
+    if (stack.includes(key)) {
+      return null;
+    }
+
+    const nested = collectStaticLocalExpression(binding.declarator.init, ctx, [
+      ...stack,
+      key,
+    ]);
+    if (!nested) {
+      return null;
+    }
+
+    replacements.set(name, nested.source);
+    nested.importedFrom.forEach((source) => importedFrom.add(source));
+    imports.push(...nested.imports);
+  }
+
+  return {
+    importedFrom: [...importedFrom],
+    imports,
+    source:
+      replacements.size > 0
+        ? replaceStaticLocalReferences(expression, replacements, ctx)
+        : ctx.code.slice(expression.start, expression.end),
+  };
+};
+
 const declarationInitCode = (
   init: Expression,
   ctx: ExtractionContext
@@ -2068,6 +2184,7 @@ const extractExpression = (
     expression,
     ctx
   );
+  const staticIdentifierReplacements = new Map<string, string>();
   const staticImports: OxcStaticImportReference[] = [
     ...namespaceStatic.imports,
   ];
@@ -2112,7 +2229,20 @@ const extractExpression = (
         return;
       }
 
-      hasNonStaticLocalReference = true;
+      const staticLocalExpression =
+        evaluate && binding.declarator?.init
+          ? collectStaticLocalExpression(binding.declarator.init, ctx, [
+              hoistedBindingKey(binding),
+            ])
+          : null;
+      if (staticLocalExpression) {
+        staticIdentifierReplacements.set(name, staticLocalExpression.source);
+        importedFrom.push(...staticLocalExpression.importedFrom);
+        staticImports.push(...staticLocalExpression.imports);
+      } else {
+        hasNonStaticLocalReference = true;
+      }
+
       assertHoistable(binding, ctx);
       addHoistedDeclaration(binding, ctx);
       if (!binding.isRoot && binding.declarator?.id.type === 'Identifier') {
@@ -2133,7 +2263,14 @@ const extractExpression = (
     importedFrom,
     kind: isFunction ? ValueType.FUNCTION : ValueType.LAZY,
     staticExpressionCode:
-      namespaceStatic.replacements.length > 0
+      staticIdentifierReplacements.size > 0
+        ? replaceStaticLocalReferences(
+            expression,
+            staticIdentifierReplacements,
+            ctx,
+            namespaceStatic.replacements
+          )
+        : namespaceStatic.replacements.length > 0
         ? applyExpressionReplacements(
             expression,
             namespaceStatic.replacements,
