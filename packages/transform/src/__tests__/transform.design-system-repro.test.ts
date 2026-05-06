@@ -1782,6 +1782,120 @@ describe('design-system chain repro for staticImportValues', () => {
     }
   });
 
+  // FIXME: seq00044 (text-editor/src/editor/style.ts) rejects with
+  // candidate-expression-non-serializable in the bench, but reduced
+  // attempts here pass. The trigger is something specific to the real
+  // file's giant nested ObjectExpression that isolated reductions don't
+  // capture. Leaving the close-but-passing repro for now.
+  it.skip('inlines candidate that spreads same-file ObjectExpression alongside a cross-file imported ObjectExpression (editor style.ts)', async () => {
+    // text-editor/src/editor/style.ts pattern (seq00044): the candidate
+    // spreads multiple sources including an imported plain ObjectExpression
+    // from another file (regularRichEditorHTMLStyles, smallHtmlStylesClass)
+    // alongside same-file mentionMarkStyles + same-file commentColor const.
+    const root = mkdtempSync(join(tmpdir(), 'wyw-spread-repro-'));
+    const cache = new TransformCacheCollection();
+    const perf = createPerfEventRecorder();
+    const entryFile = join(root, 'editor-style.ts');
+    const dsFile = join(root, 'design-system.ts');
+    const htmlStylesFile = join(root, 'html-styles.ts');
+
+    writeFileSync(
+      dsFile,
+      dedent`
+        export const space = { s3: 3, s5: 5, s8: 8 } as const;
+        export const lineHeight = { regular: 1.5 } as const;
+        export const themeVars = {
+          commentColor: 'var(--comment)',
+          textColor: 'var(--text)',
+          disabledTextColor: 'var(--disabled)',
+          textSelectionColor: 'var(--text-selection)',
+        };
+      `
+    );
+    writeFileSync(
+      htmlStylesFile,
+      dedent`
+        import { themeVars } from './design-system';
+
+        export const regularRichEditorHTMLStyles = {
+          '& p': {
+            color: themeVars.textColor,
+            marginTop: 0,
+          },
+          '& strong': { fontWeight: 600 },
+        };
+      `
+    );
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { css } from 'test-css-processor';
+        import { lineHeight, space, themeVars } from './design-system';
+        import { regularRichEditorHTMLStyles } from './html-styles';
+
+        const commentColor = themeVars.commentColor;
+        const mentionMarkStyles = {
+          'span[data-hint-query="true"]': {
+            color: themeVars.disabledTextColor,
+            opacity: 0.5,
+          },
+        };
+
+        export const editorClassName = css\`
+          ${'${{'}
+            ...mentionMarkStyles,
+            ...regularRichEditorHTMLStyles,
+            '@keyframes cursorBlinkingAnimation': {
+              '0%': { opacity: 1 },
+              '50%': { opacity: 0 },
+              '100%': { opacity: 1 },
+            },
+            '& .comment': {
+              borderBottom: \`2px solid ${'${commentColor}'}\`,
+            },
+            '& .comment.active': {
+              background: commentColor,
+            },
+            '.ProseMirror-gapcursor::after': {
+              marginTop: space.s5,
+              paddingTop: space.s3,
+              lineHeight: lineHeight.regular,
+              borderLeft: \`1px solid ${'${themeVars.textColor}'}\`,
+            },
+            '& *::selection': {
+              backgroundColor: themeVars.textSelectionColor,
+              color: themeVars.textColor,
+            },
+          ${'}}'};
+        \`;
+      `
+    );
+
+    try {
+      const result = await runTransform(
+        root,
+        entryFile,
+        cache,
+        perf.eventEmitter
+      );
+
+      expect(perf.counts.get('transform:evalFile') ?? 0).toBe(0);
+      expect(result.cssText).toContain('color:var(--disabled)');
+      expect(result.cssText).toContain('font-weight:600');
+      expect(result.cssText).toContain(
+        'border-bottom:2px solid var(--comment)'
+      );
+      expect(result.cssText).toContain('background:var(--comment)');
+      expect(result.cssText).toContain(
+        'background-color:var(--text-selection)'
+      );
+      expect(result.code).not.toContain('./design-system');
+      expect(result.code).not.toContain('./html-styles');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('inlines candidate using same-file MemberExpression-init const + spread of same-file ObjectExpression (editor style.ts)', async () => {
     // text-editor/src/editor/style.ts pattern:
     //   const commentColor = themeVars.commentColor;
