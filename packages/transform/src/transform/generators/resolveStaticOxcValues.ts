@@ -4958,14 +4958,58 @@ function* resolveStaticExport(
       stack,
       memo
     );
+    if (metadataResult) {
+      debugStaticResolve(action, {
+        exported: exportedName,
+        filename,
+        phase: 'export',
+        status: 'resolved',
+      });
+      return finish(metadataResult);
+    }
+
+    // Fallback: the metadata path rejected (e.g. non-empty-css-artifact
+    // when the css\`\` template has interpolations the source-preeval
+    // can't fold). The processor still computed a className for this
+    // binding during applyOxcProcessors; surface it as the export's
+    // value. Keep the source file in sideEffectDependencies so its CSS
+    // registers at runtime.
+    if (
+      target.expression.type === 'TaggedTemplateExpression' &&
+      target.localName
+    ) {
+      const sourcePreeval = getStaticMetadataPreevalResult(
+        action,
+        filename,
+        code,
+        codeHash
+      );
+      const className =
+        sourcePreeval?.processorClassNames[target.localName];
+      if (className) {
+        debugStaticResolve(action, {
+          exported: exportedName,
+          filename,
+          phase: 'export',
+          reason: 'processor-class-name',
+          status: 'resolved',
+        });
+        return finish({
+          dependencies: [filename],
+          sideEffectDependencies: [filename],
+          value: className,
+        });
+      }
+    }
+
     debugStaticResolve(action, {
       exported: exportedName,
       filename,
       phase: 'export',
-      reason: metadataResult ? undefined : 'resolve-failed',
-      status: metadataResult ? 'resolved' : 'rejected',
+      reason: 'resolve-failed',
+      status: 'rejected',
     });
-    return finish(metadataResult);
+    return finish(null);
   }
 
   const env = new Map<string, unknown>();

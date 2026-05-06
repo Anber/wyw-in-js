@@ -48,6 +48,7 @@ type Replacement = {
 
 type ApplyOxcProcessorsResult = {
   code: string;
+  processorClassNamesByLocal: Map<string, string>;
   processors: BaseProcessor[];
   staticValueCandidates: OxcStaticValueCandidate[];
   staticValues: OxcStaticValue[];
@@ -2342,7 +2343,19 @@ export const applyOxcProcessors = (
         const { id } = owner;
         if (isNode(id) && id.type === 'Identifier') {
           removableExpressionRefs.add(id.name);
-          processorClassNamesByLocal.set(id.name, processor.className);
+          // Only record processors whose runtime value is the className
+          // string itself (selector-only `css\`\``-style processors).
+          // Styled components emit a richer value (component + metadata)
+          // and must not be short-circuited to a bare className — their
+          // consumers compose through the metadata.
+          const replacement = processor.value as { type?: string; value?: unknown };
+          if (
+            (replacement?.type === 'StringLiteral' ||
+              replacement?.type === 'Literal') &&
+            typeof replacement.value === 'string'
+          ) {
+            processorClassNamesByLocal.set(id.name, processor.className);
+          }
         }
       }
 
@@ -2371,6 +2384,7 @@ export const applyOxcProcessors = (
           )
         )
       : codeWithAddedImports,
+    processorClassNamesByLocal,
     processors,
     staticValueCandidates:
       processorClassNamesByLocal.size > 0
