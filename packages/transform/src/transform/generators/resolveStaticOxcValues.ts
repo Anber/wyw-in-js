@@ -680,7 +680,19 @@ const isSafeStaticExpression = (
       }
 
       const propertyNode = property as AnyNode;
-      if (propertyNode.computed || propertyNode.method) {
+      if (propertyNode.method) {
+        return false;
+      }
+
+      // Computed keys are admissible as long as the key expression
+      // itself is safe-static — the downstream evaluator already folds
+      // them against the env. Common shape: `[\`${imp} &\`]: { ... }`.
+      if (
+        propertyNode.computed &&
+        (!propertyNode.key ||
+          typeof propertyNode.key !== 'object' ||
+          !isSafeStaticExpression(propertyNode.key as Node, options))
+      ) {
         return false;
       }
 
@@ -1945,10 +1957,19 @@ const collectStaticExpressionReferences = (
       }
 
       const propertyNode = property as AnyNode;
+      if (!propertyNode.value || typeof propertyNode.value !== 'object') {
+        return false;
+      }
+
       if (
-        propertyNode.computed ||
-        !propertyNode.value ||
-        typeof propertyNode.value !== 'object'
+        propertyNode.computed &&
+        (!propertyNode.key ||
+          typeof propertyNode.key !== 'object' ||
+          !collectStaticExpressionReferences(
+            propertyNode.key as Node,
+            references,
+            options
+          ))
       ) {
         return false;
       }
