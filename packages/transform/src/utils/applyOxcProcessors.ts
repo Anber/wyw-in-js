@@ -2020,6 +2020,33 @@ const isTagReferenced = (program: Program, ancestors: Node[]): boolean => {
   return referenced;
 };
 
+const collectSameFileProcessorStaticValues = (
+  expressionValues: Omit<ExpressionValue, 'buildCodeFrameError'>[],
+  processorClassNamesByLocal: Map<string, string>
+): OxcStaticValue[] => {
+  const staticValues: OxcStaticValue[] = [];
+  const seen = new Set<string>();
+
+  expressionValues.forEach((value) => {
+    if (value.kind !== ValueType.LAZY) {
+      return;
+    }
+
+    const className = processorClassNamesByLocal.get(value.source);
+    if (!className || seen.has(value.ex.name)) {
+      return;
+    }
+
+    seen.add(value.ex.name);
+    staticValues.push({
+      name: value.ex.name,
+      value: className,
+    });
+  });
+
+  return staticValues;
+};
+
 const isReplacementPure = (replacement: ProcessorExpression): boolean =>
   replacement.type === 'CallExpression';
 
@@ -2269,6 +2296,7 @@ export const applyOxcProcessors = (
   const addedImports: AddedImport[] = [];
   const replacements: Replacement[] = [];
   const processors: BaseProcessor[] = [];
+  const processorClassNamesByLocal = new Map<string, string>();
   extracted.dependencyNames.forEach((name: string) =>
     removableImportLocals.add(name)
   );
@@ -2314,6 +2342,7 @@ export const applyOxcProcessors = (
         const { id } = owner;
         if (isNode(id) && id.type === 'Identifier') {
           removableExpressionRefs.add(id.name);
+          processorClassNamesByLocal.set(id.name, processor.className);
         }
       }
 
@@ -2344,6 +2373,12 @@ export const applyOxcProcessors = (
       : codeWithAddedImports,
     processors,
     staticValueCandidates: extracted.staticValueCandidates,
-    staticValues: extracted.staticValues,
+    staticValues: [
+      ...extracted.staticValues,
+      ...collectSameFileProcessorStaticValues(
+        extracted.expressionValues,
+        processorClassNamesByLocal
+      ),
+    ],
   };
 };
