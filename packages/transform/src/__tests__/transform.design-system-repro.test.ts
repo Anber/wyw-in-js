@@ -1566,6 +1566,299 @@ describe('design-system chain repro for staticImportValues', () => {
     }
   });
 
+  it('inlines cross-file css class name re-exported via a same-file alias', async () => {
+    // box.tsx pattern:
+    //   const strokeContainer = css\`...\`;
+    //   export const BoxStroke = strokeContainer;
+    // A consumer interpolates BoxStroke directly. Resolution must follow
+    // the alias to the original css binding's class name.
+    const root = mkdtempSync(join(tmpdir(), 'wyw-spread-repro-'));
+    const cache = new TransformCacheCollection();
+    const perf = createPerfEventRecorder();
+    const sourceFile = join(root, 'box.tsx');
+    const entryFile = join(root, 'apps-listing.tsx');
+    const dsFile = join(root, 'design-system.ts');
+
+    writeFileSync(
+      dsFile,
+      dedent`
+        export const themeVars = { textColor: 'var(--text)' };
+      `
+    );
+
+    writeFileSync(
+      sourceFile,
+      dedent`
+        import { css } from 'test-css-processor';
+        import { themeVars } from './design-system';
+
+        const strokeContainer = css\`
+          color: ${'${themeVars.textColor}'};
+        \`;
+        const opacityContainerClass = css\`
+          opacity: 0.5;
+        \`;
+
+        export const BoxStroke = strokeContainer;
+        export const BoxOpacityContainer = opacityContainerClass;
+      `
+    );
+
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { css } from 'test-css-processor';
+        import { BoxStroke, BoxOpacityContainer } from './box';
+
+        export const listing = css\`
+          .${'${BoxStroke}'} { background: blue; }
+          .${'${BoxOpacityContainer}'} { background: green; }
+        \`;
+      `
+    );
+
+    try {
+      const result = await runTransform(
+        root,
+        entryFile,
+        cache,
+        perf.eventEmitter
+      );
+
+      expect(perf.counts.get('transform:evalFile') ?? 0).toBe(0);
+      expect(result.cssText).toContain('background:blue');
+      expect(result.cssText).toContain('background:green');
+      expect(result.code).not.toContain(
+        "import { BoxStroke, BoxOpacityContainer } from './box'"
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('inlines exported plain ObjectExpression with cross-file ref in computed property key (rowItemStyles)', async () => {
+    // context-menu/index.tsx pattern:
+    //   export const rowItemStyles = {
+    //     ...textStyles.regular,
+    //     [`${mobileRootSelector} &`]: { ... },
+    //   };
+    // A consumer imports rowItemStyles and interpolates it as ${rowItemStyles}
+    // inside a styled template. The computed property key references a
+    // cross-file binding (mobileRootSelector).
+    const root = mkdtempSync(join(tmpdir(), 'wyw-spread-repro-'));
+    const cache = new TransformCacheCollection();
+    const perf = createPerfEventRecorder();
+    const sourceFile = join(root, 'context-menu.tsx');
+    const entryFile = join(root, 'view-create-actions-menu.tsx');
+    const dsFile = join(root, 'design-system.ts');
+    const mobileFile = join(root, 'mobile-styles.ts');
+
+    writeFileSync(
+      dsFile,
+      dedent`
+        export const space = { s4: 4, s8: 8, s12: 12 } as const;
+        export const layout = { menuItemHeight: 32, mobileMenuItemHeight: 44 } as const;
+        export const textStyles = {
+          regular: { fontSize: 14 },
+          big: { fontSize: 16 },
+        };
+        export const themeVars = {
+          colorBgActionsMenuItemHover: 'var(--menu-hover)',
+          disabledTextColor: 'var(--disabled-text)',
+          transparent: 'transparent',
+        };
+      `
+    );
+    writeFileSync(
+      mobileFile,
+      dedent`
+        export const mobileRootSelector = '.mobile-root';
+      `
+    );
+    writeFileSync(
+      sourceFile,
+      dedent`
+        import { layout, space, textStyles, themeVars } from './design-system';
+        import { mobileRootSelector } from './mobile-styles';
+
+        export const rowItemStyles = {
+          ...textStyles.regular,
+          minHeight: layout.menuItemHeight,
+          padding: \`0px ${'${space.s8}'}px\`,
+          margin: \`0px ${'${space.s4}'}px\`,
+          '&:hover': {
+            backgroundColor: themeVars.colorBgActionsMenuItemHover,
+          },
+          [\`${'${mobileRootSelector}'} &\`]: {
+            ...textStyles.big,
+            minHeight: layout.mobileMenuItemHeight,
+            padding: \`0px ${'${space.s12}'}px\`,
+          },
+        };
+      `
+    );
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { css } from 'test-css-processor';
+        import { rowItemStyles } from './context-menu';
+
+        export const className = css\`
+          ${'${{ ...rowItemStyles, color: \'red\' }}'};
+        \`;
+      `
+    );
+
+    try {
+      const result = await runTransform(
+        root,
+        entryFile,
+        cache,
+        perf.eventEmitter
+      );
+
+      expect(perf.counts.get('transform:evalFile') ?? 0).toBe(0);
+      expect(result.cssText).toContain('color:red');
+      expect(result.cssText).toContain('font-size:14');
+      expect(result.cssText).toContain('min-height:32');
+      expect(result.cssText).toContain('.mobile-root');
+      expect(result.code).not.toContain('./context-menu');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('inlines binary expression over same-file const-bound MemberExpression (settings-form INPUT_LABEL_GAP)', async () => {
+    // settings-form.tsx pattern:
+    //   const INPUT_LABEL_GAP = space.s24;
+    //   const INPUT_WIDTH = 32;
+    //   ${INPUT_WIDTH + INPUT_LABEL_GAP}
+    // The candidate is a binary expression over a same-file const whose
+    // init is a MemberExpression on an imported binding.
+    const root = mkdtempSync(join(tmpdir(), 'wyw-spread-repro-'));
+    const cache = new TransformCacheCollection();
+    const perf = createPerfEventRecorder();
+    const entryFile = join(root, 'settings-form.tsx');
+    const dsFile = join(root, 'design-system.ts');
+
+    writeFileSync(
+      dsFile,
+      dedent`
+        export const space = { s24: 24 } as const;
+      `
+    );
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { css } from 'test-css-processor';
+        import { space } from './design-system';
+
+        const INPUT_LABEL_GAP = space.s24;
+        const INPUT_WIDTH = 32;
+
+        export const className = css\`
+          flex-basis: calc(100% - ${'${INPUT_WIDTH + INPUT_LABEL_GAP}'}px);
+          gap: ${'${INPUT_LABEL_GAP}'}px;
+        \`;
+      `
+    );
+
+    try {
+      const result = await runTransform(
+        root,
+        entryFile,
+        cache,
+        perf.eventEmitter
+      );
+
+      expect(perf.counts.get('transform:evalFile') ?? 0).toBe(0);
+      expect(result.cssText).toContain('flex-basis:calc(100% - 56px)');
+      expect(result.cssText).toContain('gap:24px');
+      expect(result.code).not.toContain('./design-system');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('inlines candidate using same-file MemberExpression-init const + spread of same-file ObjectExpression (editor style.ts)', async () => {
+    // text-editor/src/editor/style.ts pattern:
+    //   const commentColor = themeVars.commentColor;
+    //   const mentionMarkStyles = { '...': {...} };
+    //   ${{ ...mentionMarkStyles, '& .comment': { borderBottom: \`2px solid ${commentColor}\` } }}
+    const root = mkdtempSync(join(tmpdir(), 'wyw-spread-repro-'));
+    const cache = new TransformCacheCollection();
+    const perf = createPerfEventRecorder();
+    const entryFile = join(root, 'editor-style.ts');
+    const dsFile = join(root, 'design-system.ts');
+
+    writeFileSync(
+      dsFile,
+      dedent`
+        export const space = { s5: 5, s8: 8 } as const;
+        export const lineHeight = { regular: 1.5 } as const;
+        export const themeVars = {
+          commentColor: 'var(--comment)',
+          textColor: 'var(--text)',
+          disabledTextColor: 'var(--disabled)',
+          richTextTableBorder: 'var(--table-border)',
+          unitBg: 'var(--unit-bg)',
+          textSelectionColor: 'var(--text-selection)',
+        };
+      `
+    );
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { css } from 'test-css-processor';
+        import { lineHeight, space, themeVars } from './design-system';
+
+        const commentColor = themeVars.commentColor;
+        const mentionMarkStyles = {
+          'span[data-hint-query="true"]': {
+            color: themeVars.disabledTextColor,
+            opacity: 0.5,
+          },
+        };
+
+        export const editorClassName = css\`
+          ${'${{'}
+            ...mentionMarkStyles,
+            '& .comment': {
+              borderBottom: \`2px solid ${'${commentColor}'}\`,
+            },
+            '& .comment.active': {
+              background: commentColor,
+            },
+            '& *::selection': {
+              backgroundColor: themeVars.textSelectionColor,
+              marginTop: space.s5,
+              lineHeight: lineHeight.regular,
+            },
+          ${'}}'};
+        \`;
+      `
+    );
+
+    try {
+      const result = await runTransform(
+        root,
+        entryFile,
+        cache,
+        perf.eventEmitter
+      );
+
+      expect(perf.counts.get('transform:evalFile') ?? 0).toBe(0);
+      expect(result.cssText).toContain('color:var(--disabled)');
+      expect(result.cssText).toContain('opacity:0.5');
+      expect(result.cssText).toContain('border-bottom:2px solid var(--comment)');
+      expect(result.cssText).toContain('background:var(--comment)');
+      expect(result.cssText).toContain('background-color:var(--text-selection)');
+      expect(result.code).not.toContain('./design-system');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('inlines mixed same-file + cross-file spread chain (typeBadge pattern)', async () => {
     const root = mkdtempSync(join(tmpdir(), 'wyw-spread-repro-'));
     const dsDir = join(root, 'design-system');
