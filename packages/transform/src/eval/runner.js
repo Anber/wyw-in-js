@@ -1216,6 +1216,24 @@ const sendWarn = (warning) => {
   sendMessage({ type: 'WARN', payload: warning });
 };
 
+const reviveSerializedError = (error) => {
+  if (error instanceof Error) {
+    return error;
+  }
+
+  const revived = new Error(error?.message ?? String(error));
+  if (error?.name) {
+    revived.name = error.name;
+  }
+  if (error?.stack) {
+    revived.stack = error.stack;
+  }
+  if (error?.cause) {
+    revived.cause = reviveSerializedError(error.cause);
+  }
+  return revived;
+};
+
 const serializeError = (error) => {
   const result = {
     message: error?.message ?? String(error),
@@ -1822,7 +1840,7 @@ loadModule = async (id, importer, requestSpec) => {
       }
       evictPoisonedModule(id);
       const enhanced = new Error(detail);
-      enhanced.cause = loaded.error;
+      enhanced.cause = reviveSerializedError(loaded.error);
       throw enhanced;
     }
 

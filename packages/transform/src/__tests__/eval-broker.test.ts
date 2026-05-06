@@ -2746,6 +2746,8 @@ describe('EvalBroker', () => {
       );
       expect(error.message).toMatch(/missing-target\.js/);
       expect(error.message).toMatch(/entry\.js/);
+      expect(error.cause).toBeInstanceOf(Error);
+      expect((error.cause as Error).message).toMatch(/missing-target\.js/);
     }
 
     broker.dispose();
