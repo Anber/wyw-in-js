@@ -2177,6 +2177,24 @@ describe('design-system chain repro for staticImportValues', () => {
     }
   });
 
+  // FIXME: seq00040/seq00041 (unit-content-layout.tsx, transitively
+  // unit/styles.ts) — styled-component templates with runtime-callback
+  // dynamic prop interpolations (`${(props) => ...}`) extract candidates
+  // whose evaluated values are functions. The candidate evaluator marks
+  // them candidate-expression-non-serializable and the consumer falls
+  // back to evalFile, transitively pulling in every dependency module
+  // (unit/styles.ts, design-system, etc.).
+  //
+  // The fix needs to distinguish "the candidate's value is needed as a
+  // serialized literal for css extraction" from "the candidate is a
+  // runtime callback the styled processor handles directly". The
+  // test-styled-processor fixture rejects all interpolations
+  // (addInterpolation throws), so this specific shape can't be
+  // reproduced in a unit test against the existing fixtures.
+  it.skip('does not fall back to evalFile for styled dynamic-prop function candidates (UnitContentLayout)', async () => {
+    // Placeholder — see FIXME above.
+  });
+
   it('inlines mixed same-file + cross-file spread chain (typeBadge pattern)', async () => {
     const root = mkdtempSync(join(tmpdir(), 'wyw-spread-repro-'));
     const dsDir = join(root, 'design-system');
