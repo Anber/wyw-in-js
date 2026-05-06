@@ -5300,7 +5300,10 @@ export function* resolveStaticOxcPreevalValues(
     changed = true;
   }
 
-  if (!changed && !hasKnownStaticCandidate) {
+  if (
+    !changed &&
+    (!hasKnownStaticCandidate || preevalResult.staticValuesApplied)
+  ) {
     return false;
   }
 
@@ -5313,6 +5316,7 @@ export function* resolveStaticOxcPreevalValues(
   preevalResult.staticNullWYWMetaExtendsHelpers = [
     ...staticNullWYWMetaExtendsHelpers,
   ];
+  preevalResult.staticValuesApplied = true;
   const originalBaseCode = preevalResult.baseCode ?? preevalResult.code;
   const staticExtendsHelperValues = new Map(staticValueCache);
   staticNullWYWMetaExtendsHelpers.forEach((name) => {

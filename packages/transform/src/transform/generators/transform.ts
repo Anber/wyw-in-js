@@ -12,6 +12,7 @@ import type {
 import type {
   ITransformAction,
   Services,
+  SyncScenarioFor,
   SyncScenarioForAction,
 } from '../types';
 
@@ -115,6 +116,7 @@ const ensureOxcPreevalResult = (
       metadata: result.metadata,
       staticSideEffectImportLocals: [],
       staticDependencies: result.staticDependencies,
+      staticValuesApplied: false,
       staticValueCache: result.staticValueCache,
       staticValueCandidates: result.staticValueCandidates,
     };
@@ -241,6 +243,92 @@ export const prepareCodeForEvalRuntime = (
     stripForEvalRuntime: true,
   });
 
+function* resolveAndProcessOxcPreparedImports(
+  action: ITransformAction,
+  preparedCode: string,
+  imports: Map<string, string[]> | null
+): SyncScenarioFor<string> {
+  const { loadedAndParsed } = action.entrypoint;
+  if (imports === null || imports.size === 0) {
+    return preparedCode;
+  }
+
+  const resolvedImports = yield* action.getNext(
+    'resolveImports',
+    action.entrypoint,
+    {
+      imports,
+      phase: 'initial',
+    }
+  );
+
+  let nextCode = preparedCode;
+  let nextResolvedImports: IEntrypointDependency[] = [];
+  let skippedParentDependencyTracking: string[] = [];
+
+  if (resolvedImports.length > 0) {
+    const rewritten = yield* rewriteOptimizedOxcBarrelImports.call(
+      action,
+      preparedCode,
+      loadedAndParsed.evaluator === 'ignored'
+        ? action.entrypoint.name
+        : loadedAndParsed.evalConfig.filename ?? action.entrypoint.name,
+      resolvedImports
+    );
+
+    nextCode = rewritten.code;
+
+    if (rewritten.optimizedCount > 0) {
+      skippedParentDependencyTracking = rewritten.generatedSources;
+      const fullyRewrittenSources = new Set(rewritten.fullyRewrittenSources);
+      const partialFallbackSources = new Set(rewritten.partialFallbackSources);
+
+      for (const dependency of resolvedImports) {
+        if (
+          dependency.resolved &&
+          (fullyRewrittenSources.has(dependency.source) ||
+            partialFallbackSources.has(dependency.source))
+        ) {
+          if (partialFallbackSources.has(dependency.source)) {
+            action.entrypoint.addDependency(dependency);
+          } else {
+            action.entrypoint.addInvalidationDependency(dependency);
+          }
+
+          action.entrypoint.markInvalidateOnDependencyChange(
+            dependency.resolved
+          );
+        }
+      }
+
+      nextResolvedImports = yield* action.getNext(
+        'resolveImports',
+        action.entrypoint,
+        {
+          imports: rewritten.imports,
+          phase: 'rewritten',
+          preResolved: rewritten.preResolvedImports,
+        }
+      );
+    } else {
+      nextResolvedImports = resolvedImports;
+    }
+  }
+
+  if (nextResolvedImports.length !== 0) {
+    yield [
+      'processImports',
+      action.entrypoint,
+      {
+        resolved: nextResolvedImports,
+        skipParentDependencyTracking: skippedParentDependencyTracking,
+      },
+    ];
+  }
+
+  return nextCode;
+}
+
 export function* internalTransform(
   this: ITransformAction,
   prepareFn: PrepareCodeFn
@@ -267,7 +355,7 @@ export function* internalTransform(
     yield* resolveStaticOxcPreevalValues.call(this);
   }
 
-  const [preparedCode, imports, metadata] = prepareFn(
+  let [preparedCode, imports, metadata] = prepareFn(
     this.services,
     this.entrypoint,
     null
@@ -285,81 +373,23 @@ export function* internalTransform(
       };
     }
 
-    let nextCode = preparedCode;
-    let nextResolvedImports: IEntrypointDependency[] = [];
-    let skippedParentDependencyTracking: string[] = [];
+    let nextCode = yield* resolveAndProcessOxcPreparedImports(
+      this,
+      preparedCode,
+      imports
+    );
 
-    if (imports !== null && imports.size > 0) {
-      const resolvedImports = yield* this.getNext(
-        'resolveImports',
+    if (yield* resolveStaticOxcPreevalValues.call(this)) {
+      [preparedCode, imports, metadata] = prepareFn(
+        this.services,
         this.entrypoint,
-        {
-          imports,
-          phase: 'initial',
-        }
+        null
       );
-
-      if (resolvedImports.length > 0) {
-        const rewritten = yield* rewriteOptimizedOxcBarrelImports.call(
-          this,
-          preparedCode,
-          loadedAndParsed.evalConfig.filename ?? this.entrypoint.name,
-          resolvedImports
-        );
-
-        nextCode = rewritten.code;
-
-        if (rewritten.optimizedCount > 0) {
-          skippedParentDependencyTracking = rewritten.generatedSources;
-          const fullyRewrittenSources = new Set(
-            rewritten.fullyRewrittenSources
-          );
-          const partialFallbackSources = new Set(
-            rewritten.partialFallbackSources
-          );
-
-          for (const dependency of resolvedImports) {
-            if (
-              dependency.resolved &&
-              (fullyRewrittenSources.has(dependency.source) ||
-                partialFallbackSources.has(dependency.source))
-            ) {
-              if (partialFallbackSources.has(dependency.source)) {
-                this.entrypoint.addDependency(dependency);
-              } else {
-                this.entrypoint.addInvalidationDependency(dependency);
-              }
-
-              this.entrypoint.markInvalidateOnDependencyChange(
-                dependency.resolved
-              );
-            }
-          }
-
-          nextResolvedImports = yield* this.getNext(
-            'resolveImports',
-            this.entrypoint,
-            {
-              imports: rewritten.imports,
-              phase: 'rewritten',
-              preResolved: rewritten.preResolvedImports,
-            }
-          );
-        } else {
-          nextResolvedImports = resolvedImports;
-        }
-      }
-    }
-
-    if (nextResolvedImports.length !== 0) {
-      yield [
-        'processImports',
-        this.entrypoint,
-        {
-          resolved: nextResolvedImports,
-          skipParentDependencyTracking: skippedParentDependencyTracking,
-        },
-      ];
+      nextCode = yield* resolveAndProcessOxcPreparedImports(
+        this,
+        preparedCode,
+        imports
+      );
     }
 
     finalPreparedCode = this.services.eventEmitter.perf(

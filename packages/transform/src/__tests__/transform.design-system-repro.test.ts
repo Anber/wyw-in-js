@@ -45,18 +45,26 @@ const createResolver =
   };
 
 const createPerfEventRecorder = () => {
+  const counts = new Map<string, number>();
   const events: Record<string, unknown>[] = [];
   const eventEmitter = new EventEmitter(
     (labels, type) => {
       if (type === 'single') {
         events.push(labels);
+        return;
       }
+
+      if (type !== 'start' || typeof labels.method !== 'string') {
+        return;
+      }
+
+      counts.set(labels.method, (counts.get(labels.method) ?? 0) + 1);
     },
     () => 0,
     () => {}
   );
 
-  return { eventEmitter, events };
+  return { counts, eventEmitter, events };
 };
 
 const runTransform = async (
@@ -141,7 +149,7 @@ describe('design-system chain repro for staticImportValues', () => {
       dedent`
         export { space } from './design-system/layout';
         export { themeVars } from './design-system/theme';
-        export { textStyles } from './design-system/typography';
+        export { fontWeight, textStyles } from './design-system/typography';
       `
     );
 
@@ -210,6 +218,142 @@ describe('design-system chain repro for staticImportValues', () => {
 
     return { barrelFile, layoutFile, themeFile, typographyFile };
   };
+
+  it('retries cold aliased sibling package barrel child imports before eval fallback', async () => {
+    const workspaceRoot = mkdtempSync(join(tmpdir(), 'wyw-ds-alias-repro-'));
+    const appRoot = join(workspaceRoot, 'app');
+    const appSrc = join(appRoot, 'src', 'components', 'app');
+    const packageRoot = join(workspaceRoot, 'packages', 'ui-kit', 'src');
+    const dsDir = join(packageRoot, 'design-system');
+    const cache = new TransformCacheCollection();
+    const perf = createPerfEventRecorder();
+    const entryFile = join(appSrc, 'not-found-page.tsx');
+
+    require('fs').mkdirSync(appSrc, { recursive: true });
+    require('fs').mkdirSync(dsDir, { recursive: true });
+    const { barrelFile, themeFile, typographyFile } =
+      writeBarrelChain(packageRoot);
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { css } from 'test-css-processor';
+        import { fontWeight, themeVars } from '@pkg/ui-kit/src/design-system';
+
+        export const inlineButton = css\`
+          font-weight: ${'${fontWeight.semibold}'};
+        \`;
+
+        export const notFoundPageStyle = css\`
+          ${'${'}{
+            width: '100vw',
+            height: '100%',
+            backgroundColor: themeVars.accentTextColor,
+            color: themeVars.textColor,
+            display: 'flex',
+            flexDirection: 'column',
+          }${'}'}
+        \`;
+      `
+    );
+
+    const resolveRelative = (what: string, importer: string) => {
+      const base = resolve(dirname(importer), what);
+      for (const ext of ['.ts', '.tsx', '.js']) {
+        const candidate = `${base}${ext}`;
+        if (existsSync(candidate) && statSync(candidate).isFile()) {
+          return candidate;
+        }
+      }
+      return base;
+    };
+
+    const coldMisses = new Set([
+      './design-system/theme',
+      './design-system/typography',
+    ]);
+    const resolver = async (what: string, importer: string) => {
+      if (what === 'test-css-processor') {
+        return processorFile;
+      }
+
+      if (what === '@pkg/ui-kit/src/design-system') {
+        return barrelFile;
+      }
+
+      if (what.startsWith('.')) {
+        if (importer.endsWith('design-system.ts') && coldMisses.delete(what)) {
+          return null;
+        }
+
+        // Real webpack-style resolvers receive absolute importer ids. The
+        // static resolver currently asks for barrel children before the
+        // sibling package entrypoint is fully rooted, which reproduces the
+        // bench's candidate-import-unresolved cascade.
+        return importer.startsWith(workspaceRoot)
+          ? resolveRelative(what, importer)
+          : null;
+      }
+
+      return null;
+    };
+
+    try {
+      const result = await transform(
+        {
+          cache,
+          eventEmitter: perf.eventEmitter,
+          options: {
+            filename: entryFile,
+            root: appRoot,
+            pluginOptions: {
+              configFile: false,
+              features: { staticImportValues: true },
+              tagResolver: (source, tag) =>
+                source === 'test-css-processor' && tag === 'css'
+                  ? processorFile
+                  : null,
+            },
+          },
+        },
+        readFileSync(entryFile, 'utf8'),
+        resolver
+      );
+
+      const candidateEvents = collectStaticResolveEvents(perf.events).filter(
+        (event) =>
+          event.phase === 'candidate' &&
+          (event.candidate === '_exp' || event.candidate === '_exp2')
+      );
+
+      expect({
+        cssText: result.cssText,
+        candidateEvents,
+        evals: perf.counts.get('transform:evalFile') ?? 0,
+      }).toEqual(
+        expect.objectContaining({
+          evals: 0,
+        })
+      );
+      expect(candidateEvents).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ candidate: '_exp', status: 'resolved' }),
+          expect.objectContaining({ candidate: '_exp2', status: 'resolved' }),
+        ])
+      );
+      expect(result.cssText).toContain('font-weight:600');
+      expect(result.cssText).toContain(
+        'background-color:var(--fibery-color-accentTextColor)'
+      );
+      expect(result.cssText).toContain('color:var(--fibery-color-textColor)');
+      expect(result.code).not.toContain('@pkg/ui-kit/src/design-system');
+      expect([themeFile, typographyFile]).toEqual([
+        expect.stringContaining('theme.ts'),
+        expect.stringContaining('typography.ts'),
+      ]);
+    } finally {
+      rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+  });
 
   it('inlines space.s12 + space.s6 (literal-only object via barrel)', async () => {
     const root = mkdtempSync(join(tmpdir(), 'wyw-ds-repro-'));
