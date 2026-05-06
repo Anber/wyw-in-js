@@ -2700,6 +2700,114 @@ describe('EvalBroker', () => {
     rmSync(root, { recursive: true, force: true });
   });
 
+  it('missing import surfaces specifier and importer, not opaque ERR_VM_MODULE_STATUS', async () => {
+    // Reproduces: when an import temporarily points at a file that does not
+    // exist on disk, webpack consumers see only:
+    //   "Module status must be one of linked, evaluated, or errored"
+    // with no indication of which import in which file is broken. The
+    // diagnostic must name the missing specifier and the importing file so a
+    // user can fix the import without bisecting the build.
+    const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
+
+    writeFileSync(
+      join(root, 'entry.js'),
+      [
+        "import { value } from './missing-target.js';",
+        'export const __wywPreval = { v: () => value };',
+      ].join('\n')
+    );
+
+    // Resolver hands back an absolute path even though the file does not
+    // exist — mirrors editor/watch state where the path is momentarily stale.
+    const asyncResolve = jest.fn(async (what: string, importer: string) => {
+      if (what.startsWith('.')) {
+        return resolve(dirname(importer), what);
+      }
+      return null;
+    });
+    const services = createServices(root, join(root, 'entry.js'));
+    const broker = new EvalBroker(services, asyncResolve);
+
+    const ep = Entrypoint.createRoot(
+      services,
+      join(root, 'entry.js'),
+      ['__wywPreval'],
+      readFileSync(join(root, 'entry.js'), 'utf-8')
+    );
+
+    try {
+      await broker.evaluate(ep);
+      expect.unreachable('should have thrown');
+    } catch (err) {
+      expect(err).toBeInstanceOf(Error);
+      const error = err as Error;
+      expect(error.message).not.toMatch(
+        /Module status must be one of linked, evaluated, or errored/
+      );
+      expect(error.message).toMatch(/missing-target\.js/);
+      expect(error.message).toMatch(/entry\.js/);
+      expect(error.cause).toBeInstanceOf(Error);
+      expect((error.cause as Error).message).toMatch(/missing-target\.js/);
+    }
+
+    broker.dispose();
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('recovers after a transient missing import is fixed on disk', async () => {
+    // Reproduces (B): once a module fails to load (ENOENT on a transient
+    // missing import target), the runner caches the importer's
+    // SourceTextModule in 'errored' state. On the next eval session — even
+    // after the user creates the missing file — linkModule early-returns
+    // because module.status !== 'unlinked', and module.evaluate() re-throws
+    // the original link error. The build appears stuck despite a clean source
+    // tree.
+    //
+    // Expected: a successful second session once the file exists.
+    const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
+
+    writeFileSync(
+      join(root, 'entry.js'),
+      [
+        "import { value } from './target.js';",
+        'export const __wywPreval = { v: () => value };',
+      ].join('\n')
+    );
+    // target.js is intentionally missing for session 1.
+
+    const asyncResolve = jest.fn(async (what: string, importer: string) => {
+      if (what.startsWith('.')) {
+        return resolve(dirname(importer), what);
+      }
+      return null;
+    });
+    const services = createServices(root, join(root, 'entry.js'));
+    const broker = new EvalBroker(services, asyncResolve);
+
+    const ep1 = Entrypoint.createRoot(
+      services,
+      join(root, 'entry.js'),
+      ['__wywPreval'],
+      readFileSync(join(root, 'entry.js'), 'utf-8')
+    );
+    await expect(broker.evaluate(ep1)).rejects.toThrow();
+
+    // User creates the previously-missing file.
+    writeFileSync(join(root, 'target.js'), 'export const value = 42;');
+
+    const ep2 = Entrypoint.createRoot(
+      services,
+      join(root, 'entry.js'),
+      ['__wywPreval'],
+      readFileSync(join(root, 'entry.js'), 'utf-8')
+    );
+    const result = await broker.evaluate(ep2);
+    expect(result.values?.get('v')).toBe(42);
+
+    broker.dispose();
+    rmSync(root, { recursive: true, force: true });
+  });
+
   it('concurrent sibling dependencies importing different exports from same barrel succeed', async () => {
     // Reproduces: when two dependency modules concurrently link and both import
     // the same barrel file (for different named exports), the runner's loadInFlight
