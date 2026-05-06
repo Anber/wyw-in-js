@@ -1999,7 +1999,7 @@ describe('design-system chain repro for staticImportValues', () => {
     writeFileSync(
       sourceFile,
       dedent`
-        import { space } from './design-system';
+        import { space } from '@pkg/design-system';
 
         export const cssConstants = {
           common: space.s10,
@@ -2011,8 +2011,14 @@ describe('design-system chain repro for staticImportValues', () => {
       entryFile,
       dedent`
         import { css } from 'test-css-processor';
+        // Direct import of the alias from the entry succeeds and primes
+        // the cross-importer resolution cache.
+        import { space } from '@pkg/design-system';
         import { cssConstants } from './css-constants';
 
+        export const sentinel = css\`
+          margin: ${'${space.s10}'}px;
+        \`;
         export const className = css\`
           padding: ${'${cssConstants.common}'}px;
           width: ${'${cssConstants.sidebarWidth}'}px;
@@ -2021,15 +2027,18 @@ describe('design-system chain repro for staticImportValues', () => {
     );
 
     // Resolver that consistently returns null for the
-    // css-constants.ts → ./design-system pair (mimicking the bench's
-    // dependency-unresolved symptom for this specific importer).
-    // Other importers can still resolve design-system fine.
+    // css-constants.ts → @pkg/design-system pair (mimicking the bench's
+    // dependency-unresolved symptom for this specific importer). Other
+    // importers can still resolve the alias fine.
     const flakyResolver = async (what: string, importer: string) => {
       if (
-        what === './design-system' &&
+        what === '@pkg/design-system' &&
         importer.endsWith('css-constants.ts')
       ) {
         return null;
+      }
+      if (what === '@pkg/design-system') {
+        return tokensFile;
       }
       if (what === 'test-css-processor') {
         return processorFile;
