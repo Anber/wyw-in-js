@@ -163,11 +163,7 @@ export class EventEmitter {
 
     this.onEvent(labels, 'start', startEvent);
 
-    const finish = (
-      status: PerfStatus,
-      isAsync: boolean,
-      error?: unknown
-    ) => {
+    const finish = (status: PerfStatus, isAsync: boolean, error?: unknown) => {
       const finishedAt = performance.now();
       const finishEvent: PerfFinishEvent = {
         durationMs: finishedAt - startedAt,
