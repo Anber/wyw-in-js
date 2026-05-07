@@ -1,3 +1,7 @@
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+
 import * as babel from '@babel/core';
 
 import type { StrictOptions } from '@wyw-in-js/shared';
@@ -10,7 +14,9 @@ import { asyncResolveImports } from '../transform/generators/resolveImports';
 import type { IResolveImportsAction, Services } from '../transform/types';
 import { EventEmitter } from '../utils/EventEmitter';
 
-const createPluginOptions = (): StrictOptions => ({
+const createPluginOptions = (
+  overrides: Partial<StrictOptions> = {}
+): StrictOptions => ({
   babelOptions: {},
   displayName: false,
   evaluate: true,
@@ -25,10 +31,15 @@ const createPluginOptions = (): StrictOptions => ({
   },
   highPriorityPlugins: [],
   importOverrides: undefined,
+  oxcOptions: {},
   rules: [],
+  ...overrides,
 });
 
-const createServices = (filename: string): Services => {
+const createServices = (
+  filename: string,
+  pluginOptions: Partial<StrictOptions> = {}
+): Services => {
   const loadAndParseFn: LoadAndParseFn = (services, _name, loadedCode) => ({
     get ast() {
       return services.babel.parseSync(loadedCode ?? '')!;
@@ -46,22 +57,139 @@ const createServices = (filename: string): Services => {
     eventEmitter: EventEmitter.dummy,
     options: {
       filename,
-      root: '/project',
-      pluginOptions: createPluginOptions(),
+      root: path.dirname(filename),
+      pluginOptions: createPluginOptions(pluginOptions),
     },
   };
 };
 
 const drainAsync = async <T>(gen: AsyncGenerator<unknown, T>): Promise<T> => {
-  while (true) {
-    const next = await gen.next();
-    if (next.done) {
-      return next.value;
-    }
+  const next = await gen.next();
+  if (next.done) {
+    return next.value;
   }
+
+  return drainAsync(gen);
 };
 
 describe('asyncResolveImports — bounded retry on null resolutions', () => {
+  it('prefers native resolution before bundler resolution in hybrid mode', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wyw-resolve-imports-'));
+    const entryFile = path.join(root, 'entry.ts');
+    const depFile = path.join(root, 'dep.ts');
+    fs.writeFileSync(entryFile, 'import { value } from "./dep";');
+    fs.writeFileSync(depFile, 'export const value = 1;');
+
+    const services = createServices(entryFile, {
+      eval: {
+        resolver: 'hybrid',
+      },
+    });
+    const entrypoint = Entrypoint.createRoot(services, entryFile, ['*'], '');
+    const resolve = jest.fn(async () => path.join(root, 'bundler.ts'));
+
+    const result = await drainAsync(
+      asyncResolveImports.call(
+        {
+          data: { imports: new Map([['./dep', ['value']]]) },
+          entrypoint,
+          services,
+        } as IResolveImportsAction,
+        resolve
+      )
+    );
+
+    expect(result).toEqual([
+      {
+        source: './dep',
+        only: ['value'],
+        resolved: fs.realpathSync(depFile),
+      },
+    ]);
+    expect(resolve).not.toHaveBeenCalled();
+  });
+
+  it('falls back to bundler resolution in hybrid mode when native resolution misses', async () => {
+    const services = createServices('/project/src/a.js', {
+      eval: {
+        resolver: 'hybrid',
+      },
+    });
+    const entrypoint = Entrypoint.createRoot(
+      services,
+      '/project/src/a.js',
+      ['*'],
+      ''
+    );
+    const resolve = jest.fn(async () => '/project/src/alias.js');
+
+    const result = await drainAsync(
+      asyncResolveImports.call(
+        {
+          data: { imports: new Map([['@app/alias', ['value']]]) },
+          entrypoint,
+          services,
+        } as IResolveImportsAction,
+        resolve
+      )
+    );
+
+    expect(result).toEqual([
+      {
+        source: '@app/alias',
+        only: ['value'],
+        resolved: '/project/src/alias.js',
+      },
+    ]);
+    expect(resolve).toHaveBeenCalledWith('@app/alias', '/project/src/a.js', [
+      '/project/src/a.js',
+    ]);
+  });
+
+  it('prefers custom resolver before native and bundler resolution', async () => {
+    const customResolver = jest.fn(async () => ({
+      id: '/project/src/custom.js',
+    }));
+    const services = createServices('/project/src/a.js', {
+      eval: {
+        customResolver,
+        resolver: 'hybrid',
+      },
+    });
+    const entrypoint = Entrypoint.createRoot(
+      services,
+      '/project/src/a.js',
+      ['*'],
+      ''
+    );
+    const resolve = jest.fn(async () => '/project/src/bundler.js');
+
+    const result = await drainAsync(
+      asyncResolveImports.call(
+        {
+          data: { imports: new Map([['./dep', ['value']]]) },
+          entrypoint,
+          services,
+        } as IResolveImportsAction,
+        resolve
+      )
+    );
+
+    expect(result).toEqual([
+      {
+        source: './dep',
+        only: ['value'],
+        resolved: '/project/src/custom.js',
+      },
+    ]);
+    expect(customResolver).toHaveBeenCalledWith(
+      './dep',
+      '/project/src/a.js',
+      'import'
+    );
+    expect(resolve).not.toHaveBeenCalled();
+  });
+
   it('retries a transient null resolution exactly once, then succeeds', async () => {
     const services = createServices('/project/src/a.js');
     const entrypoint = Entrypoint.createRoot(
@@ -134,10 +262,11 @@ describe('asyncResolveImports — bounded retry on null resolutions', () => {
 
     // Many consumers hit the same failing source. Resolver must be called at
     // most MAX_NULL_ATTEMPTS times (currently 2), not once per consumer.
-    for (let i = 0; i < 50; i += 1) {
+    await Array.from({ length: 50 }).reduce<Promise<void>>(async (previous) => {
+      await previous;
       const result = await callResolve();
       expect(result).toEqual([]);
-    }
+    }, Promise.resolve());
 
     // Exactly 2 attempts: first call, then one bounded retry.
     expect(resolve).toHaveBeenCalledTimes(2);
@@ -175,7 +304,9 @@ describe('asyncResolveImports — bounded retry on null resolutions', () => {
     const a = callResolve();
     const b = callResolve();
 
-    await new Promise((r) => setImmediate(r));
+    await new Promise<void>((resolveImmediate) => {
+      setImmediate(resolveImmediate);
+    });
     expect(resolve).toHaveBeenCalledTimes(1);
 
     releaseResolver!('/project/src/foo.js');

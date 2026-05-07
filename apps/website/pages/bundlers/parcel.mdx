@@ -30,3 +30,16 @@ Prepend `@wyw-in-js/parcel-transformer` to the default JS pipeline in `.parcelrc
 
 `eval.require` defaults to `warn-and-run` in v2. If eval-time `require()` happens, WyW will warn and execute it at
 runtime; use `importOverrides` or `eval.require: 'error'` to make it explicit.
+
+### Eval resolver modes
+
+`eval.resolver: 'native'` and the native step of `eval.resolver: 'hybrid'` use `oxc-resolver` with automatic
+`tsconfig.json` discovery, so TypeScript `baseUrl`/`paths` aliases work by default.
+
+Parcel aliases and resolver plugins are handled by Parcel's resolver API and are not exposed as a static alias map to the
+transformer.
+
+- `hybrid`: tries `eval.customResolver`, then native resolution, then Parcel's resolver. Use this when evaluated imports
+  depend on Parcel aliases, package targets, or resolver plugins.
+- `native`: uses only `oxc-resolver`; Parcel's resolver is not called. Mirror Parcel-only aliases in
+  `oxcOptions.resolver.alias` or keep using `hybrid`.

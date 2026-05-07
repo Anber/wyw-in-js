@@ -47,6 +47,7 @@ import {
   resolveMockSpecifier,
   toImportKey,
 } from './utils/importOverrides';
+import { resolveWithNativeResolver } from './utils/nativeResolver';
 import { parseRequest, stripQueryAndHash } from './utils/parseRequest';
 import { resolveFilenameWithConditions } from './utils/resolveWithConditions';
 import { createVmContext } from './vm/createVmContext';
@@ -159,6 +160,10 @@ type ResolvedImport = {
   resolved: string;
   only: string[];
   external?: boolean;
+};
+
+type NativeFallbackOptions = {
+  warnOnFallback: boolean;
 };
 
 const defaultEvalOptions: Required<
@@ -914,7 +919,7 @@ export class Module {
       }
     }
 
-    if (evalOptions.resolver !== 'node') {
+    const resolveBundlerDependency = (): ResolvedImport | null => {
       const dependency = getImporterDependency(importer, specifier);
       if (dependency?.resolved) {
         return {
@@ -923,10 +928,39 @@ export class Module {
           only: dependency.only,
         };
       }
+
+      return null;
+    };
+
+    if (evalOptions.resolver === 'hybrid') {
+      try {
+        return this.resolveWithNativeFallback(specifier, importer, kind, {
+          warnOnFallback: false,
+        });
+      } catch {
+        // Hybrid mode lets the bundler resolver handle aliases, virtual IDs,
+        // and other specifiers that the native resolver cannot resolve.
+      }
     }
 
-    if (evalOptions.resolver === 'node' || evalOptions.require !== 'off') {
-      return this.resolveWithNodeFallback(specifier, importer, kind);
+    if (evalOptions.resolver === 'native') {
+      return this.resolveWithNativeFallback(specifier, importer, kind, {
+        warnOnFallback: false,
+      });
+    }
+
+    if (
+      evalOptions.resolver === 'bundler' ||
+      evalOptions.resolver === 'hybrid'
+    ) {
+      const dependency = resolveBundlerDependency();
+      if (dependency) return dependency;
+    }
+
+    if (evalOptions.resolver === 'bundler' && evalOptions.require !== 'off') {
+      return this.resolveWithNativeFallback(specifier, importer, kind, {
+        warnOnFallback: true,
+      });
     }
 
     return null;
@@ -948,7 +982,9 @@ export class Module {
       );
     }
 
-    return this.resolveWithNodeFallback(specifier, importer, 'require');
+    return this.resolveWithNativeFallback(specifier, importer, 'require', {
+      warnOnFallback: true,
+    });
   }
 
   private applyImportOverrides(
@@ -1099,14 +1135,15 @@ export class Module {
     }
   }
 
-  resolveWithNodeFallback = (
+  resolveWithNativeFallback = (
     id: string,
     importer: Entrypoint | IEvaluatedEntrypoint,
-    kind: EvalResolverKind
+    kind: EvalResolverKind,
+    { warnOnFallback }: NativeFallbackOptions = { warnOnFallback: true }
   ): ResolvedImport => {
-    if (!this.ignored) {
+    if (!this.ignored && warnOnFallback) {
       this.debug(
-        '❌ import has not been resolved during prepare stage. Fallback to Node.js resolver'
+        '❌ import has not been resolved during prepare stage. Fallback to native resolver'
       );
     }
 
@@ -1114,49 +1151,66 @@ export class Module {
     const added: string[] = [];
 
     try {
-      // Check for supported extensions
-      this.extensions.forEach((ext) => {
-        if (ext === '.cjs' || ext === '.mjs') {
-          return;
-        }
-        if (ext in extensions) {
-          return;
-        }
-
-        // When an extension is not supported, add it
-        // And keep track of it to clean it up after resolving
-        // Use noop for the transform function since we handle it
-        extensions[ext] = NOOP;
-        added.push(ext);
-      });
-
       const filename = importer.name;
       const strippedId = stripQueryAndHash(id);
-      const parent = {
-        id: filename,
-        filename,
-        paths: this.moduleImpl._nodeModulePaths(path.dirname(filename)),
-      };
-      const { conditionNames } = this.services.options.pluginOptions;
-      const conditions = conditionNames?.length
-        ? expandConditions(conditionNames)
-        : undefined;
+      const { conditionNames, oxcOptions } =
+        this.services.options.pluginOptions;
 
-      let resolved = this.resolveWithConditions(strippedId, parent, conditions);
+      let resolved: string;
+      try {
+        if (this.moduleImpl === DefaultModuleImplementation) {
+          resolved = resolveWithNativeResolver({
+            conditionNames,
+            extensions: this.extensions,
+            importer: filename,
+            kind,
+            oxcOptions,
+            specifier: id,
+          });
+        } else {
+          // Preserve the test-only custom module implementation hook.
+          this.extensions.forEach((ext) => {
+            if (ext === '.cjs' || ext === '.mjs') return;
+            if (ext in extensions) return;
 
-      const isFileSpecifier =
-        strippedId.startsWith('.') || path.isAbsolute(strippedId);
+            extensions[ext] = NOOP;
+            added.push(ext);
+          });
 
-      if (
-        isFileSpecifier &&
-        path.extname(strippedId) === '' &&
-        resolved.endsWith('.cjs') &&
-        fs.existsSync(`${resolved.slice(0, -4)}.js`)
-      ) {
-        // When both `.cjs` and `.js` exist for an extensionless specifier, the
-        // resolver may pick `.cjs` depending on the environment/extensions.
-        // Prefer `.js` to keep resolved paths stable (e.g. importOverrides keys).
-        resolved = `${resolved.slice(0, -4)}.js`;
+          const parent = {
+            id: filename,
+            filename,
+            paths: this.moduleImpl._nodeModulePaths(path.dirname(filename)),
+          };
+          const conditions = conditionNames?.length
+            ? expandConditions(conditionNames)
+            : undefined;
+
+          resolved = this.resolveWithConditions(strippedId, parent, conditions);
+
+          const isFileSpecifier =
+            strippedId.startsWith('.') || path.isAbsolute(strippedId);
+
+          if (
+            isFileSpecifier &&
+            path.extname(strippedId) === '' &&
+            resolved.endsWith('.cjs') &&
+            fs.existsSync(`${resolved.slice(0, -4)}.js`)
+          ) {
+            resolved = `${resolved.slice(0, -4)}.js`;
+          }
+        }
+      } catch (error) {
+        throw new Error(
+          [
+            `[wyw-in-js] Native resolver failed during eval.`,
+            ``,
+            `importer: ${filename}`,
+            `source:   ${id}`,
+            ``,
+            `error: ${error instanceof Error ? error.message : String(error)}`,
+          ].join('\n')
+        );
       }
 
       const { root } = this.services.options;
@@ -1174,8 +1228,14 @@ export class Module {
       const evalOptions = getEvalOptions(this.services);
       const basePolicy: 'warn' | 'error' =
         evalOptions.require === 'warn-and-run' ? 'warn' : 'error';
-      let policy = override?.unknown ?? (override?.mock ? 'allow' : basePolicy);
-      if (evalOptions.require === 'off' && policy !== 'error') {
+      let policy: 'allow' | 'error' | 'warn' = warnOnFallback
+        ? override?.unknown ?? (override?.mock ? 'allow' : basePolicy)
+        : 'allow';
+      if (
+        warnOnFallback &&
+        evalOptions.require === 'off' &&
+        policy !== 'error'
+      ) {
         policy = 'error';
       }
       const shouldWarn = !this.ignored && policy === 'warn';
@@ -1200,7 +1260,7 @@ export class Module {
       if (policy === 'error') {
         throw new Error(
           [
-            `[wyw-in-js] Unknown import reached during eval (Node resolver fallback)`,
+            `[wyw-in-js] Unknown import reached during eval (native resolver fallback)`,
             ``,
             `importer: ${filename}`,
             `source:   ${id}`,
@@ -1225,7 +1285,7 @@ export class Module {
       if (shouldWarn && !warnedUnknownImports.has(keyInfo.key)) {
         warnedUnknownImports.add(keyInfo.key);
         const warningMessage = [
-          `[wyw-in-js] Unknown import reached during eval (Node resolver fallback)`,
+          `[wyw-in-js] Unknown import reached during eval (native resolver fallback)`,
           ``,
           `importer: ${filename}`,
           `source:   ${id}`,

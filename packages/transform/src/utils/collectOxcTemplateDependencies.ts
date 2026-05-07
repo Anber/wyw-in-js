@@ -879,6 +879,22 @@ const cloneStaticValue = (value: unknown): unknown => {
   return value;
 };
 
+const INT32_SIZE = 2 ** 32;
+const INT32_SIGN_BIT = 2 ** 31;
+
+const toInt32 = (value: number): number => {
+  if (!Number.isFinite(value) || value === 0) {
+    return 0;
+  }
+
+  const integer = Math.sign(value) * Math.floor(Math.abs(value));
+  const int32bit = ((integer % INT32_SIZE) + INT32_SIZE) % INT32_SIZE;
+
+  return int32bit >= INT32_SIGN_BIT ? int32bit - INT32_SIZE : int32bit;
+};
+
+const bitwiseNot = (value: number): number => -toInt32(value) - 1;
+
 const getObjectMember = (
   objectValue: unknown,
   property: string | number
@@ -1328,10 +1344,7 @@ const isProcessEnvMember = (node: Node): boolean => {
     return false;
   }
 
-  if (
-    node.property.type !== 'Identifier' ||
-    node.property.name !== 'env'
-  ) {
+  if (node.property.type !== 'Identifier' || node.property.name !== 'env') {
     return false;
   }
 
@@ -1444,7 +1457,7 @@ const evaluateStatic = (
       case '!':
         return !arg;
       case '~':
-        return typeof arg === 'number' ? ~arg : undefined;
+        return typeof arg === 'number' ? bitwiseNot(arg) : undefined;
       case 'void':
         return undefined;
       default:

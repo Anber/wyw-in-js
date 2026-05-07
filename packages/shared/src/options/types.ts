@@ -97,7 +97,7 @@ type ImportOverrideUnknown = {
   mock?: never;
   noShake?: never;
   /**
-   * Controls behavior when an import reaches eval-time Node resolver fallback.
+   * Controls behavior when an import reaches eval-time native resolver fallback.
    * - 'warn' (default): warn once per canonical import key.
    * - 'error': throw.
    * - 'allow': no warning, keep load-as-is.
@@ -131,7 +131,7 @@ export type ImportLoader =
 
 export type ImportLoaders = Record<string, ImportLoader | false>;
 
-export type EvalResolverMode = 'bundler' | 'hybrid' | 'node' | 'custom';
+export type EvalResolverMode = 'bundler' | 'hybrid' | 'native' | 'custom';
 
 export type EvalRequireMode = 'warn-and-run' | 'error' | 'off';
 
@@ -158,7 +158,7 @@ export type EvalWarning = {
 export type EvalOptionsV2 = {
   /**
    * Default is `bundler`. `hybrid` is an opt-in mode whose intended
-   * precedence is customResolver -> safe Oxc subset -> bundler -> node.
+   * precedence is customResolver -> native Oxc resolver -> bundler.
    */
   resolver?: EvalResolverMode;
   customResolver?: (

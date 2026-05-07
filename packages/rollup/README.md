@@ -32,6 +32,15 @@ export default {
 };
 ```
 
+## Eval resolver modes
+
+`eval.resolver: 'native'` and the native step of `eval.resolver: 'hybrid'` use `oxc-resolver` with automatic
+`tsconfig.json` discovery.
+
+Rollup aliases are commonly implemented by resolver plugins, so they are resolved only by the bundler fallback. Use
+`hybrid` when evaluated imports rely on Rollup plugins. Use `native` only when `oxc-resolver` can resolve all evaluated
+imports, or mirror plugin aliases in `oxcOptions.resolver.alias`.
+
 ### Concurrency (tsdown/rolldown)
 
 Some Rollup-compatible bundlers may execute plugin hooks concurrently (e.g. tsdown/rolldown). To keep evaluation deterministic, `@wyw-in-js/rollup` serializes `transform()` calls by default.

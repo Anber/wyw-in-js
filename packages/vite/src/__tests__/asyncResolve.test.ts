@@ -38,7 +38,35 @@ jest.mock('@wyw-in-js/shared', () => ({
     };
   },
   logger: createLogger(),
+  mergeOxcResolverAlias: (oxcOptions: any, nativeAlias: any) => ({
+    ...oxcOptions,
+    resolver: {
+      ...(oxcOptions?.resolver ?? {}),
+      alias: {
+        ...nativeAlias,
+        ...(oxcOptions?.resolver?.alias ?? {}),
+      },
+    },
+  }),
   syncResolve: (...args: unknown[]) => syncResolveMock(...args),
+  toNativeResolverAlias: (alias: any) => {
+    const entries = Array.isArray(alias)
+      ? alias
+      : Object.entries(alias ?? {}).map(([find, replacement]) => ({
+          find,
+          replacement,
+        }));
+
+    return Object.fromEntries(
+      entries
+        .filter(
+          (entry: any) =>
+            typeof entry.find === 'string' &&
+            typeof entry.replacement === 'string'
+        )
+        .map((entry: any) => [entry.find, [entry.replacement]])
+    );
+  },
 }));
 
 jest.mock('vite', () =>
@@ -227,6 +255,57 @@ describe('vite asyncResolve', () => {
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }
+  });
+
+  it('passes string Vite aliases to native resolver options', async () => {
+    const { default: wywInJS } = await loadWywInJS();
+    const plugin = wywInJS({
+      oxcOptions: {
+        resolver: {
+          alias: {
+            existing: ['/custom-existing'],
+          },
+          conditionNames: ['...'],
+        },
+      },
+    });
+
+    plugin.configResolved({
+      root: process.cwd(),
+      mode: 'development',
+      command: 'serve',
+      base: '/',
+      createResolver: () => jest.fn().mockResolvedValue('/resolved.ts'),
+      resolve: {
+        alias: [
+          { find: '@', replacement: '/project/src' },
+          { find: 'existing', replacement: '/project/vite-existing' },
+          { find: /^virtual:/, replacement: '/project/virtual' },
+        ],
+      },
+    } as any);
+
+    const transformModule = await import('@wyw-in-js/transform');
+    const transformMock = transformModule.transform as unknown as jest.Mock;
+    transformMock.mockClear();
+
+    await plugin.transform?.call(
+      { warn: jest.fn() } as any,
+      'console.log("test")',
+      '/entry.tsx'
+    );
+
+    expect(
+      transformMock.mock.calls[0][0].options.pluginOptions.oxcOptions
+    ).toEqual({
+      resolver: {
+        alias: {
+          '@': ['/project/src'],
+          existing: ['/custom-existing'],
+        },
+        conditionNames: ['...'],
+      },
+    });
   });
 
   it('does not fall back to node resolve for query ids', async () => {

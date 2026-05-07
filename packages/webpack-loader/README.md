@@ -33,6 +33,15 @@ module.exports = {
 };
 ```
 
+## Eval resolver modes
+
+`eval.resolver: 'native'` and the native step of `eval.resolver: 'hybrid'` use `oxc-resolver` with automatic
+`tsconfig.json` discovery. The loader also forwards static string entries from webpack `resolve.alias`.
+
+Use `hybrid` when evaluated imports may rely on webpack resolver plugins, query handling, or non-string aliases. Use
+`native` only when `oxc-resolver` can resolve all evaluated imports, or mirror webpack-only aliases in
+`oxcOptions.resolver.alias`.
+
 ## Disabling vendor prefixing
 
 Stylis adds vendor-prefixed CSS by default. To disable it (and reduce CSS size), pass `prefixer: false`:

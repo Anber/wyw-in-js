@@ -29,6 +29,14 @@ export default defineConfig({
 });
 ```
 
+## Eval resolver modes
+
+`eval.resolver: 'native'` and the native step of `eval.resolver: 'hybrid'` use `oxc-resolver` with automatic
+`tsconfig.json` discovery. The Vite plugin also forwards simple string aliases from `resolve.alias`.
+
+Use `hybrid` when evaluated imports may rely on Vite virtual modules, resolver plugins, or non-string aliases. Use `native`
+only when `oxc-resolver` can resolve all evaluated imports, or mirror Vite-only aliases in `oxcOptions.resolver.alias`.
+
 ## Transforming libraries in `node_modules`
 
 By default, the Vite plugin skips transforming files from `node_modules` for performance.

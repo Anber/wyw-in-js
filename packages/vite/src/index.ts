@@ -17,7 +17,14 @@ import type {
   FilterPattern,
 } from 'vite';
 
-import { asyncResolverFactory, logger, syncResolve } from '@wyw-in-js/shared';
+import {
+  asyncResolverFactory,
+  logger,
+  mergeOxcResolverAlias,
+  syncResolve,
+  toNativeResolverAlias,
+  type NativeResolverAlias,
+} from '@wyw-in-js/shared';
 import type {
   IFileReporterOptions,
   PluginOptions,
@@ -516,6 +523,7 @@ export default function wywInJS({
     client: Record<string, unknown>;
     ssr: Record<string, unknown>;
   } | null = null;
+  let nativeResolverAlias: NativeResolverAlias = {};
   const buildOverrideContext =
     (getEnv: () => Record<string, unknown> | undefined): OverrideContext =>
     (context: OverrideContextArgs[0], filename: OverrideContextArgs[1]) => {
@@ -838,6 +846,7 @@ export default function wywInJS({
     configResolved(resolvedConfig: ResolvedConfig) {
       config = resolvedConfig;
       viteResolver = config.createResolver();
+      nativeResolverAlias = toNativeResolverAlias(config.resolve?.alias);
 
       if (preserveCssPaths && config.command === 'build') {
         const outputs = config.build.rollupOptions.output;
@@ -1071,6 +1080,10 @@ export default function wywInJS({
           preprocessor,
           pluginOptions: {
             ...rest,
+            oxcOptions: mergeOxcResolverAlias(
+              rest.oxcOptions,
+              nativeResolverAlias
+            ),
             overrideContext,
           },
         },

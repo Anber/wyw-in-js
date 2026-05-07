@@ -982,6 +982,12 @@ let stdoutWriteFailed = null;
 let shutdownRequested = false;
 let shutdownFinished = false;
 
+// Tracks the SourceTextModule identifier (versioned with hash) that was last
+// included in an EVAL_RESULT for each id. Reused module variants don't need
+// re-serialization across eval sessions — same variant = same namespace =
+// same exports the broker already has cached.
+const sentNamespaceIdentifiers = new Map();
+
 const resetModuleState = () => {
   moduleCache.clear();
   moduleHashes.clear();
@@ -996,12 +1002,6 @@ const resetModuleState = () => {
   resolveCache.clear();
   sentNamespaceIdentifiers.clear();
 };
-
-// Tracks the SourceTextModule identifier (versioned with hash) that was last
-// included in an EVAL_RESULT for each id. Reused module variants don't need
-// re-serialization across eval sessions — same variant = same namespace =
-// same exports the broker already has cached.
-const sentNamespaceIdentifiers = new Map();
 
 const resetSingleModuleState = (id, cachedModule = moduleCache.get(id)) => {
   if (cachedModule) {
@@ -1872,12 +1872,9 @@ loadModule = async (id, importer, requestSpec) => {
       if (!evaluated) {
         const variants = moduleVariants.get(id);
         if (variants) {
-          for (const variant of variants.values()) {
-            if (variant.status === 'evaluated' && coversKeys(variant)) {
-              evaluated = variant;
-              break;
-            }
-          }
+          evaluated = Array.from(variants.values()).find(
+            (variant) => variant.status === 'evaluated' && coversKeys(variant)
+          );
         }
       }
 

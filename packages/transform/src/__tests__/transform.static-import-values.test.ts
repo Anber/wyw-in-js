@@ -683,13 +683,9 @@ describe('transform static import value inlining', () => {
     );
 
     try {
-      await runTransformWithOptions(
-        root,
-        entryFile,
-        cache,
-        perf.eventEmitter,
-        { features: { staticImportValues: false } }
-      );
+      await runTransformWithOptions(root, entryFile, cache, perf.eventEmitter, {
+        features: { staticImportValues: false },
+      });
 
       expect(
         perf.events.filter((event) => event.type === 'staticResolve')

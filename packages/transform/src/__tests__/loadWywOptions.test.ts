@@ -35,8 +35,14 @@ describe('loadWywOptions', () => {
     expect(options.rules[0].oxcOptions).toBe(oxcOptions);
   });
 
-  it('accepts hybrid resolver mode without changing the default', () => {
+  it('accepts native and hybrid resolver modes without changing the default', () => {
     const defaultOptions = loadWywOptions({ configFile: false });
+    const nativeOptions = loadWywOptions({
+      configFile: false,
+      eval: {
+        resolver: 'native',
+      },
+    });
     const hybridOptions = loadWywOptions({
       configFile: false,
       eval: {
@@ -45,7 +51,19 @@ describe('loadWywOptions', () => {
     });
 
     expect(defaultOptions.eval?.resolver).toBe('bundler');
+    expect(nativeOptions.eval?.resolver).toBe('native');
     expect(hybridOptions.eval?.resolver).toBe('hybrid');
+  });
+
+  it('rejects the removed node resolver mode instead of aliasing it', () => {
+    expect(() =>
+      loadWywOptions({
+        configFile: false,
+        eval: {
+          resolver: 'node' as never,
+        },
+      })
+    ).toThrow('Unsupported eval.resolver "node"');
   });
 
   it('autodiscovers wyw-in-js.config.mjs files', () => {

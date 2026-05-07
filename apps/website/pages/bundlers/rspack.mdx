@@ -43,9 +43,19 @@ export default defineConfig({
 });
 ```
 
+### Eval resolver modes
+
+Rspack/Rsbuild use `@wyw-in-js/webpack-loader`, so the native resolver behavior matches the webpack integration.
+`eval.resolver: 'native'` and the native step of `eval.resolver: 'hybrid'` use `oxc-resolver` with automatic
+`tsconfig.json` discovery, and static string entries from `resolve.alias` are forwarded into native resolver options.
+
+- `hybrid`: tries `eval.customResolver`, then native resolution, then the Rspack resolver. Use this when evaluated imports
+  depend on Rspack resolver plugins or non-string aliases.
+- `native`: uses only `oxc-resolver`; Rspack's resolver is not called. Mirror Rspack-only aliases in
+  `oxcOptions.resolver.alias` or keep using `hybrid`.
+
 ### HMR note
 
 Some Rspack setups may rebuild the generated CSS module before the JS loader finishes updating the in-memory CSS cache, which can make style updates appear “one edit behind”.
 
 WyW-in-JS avoids this by adding an internal version query to the injected CSS import when HMR is enabled, so the CSS module is invalidated on every CSS change.
-

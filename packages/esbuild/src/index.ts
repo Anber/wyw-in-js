@@ -27,7 +27,11 @@ import {
   createFileReporter,
   loadWywOptions,
 } from '@wyw-in-js/transform';
-import { asyncResolverFactory } from '@wyw-in-js/shared';
+import {
+  asyncResolverFactory,
+  mergeOxcResolverAlias,
+  toNativeResolverAlias,
+} from '@wyw-in-js/shared';
 
 type EsbuildPluginOptions = {
   debug?: IFileReporterOptions | false | null | undefined;
@@ -94,6 +98,9 @@ export default function wywInJS({
       const cssResolveDirs = new Map<string, string>();
       const warnedFilters = new Set<string>();
       let warnedEmptyOxcOptions = false;
+      const nativeResolverAlias = toNativeResolverAlias(
+        build.initialOptions.alias
+      );
 
       const { emitter, onDone } = createFileReporter(debug ?? false);
 
@@ -265,7 +272,13 @@ export default function wywInJS({
         const transformServices = {
           options: {
             filename: args.path,
-            pluginOptions: rest,
+            pluginOptions: {
+              ...rest,
+              oxcOptions: mergeOxcResolverAlias(
+                rest.oxcOptions,
+                nativeResolverAlias
+              ),
+            },
             prefixer,
             keepComments,
             preprocessor,

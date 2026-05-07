@@ -35,6 +35,19 @@ module.exports = {
 `eval.require` defaults to `warn-and-run` in v2. If eval-time `require()` happens, WyW will warn and execute it at
 runtime; use `importOverrides` or `eval.require: 'error'` to make it explicit.
 
+### Eval resolver modes
+
+`eval.resolver: 'native'` and the native step of `eval.resolver: 'hybrid'` use `oxc-resolver` with automatic
+`tsconfig.json` discovery, so TypeScript `baseUrl`/`paths` aliases work by default.
+
+The webpack loader also forwards static string entries from `resolve.alias` into native resolver options. Dynamic resolver
+plugins and non-string aliases remain webpack-specific and are resolved only by the bundler fallback.
+
+- `hybrid`: tries `eval.customResolver`, then native resolution, then webpack's resolver. This is the safest mode when
+  evaluated imports use webpack aliases, resolver plugins, or query-based asset requests.
+- `native`: uses only `oxc-resolver`; webpack's resolver is not called. Mirror webpack-only aliases in
+  `oxcOptions.resolver.alias` or keep using `hybrid`.
+
 ### Resource queries (`?raw`, `?url`, etc.)
 
 If you import assets with resource queries (e.g. `./arrow.svg?svgUse`), WyW-in-JS ignores `?query/#hash` for file reads and extension checks.

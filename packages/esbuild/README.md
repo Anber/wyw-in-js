@@ -34,6 +34,14 @@ esbuild
   .catch(() => process.exit(1));
 ```
 
+## Eval resolver modes
+
+`eval.resolver: 'native'` and the native step of `eval.resolver: 'hybrid'` use `oxc-resolver` with automatic
+`tsconfig.json` discovery. The plugin also forwards esbuild's top-level `alias` option.
+
+Use `hybrid` when evaluated imports may rely on esbuild `onResolve` plugins. Use `native` only when `oxc-resolver` can
+resolve all evaluated imports, or mirror plugin-only aliases in `oxcOptions.resolver.alias`.
+
 ## Additional Oxc transformations
 
 `@wyw-in-js/esbuild` runs WyW evaluation after an `esbuild.transform()` step, so transform options that must run on the

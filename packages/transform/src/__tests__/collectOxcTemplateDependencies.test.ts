@@ -18,4 +18,11 @@ describe('evaluateOxcStaticExpression', () => {
       evaluateOxcStaticExpression('typeof process.env.NODE_ENV', '/test.ts')
     ).toBe('undefined');
   });
+
+  it('preserves bitwise-not semantics without using a bitwise operator', () => {
+    expect(evaluateOxcStaticExpression('~1', '/test.ts')).toBe(-2);
+    expect(evaluateOxcStaticExpression('~2147483648', '/test.ts')).toBe(
+      2147483647
+    );
+  });
 });

@@ -3,6 +3,17 @@ import type { Configuration, RuleSetRule } from 'webpack';
 import { withWyw } from '../index';
 
 describe('withWyw', () => {
+  const getTurbopackLoaderOptions = (nextConfig: any) => {
+    const rules = nextConfig.turbopack?.rules ?? nextConfig.experimental?.turbo?.rules;
+    const tsRule = rules['*.ts'];
+
+    if (Array.isArray(tsRule)) {
+      return tsRule[0].options;
+    }
+
+    return tsRule.loaders[0].options;
+  };
+
   it('injects Turbopack rules (turbopack.rules or experimental.turbo.rules)', () => {
     const nextConfig = withWyw();
 
@@ -64,6 +75,42 @@ describe('withWyw', () => {
     expect(rules).toBeTruthy();
     expect(rules['*.ts']).toEqual(['custom-loader']);
     expect(rules['*.tsx']).toBeTruthy();
+  });
+
+  it('passes static Turbopack aliases to native resolver options', () => {
+    const nextConfig = withWyw(
+      {
+        turbopack: {
+          resolveAlias: {
+            '@': '/project/src',
+            disabled: false,
+            existing: '/project/ignored',
+          },
+        },
+      } as any,
+      {
+        turbopackLoaderOptions: {
+          oxcOptions: {
+            resolver: {
+              alias: {
+                existing: ['/custom-existing'],
+              },
+              conditionNames: ['...'],
+            },
+          },
+        },
+      }
+    );
+
+    expect(getTurbopackLoaderOptions(nextConfig).oxcOptions).toEqual({
+      resolver: {
+        alias: {
+          '@': ['/project/src'],
+          existing: ['/custom-existing'],
+        },
+        conditionNames: ['...'],
+      },
+    });
   });
 
   it('injects @wyw-in-js/webpack-loader into Next transpile rules', () => {

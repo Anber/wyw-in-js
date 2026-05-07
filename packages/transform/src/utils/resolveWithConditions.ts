@@ -90,7 +90,7 @@ const resolveWithNodeProcess = (
     } catch {
       throw new Error(
         [
-          '[wyw-in-js] Failed to parse Node resolver fallback output.',
+          '[wyw-in-js] Failed to parse custom module resolver output.',
           `stdout: ${stdout}`,
           result.stderr ? `stderr: ${result.stderr.trim()}` : '',
         ]
@@ -109,7 +109,7 @@ const resolveWithNodeProcess = (
   if (result.status !== 0 || !parsed?.resolved) {
     throw new Error(
       [
-        '[wyw-in-js] Node resolver fallback failed.',
+        '[wyw-in-js] Custom module resolver fallback failed.',
         `status: ${result.status ?? 'null'}`,
         result.stderr ? `stderr: ${result.stderr.trim()}` : '',
       ]
@@ -138,7 +138,7 @@ export const resolveFilenameWithConditions = (
   // Bun crashes on macOS/Silicon in this exact path:
   //   Module._resolveFilename(specifier, parent, false, { conditions })
   // We reproduced it both with a tiny standalone script and through the
-  // `EvalBroker > passes conditionNames to node fallback resolution` test,
+  // `EvalBroker > passes conditionNames to native fallback resolution` test,
   // including on Bun 1.3.13. Keep this fallback narrow: only conditioned
   // resolution under Bun goes through a short-lived Node subprocess.
   //

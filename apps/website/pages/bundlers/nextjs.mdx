@@ -31,6 +31,20 @@ export default withWyw({
 `eval.require` defaults to `warn-and-run` in v2. If eval-time `require()` happens, WyW will warn and execute it at
 runtime; use `importOverrides` or `eval.require: 'error'` to make it explicit.
 
+### Eval resolver modes
+
+`eval.resolver: 'native'` and the native step of `eval.resolver: 'hybrid'` use `oxc-resolver` with automatic
+`tsconfig.json` discovery, so TypeScript `baseUrl`/`paths` aliases work by default.
+
+For the webpack pipeline, `@wyw-in-js/webpack-loader` forwards static string entries from webpack `resolve.alias`.
+For the Turbopack pipeline configured through `withWyw()`, static string aliases from `turbopack.resolveAlias` or
+`experimental.turbo.resolveAlias` are forwarded into native resolver options.
+
+- `hybrid`: tries `eval.customResolver`, then native resolution, then the active Next bundler resolver. Use this when
+  evaluated imports may depend on Next, webpack, or Turbopack resolver behavior.
+- `native`: uses only `oxc-resolver`; Next's bundler resolver is not called. Mirror bundler-only aliases in
+  `oxcOptions.resolver.alias` or keep using `hybrid`.
+
 ### Customizing the loader
 
 Pass `loaderOptions` through to `@wyw-in-js/webpack-loader`:
