@@ -577,6 +577,10 @@ const analyzeProgram = (
       usedNames.add(node.name);
     }
 
+    if (isInTypeContext(ancestors)) {
+      return;
+    }
+
     if (
       node.type === 'FunctionDeclaration' ||
       node.type === 'FunctionExpression' ||
