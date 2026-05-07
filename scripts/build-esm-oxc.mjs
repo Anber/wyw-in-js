@@ -86,7 +86,7 @@ for (const filename of files) {
     lang: getLang(filename),
     sourceType: 'module',
     sourcemap: true,
-    target: 'esnext',
+    target: 'es2024',
     typescript: {
       allowNamespaces: true,
     },
