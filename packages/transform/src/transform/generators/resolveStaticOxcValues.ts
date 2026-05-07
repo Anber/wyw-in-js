@@ -991,6 +991,18 @@ const parseStaticExpressionSource = (
   }
 };
 
+const isRuntimeCallbackExpression = (
+  expression: Expression | null
+): boolean => {
+  const unwrapped = expression ? unwrapExpression(expression) : null;
+  return (
+    unwrapped?.type === 'ArrowFunctionExpression' ||
+    unwrapped?.type === 'FunctionExpression'
+  );
+};
+
+const runtimeCallbackPlaceholder = (): undefined => undefined;
+
 const expressionUsesNameOnlyAsZeroArgCalls = (
   expression: Node,
   name: string
@@ -5465,6 +5477,13 @@ function* resolveCandidateValue(
     });
   }
 
+  if (candidateExpression === undefined) {
+    candidateExpression = parseStaticExpressionSource(
+      candidate.source,
+      filename
+    );
+  }
+
   const value = evaluateOxcStaticExpression(
     candidate.source,
     filename,
@@ -5477,7 +5496,10 @@ function* resolveCandidateValue(
   // local `_exp = () => target` arrow already lives in the bundle, so
   // the file does not need evalFile to compute it. Mark the result as
   // runtimeOnly so the helper declaration survives pruning.
-  if (typeof value === 'function') {
+  if (
+    typeof value === 'function' ||
+    (value === undefined && isRuntimeCallbackExpression(candidateExpression))
+  ) {
     debugStaticResolve(action, {
       candidate: candidate.name,
       filename,
@@ -5593,7 +5615,9 @@ export function* resolveStaticOxcPreevalValues(
   // Names of candidates resolved to runtime callbacks (function values).
   // They keep the file out of evalFile but their helper declarations must
   // not be pruned — the runtime call site relies on them.
-  const runtimeOnlyCandidateNames = new Set<string>();
+  const runtimeOnlyCandidateNames = new Set<string>(
+    preevalResult.runtimeOnlyStaticValueNames ?? []
+  );
   let changed = false;
   let hasKnownStaticCandidate = false;
 
@@ -5673,10 +5697,11 @@ export function* resolveStaticOxcPreevalValues(
     }
 
     if (resolved.runtimeOnly) {
-      // Runtime callback — don't seed staticValueCache (which gates
-      // pruning of the `_exp = () => target` helper). Track separately
-      // so dependencyNames still gets filtered and evalFile is skipped.
+      // Runtime callback — seed a callable placeholder for collect() but
+      // track it separately so the `_exp = () => target` helper survives
+      // pruning. The runtime call site relies on that helper declaration.
       runtimeOnlyCandidateNames.add(candidate.name);
+      staticValueCache.set(candidate.name, runtimeCallbackPlaceholder);
     } else {
       staticValueCache.set(candidate.name, resolved.value);
     }
@@ -5710,9 +5735,19 @@ export function* resolveStaticOxcPreevalValues(
   preevalResult.staticNullWYWMetaExtendsHelpers = [
     ...staticNullWYWMetaExtendsHelpers,
   ];
+  preevalResult.runtimeOnlyStaticValueNames = [...runtimeOnlyCandidateNames];
   preevalResult.staticValuesApplied = true;
   const originalBaseCode = preevalResult.baseCode ?? preevalResult.code;
-  const staticExtendsHelperValues = new Map(staticValueCache);
+  const prunableStaticValueNames = new Set(
+    [...staticValueCache.keys()].filter(
+      (name) => !runtimeOnlyCandidateNames.has(name)
+    )
+  );
+  const staticExtendsHelperValues = new Map(
+    [...staticValueCache].filter(
+      ([name]) => !runtimeOnlyCandidateNames.has(name)
+    )
+  );
   staticNullWYWMetaExtendsHelpers.forEach((name) => {
     if (!staticExtendsHelperValues.has(name)) {
       staticExtendsHelperValues.set(name, null);
@@ -5721,7 +5756,7 @@ export function* resolveStaticOxcPreevalValues(
   const baseCode = pruneStaticPreevalCode(
     originalBaseCode,
     filename,
-    new Set(staticValueCache.keys()),
+    prunableStaticValueNames,
     staticImportLocals,
     staticExtendsHelperValues,
     sideEffectImportLocals
@@ -5731,7 +5766,7 @@ export function* resolveStaticOxcPreevalValues(
       ? pruneStaticPreevalCode(
           originalBaseCode,
           filename,
-          new Set(staticValueCache.keys()),
+          prunableStaticValueNames,
           staticImportLocals,
           staticExtendsHelperValues,
           new Set()

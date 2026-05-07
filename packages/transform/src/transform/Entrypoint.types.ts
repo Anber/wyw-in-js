@@ -42,6 +42,7 @@ export interface IPreevalResult {
   staticNullWYWMetaExtendsHelpers?: string[];
   staticValuesApplied?: boolean;
   staticValueCache?: Map<string, unknown>;
+  runtimeOnlyStaticValueNames?: string[];
   staticValueCandidates?: Array<{
     imports: Array<{
       imported: 'default' | string;

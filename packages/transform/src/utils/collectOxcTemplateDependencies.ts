@@ -2612,7 +2612,9 @@ const extractExpressions = (
         value: staticValue,
       });
     } else if (
-      (staticImports.length > 0 || hasInlinableLocalReference) &&
+      (staticImports.length > 0 ||
+        hasInlinableLocalReference ||
+        staticExpressionCode !== undefined) &&
       kind !== ValueType.FUNCTION
     ) {
       const uniqueImports = new Map<string, OxcStaticImportReference>();
