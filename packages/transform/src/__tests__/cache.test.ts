@@ -8,7 +8,8 @@ import type { IEntrypointDependency } from '../transform/Entrypoint.types';
 type MockEntrypoint = {
   dependencies: Map<string, Pick<IEntrypointDependency, 'resolved'>>;
   generation: number;
-  initialCode: string;
+  initialCode?: string;
+  invalidateOnDependencyChange?: Set<string>;
   invalidationDependencies?: Map<
     string,
     Pick<IEntrypointDependency, 'resolved'>
@@ -257,6 +258,56 @@ describe('TransformCacheCollection', () => {
       expect(cache.has('entrypoints', depName)).toBe(true);
       expect(mockedReadFileSync).not.toHaveBeenCalledWith(depName, 'utf8');
       expect(mockedStatSync).toHaveBeenCalledWith(depName);
+    });
+
+    it('does not invalidate an output-affecting dependency when only its entrypoint was evicted', () => {
+      const depName = 'dep.js';
+      const depContent = 'export const token = "red";';
+      const parentName = 'parent.js';
+      const parentContent = 'import { token } from "./dep.js"; css`${token}`;';
+
+      const { entrypoint: depEntrypoint } = setupCacheWithEntrypoint(
+        depName,
+        depContent
+      );
+
+      const parentDeps = new Map<
+        string,
+        Pick<IEntrypointDependency, 'resolved'>
+      >([['./dep.js', { resolved: depName }]]);
+      const { cache, entrypoint: parentEntrypoint } = setupCacheWithEntrypoint(
+        parentName,
+        parentContent,
+        parentDeps
+      );
+      parentEntrypoint.invalidateOnDependencyChange = new Set([depName]);
+
+      cache.add('entrypoints', depName, depEntrypoint as any);
+
+      mockedStatSync.mockImplementation((path) => {
+        if (path === depName) {
+          return { mtimeMs: 123 } as fs.Stats;
+        }
+
+        throw new Error(`Unexpected statSync call: ${String(path)}`);
+      });
+      mockedReadFileSync.mockImplementation((path) => {
+        if (path === depName) {
+          return depContent;
+        }
+
+        throw new Error(`Unexpected readFileSync call: ${String(path)}`);
+      });
+
+      expect(cache.checkFreshness(depName, depName)).toBe(false);
+      cache.delete('entrypoints', depName);
+      mockedReadFileSync.mockClear();
+
+      const invalidated = cache.invalidateIfChanged(parentName, parentContent);
+
+      expect(invalidated).toBe(false);
+      expect(cache.has('entrypoints', parentName)).toBe(true);
+      expect(mockedReadFileSync).toHaveBeenCalledWith(depName, 'utf8');
     });
 
     it('memoizes unchanged shared dependency subtrees within one invalidation pass', () => {
