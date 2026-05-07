@@ -1213,6 +1213,13 @@ export class EvalBroker {
 
   private readonly onlyByModule = new Map<string, string[]>();
 
+  // Modules that are part of the current eval session's link graph. Used
+  // to scope `mergeKnownDependencyOnly` to entrypoints that share the
+  // current runner's VM, instead of unioning across every cached
+  // entrypoint project-wide. Cleared whenever the runner is killed or
+  // respawned (mirrors lastSentLoadByModule).
+  private readonly sessionLinkGraph = new Set<string>();
+
   private readonly runtimeDependenciesByModule = new Map<string, Set<string>>();
 
   private readonly emittedDependencies = new Set<string>();
@@ -1472,6 +1479,8 @@ export class EvalBroker {
     this.onlyByModule.clear();
     this.resolveCache.clear();
     this.resolveInFlight.clear();
+    this.sessionLinkGraph.clear();
+    this.sessionLinkGraph.add(entrypoint.name);
     this.onlyByModule.set(entrypoint.name, ['__wywPreval']);
   }
 
@@ -1531,6 +1540,7 @@ export class EvalBroker {
     this.lastInitKey = null;
     this.lastHappyDomEnabled = false;
     this.lastSentLoadByModule.clear();
+    this.sessionLinkGraph.clear();
     this.stableInitHashCache = null;
     flushDebugStreams();
   }
@@ -1579,6 +1589,7 @@ export class EvalBroker {
       this.lastInitKey = null;
       this.lastHappyDomEnabled = false;
       this.lastSentLoadByModule.clear();
+    this.sessionLinkGraph.clear();
     });
   }
 
@@ -1734,6 +1745,7 @@ export class EvalBroker {
     // New process ⇒ runner's moduleCache/moduleHashes are empty, so our mirror
     // of "what we already shipped" is stale.
     this.lastSentLoadByModule.clear();
+    this.sessionLinkGraph.clear();
   }
 
   private getStableInitHash(
@@ -1929,6 +1941,7 @@ export class EvalBroker {
           // context rebuild or reuseModules:false). Drop our shipped-code
           // mirror so handleLoad ships fresh code on the next LOAD.
           this.lastSentLoadByModule.clear();
+    this.sessionLinkGraph.clear();
         }
         this.resolvePending(message.id, {});
         return;
@@ -2783,6 +2796,14 @@ export class EvalBroker {
         only: merged,
       });
     }
+    // Session link graph tracks every module that's been admitted into
+    // the current runner's VM. mergeKnownDependencyOnly uses this to
+    // narrow its consumer-set to entrypoints actually linking against
+    // the same module instance.
+    this.sessionLinkGraph.add(payload.id);
+    if (payload.importerId) {
+      this.sessionLinkGraph.add(payload.importerId);
+    }
   }
 
   private async loadModule({
@@ -3243,6 +3264,17 @@ export class EvalBroker {
 
     let mergedOnly = storedOnly;
     for (const cachedEntrypoint of this.services.cache.entrypoints.values() as Iterable<CachedDependencyOwner>) {
+      // Scope the union to entrypoints that are part of the CURRENT
+      // session's link graph. Cached entrypoints from prior transforms
+      // already evaluated against their own VMs; their imports must not
+      // widen this load. Empty session graph (initial load) falls back
+      // to project-wide for safety.
+      if (
+        this.sessionLinkGraph.size > 0 &&
+        !this.sessionLinkGraph.has(cachedEntrypoint.name)
+      ) {
+        continue;
+      }
       const { dependencies } = cachedEntrypoint;
       if (!dependencies) {
         continue;
