@@ -518,6 +518,33 @@ module.exports = {
 
   A map of feature flags to enable/disable. See [Feature Flags](/feature-flags) for more information.
 
+- `staticBindings: Record<string, Record<string, unknown>>`
+
+  A per-source map of statically-known imported values used by `features.staticImportValues`. Keys are either the import
+  source as written, such as `@linaria/core`, or the resolved absolute file path. Values map imported names to either
+  literal replacements or pure helper functions. Helper functions are called only when all call arguments can also be
+  resolved statically.
+
+  Use this for deterministic helpers or build-time constants that WyW cannot inspect directly. The trust model is the
+  same as `importOverrides`: the project config vouches that these values are deterministic and intentionally match, or
+  intentionally replace, runtime behavior.
+
+  ```js
+  export default {
+    features: {
+      staticImportValues: true,
+    },
+    staticBindings: {
+      '@linaria/core': {
+        cx: (...args) => args.filter(Boolean).join(' '),
+      },
+      '/absolute/path/to/theme.ts': {
+        themeVars: { panelBg: '#f00' },
+      },
+    },
+  };
+  ```
+
 - <a id="coderemover"></a> `codeRemover: CodeRemoverOptions`
 
   An object with two keys `componentTypes` and `hocs`. It specifies types of variables and HOCs that will be replaced

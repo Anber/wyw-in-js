@@ -1,4 +1,7 @@
-import { evaluateOxcStaticExpression } from '../utils/collectOxcTemplateDependencies';
+import {
+  evaluateOxcStaticExpression,
+  evaluateOxcStaticExpressionAt,
+} from '../utils/collectOxcTemplateDependencies';
 
 describe('evaluateOxcStaticExpression', () => {
   it('folds typeof of undeclared globals to "undefined"', () => {
@@ -22,6 +25,26 @@ describe('evaluateOxcStaticExpression', () => {
     expect(
       evaluateOxcStaticExpression('typeof process.env.NODE_ENV', '/test.ts')
     ).toBe('undefined');
+    expect(
+      evaluateOxcStaticExpression(
+        "process.env.NODE_ENV === undefined ? 'fallback' : 'runtime'",
+        '/test.ts'
+      )
+    ).toBe('fallback');
+  });
+
+  it('does not fold typeof declared dynamic locals as undeclared globals', () => {
+    const code =
+      "const local = window.foo;\nconst value = typeof local === 'undefined' ? 'fallback' : 'runtime';";
+    const expression = "typeof local === 'undefined' ? 'fallback' : 'runtime'";
+    const start = code.indexOf(expression);
+
+    expect(
+      evaluateOxcStaticExpressionAt(code, '/test.ts', {
+        start,
+        end: start + expression.length,
+      })
+    ).toBe(undefined);
   });
 
   it('preserves bitwise-not semantics without using a bitwise operator', () => {

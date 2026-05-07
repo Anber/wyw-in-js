@@ -4031,6 +4031,14 @@ const dependencyResolutionCaches = new WeakMap<
   Map<string, IEntrypointDependency>
 >();
 
+// Bare package and alias resolution can depend on the importer through nested
+// packages, package boundaries, tsconfig paths, or bundler aliases.
+const dependencyResolutionCacheKey = (
+  importer: string,
+  source: string,
+  imported: string
+): string => `${importer}\0${source}\0${imported}`;
+
 function* resolveDependency(
   action: ITransformAction,
   importer: string,
@@ -4047,19 +4055,15 @@ function* resolveDependency(
     phase: 'initial',
   });
 
-  // Non-relative sources (package names, aliases) resolve deterministically
-  // within a project — the same `source` always points to the same file
-  // regardless of importer. Cache successful resolutions and fall back to
-  // them when an individual importer's resolver call returns null. This
-  // recovers from resolver-side flakiness where one importer hits a
-  // negative cache while every other importer for the same source resolves
-  // fine.
+  // Non-relative sources (package names, aliases) can still be importer-
+  // dependent because of nested packages, tsconfig boundaries, and bundler
+  // aliases. Cache only within the same importer context.
   if (!isRelativeSource(source)) {
     const cache = getWeakCacheMap(
       dependencyResolutionCaches,
       action.services.cache
     );
-    const cacheKey = `${source}\0${imported}`;
+    const cacheKey = dependencyResolutionCacheKey(importer, source, imported);
     if (resolved?.resolved) {
       cache.set(cacheKey, resolved);
       return resolved;

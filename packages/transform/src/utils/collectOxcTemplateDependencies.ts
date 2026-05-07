@@ -1381,6 +1381,34 @@ const isProcessEnvMember = (node: Node): boolean => {
   return node.object.type === 'Identifier' && node.object.name === 'process';
 };
 
+const isProcessEnvValueAccess = (
+  expression: Expression,
+  env: EvalEnv
+): boolean =>
+  expression.type === 'MemberExpression' &&
+  isProcessEnvMember(expression.object) &&
+  !env.has('process');
+
+const isDeterministicUndefinedExpression = (
+  expression: Expression,
+  ctx: ExtractionContext,
+  env: EvalEnv
+): boolean => {
+  if (isProcessEnvValueAccess(expression, env)) {
+    return true;
+  }
+
+  if (expression.type === 'UnaryExpression' && expression.operator === 'void') {
+    return true;
+  }
+
+  return (
+    expression.type === 'Identifier' &&
+    expression.name === 'undefined' &&
+    !resolveBindingAt(ctx, expression.name, expression.start)
+  );
+};
+
 const evaluateBinary = (
   expression: Expression,
   ctx: ExtractionContext,
@@ -1394,8 +1422,24 @@ const evaluateBinary = (
   const left = evaluateStatic(expression.left as Expression, ctx, env, stack);
   const right = evaluateStatic(expression.right as Expression, ctx, env, stack);
 
-  // Equality / inequality operators tolerate undefined operands —
-  // `typeof X === 'undefined'` is the canonical undeclared-global probe.
+  const leftIsDeterministicUndefined =
+    left === undefined &&
+    isDeterministicUndefinedExpression(expression.left as Expression, ctx, env);
+  const rightIsDeterministicUndefined =
+    right === undefined &&
+    isDeterministicUndefinedExpression(
+      expression.right as Expression,
+      ctx,
+      env
+    );
+
+  if (
+    (left === undefined && !leftIsDeterministicUndefined) ||
+    (right === undefined && !rightIsDeterministicUndefined)
+  ) {
+    return undefined;
+  }
+
   switch (expression.operator) {
     case '===':
       return left === right;
@@ -1409,10 +1453,6 @@ const evaluateBinary = (
       return left != right;
     default:
       break;
-  }
-
-  if (left === undefined || right === undefined) {
-    return undefined;
   }
 
   if (expression.operator === '+') {
@@ -1479,16 +1519,21 @@ const evaluateStatic = (
 
   if (expression.type === 'UnaryExpression') {
     if (expression.operator === 'typeof') {
-      const argIsProcessEnvAccess =
-        expression.argument.type === 'MemberExpression' &&
-        isProcessEnvMember(expression.argument.object);
+      const argIsProcessEnvAccess = isProcessEnvValueAccess(
+        expression.argument as Expression,
+        env
+      );
       // `typeof someIdentifier` is the canonical undeclared-global
       // probe — it returns 'undefined' regardless of whether the
-      // symbol is declared. We don't model TDZ, but const/let in the
-      // file's top-level scope have bindings findReferences sees, so
-      // an Identifier here that evaluates to undefined is genuinely
-      // unbound from wyw's perspective.
-      const argIsBareIdentifier = expression.argument.type === 'Identifier';
+      // symbol is declared. Only fold truly unbound identifiers: declared
+      // but dynamic locals still have runtime values we cannot infer.
+      const argIsUnboundBareIdentifier =
+        expression.argument.type === 'Identifier' &&
+        !resolveBindingAt(
+          ctx,
+          expression.argument.name,
+          expression.argument.start
+        );
       const arg = evaluateStatic(
         expression.argument as Expression,
         ctx,
@@ -1496,7 +1541,7 @@ const evaluateStatic = (
         stack
       );
       if (arg === undefined) {
-        return argIsProcessEnvAccess || argIsBareIdentifier
+        return argIsProcessEnvAccess || argIsUnboundBareIdentifier
           ? 'undefined'
           : undefined;
       }
@@ -1536,9 +1581,10 @@ const evaluateStatic = (
     // undefined" — it's a build-time lookup we control. For everything else,
     // undefined means "couldn't evaluate" and we must bail to avoid inlining
     // a wrong fallback when the runtime value isn't actually nullish.
-    const leftIsProcessEnvAccess =
-      expression.left.type === 'MemberExpression' &&
-      isProcessEnvMember(expression.left.object);
+    const leftIsProcessEnvAccess = isProcessEnvValueAccess(
+      expression.left,
+      env
+    );
 
     if (left === undefined && !leftIsProcessEnvAccess) {
       return undefined;
@@ -1763,11 +1809,7 @@ const evaluateStatic = (
       return undefined;
     }
 
-    if (
-      isProcessEnvMember(expression.object) &&
-      typeof key === 'string' &&
-      !env.has('process')
-    ) {
+    if (isProcessEnvValueAccess(expression, env) && typeof key === 'string') {
       // Treat process.env.X as deterministically undefined at build time.
       // Reading from real process.env would couple the bundle to whatever
       // happens to be set on the build machine; falling back to the

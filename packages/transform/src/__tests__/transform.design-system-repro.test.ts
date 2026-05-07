@@ -1979,7 +1979,7 @@ describe('design-system chain repro for staticImportValues', () => {
     }
   });
 
-  it('inlines cross-file MemberExpression on a plain ObjectExpression even when source-side import resolution flickers (cssConstants)', async () => {
+  it('inlines cross-file MemberExpression on a plain ObjectExpression when source-side import resolution flickers (cssConstants)', async () => {
     // canvas/components/{comments-sidebar,activity}.tsx pattern (seq00033/00038):
     //   // css-constants.ts
     //   import { space } from '@fibery/ui-kit/src/design-system';
@@ -1988,11 +1988,9 @@ describe('design-system chain repro for staticImportValues', () => {
     //   // consumer
     //   ${cssConstants.common}
     //
-    // In the bench, the resolver returns null when css-constants.ts asks
-    // for design-system, even though every other file in the project gets
-    // it back fine. wyw should still resolve cssConstants if a) the
-    // resolver succeeds even once for the same source/imported pair, or
-    // b) we can fall back to the consumer's resolver call.
+    // In the bench, the resolver can briefly return null when
+    // css-constants.ts asks for design-system. wyw should still resolve
+    // cssConstants when the same importer succeeds on the bounded retry.
     const root = mkdtempSync(join(tmpdir(), 'wyw-spread-repro-'));
     const cache = new TransformCacheCollection();
     const perf = createPerfEventRecorder();
@@ -2021,8 +2019,8 @@ describe('design-system chain repro for staticImportValues', () => {
       entryFile,
       dedent`
         import { css } from 'test-css-processor';
-        // Direct import of the alias from the entry succeeds and primes
-        // the cross-importer resolution cache.
+        // Direct import of the alias from the entry succeeds, but must
+        // not be used as a fallback for css-constants.ts.
         import { space } from '@pkg/design-system';
         import { cssConstants } from './css-constants';
 
@@ -2036,15 +2034,18 @@ describe('design-system chain repro for staticImportValues', () => {
       `
     );
 
-    // Resolver that consistently returns null for the
-    // css-constants.ts → @pkg/design-system pair (mimicking the bench's
-    // dependency-unresolved symptom for this specific importer). Other
-    // importers can still resolve the alias fine.
+    // Resolver that returns null once for the
+    // css-constants.ts → @pkg/design-system pair. Other importers can
+    // still resolve the alias fine, but the source file must rely on its
+    // own bounded retry rather than cross-importer cache reuse.
+    let trippedCssConstantsFailure = false;
     const flakyResolver = async (what: string, importer: string) => {
       if (
         what === '@pkg/design-system' &&
-        importer.endsWith('css-constants.ts')
+        importer.endsWith('css-constants.ts') &&
+        !trippedCssConstantsFailure
       ) {
+        trippedCssConstantsFailure = true;
         return null;
       }
       if (what === '@pkg/design-system') {
