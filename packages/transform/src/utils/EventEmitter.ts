@@ -77,12 +77,35 @@ export interface OnAction {
   (...args: OnActionFinishArgs): void;
 }
 
+type PerfStatus = 'failed' | 'finished';
+
+type PerfStartEvent = {
+  method: string;
+  spanId: number;
+  startedAt: number;
+  type: 'perf-span-start';
+};
+
+export type PerfFinishEvent = {
+  durationMs: number;
+  error?: unknown;
+  finishedAt: number;
+  isAsync: boolean;
+  method: string;
+  spanId: number;
+  startedAt: number;
+  status: PerfStatus;
+  type: 'perf-span';
+};
+
 export class EventEmitter {
   static dummy = new EventEmitter(
     () => {},
     () => 0,
     () => {}
   );
+
+  private perfSpanId = 0;
 
   constructor(
     protected onEvent: OnEvent,
@@ -127,21 +150,59 @@ export class EventEmitter {
   }
 
   public perf<TRes>(method: string, fn: () => TRes): TRes {
+    const spanId = this.perfSpanId;
+    this.perfSpanId += 1;
+    const startedAt = performance.now();
     const labels = { method };
+    const startEvent: PerfStartEvent = {
+      method,
+      spanId,
+      startedAt,
+      type: 'perf-span-start',
+    };
 
-    this.onEvent(labels, 'start');
+    this.onEvent(labels, 'start', startEvent);
 
-    const result = fn();
-    if (result instanceof Promise) {
-      result.then(
-        () => this.onEvent(labels, 'finish'),
-        () => this.onEvent(labels, 'finish')
-      );
-    } else {
-      this.onEvent(labels, 'finish');
+    const finish = (
+      status: PerfStatus,
+      isAsync: boolean,
+      error?: unknown
+    ) => {
+      const finishedAt = performance.now();
+      const finishEvent: PerfFinishEvent = {
+        durationMs: finishedAt - startedAt,
+        finishedAt,
+        isAsync,
+        method,
+        spanId,
+        startedAt,
+        status,
+        type: 'perf-span',
+      };
+
+      if (error !== undefined) {
+        finishEvent.error = error;
+      }
+
+      this.onEvent(labels, 'finish', finishEvent);
+    };
+
+    try {
+      const result = fn();
+      if (result instanceof Promise) {
+        result.then(
+          () => finish('finished', true),
+          (error) => finish('failed', true, error)
+        );
+      } else {
+        finish('finished', false);
+      }
+
+      return result;
+    } catch (error) {
+      finish('failed', false, error);
+      throw error;
     }
-
-    return result;
   }
 
   public single(labels: Record<string, unknown>) {

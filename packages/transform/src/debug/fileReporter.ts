@@ -8,6 +8,7 @@ import type {
   OnActionFinishArgs,
   OnActionStartArgs,
   OnEntrypointEvent,
+  PerfFinishEvent,
 } from '../utils/EventEmitter';
 import { EventEmitter, isOnActionStartArgs } from '../utils/EventEmitter';
 
@@ -39,6 +40,14 @@ export interface IQueueActionEvent {
 const workingDir = process.cwd();
 
 function replacer(_key: string, value: unknown): unknown {
+  if (value instanceof Error) {
+    return {
+      message: value.message,
+      name: value.name,
+      stack: value.stack,
+    };
+  }
+
   if (typeof value === 'string' && path.isAbsolute(value)) {
     return path.relative(workingDir, value);
   }
@@ -84,6 +93,35 @@ const writeJSONl = (stream: NodeJS.WritableStream, data: unknown) => {
   stream.write(`${JSON.stringify(data, replacer)}\n`);
 };
 
+const isPerfFinishEvent = (event: unknown): event is PerfFinishEvent => {
+  if (!event || typeof event !== 'object') {
+    return false;
+  }
+
+  return (
+    'type' in event &&
+    event.type === 'perf-span' &&
+    'method' in event &&
+    typeof event.method === 'string' &&
+    'spanId' in event &&
+    typeof event.spanId === 'number' &&
+    'startedAt' in event &&
+    typeof event.startedAt === 'number' &&
+    'finishedAt' in event &&
+    typeof event.finishedAt === 'number' &&
+    'durationMs' in event &&
+    typeof event.durationMs === 'number'
+  );
+};
+
+const isPerfStartEvent = (event: unknown) => {
+  if (!event || typeof event !== 'object') {
+    return false;
+  }
+
+  return 'type' in event && event.type === 'perf-span-start';
+};
+
 export const createFileReporter = (
   options: IFileReporterOptions | false = false
 ) => {
@@ -118,6 +156,10 @@ export const createFileReporter = (
 
   const staticResolveStream = createWriteStream(
     path.join(options.dir, 'static-resolve.jsonl')
+  );
+
+  const perfSpanStream = createWriteStream(
+    path.join(options.dir, 'perf-spans.jsonl')
   );
 
   const startedAt = performance.now();
@@ -160,9 +202,19 @@ export const createFileReporter = (
 
   const startTimes = new Map<string, number>();
 
-  const onEvent: OnEvent = (meta, type) => {
+  const onEvent: OnEvent = (meta, type, event) => {
     if (type === 'single') {
       processSingleEvent(meta);
+      return;
+    }
+
+    if (type === 'finish' && isPerfFinishEvent(event)) {
+      addTiming('method', event.method, event.durationMs);
+      writeJSONl(perfSpanStream, event);
+      return;
+    }
+
+    if (type === 'start' && isPerfStartEvent(event)) {
       return;
     }
 
@@ -235,6 +287,7 @@ export const createFileReporter = (
       dependenciesStream.end();
       entrypointStream.end();
       staticResolveStream.end();
+      perfSpanStream.end();
       timings.clear();
     },
   };
