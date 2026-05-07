@@ -5747,6 +5747,11 @@ export function* resolveStaticOxcPreevalValues(
   preevalResult.staticSideEffectImportLocals = [...sideEffectImportLocals];
 
   for (const dependency of staticDependencies) {
+    const strippedDependency = stripQueryAndHash(dependency);
+    if (isAbsolute(strippedDependency)) {
+      this.services.cache.checkFreshness(dependency, strippedDependency);
+    }
+
     this.entrypoint.addInvalidationDependency({
       only: ['*'],
       resolved: dependency,

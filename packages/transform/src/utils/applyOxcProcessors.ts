@@ -52,13 +52,6 @@ type ApplyOxcProcessorsResult = {
   // a class-name fallback in cross-file static-export resolution because
   // the runtime value of the binding IS this string.
   processorClassNamesByLocal: Map<string, string>;
-  // Class names of every processor binding (selector-only AND styled).
-  // Only safe to use within the SAME file (inlineConstants on candidates,
-  // collectSameFileProcessorStaticValues), where css interpolation
-  // contexts treat the binding's runtime value as its className. Cross-
-  // file consumers must go through resolveProcessorStaticExport so they
-  // receive the rich styled metadata for composition.
-  sameFileProcessorClassNamesByLocal: Map<string, string>;
   processors: BaseProcessor[];
   staticValueCandidates: OxcStaticValueCandidate[];
   staticValues: OxcStaticValue[];
@@ -143,6 +136,9 @@ type ScopedCleanupScope = {
 
 let didWarnSkipSymbolMismatch = false;
 const GENERATED_HELPER_NAME_RE = /^_exp\d*$/;
+const WYW_META_EXTENDS_HELPER_RE =
+  /(?:\bextends|["']extends["'])\s*:\s*(_exp\d*)\s*\(\s*\)/g;
+const JS_IDENTIFIER_RE = /[$A-Z_a-z][$\w]*/g;
 
 const isNode = (value: unknown): value is Node =>
   !!value &&
@@ -2033,7 +2029,7 @@ const isTagReferenced = (program: Program, ancestors: Node[]): boolean => {
 
 const collectSameFileProcessorStaticValues = (
   expressionValues: Omit<ExpressionValue, 'buildCodeFrameError'>[],
-  processorClassNamesByLocal: Map<string, string>
+  processorStaticValuesByLocal: Map<string, unknown>
 ): OxcStaticValue[] => {
   const staticValues: OxcStaticValue[] = [];
   const seen = new Set<string>();
@@ -2043,9 +2039,9 @@ const collectSameFileProcessorStaticValues = (
       return;
     }
 
-    const className = processorClassNamesByLocal.get(value.source);
+    const staticValue = processorStaticValuesByLocal.get(value.source);
     if (
-      !className ||
+      staticValue === undefined ||
       value.ex.type !== 'Identifier' ||
       seen.has(value.ex.name)
     ) {
@@ -2055,11 +2051,284 @@ const collectSameFileProcessorStaticValues = (
     seen.add(value.ex.name);
     staticValues.push({
       name: value.ex.name,
-      value: className,
+      value: staticValue,
     });
   });
 
   return staticValues;
+};
+
+const unknownProcessorStaticValue = Symbol('unknownProcessorStaticValue');
+
+type UnknownProcessorStaticValue = typeof unknownProcessorStaticValue;
+
+const processorLiteralValue = (
+  expression: ProcessorExpression
+): unknown | UnknownProcessorStaticValue => {
+  const expressionWithValue = expression as ProcessorExpression & {
+    value?: unknown;
+  };
+
+  if (
+    expression.type === 'StringLiteral' ||
+    expression.type === 'NumericLiteral' ||
+    expression.type === 'BooleanLiteral' ||
+    expression.type === 'Literal'
+  ) {
+    return expressionWithValue.value;
+  }
+
+  if (expression.type === 'NullLiteral') {
+    return null;
+  }
+
+  return unknownProcessorStaticValue;
+};
+
+const processorPropertyKeyName = (key: ProcessorExpression): string | null => {
+  if (key.type === 'Identifier') {
+    return (key as ProcessorExpression & { name: string }).name;
+  }
+
+  const value = processorLiteralValue(key);
+  return typeof value === 'string' ? value : null;
+};
+
+const processorObjectPropertyValue = (
+  expression: ProcessorExpression,
+  name: string
+): ProcessorExpression | null => {
+  if (expression.type !== 'ObjectExpression') {
+    return null;
+  }
+
+  const { properties } = expression as ProcessorExpression & {
+    properties?: Array<
+      ProcessorExpression & {
+        key?: ProcessorExpression;
+        type: string;
+        value?: ProcessorExpression;
+      }
+    >;
+  };
+  if (!properties) {
+    return null;
+  }
+
+  for (const property of properties) {
+    if (
+      (property.type === 'ObjectProperty' || property.type === 'Property') &&
+      property.key &&
+      processorPropertyKeyName(property.key) === name
+    ) {
+      return property.value ?? null;
+    }
+  }
+
+  return null;
+};
+
+const processorExpressionToStaticValue = (
+  expression: ProcessorExpression,
+  resolveHelperCall: (name: string) => unknown | UnknownProcessorStaticValue
+): unknown | UnknownProcessorStaticValue => {
+  const literal = processorLiteralValue(expression);
+  if (literal !== unknownProcessorStaticValue) {
+    return literal;
+  }
+
+  if (expression.type === 'ArrayExpression') {
+    const { elements } = expression as ProcessorExpression & {
+      elements?: Array<ProcessorExpression | null>;
+    };
+    if (!elements) {
+      return unknownProcessorStaticValue;
+    }
+
+    const result: unknown[] = [];
+    for (const element of elements) {
+      if (element === null) {
+        result.push(null);
+      } else {
+        const value = processorExpressionToStaticValue(
+          element,
+          resolveHelperCall
+        );
+        if (value === unknownProcessorStaticValue) {
+          return unknownProcessorStaticValue;
+        }
+
+        result.push(value);
+      }
+    }
+
+    return result;
+  }
+
+  if (expression.type === 'ObjectExpression') {
+    const metaExpression = processorObjectPropertyValue(
+      expression,
+      '__wyw_meta'
+    );
+    if (!metaExpression || metaExpression.type !== 'ObjectExpression') {
+      return unknownProcessorStaticValue;
+    }
+
+    const classNameExpression = processorObjectPropertyValue(
+      metaExpression,
+      'className'
+    );
+    const className = classNameExpression
+      ? processorLiteralValue(classNameExpression)
+      : unknownProcessorStaticValue;
+    if (typeof className !== 'string') {
+      return unknownProcessorStaticValue;
+    }
+
+    const extendsExpression = processorObjectPropertyValue(
+      metaExpression,
+      'extends'
+    );
+    const extended = extendsExpression
+      ? processorExpressionToStaticValue(extendsExpression, resolveHelperCall)
+      : null;
+    if (extended === unknownProcessorStaticValue) {
+      return unknownProcessorStaticValue;
+    }
+
+    return {
+      __wyw_meta: {
+        className,
+        extends: extended,
+      },
+    };
+  }
+
+  if (expression.type === 'CallExpression') {
+    const call = expression as ProcessorExpression & {
+      arguments?: ProcessorExpression[];
+      callee?: ProcessorExpression;
+    };
+    if (call.arguments?.length === 0 && call.callee?.type === 'Identifier') {
+      return resolveHelperCall(
+        (call.callee as ProcessorExpression & { name: string }).name
+      );
+    }
+  }
+
+  return unknownProcessorStaticValue;
+};
+
+const collectSameFileProcessorStaticValuesByLocal = (
+  processorsByLocal: Map<string, BaseProcessor>,
+  expressionValues: Omit<ExpressionValue, 'buildCodeFrameError'>[]
+): Map<string, unknown> => {
+  const expressionSourceByName = new Map<string, string>();
+  expressionValues.forEach((value) => {
+    if (value.ex.type === 'Identifier') {
+      expressionSourceByName.set(value.ex.name, value.source);
+    }
+  });
+
+  const memo = new Map<string, unknown | UnknownProcessorStaticValue>();
+  const resolving = new Set<string>();
+
+  const resolveLocal = (
+    local: string
+  ): unknown | UnknownProcessorStaticValue => {
+    if (memo.has(local)) {
+      return memo.get(local)!;
+    }
+
+    const processor = processorsByLocal.get(local);
+    if (!processor || resolving.has(local)) {
+      return unknownProcessorStaticValue;
+    }
+
+    resolving.add(local);
+    const value = processorExpressionToStaticValue(
+      processor.value,
+      (helperName) => {
+        const source = expressionSourceByName.get(helperName);
+        return source ? resolveLocal(source) : unknownProcessorStaticValue;
+      }
+    );
+    resolving.delete(local);
+    memo.set(local, value);
+    return value;
+  };
+
+  const result = new Map<string, unknown>();
+  processorsByLocal.forEach((_processor, local) => {
+    const value = resolveLocal(local);
+    if (value !== unknownProcessorStaticValue) {
+      result.set(local, value);
+    }
+  });
+
+  return result;
+};
+
+const collectWYWMetaExtendsHelperNames = (code: string): Set<string> => {
+  const names = new Set<string>();
+
+  let match = WYW_META_EXTENDS_HELPER_RE.exec(code);
+  while (match) {
+    const name = match[1];
+    if (name && GENERATED_HELPER_NAME_RE.test(name)) {
+      names.add(name);
+    }
+    match = WYW_META_EXTENDS_HELPER_RE.exec(code);
+  }
+  return names;
+};
+
+const collectCandidateInlineConstants = (
+  candidate: OxcStaticValueCandidate,
+  processorStaticValuesByLocal: Map<string, unknown>
+): Record<string, unknown> | null => {
+  const inlineConstants: Record<string, unknown> = {};
+  let hasInlineConstant = false;
+
+  let match = JS_IDENTIFIER_RE.exec(candidate.source);
+  while (match) {
+    const name = match[0];
+    if (processorStaticValuesByLocal.has(name)) {
+      inlineConstants[name] = processorStaticValuesByLocal.get(name);
+      hasInlineConstant = true;
+    }
+    match = JS_IDENTIFIER_RE.exec(candidate.source);
+  }
+
+  return hasInlineConstant ? inlineConstants : null;
+};
+
+const addCandidateInlineConstants = (
+  candidates: OxcStaticValueCandidate[],
+  processorStaticValuesByLocal: Map<string, unknown>
+): OxcStaticValueCandidate[] => {
+  if (processorStaticValuesByLocal.size === 0) {
+    return candidates;
+  }
+
+  return candidates.map((candidate) => {
+    const inlineConstants = collectCandidateInlineConstants(
+      candidate,
+      processorStaticValuesByLocal
+    );
+
+    if (!inlineConstants) {
+      return candidate;
+    }
+
+    return {
+      ...candidate,
+      inlineConstants: {
+        ...candidate.inlineConstants,
+        ...inlineConstants,
+      },
+    };
+  });
 };
 
 const isReplacementPure = (replacement: ProcessorExpression): boolean =>
@@ -2248,7 +2517,6 @@ export const applyOxcProcessors = (
     return {
       code: workingCode,
       processorClassNamesByLocal: new Map(),
-      sameFileProcessorClassNamesByLocal: new Map(),
       processors: [],
       staticValueCandidates: [],
       staticValues: [],
@@ -2263,7 +2531,6 @@ export const applyOxcProcessors = (
     return {
       code: workingCode,
       processorClassNamesByLocal: new Map(),
-      sameFileProcessorClassNamesByLocal: new Map(),
       processors: [],
       staticValueCandidates: [],
       staticValues: [],
@@ -2322,7 +2589,7 @@ export const applyOxcProcessors = (
   const replacements: Replacement[] = [];
   const processors: BaseProcessor[] = [];
   const processorClassNamesByLocal = new Map<string, string>();
-  const sameFileProcessorClassNamesByLocal = new Map<string, string>();
+  const sameFileProcessorsByLocal = new Map<string, BaseProcessor>();
   extracted.dependencyNames.forEach((name: string) =>
     removableImportLocals.add(name)
   );
@@ -2368,10 +2635,7 @@ export const applyOxcProcessors = (
         const { id } = owner;
         if (isNode(id) && id.type === 'Identifier') {
           removableExpressionRefs.add(id.name);
-          // Same-file map records every processor binding — within the
-          // file, css interpolation contexts treat the binding's value
-          // as its className regardless of processor kind.
-          sameFileProcessorClassNamesByLocal.set(id.name, processor.className);
+          sameFileProcessorsByLocal.set(id.name, processor);
           // Cross-file map (used as a className-only fallback in
           // resolveStaticExport) is restricted to processors whose
           // runtime value IS the className string. Styled-component
@@ -2396,8 +2660,24 @@ export const applyOxcProcessors = (
       addedImports.push(...astService.getAddedImports());
     });
   });
+  const sameFileProcessorStaticValuesByLocal =
+    collectSameFileProcessorStaticValuesByLocal(
+      sameFileProcessorsByLocal,
+      extracted.expressionValues
+    );
 
   const replacedCode = applyReplacements(workingCode, replacements);
+  const metadataExtendsHelperNames =
+    collectWYWMetaExtendsHelperNames(replacedCode);
+  const staticValueCandidates = extracted.staticValueCandidates.filter(
+    (candidate) =>
+      candidate.imports.length > 0 ||
+      !metadataExtendsHelperNames.has(candidate.name)
+  );
+  const sameFileProcessorStaticValues = collectSameFileProcessorStaticValues(
+    extracted.expressionValues,
+    sameFileProcessorStaticValuesByLocal
+  ).filter((value) => !metadataExtendsHelperNames.has(value.name));
   const codeWithAddedImports = insertAddedImports(
     replacedCode,
     program,
@@ -2417,23 +2697,11 @@ export const applyOxcProcessors = (
         )
       : codeWithAddedImports,
     processorClassNamesByLocal,
-    sameFileProcessorClassNamesByLocal,
     processors,
-    staticValueCandidates:
-      sameFileProcessorClassNamesByLocal.size > 0
-        ? extracted.staticValueCandidates.map((candidate) => ({
-            ...candidate,
-            inlineConstants: Object.fromEntries(
-              sameFileProcessorClassNamesByLocal
-            ),
-          }))
-        : extracted.staticValueCandidates,
-    staticValues: [
-      ...extracted.staticValues,
-      ...collectSameFileProcessorStaticValues(
-        extracted.expressionValues,
-        sameFileProcessorClassNamesByLocal
-      ),
-    ],
+    staticValueCandidates: addCandidateInlineConstants(
+      staticValueCandidates,
+      sameFileProcessorStaticValuesByLocal
+    ),
+    staticValues: [...extracted.staticValues, ...sameFileProcessorStaticValues],
   };
 };

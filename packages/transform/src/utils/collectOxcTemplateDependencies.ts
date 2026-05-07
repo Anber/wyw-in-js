@@ -2319,33 +2319,12 @@ const extractExpression = (
   evaluate: boolean
 ): ExtractedExpression => {
   const source = ctx.code.slice(expression.start, expression.end);
-  // An Identifier referring to a function-typed binding (`const f = (...)
-  // => ...`, `function f() {}`, or `const f = function () {}`) is just a
-  // runtime callback — its value can never be inlined as a literal, and
-  // a candidate over it would always reject as non-serializable. Treat
-  // it like an inline function expression so it skips both the
-  // staticValues and staticValueCandidates paths and the consumer's
-  // `_exp()` call site survives at runtime.
-  const isIdentifierToFunction =
-    expression.type === 'Identifier' &&
-    (() => {
-      const binding = resolveBindingAt(ctx, expression.name, expression.start);
-      if (!binding || binding.importedFrom) {
-        return false;
-      }
-      if (binding.functionNode) {
-        return true;
-      }
-      const init = binding.declarator?.init;
-      return (
-        init?.type === 'ArrowFunctionExpression' ||
-        init?.type === 'FunctionExpression'
-      );
-    })();
+  // Only inline function expressions are function-valued here. A bare
+  // identifier that points to a local function may be a styled runtime
+  // component, so it has to stay as a lazy `_exp()` reference.
   const isFunction =
     expression.type === 'FunctionExpression' ||
-    expression.type === 'ArrowFunctionExpression' ||
-    isIdentifierToFunction;
+    expression.type === 'ArrowFunctionExpression';
 
   if (evaluate) {
     const evaluated = evaluateStatic(expression, ctx);

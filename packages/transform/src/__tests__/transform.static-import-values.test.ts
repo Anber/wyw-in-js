@@ -21,6 +21,11 @@ const styledProcessorFile = join(
   '__fixtures__',
   'test-styled-processor.js'
 );
+const runtimeStyledProcessorFile = join(
+  __dirname,
+  '__fixtures__',
+  'test-runtime-styled-processor.js'
+);
 
 const createResolver =
   (processorPath: string) => async (what: string, importer: string) => {
@@ -30,6 +35,10 @@ const createResolver =
 
     if (what === 'test-styled-processor') {
       return styledProcessorFile;
+    }
+
+    if (what === 'test-runtime-styled-processor') {
+      return runtimeStyledProcessorFile;
     }
 
     if (what.startsWith('.')) {
@@ -64,6 +73,13 @@ const runTransformWithOptions = async (
 
             if (source === 'test-styled-processor' && tag === 'styled') {
               return styledProcessorFile;
+            }
+
+            if (
+              source === 'test-runtime-styled-processor' &&
+              tag === 'styled'
+            ) {
+              return runtimeStyledProcessorFile;
             }
 
             return null;
@@ -1248,6 +1264,80 @@ describe('transform static import value inlining', () => {
       );
       expect(result.dependencies).toContain(baseFile);
       expect(perf.counts.get('transform:evalFile') ?? 0).toBe(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps local runtime component references in runtime styled output', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
+    const entryFile = join(root, 'entry.js');
+    const cache = new TransformCacheCollection();
+
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { styled } from 'test-runtime-styled-processor';
+
+        const Layout = () => 'runtime';
+
+        export default styled(Layout)\`
+          color: red;
+        \`;
+      `
+    );
+
+    try {
+      const result = await runTransform(root, entryFile, cache);
+
+      expect(result.cssText).toContain('color:red');
+      expect(result.code).toContain("const Layout = () => 'runtime';");
+      expect(result.code).toContain('const _exp = () => (Layout);');
+      expect(result.code).toContain('styled(_exp())');
+      expect(result.code).not.toContain('styled(() => {})');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps same-file styled component selector interpolations as class selectors', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
+    const entryFile = join(root, 'entry.js');
+    const cache = new TransformCacheCollection();
+    const perf = createPerfEventRecorder();
+
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { styled } from 'test-styled-processor';
+
+        const Item = styled.div\`
+          color: red;
+        \`;
+
+        export const Row = styled.div\`
+          & > ${'${Item}'}:last-of-type {
+            color: blue;
+          }
+        \`;
+      `
+    );
+
+    try {
+      const result = await runTransform(
+        root,
+        entryFile,
+        cache,
+        perf.eventEmitter,
+        {},
+        createResolver(styledProcessorFile)
+      );
+
+      expect(perf.counts.get('transform:evalFile') ?? 0).toBe(0);
+      expect(result.cssText).toMatch(/>\.[_a-zA-Z][_a-zA-Z0-9-]*:last-of-type/);
+      expect(result.cssText).not.toMatch(
+        />[_a-zA-Z][_a-zA-Z0-9-]*:last-of-type/
+      );
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -2601,6 +2691,7 @@ describe('transform static import value inlining', () => {
     const barrelFile = join(root, 'barrel.js');
     const depFile = join(root, 'tokens.js');
     const cache = new TransformCacheCollection();
+    const resolver = createResolver(processorFile);
 
     writeFileSync(depFile, `export const color = 'red';`);
     writeFileSync(barrelFile, `export { color } from './tokens.js';`);
@@ -2617,9 +2708,23 @@ describe('transform static import value inlining', () => {
     );
 
     try {
-      const first = await runTransform(root, entryFile, cache);
+      const first = await runTransform(
+        root,
+        entryFile,
+        cache,
+        undefined,
+        {},
+        resolver
+      );
       writeFileSync(depFile, `export const color = 'blue';`);
-      const second = await runTransform(root, entryFile, cache);
+      const second = await runTransform(
+        root,
+        entryFile,
+        cache,
+        undefined,
+        {},
+        resolver
+      );
 
       expect(first.cssText).toContain('color:red');
       expect(second.cssText).toContain('color:blue');
