@@ -75,6 +75,7 @@ const getPrivateBroker = (broker: EvalBroker) =>
     lastHappyDomEnabled: boolean;
     lastInitKey: string | null;
     onlyByModule: Map<string, string[]>;
+    sessionLinkGraph: Set<string>;
     ensureImportsMapping: (
       id: string,
       imports: Map<string, string[]> | null | undefined
@@ -405,6 +406,104 @@ describe('EvalBroker', () => {
     );
     // The prepared code must re-export iconSize from the layout sub-module
     expect(loaded.code).toContain('iconSize');
+
+    broker.dispose();
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('does not widen `only` with cached cross-session entrypoints', async () => {
+    // Cross-session widening regression: a previously-cached entrypoint
+    // (consumer-a, evaluated in a prior transform) recorded
+    // `barrel: only=['fontWeight']`. A new session for consumer-b imports
+    // only `iconSize` from the same barrel. The barrel's load `only`
+    // must not pull in `fontWeight` just because consumer-a's cached
+    // entrypoint exists — consumer-a isn't part of this session's link
+    // graph, so its imports don't constrain the load.
+
+    const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
+    const barrel = join(root, 'barrel.js');
+    const typography = join(root, 'typography.js');
+    const layout = join(root, 'layout.js');
+    const consumerA = join(root, 'consumer-a.js');
+    const consumerB = join(root, 'consumer-b.js');
+
+    writeFileSync(
+      typography,
+      [
+        'const base = 16;',
+        'export const fontWeight = base * 25;',
+      ].join('\n')
+    );
+    writeFileSync(
+      layout,
+      [
+        'const unit = 8;',
+        'export const iconSize = unit * 3;',
+      ].join('\n')
+    );
+    writeFileSync(
+      barrel,
+      [
+        "export { fontWeight } from './typography.js';",
+        "export { iconSize } from './layout.js';",
+      ].join('\n')
+    );
+    writeFileSync(
+      consumerA,
+      [
+        "import { fontWeight } from './barrel.js';",
+        'export const a = fontWeight;',
+      ].join('\n')
+    );
+    writeFileSync(
+      consumerB,
+      [
+        "import { iconSize } from './barrel.js';",
+        'export const b = iconSize;',
+      ].join('\n')
+    );
+
+    const services = createServices(root, consumerB);
+
+    // Simulate a cached prior-session entrypoint for consumer-a that
+    // recorded barrel: only=['fontWeight']. With the cross-session
+    // widening, this would bleed into consumer-b's load.
+    const cachedConsumerA = Entrypoint.createRoot(
+      services,
+      consumerA,
+      ['*'],
+      readFileSync(consumerA, 'utf-8')
+    );
+    cachedConsumerA.addDependency({
+      only: ['fontWeight'],
+      resolved: barrel,
+      source: './barrel.js',
+    });
+    services.cache.add('entrypoints', consumerA, cachedConsumerA);
+
+    const broker = new EvalBroker(services, jest.fn(async () => null));
+    const privateBroker = getPrivateBroker(broker);
+
+    // Consumer-b's session: importsByModule reflects what consumer-b
+    // actually imports.
+    privateBroker.importsByModule.set(
+      consumerB,
+      new Map([['./barrel.js', ['iconSize']]])
+    );
+    // Simulate what runOneEntrypoint → resetPerEntrypointState would do
+    // when consumer-b's session starts: seed the link graph with the
+    // entrypoint. Consumer-a is NOT in the graph (it's a stale cached
+    // entrypoint from a prior session) so its imports must not bleed in.
+    privateBroker.sessionLinkGraph.add(consumerB);
+
+    const loaded = await privateBroker.loadModule({
+      id: barrel,
+      importerId: consumerB,
+      request: './barrel.js',
+    });
+
+    expect(loaded.only).toEqual(expect.arrayContaining(['iconSize']));
+    expect(loaded.only).not.toContain('fontWeight');
 
     broker.dispose();
     rmSync(root, { recursive: true, force: true });
