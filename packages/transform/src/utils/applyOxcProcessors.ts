@@ -2044,7 +2044,11 @@ const collectSameFileProcessorStaticValues = (
     }
 
     const className = processorClassNamesByLocal.get(value.source);
-    if (!className || seen.has(value.ex.name)) {
+    if (
+      !className ||
+      value.ex.type !== 'Identifier' ||
+      seen.has(value.ex.name)
+    ) {
       return;
     }
 

@@ -5183,6 +5183,7 @@ function* resolveStaticExport(
     } else if (target.expression.type === 'Identifier') {
       lookupName = target.expression.name;
     }
+
     if (lookupName) {
       const sourcePreeval = getStaticMetadataPreevalResult(
         action,

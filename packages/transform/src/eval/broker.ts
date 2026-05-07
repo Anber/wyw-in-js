@@ -369,6 +369,7 @@ type CachedDependencyRecord = {
 
 type CachedDependencyOwner = {
   dependencies?: Map<string, CachedDependencyRecord>;
+  name: string;
 };
 
 type DirectBarrelBinding =
