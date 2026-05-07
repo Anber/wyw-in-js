@@ -14,6 +14,7 @@ import { parseRequest } from './parseRequest';
 const CJS_DEFAULT_CONDITIONS = ['require', 'node', 'default'] as const;
 const ESM_DEFAULT_CONDITIONS = ['node', 'import', 'default'] as const;
 const FALLBACK_EXTENSIONS = ['.json', '.node'] as const;
+const MAX_RESOLVER_CACHE_SIZE = 64;
 
 const resolverCache = new Map<string, ResolverFactory>();
 
@@ -90,12 +91,29 @@ const createResolverOptions = ({
 const getResolver = (options: NapiResolveOptions): ResolverFactory => {
   const key = JSON.stringify(options);
   const cached = resolverCache.get(key);
-  if (cached) return cached;
+  if (cached) {
+    resolverCache.delete(key);
+    resolverCache.set(key, cached);
+    return cached;
+  }
 
   const resolver = new ResolverFactory(options);
+  if (resolverCache.size >= MAX_RESOLVER_CACHE_SIZE) {
+    const oldestKey = resolverCache.keys().next().value;
+    if (oldestKey !== undefined) {
+      resolverCache.delete(oldestKey);
+    }
+  }
   resolverCache.set(key, resolver);
   return resolver;
 };
+
+export const clearNativeResolverCacheForTest = (): void => {
+  resolverCache.clear();
+};
+
+export const getNativeResolverCacheSizeForTest = (): number =>
+  resolverCache.size;
 
 const preferJsOverCjsForExtensionlessFileSpecifier = (
   specifier: string,

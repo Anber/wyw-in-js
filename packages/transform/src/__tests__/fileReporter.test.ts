@@ -4,18 +4,30 @@ import { join } from 'path';
 
 import { createFileReporter } from '../debug/fileReporter';
 
+const delay = (intervalMs: number) =>
+  new Promise<void>((resolve) => {
+    setTimeout(resolve, intervalMs);
+  });
+
 const waitFor = async (
   predicate: () => boolean,
   { timeoutMs = 1000, intervalMs = 5 } = {}
 ) => {
   const startedAt = Date.now();
-  while (!predicate()) {
+  const poll = async (): Promise<void> => {
+    if (predicate()) {
+      return;
+    }
+
     if (Date.now() - startedAt > timeoutMs) {
       throw new Error('waitFor timed out');
     }
 
-    await new Promise((r) => setTimeout(r, intervalMs));
-  }
+    await delay(intervalMs);
+    await poll();
+  };
+
+  await poll();
 };
 
 const readJsonl = (file: string) =>
@@ -55,7 +67,9 @@ describe('createFileReporter', () => {
 
       reporter.onDone(dir);
       const target = join(dir, 'static-resolve.jsonl');
-      await waitFor(() => existsSync(target) && readFileSync(target).length > 0);
+      await waitFor(
+        () => existsSync(target) && readFileSync(target).length > 0
+      );
 
       const events = readJsonl(target);
       expect(events).toHaveLength(2);
@@ -82,7 +96,9 @@ describe('createFileReporter', () => {
 
   it('returns a dummy reporter when no dir is provided', () => {
     const reporter = createFileReporter(false);
-    expect(() => reporter.emitter.single({ type: 'staticResolve' })).not.toThrow();
+    expect(() =>
+      reporter.emitter.single({ type: 'staticResolve' })
+    ).not.toThrow();
     expect(() => reporter.onDone('/')).not.toThrow();
   });
 });

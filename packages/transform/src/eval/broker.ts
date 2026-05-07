@@ -1129,10 +1129,10 @@ const getInitPayloadKey = (payload: EvalRunnerInitPayload): string =>
 // this per-services so we replace per-evaluate SHA-256 of the full payload
 // with one SHA-256 of the stable bits + a cheap string concat per
 // entrypoint.
-const getStableInitPayloadHash = (
-  payload: EvalRunnerInitPayload
-): string => {
-  const { entrypoint: _entrypoint, ...stable } = payload;
+const getStableInitPayloadHash = (payload: EvalRunnerInitPayload): string => {
+  const { entrypoint, ...stable } = payload;
+  void entrypoint;
+
   return createHash('sha256')
     .update(JSON.stringify(canonicalizeForHash(stable)))
     .digest('hex');
@@ -1814,7 +1814,10 @@ export class EvalBroker {
           );
           fallbackPayload.reuseModules = true;
           await this.request('INIT', fallbackPayload, INIT_TIMEOUT_MS);
-          this.lastInitKey = `${this.getStableInitHash(this.currentServices, fallbackFeatures)}::${entrypoint.name}`;
+          this.lastInitKey = `${this.getStableInitHash(
+            this.currentServices,
+            fallbackFeatures
+          )}::${entrypoint.name}`;
           this.lastHappyDomEnabled = false;
           return;
         }
@@ -2074,8 +2077,16 @@ export class EvalBroker {
         if (resolved && resolved !== stripped) {
           return resolved;
         }
-      } catch {
-        // ignore fallback failures
+      } catch (error) {
+        if (process.env.WYW_DEBUG_EVAL_RESOLVE) {
+          // eslint-disable-next-line no-console
+          console.warn('[wyw-eval:resolve:native-normalize-miss]', {
+            specifier,
+            importerId,
+            kind,
+            error,
+          });
+        }
       }
     }
 
@@ -2270,7 +2281,16 @@ export class EvalBroker {
             });
           }
           return nativeResolved;
-        } catch {
+        } catch (error) {
+          if (process.env.WYW_DEBUG_EVAL_RESOLVE) {
+            // eslint-disable-next-line no-console
+            console.warn('[wyw-eval:resolve:native-miss]', {
+              specifier,
+              importerId,
+              kind,
+              error,
+            });
+          }
           // Hybrid mode lets the bundler resolver handle aliases, virtual IDs,
           // and other specifiers that the native resolver cannot resolve.
         }

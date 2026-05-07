@@ -192,6 +192,60 @@ describe('EvalBroker', () => {
     rmSync(root, { recursive: true, force: true });
   });
 
+  it('logs native resolver misses in hybrid mode when eval resolve debug is enabled', async () => {
+    const previousDebug = process.env.WYW_DEBUG_EVAL_RESOLVE;
+    process.env.WYW_DEBUG_EVAL_RESOLVE = '1';
+
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
+    const importer = join(root, 'entry.js');
+    const bundlerDep = join(root, 'bundler.js');
+
+    try {
+      writeFileSync(importer, 'export const value = true;');
+      writeFileSync(bundlerDep, 'export const value = "bundler";');
+
+      const asyncResolve = jest.fn(async () => bundlerDep);
+      const services = createServices(root, importer, {
+        eval: {
+          resolver: 'hybrid',
+        },
+      });
+
+      const broker = new EvalBroker(services, asyncResolve);
+      const privateBroker = getPrivateBroker(broker);
+      privateBroker.importsByModule.set(
+        importer,
+        new Map([['virtual:dep', ['*']]])
+      );
+
+      const result = await privateBroker.resolveImport({
+        specifier: 'virtual:dep',
+        importerId: importer,
+        kind: 'import',
+      });
+
+      expect(result.resolvedId).toBe(bundlerDep);
+      expect(warn).toHaveBeenCalledWith(
+        '[wyw-eval:resolve:native-miss]',
+        expect.objectContaining({
+          specifier: 'virtual:dep',
+          importerId: importer,
+        })
+      );
+
+      broker.dispose();
+    } finally {
+      warn.mockRestore();
+      if (previousDebug === undefined) {
+        delete process.env.WYW_DEBUG_EVAL_RESOLVE;
+      } else {
+        process.env.WYW_DEBUG_EVAL_RESOLVE = previousDebug;
+      }
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('keeps active eval services while later evals wait in queue', async () => {
     const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
     const firstEntry = join(root, 'first.js');
@@ -2967,10 +3021,7 @@ describe('EvalBroker', () => {
     writeFileSync(dep, 'export const x = 10;\nexport const y = 20;\n');
 
     const barrel = join(root, 'barrel.js');
-    writeFileSync(
-      barrel,
-      "export { x, y } from './dep.js';\n"
-    );
+    writeFileSync(barrel, "export { x, y } from './dep.js';\n");
 
     // Session 1: imports both x and y → forces full eval of dep.js
     const entryA = join(root, 'entry-a.js');
@@ -3344,9 +3395,7 @@ describe('EvalBroker', () => {
         readFileSync(entrySerializedWide, 'utf-8')
       );
       const serializedWideResult = await broker.evaluate(serializedWide);
-      expect(serializedWideResult.values?.get('value')).toBe(
-        'Inter/400/14px'
-      );
+      expect(serializedWideResult.values?.get('value')).toBe('Inter/400/14px');
       expect(loadCalls).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
@@ -3669,7 +3718,11 @@ describe('EvalBroker', () => {
       ensureRunner: () => Promise<void>;
       handleLoad: (
         id: string,
-        payload: { id: string; importerId: string | null; request: string | null }
+        payload: {
+          id: string;
+          importerId: string | null;
+          request: string | null;
+        }
       ) => Promise<void>;
       initRunner: (entrypoint: Entrypoint) => Promise<void>;
       lastInitKey: string | null;
@@ -3780,7 +3833,9 @@ describe('EvalBroker', () => {
     it('coalesces concurrent evaluate() calls into one runner pass', async () => {
       const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
       const entries = ['a', 'b', 'c'].map((n) => join(root, `${n}.js`));
-      entries.forEach((p) => writeFileSync(p, 'export const __wywPreval = {};'));
+      entries.forEach((p) =>
+        writeFileSync(p, 'export const __wywPreval = {};')
+      );
 
       const services = createServices(root, entries[0]);
       const broker = new EvalBroker(
@@ -3788,7 +3843,12 @@ describe('EvalBroker', () => {
         jest.fn(async () => null)
       );
       const entrypoints = entries.map((p) =>
-        Entrypoint.createRoot(services, p, ['__wywPreval'], readFileSync(p, 'utf-8'))
+        Entrypoint.createRoot(
+          services,
+          p,
+          ['__wywPreval'],
+          readFileSync(p, 'utf-8')
+        )
       );
 
       const evalOrder: string[] = [];
@@ -3829,7 +3889,9 @@ describe('EvalBroker', () => {
     it('isolates batch-member failures', async () => {
       const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
       const entries = ['a', 'b', 'c'].map((n) => join(root, `${n}.js`));
-      entries.forEach((p) => writeFileSync(p, 'export const __wywPreval = {};'));
+      entries.forEach((p) =>
+        writeFileSync(p, 'export const __wywPreval = {};')
+      );
 
       const services = createServices(root, entries[0]);
       const broker = new EvalBroker(
@@ -3837,7 +3899,12 @@ describe('EvalBroker', () => {
         jest.fn(async () => null)
       );
       const entrypoints = entries.map((p) =>
-        Entrypoint.createRoot(services, p, ['__wywPreval'], readFileSync(p, 'utf-8'))
+        Entrypoint.createRoot(
+          services,
+          p,
+          ['__wywPreval'],
+          readFileSync(p, 'utf-8')
+        )
       );
 
       stubBatchInternals(broker, async (id) => {

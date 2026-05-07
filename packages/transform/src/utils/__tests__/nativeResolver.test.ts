@@ -9,11 +9,17 @@ import { tmpdir } from 'os';
 import path from 'path';
 
 import {
+  clearNativeResolverCacheForTest,
   expandNativeResolverConditions,
+  getNativeResolverCacheSizeForTest,
   resolveWithNativeResolver,
 } from '../nativeResolver';
 
 describe('nativeResolver', () => {
+  afterEach(() => {
+    clearNativeResolverCacheForTest();
+  });
+
   it('expands conditionNames by resolver kind', () => {
     expect(expandNativeResolverConditions('import', ['custom', '...'])).toEqual(
       ['custom', 'node', 'import', 'default']
@@ -89,6 +95,32 @@ describe('nativeResolver', () => {
       });
 
       expect(resolved).toBe(realpathSync(aliased));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('bounds resolver factory cache', () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'wyw-native-resolver-'));
+    const entry = path.join(root, 'src', 'entry.ts');
+    const dep = path.join(root, 'src', 'dep.ts');
+
+    try {
+      mkdirSync(path.dirname(entry), { recursive: true });
+      writeFileSync(entry, `export const entry = true;\n`);
+      writeFileSync(dep, `export const dep = true;\n`);
+
+      for (let i = 0; i < 65; i += 1) {
+        resolveWithNativeResolver({
+          conditionNames: [`custom-${i}`, '...'],
+          extensions: ['.ts'],
+          importer: entry,
+          kind: 'import',
+          specifier: './dep',
+        });
+      }
+
+      expect(getNativeResolverCacheSizeForTest()).toBe(64);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

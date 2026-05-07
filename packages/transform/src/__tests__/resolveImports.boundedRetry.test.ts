@@ -64,12 +64,12 @@ const createServices = (
 };
 
 const drainAsync = async <T>(gen: AsyncGenerator<unknown, T>): Promise<T> => {
-  while (true) {
-    const next = await gen.next();
-    if (next.done) {
-      return next.value;
-    }
+  const next = await gen.next();
+  if (next.done) {
+    return next.value;
   }
+
+  return drainAsync(gen);
 };
 
 describe('asyncResolveImports — bounded retry on null resolutions', () => {
@@ -262,10 +262,11 @@ describe('asyncResolveImports — bounded retry on null resolutions', () => {
 
     // Many consumers hit the same failing source. Resolver must be called at
     // most MAX_NULL_ATTEMPTS times (currently 2), not once per consumer.
-    for (let i = 0; i < 50; i += 1) {
+    await Array.from({ length: 50 }).reduce<Promise<void>>(async (previous) => {
+      await previous;
       const result = await callResolve();
       expect(result).toEqual([]);
-    }
+    }, Promise.resolve());
 
     // Exactly 2 attempts: first call, then one bounded retry.
     expect(resolve).toHaveBeenCalledTimes(2);
@@ -303,7 +304,9 @@ describe('asyncResolveImports — bounded retry on null resolutions', () => {
     const a = callResolve();
     const b = callResolve();
 
-    await new Promise((r) => setImmediate(r));
+    await new Promise<void>((resolveImmediate) => {
+      setImmediate(resolveImmediate);
+    });
     expect(resolve).toHaveBeenCalledTimes(1);
 
     releaseResolver!('/project/src/foo.js');
