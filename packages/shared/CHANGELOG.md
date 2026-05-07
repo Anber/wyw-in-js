@@ -1,5 +1,13 @@
 # @wyw-in-js/shared
 
+## 2.0.0-alpha.1
+
+### Minor Changes
+
+- 4fce392: Rename the eval resolver mode from `node` to `native` and resolve native eval imports with `oxc-resolver`. Hybrid eval resolution now tries the custom resolver, then native resolution, then the bundler resolver.
+
+  Native eval resolution now discovers `tsconfig.json` by default. Vite, esbuild, webpack, and Next Turbopack integrations forward static string aliases from their bundler config into native resolver options, while preserving explicitly configured `oxcOptions.resolver.alias` entries.
+
 ## 2.0.0-alpha.0
 
 ### Major Changes

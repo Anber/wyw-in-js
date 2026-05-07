@@ -35,8 +35,11 @@
     "@wyw-in-js/webpack-loader": "1.0.8"
   },
   "changesets": [
+    "eval-load-recovery",
     "fair-radios-fail",
+    "native-resolver-oxc",
     "oxc-config-foundation",
+    "perf-spans-debug-output",
     "processor-diagnostics-reporting",
     "purple-bears-peel",
     "spotty-moments-bow",

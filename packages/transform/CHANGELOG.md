@@ -1,5 +1,24 @@
 # @wyw-in-js/transform
 
+## 2.0.0-alpha.1
+
+### Minor Changes
+
+- 4fce392: Rename the eval resolver mode from `node` to `native` and resolve native eval imports with `oxc-resolver`. Hybrid eval resolution now tries the custom resolver, then native resolution, then the bundler resolver.
+
+  Native eval resolution now discovers `tsconfig.json` by default. Vite, esbuild, webpack, and Next Turbopack integrations forward static string aliases from their bundler config into native resolver options, while preserving explicitly configured `oxcOptions.resolver.alias` entries.
+
+### Patch Changes
+
+- dc4e7f0: Improve evaluation diagnostics and recovery for transient missing imports.
+
+  Missing imports during evaluation now report the importing file, requested specifier, resolved path, and original error cause. The evaluator also evicts modules left in failed VM states and refreshes broker-side load tracking, so a subsequent evaluation can recover after the missing file is created instead of rethrowing stale module status errors.
+
+- a227252: Add `perf-spans.jsonl` to debug output so transform perf spans can be analyzed alongside action, dependency, and entrypoint logs.
+- Updated dependencies
+  - @wyw-in-js/processor-utils@2.0.0-alpha.1
+  - @wyw-in-js/shared@2.0.0-alpha.1
+
 ## 2.0.0-alpha.0
 
 ### Major Changes
