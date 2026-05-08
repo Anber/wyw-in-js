@@ -116,6 +116,67 @@ export type DependenciesStats = {
   importCountByFrom: Map<string, number>;
 };
 
+export type EvalFileValue =
+  | {
+      serialized: unknown;
+      status: 'serialized';
+    }
+  | {
+      reason: string;
+      status: 'stringified';
+      stringified: string;
+    };
+
+export type EvalFileValues = {
+  exports?: Record<string, EvalFileValue>;
+  preval?: Record<string, EvalFileValue>;
+};
+
+export type EvalFileValueStatus =
+  | 'mixed'
+  | 'none'
+  | 'serialized'
+  | 'stringified';
+
+export type EvalFilesLine = {
+  contentBase64: string | null;
+  evalSeq: number;
+  hash: string | null;
+  id: string;
+  importer: string | null;
+  only: string[];
+  payloadKind: 'code' | 'serialized-exports';
+  request: string | null;
+  type: 'eval-file';
+  valuesBase64: string | null;
+  valueStatus?: EvalFileValueStatus;
+};
+
+export type EvalFileRecord = EvalFilesLine & {
+  lineNumber: number;
+  valueStatus: EvalFileValueStatus;
+};
+
+export type EvalFilesSummary = {
+  codePayloads: number;
+  serializedPayloads: number;
+  totalPayloads: number;
+  uniqueFiles: number;
+  withStringifiedValues: number;
+  topFiles: Array<{
+    codePayloads: number;
+    count: number;
+    id: string;
+    serializedPayloads: number;
+    withStringifiedValues: number;
+  }>;
+};
+
+export type EvalFilesStats = {
+  records: EvalFileRecord[];
+  summary: EvalFilesSummary;
+};
+
 export type ActionsSummary = {
   spanMs: number;
   startedAt: number | null;

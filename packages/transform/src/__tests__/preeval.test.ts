@@ -18,7 +18,6 @@ const defaultPluginOptions: RunOverrides = {
       redux: ['connect'],
     },
   },
-  evaluate: true,
   features: {
     dangerousCodeRemover: true,
   },

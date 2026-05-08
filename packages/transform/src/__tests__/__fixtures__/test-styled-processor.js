@@ -67,8 +67,17 @@ class StyledProcessor extends TaggedTemplateProcessor {
     ]);
   }
 
-  addInterpolation() {
-    throw new Error('test styled processor does not support interpolations');
+  addInterpolation(node, _precedingCss, source) {
+    // Runtime-callback interpolation (props => ...). Real linaria
+    // records these and emits a runtime variable lookup; the test
+    // fixture just records the dependency and returns a stable id.
+    this.dependencies.push({
+      ex: node,
+      kind: 'function',
+      source,
+    });
+    const id = `var-${this.className}-${this.dependencies.length}`;
+    return id;
   }
 
   doEvaltimeReplacement() {

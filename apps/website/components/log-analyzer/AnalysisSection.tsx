@@ -6,6 +6,7 @@ import type { LogAnalyzerState } from './useLogAnalyzerState';
 import { ActionsTab } from './tabs/ActionsTab';
 import { DependenciesTab } from './tabs/DependenciesTab';
 import { EntrypointsTab } from './tabs/EntrypointsTab';
+import { EvalFilesTab } from './tabs/EvalFilesTab';
 import { HelpTab } from './tabs/HelpTab';
 import { OverviewTab } from './tabs/OverviewTab';
 import { Button, TabButton } from './ui/Button';
@@ -15,6 +16,7 @@ export function AnalysisSection({ state }: { state: LogAnalyzerState }) {
     actions,
     clipboard,
     dependencies,
+    evalFiles,
     entrypoints,
     nav,
     parse,
@@ -39,6 +41,9 @@ export function AnalysisSection({ state }: { state: LogAnalyzerState }) {
               [
                 ['overview', 'Overview'],
                 ['actions', 'Actions'],
+                ...(data.evalFiles
+                  ? ([['evalFiles', 'Eval files']] as const)
+                  : []),
                 ['entrypoints', 'Entrypoints'],
                 ['dependencies', 'Dependencies'],
                 ['help', 'Help'],
@@ -101,6 +106,14 @@ export function AnalysisSection({ state }: { state: LogAnalyzerState }) {
             nav={nav}
             pathDisplay={pathDisplay}
             view={actions}
+          />
+        )}
+        {activeTab === 'evalFiles' && data.evalFiles && (
+          <EvalFilesTab
+            clipboard={clipboard}
+            data={data}
+            pathDisplay={pathDisplay}
+            view={evalFiles}
           />
         )}
         {activeTab === 'entrypoints' && (

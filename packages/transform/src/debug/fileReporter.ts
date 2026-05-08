@@ -162,6 +162,10 @@ export const createFileReporter = (
     path.join(options.dir, 'perf-spans.jsonl')
   );
 
+  const evalFilesStream = createWriteStream(
+    path.join(options.dir, 'eval-files.jsonl')
+  );
+
   const startedAt = performance.now();
   const timings: Timings = new Map();
   const addTiming = (label: string, key: string, value: number) => {
@@ -197,6 +201,10 @@ export const createFileReporter = (
 
     if (meta.type === 'staticResolve') {
       writeJSONl(staticResolveStream, meta);
+    }
+
+    if (meta.type === 'eval-file') {
+      writeJSONl(evalFilesStream, meta);
     }
   };
 
@@ -288,6 +296,7 @@ export const createFileReporter = (
       entrypointStream.end();
       staticResolveStream.end();
       perfSpanStream.end();
+      evalFilesStream.end();
       timings.clear();
     },
   };

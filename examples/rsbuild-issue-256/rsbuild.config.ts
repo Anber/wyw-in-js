@@ -49,7 +49,6 @@ export default defineConfig({
             ],
           },
           configFile: false,
-          evaluate: true,
           extensions: ['.mjs', '.cjs', '.js', '.tsx'],
         });
     },

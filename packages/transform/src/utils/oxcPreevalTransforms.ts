@@ -85,6 +85,7 @@ const defaultReactComponentTypes = [
   'MemoExoticComponent',
   'NamedExoticComponent',
 ];
+const defaultReactHocs = ['forwardRef', 'memo'];
 const generatedProcessorHelperNameRe = /^_exp\d*$/;
 const requireCallRe = /\brequire\s*\(/;
 const windowTokenRe = /\bwindow\b/;
@@ -1335,6 +1336,16 @@ const isHocCall = (
   return !!matched && hocs[matched[0]]?.includes(matched[1]);
 };
 
+const isInsideHocCall = (
+  ancestors: Node[],
+  hocs: Record<string, string[]>,
+  imports: ImportBinding[]
+): boolean =>
+  ancestors.some(
+    (ancestor): ancestor is CallExpression =>
+      ancestor.type === 'CallExpression' && isHocCall(ancestor, hocs, imports)
+  );
+
 const getComponentTypes = (
   options?: CodeRemoverOptions
 ): Record<string, string[]> => {
@@ -1350,6 +1361,16 @@ const getComponentTypes = (
   }
 
   return componentTypes;
+};
+
+const getHocs = (options?: CodeRemoverOptions): Record<string, string[]> => {
+  const hocs = {
+    ...(options?.hocs ?? {}),
+  };
+  const reactHocs = new Set([...defaultReactHocs, ...(hocs.react ?? [])]);
+
+  hocs.react = [...reactHocs];
+  return hocs;
 };
 
 const getTypeImport = (
@@ -1541,7 +1562,7 @@ export const removeDangerousCodeWithOxc = (
   const program = parseOxc(code, filename);
   const imports = collectImportBindings(code, filename, program);
   const componentTypes = getComponentTypes(options);
-  const hocs = options?.hocs ?? {};
+  const hocs = getHocs(options);
   const hasHocs = Object.keys(hocs).length > 0;
   const windowScopedNames = windowTokenRe.test(code)
     ? collectWindowScopedNames(program)
@@ -1683,6 +1704,10 @@ export const removeDangerousCodeWithOxc = (
       }
 
       if (!isAlwaysForbidden && isInDeferredFunctionScope(ancestors)) {
+        return;
+      }
+
+      if (hasHocs && isInsideHocCall(ancestors, hocs, imports)) {
         return;
       }
 

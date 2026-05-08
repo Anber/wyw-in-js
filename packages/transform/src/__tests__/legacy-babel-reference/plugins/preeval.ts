@@ -26,10 +26,9 @@ export type PreevalOptions = Pick<
   | 'codeRemover'
   | 'displayName'
   | 'extensions'
-  | 'evaluate'
   | 'features'
   | 'tagResolver'
-> & { eventEmitter?: EventEmitter };
+> & { evaluate: boolean; eventEmitter?: EventEmitter };
 
 export function preeval(
   babel: Core,

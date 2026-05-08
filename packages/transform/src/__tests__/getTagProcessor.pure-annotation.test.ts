@@ -26,10 +26,9 @@ const transform = (code: string, processorPath: string) => {
 
   const options: Pick<
     StrictOptions,
-    'classNameSlug' | 'displayName' | 'extensions' | 'evaluate' | 'tagResolver'
+    'classNameSlug' | 'displayName' | 'extensions' | 'tagResolver'
   > = {
     displayName: false,
-    evaluate: true,
     extensions: ['.js'],
     tagResolver: (source, imported) => {
       if (source !== 'test-package' || imported !== 'css') {

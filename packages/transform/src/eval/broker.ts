@@ -42,6 +42,7 @@ import { analyzeOxcBarrelFile } from '../transform/oxcBarrelManifest';
 import {
   type EvalRunnerInitPayload,
   type EvalResultPayload,
+  type DebugEvalFileValues,
   type LoadRequestPayload,
   type LoadResultPayload,
   type MainToRunnerMessage,
@@ -326,9 +327,9 @@ const getSerializableStaticImportKeys = (
 };
 
 const DEFAULT_EVAL_OPTIONS: Required<
-  Pick<EvalOptionsV2, 'mode' | 'require' | 'resolver'>
+  Pick<EvalOptionsV2, 'errors' | 'require' | 'resolver'>
 > = {
-  mode: 'strict',
+  errors: 'strict',
   require: 'warn-and-run',
   resolver: 'bundler',
 };
@@ -369,6 +370,7 @@ type CachedDependencyRecord = {
 
 type CachedDependencyOwner = {
   dependencies?: Map<string, CachedDependencyRecord>;
+  name: string;
 };
 
 type DirectBarrelBinding =
@@ -421,6 +423,20 @@ type EvaluateResult = {
   dependencies: string[];
 };
 
+type EvalFileDebugLine = {
+  contentBase64: string | null;
+  evalSeq: number;
+  hash: string | null;
+  id: string;
+  importer: string | null;
+  only: string[];
+  payloadKind: 'code' | 'serialized-exports';
+  request: string | null;
+  type: 'eval-file';
+  valuesBase64: string | null;
+  valueStatus: 'mixed' | 'none' | 'serialized' | 'stringified';
+};
+
 type PendingEval = {
   entrypoint: Entrypoint;
   services: Services | undefined;
@@ -468,6 +484,47 @@ const resolveDebugEvalDir = (): string | undefined => {
 
 const debugEvalDir = resolveDebugEvalDir();
 let debugEvalDirReady = false;
+
+const toBase64 = (value: string): string =>
+  Buffer.from(value, 'utf8').toString('base64');
+
+const toJsonBase64 = (value: unknown): string =>
+  toBase64(JSON.stringify(value));
+
+const serializedExportsToDebugValues = (
+  serializedExports: Record<string, SerializedValue>
+): DebugEvalFileValues => ({
+  exports: Object.fromEntries(
+    Object.entries(serializedExports).map(([key, serialized]) => [
+      key,
+      {
+        serialized,
+        status: 'serialized' as const,
+      },
+    ])
+  ),
+});
+
+const getDebugValuesStatus = (
+  values: DebugEvalFileValues | undefined
+): EvalFileDebugLine['valueStatus'] => {
+  const statuses = [
+    ...Object.values(values?.exports ?? {}),
+    ...Object.values(values?.preval ?? {}),
+  ].map((value) => value.status);
+
+  if (statuses.length === 0) {
+    return 'none';
+  }
+
+  const hasSerialized = statuses.includes('serialized');
+  const hasStringified = statuses.includes('stringified');
+  if (hasSerialized && hasStringified) {
+    return 'mixed';
+  }
+
+  return hasStringified ? 'stringified' : 'serialized';
+};
 
 const ensureDebugEvalDir = () => {
   if (!debugEvalDir || debugEvalDirReady) {
@@ -638,7 +695,7 @@ const buildRunnerInitPayload = (
     evalOptions: {
       globals: encodeGlobalsCached(sanitizedGlobals),
       importOverrides,
-      mode: evalOptions.mode ?? 'strict',
+      errors: evalOptions.errors ?? 'strict',
       require: evalOptions.require ?? 'warn-and-run',
       root,
       extensions,
@@ -1118,11 +1175,6 @@ const canonicalizeForHash = (value: unknown): unknown => {
   return value;
 };
 
-const getInitPayloadKey = (payload: EvalRunnerInitPayload): string =>
-  createHash('sha256')
-    .update(JSON.stringify(canonicalizeForHash(payload)))
-    .digest('hex');
-
 // Hash everything in the init payload that affects whether the runner needs
 // a fresh INIT — i.e. everything except `entrypoint` (which only affects
 // __filename/__dirname rebinding, not context reuse). The broker memoizes
@@ -1213,6 +1265,13 @@ export class EvalBroker {
 
   private readonly onlyByModule = new Map<string, string[]>();
 
+  // Modules that are part of the current eval session's link graph. Used
+  // to scope `mergeKnownDependencyOnly` to entrypoints that share the
+  // current runner's VM, instead of unioning across every cached
+  // entrypoint project-wide. Cleared whenever the runner is killed or
+  // respawned (mirrors lastSentLoadByModule).
+  private readonly sessionLinkGraph = new Set<string>();
+
   private readonly runtimeDependenciesByModule = new Map<string, Set<string>>();
 
   private readonly emittedDependencies = new Set<string>();
@@ -1251,6 +1310,8 @@ export class EvalBroker {
   } | null = null;
 
   private evalSeq = 0;
+
+  private evalFileDebugLines: EvalFileDebugLine[] | null = null;
 
   private happyDomDisabled = false;
 
@@ -1412,6 +1473,7 @@ export class EvalBroker {
     this.activeResolveRootId = resolveRootId;
     this.resetPerEntrypointState(entrypoint);
     this.evalSeq += 1;
+    this.evalFileDebugLines = activeServices.eventEmitter.enabled ? [] : null;
 
     if (debugEvalDir) {
       debugAction({
@@ -1430,6 +1492,8 @@ export class EvalBroker {
         { id: entrypoint.name },
         EVAL_TIMEOUT_MS
       );
+
+      this.flushEvalFileDebugLines(payload.debugEvalFiles);
 
       if (debugEvalDir) {
         debugAction({
@@ -1459,9 +1523,75 @@ export class EvalBroker {
         dependencies: this.collectEntrypointDependencies(entrypoint.name),
       };
     } finally {
+      this.evalFileDebugLines = null;
       if (this.activeResolveRootId === resolveRootId) {
         this.activeResolveRootId = null;
       }
+    }
+  }
+
+  private recordEvalFileDebugLine(
+    payload: LoadRequestPayload,
+    prepared: PreparedCacheEntry,
+    shouldShipCode: boolean
+  ) {
+    if (!this.evalFileDebugLines) {
+      return;
+    }
+
+    if (shouldShipCode && prepared.code) {
+      this.evalFileDebugLines.push({
+        contentBase64: toBase64(prepared.code),
+        evalSeq: this.evalSeq,
+        hash: prepared.hash ?? null,
+        id: payload.id,
+        importer: payload.importerId ?? null,
+        only: prepared.only,
+        payloadKind: 'code',
+        request: payload.request ?? null,
+        type: 'eval-file',
+        valueStatus: 'none',
+        valuesBase64: null,
+      });
+      return;
+    }
+
+    if (prepared.exports) {
+      const values = serializedExportsToDebugValues(prepared.exports);
+      this.evalFileDebugLines.push({
+        contentBase64: null,
+        evalSeq: this.evalSeq,
+        hash: prepared.hash ?? null,
+        id: payload.id,
+        importer: payload.importerId ?? null,
+        only: prepared.only,
+        payloadKind: 'serialized-exports',
+        request: payload.request ?? null,
+        type: 'eval-file',
+        valueStatus: getDebugValuesStatus(values),
+        valuesBase64: toJsonBase64(values),
+      });
+    }
+  }
+
+  private flushEvalFileDebugLines(
+    valuesById: Record<string, DebugEvalFileValues> | undefined
+  ) {
+    const lines = this.evalFileDebugLines;
+    if (!lines) {
+      return;
+    }
+
+    for (const line of lines) {
+      this.currentServices.eventEmitter.single({
+        ...line,
+        valueStatus:
+          line.valueStatus === 'none'
+            ? getDebugValuesStatus(valuesById?.[line.id])
+            : line.valueStatus,
+        valuesBase64:
+          line.valuesBase64 ?? toJsonBase64(valuesById?.[line.id] ?? {}),
+      });
     }
   }
 
@@ -1472,6 +1602,8 @@ export class EvalBroker {
     this.onlyByModule.clear();
     this.resolveCache.clear();
     this.resolveInFlight.clear();
+    this.sessionLinkGraph.clear();
+    this.sessionLinkGraph.add(entrypoint.name);
     this.onlyByModule.set(entrypoint.name, ['__wywPreval']);
   }
 
@@ -1531,6 +1663,7 @@ export class EvalBroker {
     this.lastInitKey = null;
     this.lastHappyDomEnabled = false;
     this.lastSentLoadByModule.clear();
+    this.sessionLinkGraph.clear();
     this.stableInitHashCache = null;
     flushDebugStreams();
   }
@@ -1579,6 +1712,7 @@ export class EvalBroker {
       this.lastInitKey = null;
       this.lastHappyDomEnabled = false;
       this.lastSentLoadByModule.clear();
+      this.sessionLinkGraph.clear();
     });
   }
 
@@ -1734,6 +1868,7 @@ export class EvalBroker {
     // New process ⇒ runner's moduleCache/moduleHashes are empty, so our mirror
     // of "what we already shipped" is stale.
     this.lastSentLoadByModule.clear();
+    this.sessionLinkGraph.clear();
   }
 
   private getStableInitHash(
@@ -1776,7 +1911,9 @@ export class EvalBroker {
   private async initRunner(entrypoint: Entrypoint) {
     const features = this.getRunnerFeatures();
     const stableHash = this.getStableInitHash(this.currentServices, features);
-    const initKey = `${stableHash}::${entrypoint.name}`;
+    const debugEvalFiles = this.currentServices.eventEmitter.enabled;
+    const debugEvalFilesKeyPart = debugEvalFiles ? '1' : '0';
+    const initKey = `${stableHash}::${entrypoint.name}::debugEvalFiles:${debugEvalFilesKeyPart}`;
     if (this.lastInitKey === initKey) {
       return;
     }
@@ -1787,6 +1924,9 @@ export class EvalBroker {
     );
     const payload = buildRunnerInitPayload(this.services, entrypoint, features);
     payload.reuseModules = true;
+    if (debugEvalFiles) {
+      payload.debugEvalFiles = true;
+    }
     const timeoutMs = this.getInitTimeoutMs(entrypoint, features);
 
     if (
@@ -1813,11 +1953,14 @@ export class EvalBroker {
             fallbackFeatures
           );
           fallbackPayload.reuseModules = true;
+          if (debugEvalFiles) {
+            fallbackPayload.debugEvalFiles = true;
+          }
           await this.request('INIT', fallbackPayload, INIT_TIMEOUT_MS);
           this.lastInitKey = `${this.getStableInitHash(
             this.currentServices,
             fallbackFeatures
-          )}::${entrypoint.name}`;
+          )}::${entrypoint.name}::debugEvalFiles:${debugEvalFilesKeyPart}`;
           this.lastHappyDomEnabled = false;
           return;
         }
@@ -1847,8 +1990,14 @@ export class EvalBroker {
           fallbackFeatures
         );
         fallbackPayload.reuseModules = true;
+        if (debugEvalFiles) {
+          fallbackPayload.debugEvalFiles = true;
+        }
         await this.request('INIT', fallbackPayload, INIT_TIMEOUT_MS);
-        this.lastInitKey = getInitPayloadKey(fallbackPayload);
+        this.lastInitKey = `${this.getStableInitHash(
+          this.currentServices,
+          fallbackFeatures
+        )}::${entrypoint.name}::debugEvalFiles:${debugEvalFilesKeyPart}`;
         this.lastHappyDomEnabled = false;
         return;
       }
@@ -1932,6 +2081,7 @@ export class EvalBroker {
           // context rebuild or reuseModules:false). Drop our shipped-code
           // mirror so handleLoad ships fresh code on the next LOAD.
           this.lastSentLoadByModule.clear();
+          this.sessionLinkGraph.clear();
         }
         this.resolvePending(message.id, {});
         return;
@@ -2784,6 +2934,8 @@ export class EvalBroker {
       });
     }
 
+    this.recordEvalFileDebugLine(payload, prepared, shouldShipCode);
+
     await this.sendLoadResult(id, {
       id: payload.id,
       code: shouldShipCode ? prepared.code : '',
@@ -2802,6 +2954,14 @@ export class EvalBroker {
         hash: prepared.hash,
         only: merged,
       });
+    }
+    // Session link graph tracks every module that's been admitted into
+    // the current runner's VM. mergeKnownDependencyOnly uses this to
+    // narrow its consumer-set to entrypoints actually linking against
+    // the same module instance.
+    this.sessionLinkGraph.add(payload.id);
+    if (payload.importerId) {
+      this.sessionLinkGraph.add(payload.importerId);
     }
   }
 
@@ -3263,6 +3423,17 @@ export class EvalBroker {
 
     let mergedOnly = storedOnly;
     for (const cachedEntrypoint of this.services.cache.entrypoints.values() as Iterable<CachedDependencyOwner>) {
+      // Scope the union to entrypoints that are part of the CURRENT
+      // session's link graph. Cached entrypoints from prior transforms
+      // already evaluated against their own VMs; their imports must not
+      // widen this load. Empty session graph (initial load) falls back
+      // to project-wide for safety.
+      if (
+        this.sessionLinkGraph.size > 0 &&
+        !this.sessionLinkGraph.has(cachedEntrypoint.name)
+      ) {
+        continue;
+      }
       const { dependencies } = cachedEntrypoint;
       if (!dependencies) {
         continue;

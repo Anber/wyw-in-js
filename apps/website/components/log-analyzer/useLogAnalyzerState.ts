@@ -3,6 +3,7 @@ import * as React from 'react';
 import { useActionsView } from './useActionsView';
 import { useClipboardToast } from './useClipboardToast';
 import { useDependenciesView } from './useDependenciesView';
+import { useEvalFilesView } from './useEvalFilesView';
 import { useEntrypointsView } from './useEntrypointsView';
 import { useParseWywLogs } from './useParseWywLogs';
 import { usePathDisplay } from './usePathDisplay';
@@ -32,6 +33,10 @@ export function useLogAnalyzerState() {
     data: parse.data,
   });
 
+  const evalFiles = useEvalFilesView({
+    data: parse.data,
+  });
+
   const {
     reset: resetActionsView,
     setFilterEntrypoint,
@@ -42,6 +47,7 @@ export function useLogAnalyzerState() {
   const { reset: resetEntrypointsView, selectFile } = entrypoints;
 
   const { reset: resetDependenciesView } = dependencies;
+  const { reset: resetEvalFilesView } = evalFiles;
 
   const { reset: resetClipboard } = clipboard;
 
@@ -52,12 +58,14 @@ export function useLogAnalyzerState() {
     resetActionsView();
     resetEntrypointsView();
     resetDependenciesView();
+    resetEvalFilesView();
     resetClipboard();
     resetPathDisplay();
   }, [
     resetActionsView,
     resetClipboard,
     resetDependenciesView,
+    resetEvalFilesView,
     resetEntrypointsView,
     resetPathDisplay,
   ]);
@@ -136,6 +144,7 @@ export function useLogAnalyzerState() {
     actions,
     entrypoints,
     dependencies,
+    evalFiles,
     nav: {
       openActionsTabForTarget,
       openActionsTabForImport,

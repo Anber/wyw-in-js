@@ -26,9 +26,9 @@ type AsyncResolve = (
 ) => Promise<string | null>;
 
 const DEFAULT_EVAL_OPTIONS: Required<
-  Pick<EvalOptionsV2, 'mode' | 'require' | 'resolver'>
+  Pick<EvalOptionsV2, 'errors' | 'require' | 'resolver'>
 > = {
-  mode: 'strict',
+  errors: 'strict',
   require: 'warn-and-run',
   resolver: 'bundler',
 };

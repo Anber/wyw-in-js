@@ -102,7 +102,8 @@ export class EventEmitter {
   static dummy = new EventEmitter(
     () => {},
     () => 0,
-    () => {}
+    () => {},
+    false
   );
 
   private perfSpanId = 0;
@@ -110,7 +111,8 @@ export class EventEmitter {
   constructor(
     protected onEvent: OnEvent,
     protected onAction: OnAction,
-    protected onEntrypointEvent: OnEntrypointEvent
+    protected onEntrypointEvent: OnEntrypointEvent,
+    public readonly enabled = true
   ) {}
 
   public action<TRes>(

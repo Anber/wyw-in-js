@@ -37,18 +37,17 @@ const options: Pick<
   | 'classNameSlug'
   | 'codeRemover'
   | 'displayName'
-  | 'evaluate'
+  | 'eval'
   | 'extensions'
   | 'features'
   | 'tagResolver'
 > = {
   codeRemover: {},
   displayName: false,
-  evaluate: true,
+  eval: { strategy: 'hybrid' },
   extensions: ['.tsx'],
   features: {
     dangerousCodeRemover: true,
-    staticImportValues: true,
   },
   tagResolver: (source, imported) => {
     if (source !== 'test-package' || imported !== 'css') {
@@ -64,7 +63,6 @@ const linariaOptions: Pick<
   | 'classNameSlug'
   | 'codeRemover'
   | 'displayName'
-  | 'evaluate'
   | 'extensions'
   | 'features'
   | 'tagResolver'
@@ -81,6 +79,104 @@ const linariaOptions: Pick<
 };
 
 describe('runOxcPreevalStage', () => {
+  it('uses eval.strategy to keep static values out of __wywPreval', () => {
+    const result = runOxcPreevalStage(
+      `
+        import { css } from 'test-package';
+        const color = 'red';
+        export const a = css\`
+          color: ${'${color}'};
+        \`;
+      `,
+      fileContext,
+      {
+        ...options,
+        eval: { strategy: 'hybrid' },
+        features: {
+          dangerousCodeRemover: true,
+        },
+      } as typeof options
+    );
+
+    expect(result.staticValueCache.get('_exp')).toBe('red');
+    expect(result.code).toContain('export const __wywPreval = {};');
+    expect(result.code).not.toContain('__wywPreval = { _exp: _exp }');
+  });
+
+  it('keeps static local values in __wywPreval when eval.strategy uses execute', () => {
+    const result = runOxcPreevalStage(
+      `
+        import { css } from 'test-package';
+        const color = 'red';
+        export const a = css\`
+          color: ${'${color}'};
+        \`;
+      `,
+      fileContext,
+      {
+        ...options,
+        eval: { strategy: 'execute' },
+        features: {
+          dangerousCodeRemover: true,
+        },
+      } as typeof options
+    );
+
+    expect(result.staticValueCache.has('_exp')).toBe(false);
+    expect(result.dependencyNames).toEqual(['_exp']);
+    expect(result.code).toContain('__wywPreval = { _exp: _exp }');
+  });
+
+  it('keeps only unresolved dependencies in __wywPreval for hybrid strategy', () => {
+    const result = runOxcPreevalStage(
+      `
+        import { css } from 'test-package';
+        const color = 'red';
+        const spacing = getSpacing();
+        export const a = css\`
+          color: ${'${color}'};
+          margin: ${'${spacing}'};
+        \`;
+      `,
+      fileContext,
+      {
+        ...options,
+        eval: { strategy: 'hybrid' },
+        features: {
+          dangerousCodeRemover: true,
+        },
+      } as typeof options
+    );
+
+    expect(result.staticValueCache.get('_exp')).toBe('red');
+    expect(result.dependencyNames).toEqual(['_exp2']);
+    expect(result.code).toContain('__wywPreval = { _exp2: _exp2 }');
+    expect(result.code).not.toContain('_exp: _exp');
+  });
+
+  it('keeps unresolved static-strategy dependencies for final validation', () => {
+    const result = runOxcPreevalStage(
+      `
+        import { css } from 'test-package';
+        const color = getColor();
+        export const a = css\`
+          color: ${'${color}'};
+        \`;
+      `,
+      fileContext,
+      {
+        ...options,
+        eval: { strategy: 'static' },
+        features: {
+          dangerousCodeRemover: true,
+        },
+      } as typeof options
+    );
+
+    expect(result.dependencyNames).toEqual(['_exp']);
+    expect(result.code).toContain('__wywPreval = { _exp: _exp }');
+  });
+
   it('applies eval-time replacement and synthesizes __wywPreval dependencies', () => {
     const result = runOxcPreevalStage(
       `

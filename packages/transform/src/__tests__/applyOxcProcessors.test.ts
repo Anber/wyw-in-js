@@ -61,10 +61,9 @@ const options = (
   importedTag = 'css'
 ): Pick<
   StrictOptions,
-  'classNameSlug' | 'displayName' | 'extensions' | 'evaluate' | 'tagResolver'
+  'classNameSlug' | 'displayName' | 'extensions' | 'tagResolver'
 > => ({
   displayName: false,
-  evaluate: true,
   extensions: ['.js'],
   tagResolver: (source, imported) => {
     if (source !== 'test-package' || imported !== importedTag) {
@@ -100,14 +99,9 @@ describe('applyOxcProcessors', () => {
     let resolverCalls = 0;
     const cachedOptions: Pick<
       StrictOptions,
-      | 'classNameSlug'
-      | 'displayName'
-      | 'extensions'
-      | 'evaluate'
-      | 'tagResolver'
+      'classNameSlug' | 'displayName' | 'extensions' | 'tagResolver'
     > = {
       displayName: false,
-      evaluate: true,
       extensions: ['.js'],
       tagResolver: (source, imported) => {
         if (source === 'test-package-lookup-cache' && imported === 'css') {
@@ -329,7 +323,7 @@ describe('applyOxcProcessors', () => {
       fileContext,
       {
         ...options(processorPath),
-        evaluate: false,
+        eval: { strategy: 'execute' },
       },
       () => {},
       true
@@ -615,7 +609,6 @@ describe('applyOxcProcessors', () => {
       fileContext,
       {
         displayName: false,
-        evaluate: true,
         extensions: ['.js', '.ts', '.tsx'],
         tagResolver: (source, imported) => {
           if (source === '@linaria/react' && imported === 'styled') {

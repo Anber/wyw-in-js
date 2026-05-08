@@ -458,7 +458,18 @@ export class TransformCacheCollection<
         }
 
         // A cached file without a cached entrypoint was invalidated earlier.
+        // If the caller forced a content check and the content hash is stable,
+        // the missing entrypoint is only cache churn and must not invalidate
+        // output-dependent parents.
         if (!cachedEntrypoint && nestedDependencies.size === 0) {
+          if (
+            forceContentCheck &&
+            this.contentHashes.get(dependencyFilename)?.fs !== undefined
+          ) {
+            dependencyChangeMemo.set(dependencyFilename, false);
+            return false;
+          }
+
           dependencyChangeMemo.set(dependencyFilename, true);
           return true;
         }

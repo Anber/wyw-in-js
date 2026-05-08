@@ -7,6 +7,10 @@ import type {
   EntrypointFileStats,
   EntrypointInstance,
   EntrypointLine,
+  EvalFileRecord,
+  EvalFilesLine,
+  EvalFilesStats,
+  EvalFileValueStatus,
 } from './types';
 
 export function getCommonPathPrefix(rawPaths: string[]) {
@@ -470,6 +474,101 @@ export function analyzeDependencies(
     acc.addLine(line);
   }
   return acc.finish();
+}
+
+const normalizeEvalValueStatus = (line: EvalFilesLine): EvalFileValueStatus => {
+  if (
+    line.valueStatus === 'serialized' ||
+    line.valueStatus === 'stringified' ||
+    line.valueStatus === 'mixed' ||
+    line.valueStatus === 'none'
+  ) {
+    return line.valueStatus;
+  }
+
+  return line.valuesBase64 ? 'serialized' : 'none';
+};
+
+export function createEvalFilesAccumulator() {
+  const records: EvalFileRecord[] = [];
+  type FileStats = EvalFilesStats['summary']['topFiles'][number];
+
+  const addLine = (line: EvalFilesLine, lineNumber: number) => {
+    records.push({
+      ...line,
+      lineNumber,
+      valueStatus: normalizeEvalValueStatus(line),
+    });
+  };
+
+  const finish = (): EvalFilesStats => {
+    records.sort((a, b) => {
+      if (a.evalSeq !== b.evalSeq) return a.evalSeq - b.evalSeq;
+      return a.lineNumber - b.lineNumber;
+    });
+
+    const byFile = new Map<string, FileStats>();
+
+    let codePayloads = 0;
+    let serializedPayloads = 0;
+    let withStringifiedValues = 0;
+
+    for (const record of records) {
+      if (record.payloadKind === 'code') {
+        codePayloads += 1;
+      } else {
+        serializedPayloads += 1;
+      }
+
+      if (
+        record.valueStatus === 'stringified' ||
+        record.valueStatus === 'mixed'
+      ) {
+        withStringifiedValues += 1;
+      }
+
+      const row: FileStats = byFile.get(record.id) ?? {
+        codePayloads: 0,
+        count: 0,
+        id: record.id,
+        serializedPayloads: 0,
+        withStringifiedValues: 0,
+      };
+
+      row.count += 1;
+      if (record.payloadKind === 'code') {
+        row.codePayloads += 1;
+      } else {
+        row.serializedPayloads += 1;
+      }
+      if (
+        record.valueStatus === 'stringified' ||
+        record.valueStatus === 'mixed'
+      ) {
+        row.withStringifiedValues += 1;
+      }
+      byFile.set(record.id, row);
+    }
+
+    return {
+      records,
+      summary: {
+        codePayloads,
+        serializedPayloads,
+        totalPayloads: records.length,
+        uniqueFiles: byFile.size,
+        withStringifiedValues,
+        topFiles: Array.from(byFile.values())
+          .sort((a, b) => {
+            if (b.count !== a.count) return b.count - a.count;
+            return a.id.localeCompare(b.id);
+          })
+          .slice(0, 50),
+      },
+    };
+  };
+
+  return { addLine, finish };
 }
 
 export function getSupersedeChain(

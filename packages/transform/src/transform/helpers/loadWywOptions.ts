@@ -48,6 +48,9 @@ const cache = new WeakMap<Partial<PartialOptions>, StrictOptions>();
 const defaultOverrides = {};
 const nodeModulesRegExp = /[\\/]node_modules[\\/]/;
 const evalResolverModes = new Set(['bundler', 'hybrid', 'native', 'custom']);
+const evalStrategies = new Set(['execute', 'hybrid', 'static']);
+const evalRuntimes = new Set(['nodejs']);
+const evalErrorModes = new Set(['strict', 'loose']);
 const defaultImportLoaders: ImportLoaders = {
   raw: 'raw',
   url: 'url',
@@ -147,13 +150,14 @@ export function loadWywOptions(
     globalCache: true,
     happyDOM: true,
     softErrors: false,
-    staticImportValues: false,
     useWeakRefInEval: true,
-  } satisfies FeatureFlags & { staticImportValues: boolean };
+  } satisfies FeatureFlags;
   const defaultEval: EvalOptionsV2 = {
-    mode: 'strict',
+    errors: 'strict',
     require: 'warn-and-run',
     resolver: 'bundler',
+    runtime: 'nodejs',
+    strategy: 'hybrid',
   };
 
   const config = (() => {
@@ -173,7 +177,6 @@ export function loadWywOptions(
 
   const options: StrictOptions = {
     displayName: false,
-    evaluate: true,
     evalConsole: 'pipe',
     extensions: ['.cjs', '.cts', '.js', '.jsx', '.mjs', '.mts', '.ts', '.tsx'],
     outputMetadata: false,
@@ -224,6 +227,24 @@ export function loadWywOptions(
   if (evalResolver && !evalResolverModes.has(evalResolver)) {
     throw new Error(
       `[wyw-in-js] Unsupported eval.resolver "${evalResolver}". Use "bundler", "hybrid", "native", or "custom".`
+    );
+  }
+  const evalStrategy = options.eval?.strategy;
+  if (evalStrategy && !evalStrategies.has(evalStrategy)) {
+    throw new Error(
+      `[wyw-in-js] Unsupported eval.strategy "${evalStrategy}". Use "execute", "hybrid", or "static".`
+    );
+  }
+  const evalRuntime = options.eval?.runtime;
+  if (evalRuntime && !evalRuntimes.has(evalRuntime)) {
+    throw new Error(
+      `[wyw-in-js] Unsupported eval.runtime "${evalRuntime}". Use "nodejs".`
+    );
+  }
+  const evalErrors = options.eval?.errors;
+  if (evalErrors && !evalErrorModes.has(evalErrors)) {
+    throw new Error(
+      `[wyw-in-js] Unsupported eval.errors "${evalErrors}". Use "strict" or "loose".`
     );
   }
 

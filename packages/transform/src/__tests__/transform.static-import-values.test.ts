@@ -21,6 +21,16 @@ const styledProcessorFile = join(
   '__fixtures__',
   'test-styled-processor.js'
 );
+const staticContractCssProcessorFile = join(
+  __dirname,
+  '__fixtures__',
+  'test-static-contract-css-processor.js'
+);
+const runtimeStyledProcessorFile = join(
+  __dirname,
+  '__fixtures__',
+  'test-runtime-styled-processor.js'
+);
 
 const createResolver =
   (processorPath: string) => async (what: string, importer: string) => {
@@ -30,6 +40,14 @@ const createResolver =
 
     if (what === 'test-styled-processor') {
       return styledProcessorFile;
+    }
+
+    if (what === 'test-static-contract-css-processor') {
+      return staticContractCssProcessorFile;
+    }
+
+    if (what === 'test-runtime-styled-processor') {
+      return runtimeStyledProcessorFile;
     }
 
     if (what.startsWith('.')) {
@@ -66,6 +84,20 @@ const runTransformWithOptions = async (
               return styledProcessorFile;
             }
 
+            if (
+              source === 'test-static-contract-css-processor' &&
+              tag === 'css'
+            ) {
+              return staticContractCssProcessorFile;
+            }
+
+            if (
+              source === 'test-runtime-styled-processor' &&
+              tag === 'styled'
+            ) {
+              return runtimeStyledProcessorFile;
+            }
+
             return null;
           },
         },
@@ -90,10 +122,11 @@ const runTransform = async (
     eventEmitter,
     {
       ...pluginOptions,
-      features: {
-        staticImportValues: true,
-        ...pluginOptions.features,
+      eval: {
+        strategy: 'hybrid',
+        ...pluginOptions.eval,
       },
+      features: pluginOptions.features,
     },
     asyncResolve
   );
@@ -160,7 +193,47 @@ describe('transform static import value inlining', () => {
     }
   });
 
-  it('keeps imported static values in eval by default', async () => {
+  it('allows static strategy when imported values resolve without eval', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
+    const entryFile = join(root, 'entry.js');
+    const depFile = join(root, 'tokens.js');
+    const cache = new TransformCacheCollection();
+    const perf = createPerfEventRecorder();
+
+    writeFileSync(depFile, `export const color = 'red';`);
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { css } from 'test-css-processor';
+        import { color } from './tokens.js';
+
+        export const className = css\`
+          color: ${'${color}'};
+        \`;
+      `
+    );
+
+    try {
+      const result = await runTransform(
+        root,
+        entryFile,
+        cache,
+        perf.eventEmitter,
+        {
+          eval: { strategy: 'static' },
+        }
+      );
+
+      expect(result.cssText).toContain('color:red');
+      expect(result.code).not.toContain('./tokens.js');
+      expect(result.dependencies).toContain(depFile);
+      expect(perf.counts.get('transform:evalFile') ?? 0).toBe(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('inlines imported static values by default', async () => {
     const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
     const entryFile = join(root, 'entry.js');
     const depFile = join(root, 'tokens.js');
@@ -189,8 +262,9 @@ describe('transform static import value inlining', () => {
       );
 
       expect(result.cssText).toContain('color:red');
-      expect(result.dependencies).toContain('./tokens.js');
-      expect(perf.counts.get('transform:evalFile') ?? 0).toBeGreaterThan(0);
+      expect(result.code).not.toContain('./tokens.js');
+      expect(result.dependencies).toContain(depFile);
+      expect(perf.counts.get('transform:evalFile') ?? 0).toBe(0);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -286,9 +360,7 @@ describe('transform static import value inlining', () => {
         cache,
         perf.eventEmitter,
         {
-          features: {
-            staticImportValues: false,
-          },
+          eval: { strategy: 'execute' },
         }
       );
 
@@ -326,9 +398,7 @@ describe('transform static import value inlining', () => {
         cache,
         perf.eventEmitter,
         {
-          features: {
-            staticImportValues: false,
-          },
+          eval: { strategy: 'execute' },
         }
       );
 
@@ -605,7 +675,42 @@ describe('transform static import value inlining', () => {
     }
   });
 
-  it('emits static resolve debug rejection reasons whenever the feature is enabled', async () => {
+  it('rejects unsafe dependency modules when eval.strategy is static', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
+    const entryFile = join(root, 'entry.js');
+    const depFile = join(root, 'tokens.js');
+    const cache = new TransformCacheCollection();
+
+    writeFileSync(
+      depFile,
+      dedent`
+        export const color = Date.now() > 0 ? 'red' : 'blue';
+      `
+    );
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { css } from 'test-css-processor';
+        import { color } from './tokens.js';
+
+        export const className = css\`
+          color: ${'${color}'};
+        \`;
+      `
+    );
+
+    try {
+      await expect(
+        runTransform(root, entryFile, cache, undefined, {
+          eval: { strategy: 'static' },
+        })
+      ).rejects.toThrow('eval.strategy: "static"');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('emits static resolve debug rejection reasons when eval.strategy enables static resolution', async () => {
     const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
 
     const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
@@ -656,7 +761,7 @@ describe('transform static import value inlining', () => {
     }
   });
 
-  it('does not emit static resolve debug events when the feature is disabled', async () => {
+  it('does not emit static resolve debug events when eval.strategy uses execute', async () => {
     const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
     const entryFile = join(root, 'entry.js');
     const depFile = join(root, 'unsafe.js');
@@ -684,7 +789,7 @@ describe('transform static import value inlining', () => {
 
     try {
       await runTransformWithOptions(root, entryFile, cache, perf.eventEmitter, {
-        features: { staticImportValues: false },
+        eval: { strategy: 'execute' },
       });
 
       expect(
@@ -903,6 +1008,87 @@ describe('transform static import value inlining', () => {
     }
   });
 
+  it('inlines same-file selector-only processor class names without eval', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
+    const entryFile = join(root, 'entry.js');
+    const cache = new TransformCacheCollection();
+    const perf = createPerfEventRecorder();
+
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { css } from 'test-css-processor';
+
+        const marker = css\`\`;
+        export const runtimeClassName = marker;
+
+        export const className = css\`
+          .${'${marker}'} {
+            color: red;
+          }
+        \`;
+      `
+    );
+
+    try {
+      const result = await runTransform(
+        root,
+        entryFile,
+        cache,
+        perf.eventEmitter
+      );
+
+      expect(result.cssText).toContain('color:red');
+      expect(perf.counts.get('transform:evalFile') ?? 0).toBe(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('inlines same-file selector-only processor object members without eval', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
+    const entryFile = join(root, 'entry.js');
+    const cache = new TransformCacheCollection();
+    const perf = createPerfEventRecorder();
+
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'app' }));
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { css } from 'test-css-processor';
+        import { styled } from 'test-styled-processor';
+
+        export const modifiers = {
+          empty: css\`\`,
+        };
+
+        const UnstyledNotice = () => null;
+
+        const Notice = styled(UnstyledNotice)\`
+          &.${'${modifiers.empty}'} {
+            color: red;
+          }
+        \`;
+
+        export default Object.assign(Notice, modifiers);
+      `
+    );
+
+    try {
+      const result = await runTransform(
+        root,
+        entryFile,
+        cache,
+        perf.eventEmitter
+      );
+
+      expect(result.cssText).toContain('color:red');
+      expect(perf.counts.get('transform:evalFile') ?? 0).toBe(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('inlines namespace selector-only processor class names without eval', async () => {
     const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
     const entryFile = join(root, 'entry.js');
@@ -996,6 +1182,274 @@ describe('transform static import value inlining', () => {
       expect(result.cssText).toContain('color:red');
       expect(result.cssText).not.toContain('color:blue');
       expect(result.dependencies).toContain(classesFile);
+      expect(perf.counts.get('transform:evalFile') ?? 0).toBe(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('inlines imported processor class name objects with static imports without eval', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
+    const entryFile = join(root, 'entry.js');
+    const classesFile = join(root, 'classes.js');
+    const tokensFile = join(root, 'tokens.js');
+    const cache = new TransformCacheCollection();
+    const perf = createPerfEventRecorder();
+
+    writeFileSync(
+      tokensFile,
+      `export const breakpoint = '(max-width: 600px)';`
+    );
+    writeFileSync(
+      classesFile,
+      dedent`
+        import { css } from 'test-css-processor';
+        import { breakpoint } from './tokens.js';
+
+        export const HeadingStyles = {
+          Heading1: css\`
+            font-size: 28px;
+
+            @media ${'${breakpoint}'} {
+              font-size: 22px;
+            }
+          \`,
+          Heading2: css\`
+            font-size: 22px;
+
+            @media ${'${breakpoint}'} {
+              font-size: 18px;
+            }
+          \`,
+        };
+      `
+    );
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { css } from 'test-css-processor';
+        import { HeadingStyles } from './classes.js';
+
+        export const title = css\`
+          .${'${HeadingStyles.Heading2}'} {
+            margin: 0;
+          }
+        \`;
+      `
+    );
+
+    try {
+      const result = await runTransform(
+        root,
+        entryFile,
+        cache,
+        perf.eventEmitter
+      );
+
+      expect(result.cssText).toContain('margin:0');
+      expect(result.cssText).not.toContain('font-size:22px');
+      expect(perf.counts.get('transform:evalFile') ?? 0).toBe(0);
+      expect(
+        result.dependencies.some(
+          (dependency) =>
+            dependency === classesFile || dependency === './classes.js'
+        )
+      ).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('inlines mixed styled metadata and class-name object exports without eval', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
+    const entryFile = join(root, 'entry.js');
+    const stylesFile = join(root, 'styles.js');
+    const cache = new TransformCacheCollection();
+    const perf = createPerfEventRecorder();
+
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'app' }));
+    writeFileSync(
+      stylesFile,
+      dedent`
+        import { css } from 'test-css-processor';
+        import { styled } from 'test-styled-processor';
+
+        const runtimeOnly = (() => {
+          throw new Error('mixed style object should not run during eval');
+        })();
+
+        const Container = styled.div\`
+          display: flex;
+        \`;
+
+        const CloseButton = styled.button\`
+          color: red;
+        \`;
+
+        const Clickable = css\`
+          cursor: pointer;
+        \`;
+
+        export const Styles = {
+          Container,
+          CloseButton,
+          Clickable,
+        };
+
+        export { runtimeOnly };
+      `
+    );
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { styled } from 'test-styled-processor';
+        import { Styles } from './styles.js';
+
+        export const Dialog = styled.div\`
+          ${'${Styles.Container}'} {
+            margin: 0;
+          }
+
+          .${'${Styles.Clickable}'} {
+            color: blue;
+          }
+        \`;
+      `
+    );
+
+    try {
+      const result = await runTransform(
+        root,
+        entryFile,
+        cache,
+        perf.eventEmitter
+      );
+
+      expect(result.cssText).toContain('margin:0');
+      expect(result.cssText).toContain('color:blue');
+      expect(
+        result.dependencies.some(
+          (dependency) =>
+            dependency === stylesFile || dependency === './styles.js'
+        )
+      ).toBe(true);
+      expect(perf.counts.get('transform:evalFile') ?? 0).toBe(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('prefers processor static contract values over legacy replacement expressions', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
+    const entryFile = join(root, 'entry.js');
+    const cache = new TransformCacheCollection();
+    const perf = createPerfEventRecorder();
+
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'app' }));
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { css } from 'test-static-contract-css-processor';
+        import { styled } from 'test-styled-processor';
+
+        const Base = css\`
+          color: red;
+        \`;
+
+        export const Box = styled.div\`
+          .${'${Base}'} {
+            color: blue;
+          }
+        \`;
+      `
+    );
+
+    try {
+      const result = await runTransform(
+        root,
+        entryFile,
+        cache,
+        perf.eventEmitter
+      );
+
+      expect(result.cssText).toContain('.contract-');
+      expect(result.cssText).not.toContain('.legacy-');
+      expect(perf.counts.get('transform:evalFile') ?? 0).toBe(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('inlines mixed styled metadata object exports with local runtime bases without eval', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
+    const entryFile = join(root, 'entry.js');
+    const buttonFile = join(root, 'button.js');
+    const stylesFile = join(root, 'styles.js');
+    const cache = new TransformCacheCollection();
+    const perf = createPerfEventRecorder();
+
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'app' }));
+    writeFileSync(
+      buttonFile,
+      dedent`
+        export const Button = () => null;
+      `
+    );
+    writeFileSync(
+      stylesFile,
+      dedent`
+        import { css } from 'test-css-processor';
+        import { styled } from 'test-styled-processor';
+        import { Button } from './button.js';
+
+        const CloseButton = styled(Button)\`
+          color: red;
+        \`;
+
+        const Clickable = css\`
+          cursor: pointer;
+        \`;
+
+        export const Styles = {
+          CloseButton,
+          Clickable,
+        };
+      `
+    );
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { styled } from 'test-styled-processor';
+        import { Styles } from './styles.js';
+
+        export const Dialog = styled.div\`
+          ${'${Styles.CloseButton}'} {
+            margin: 0;
+          }
+
+          .${'${Styles.Clickable}'} {
+            color: blue;
+          }
+        \`;
+      `
+    );
+
+    try {
+      const result = await runTransform(
+        root,
+        entryFile,
+        cache,
+        perf.eventEmitter
+      );
+
+      expect(result.cssText).toContain('margin:0');
+      expect(result.cssText).toContain('color:blue');
+      expect(
+        result.dependencies.some(
+          (dependency) =>
+            dependency === stylesFile || dependency === './styles.js'
+        )
+      ).toBe(true);
       expect(perf.counts.get('transform:evalFile') ?? 0).toBe(0);
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -1211,6 +1665,80 @@ describe('transform static import value inlining', () => {
       );
       expect(result.dependencies).toContain(baseFile);
       expect(perf.counts.get('transform:evalFile') ?? 0).toBe(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps local runtime component references in runtime styled output', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
+    const entryFile = join(root, 'entry.js');
+    const cache = new TransformCacheCollection();
+
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { styled } from 'test-runtime-styled-processor';
+
+        const Layout = () => 'runtime';
+
+        export default styled(Layout)\`
+          color: red;
+        \`;
+      `
+    );
+
+    try {
+      const result = await runTransform(root, entryFile, cache);
+
+      expect(result.cssText).toContain('color:red');
+      expect(result.code).toContain("const Layout = () => 'runtime';");
+      expect(result.code).toContain('const _exp = () => (Layout);');
+      expect(result.code).toContain('styled(_exp())');
+      expect(result.code).not.toContain('styled(() => {})');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps same-file styled component selector interpolations as class selectors', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
+    const entryFile = join(root, 'entry.js');
+    const cache = new TransformCacheCollection();
+    const perf = createPerfEventRecorder();
+
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { styled } from 'test-styled-processor';
+
+        const Item = styled.div\`
+          color: red;
+        \`;
+
+        export const Row = styled.div\`
+          & > ${'${Item}'}:last-of-type {
+            color: blue;
+          }
+        \`;
+      `
+    );
+
+    try {
+      const result = await runTransform(
+        root,
+        entryFile,
+        cache,
+        perf.eventEmitter,
+        {},
+        createResolver(styledProcessorFile)
+      );
+
+      expect(perf.counts.get('transform:evalFile') ?? 0).toBe(0);
+      expect(result.cssText).toMatch(/>\.[_a-zA-Z][_a-zA-Z0-9-]*:last-of-type/);
+      expect(result.cssText).not.toMatch(
+        />[_a-zA-Z][_a-zA-Z0-9-]*:last-of-type/
+      );
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -1884,7 +2412,9 @@ describe('transform static import value inlining', () => {
 
       expect(result.cssText).toContain('color:red');
       expect(result.cssText).toContain('font-size:12px');
-      expect(perf.counts.get('transform:evalFile') ?? 0).toBeGreaterThan(0);
+      // Inliner now resolves both styled() candidates statically; the SVG
+      // resolver guard (failOnRuntimeSvgResolve) still ensures eval never
+      // reaches the .svg?react import.
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -2362,6 +2892,333 @@ describe('transform static import value inlining', () => {
     }
   });
 
+  it('inlines same-file styled base metadata without eval', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
+    const entryFile = join(root, 'entry.js');
+    const cache = new TransformCacheCollection();
+    const perf = createPerfEventRecorder();
+
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'app' }));
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { styled } from 'test-styled-processor';
+
+        const Base = styled.div\`
+          color: red;
+        \`;
+
+        export const Extended = styled(Base)\`
+          font-size: 12px;
+        \`;
+      `
+    );
+
+    try {
+      const result = await runTransform(
+        root,
+        entryFile,
+        cache,
+        perf.eventEmitter
+      );
+
+      expect(result.cssText).toContain('color:red');
+      expect(result.cssText).toContain('font-size:12px');
+      expect(result.cssText).toMatch(
+        /\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\s*\{[^}]*font-size:12px;[^}]*\}/s
+      );
+      expect(perf.counts.get('transform:evalFile') ?? 0).toBe(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('inlines same-file null component bases without eval', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
+    const entryFile = join(root, 'entry.js');
+    const cache = new TransformCacheCollection();
+    const perf = createPerfEventRecorder();
+
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'app' }));
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { jsx as _jsx, jsxs as _jsxs } from 'react/jsx-runtime';
+        import { styled } from 'test-styled-processor';
+        import Feature from './Feature';
+
+        const Features = ({ className }) => _jsxs('ul', {
+          className,
+          children: [_jsx(Feature, { icon: 'cloud' })],
+        });
+
+        export const Root = styled(Features)\`
+          color: red;
+        \`;
+      `
+    );
+
+    try {
+      const result = await runTransform(
+        root,
+        entryFile,
+        cache,
+        perf.eventEmitter
+      );
+
+      expect(result.cssText).toContain('color:red');
+      expect(perf.counts.get('transform:evalFile') ?? 0).toBe(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('inlines same-file React wrapper null component bases without eval', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
+    const entryFile = join(root, 'entry.js');
+    const cache = new TransformCacheCollection();
+    const perf = createPerfEventRecorder();
+
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'app' }));
+    writeFileSync(
+      entryFile,
+      dedent`
+        import React from 'react';
+        import { jsx as _jsx } from 'react/jsx-runtime';
+        import { styled } from 'test-styled-processor';
+
+        const BareAlert = ({ children }, ref) => {
+          return _jsx('span', { ref, children });
+        };
+        const UnstyledAlert = React.forwardRef(BareAlert);
+
+        export const Alert = styled(UnstyledAlert)\`
+          color: red;
+        \`;
+      `
+    );
+
+    try {
+      const result = await runTransform(
+        root,
+        entryFile,
+        cache,
+        perf.eventEmitter
+      );
+
+      expect(result.cssText).toContain('color:red');
+      expect(perf.counts.get('transform:evalFile') ?? 0).toBe(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('inlines same-file React wrapper bases with sanitized render functions without eval', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
+    const entryFile = join(root, 'entry.js');
+    const cache = new TransformCacheCollection();
+    const perf = createPerfEventRecorder();
+
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'app' }));
+    writeFileSync(
+      entryFile,
+      dedent`
+        import React from 'react';
+        import { styled } from 'test-styled-processor';
+
+        const InputFieldRender = () => {
+          setTimeout(() => {}, 1);
+          return null;
+        };
+        const BareInputField = React.forwardRef(InputFieldRender);
+
+        export const LabelsInputField = styled(BareInputField)\`
+          color: red;
+        \`;
+      `
+    );
+
+    try {
+      const result = await runTransform(
+        root,
+        entryFile,
+        cache,
+        perf.eventEmitter
+      );
+
+      expect(result.cssText).toContain('color:red');
+      expect(perf.counts.get('transform:evalFile') ?? 0).toBe(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('inlines same-file default null component bases without eval', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
+    const entryFile = join(root, 'entry.js');
+    const cache = new TransformCacheCollection();
+    const perf = createPerfEventRecorder();
+
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'app' }));
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { styled } from 'test-styled-processor';
+
+        const BareEditor = () => null;
+
+        export default styled(BareEditor)\`
+          color: red;
+        \`;
+      `
+    );
+
+    try {
+      const result = await runTransform(
+        root,
+        entryFile,
+        cache,
+        perf.eventEmitter
+      );
+
+      expect(result.cssText).toContain('color:red');
+      expect(perf.counts.get('transform:evalFile') ?? 0).toBe(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('inlines same-file typed styled base metadata with runtime props without eval', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
+    const entryFile = join(root, 'entry.tsx');
+    const flexFile = join(root, 'flex.tsx');
+    const cache = new TransformCacheCollection();
+    const perf = createPerfEventRecorder();
+
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'app' }));
+    writeFileSync(
+      flexFile,
+      dedent`
+        import { styled } from 'test-styled-processor';
+
+        const runtimeOnly = (() => {
+          throw new Error('typed styled base should not be imported during eval');
+        })();
+
+        export const Horizontal = styled.div<{ inline?: boolean }>\`
+          display: ${'${props => (props.inline === true ? "inline-flex" : "flex")}'};
+          align-items: ${'${props => props.inline ? "center" : "normal"}'};
+        \`;
+
+        export { runtimeOnly };
+      `
+    );
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { styled } from 'test-styled-processor';
+        import { Horizontal } from './flex.tsx';
+
+        export const ContextItemPill = styled(Horizontal)<{ withRemoveIcon: boolean }>\`
+          padding: ${'${props => (props.withRemoveIcon ? "2px 4px" : "2px 8px")}'};
+        \`;
+
+        export const ClickableContextItemPill = styled(ContextItemPill)\`
+          cursor: pointer;
+        \`;
+      `
+    );
+
+    try {
+      const result = await runTransform(
+        root,
+        entryFile,
+        cache,
+        perf.eventEmitter
+      );
+
+      expect(result.cssText).toContain('cursor:pointer');
+      expect(
+        result.dependencies.some(
+          (dependency) => dependency === flexFile || dependency === './flex.tsx'
+        )
+      ).toBe(true);
+      expect(perf.counts.get('transform:evalFile') ?? 0).toBe(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('inlines same-file styled chain selectors with imported bases without eval', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
+    const entryFile = join(root, 'entry.js');
+    const flexFile = join(root, 'flex.js');
+    const cache = new TransformCacheCollection();
+    const perf = createPerfEventRecorder();
+
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'app' }));
+    writeFileSync(
+      flexFile,
+      dedent`
+        import { styled } from 'test-styled-processor';
+
+        const runtimeOnly = (() => {
+          throw new Error('styled primitive module should not run during eval');
+        })();
+
+        export const Vertical = styled.div\`
+          display: flex;
+          flex-direction: column;
+        \`;
+
+        export { runtimeOnly };
+      `
+    );
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { styled } from 'test-styled-processor';
+        import { Vertical } from './flex.js';
+
+        const FieldRow = styled(Vertical)\`
+          gap: 8px;
+        \`;
+
+        const FullWidthFieldRow = styled(FieldRow)\`
+        \`;
+
+        export const DevPanel = styled.div\`
+          & > ${'${FieldRow}'}:not(${'${FullWidthFieldRow}'}) {
+            max-width: calc(50% - 8px);
+          }
+
+          @media (max-width: 600px) {
+            & > ${'${FieldRow}'} {
+              max-width: 100%;
+            }
+          }
+        \`;
+      `
+    );
+
+    try {
+      const result = await runTransform(
+        root,
+        entryFile,
+        cache,
+        perf.eventEmitter
+      );
+
+      expect(result.cssText).toContain('gap:8px');
+      expect(result.cssText).toContain('max-width:calc(50% - 8px)');
+      expect(result.cssText).toMatch(/>\.[_a-zA-Z][_a-zA-Z0-9-]*:not\(\./);
+      expect(result.dependencies).toContain(flexFile);
+      expect(perf.counts.get('transform:evalFile') ?? 0).toBe(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('reuses cached static styled metadata across entry transforms', async () => {
     const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
     const firstEntryFile = join(root, 'entry-a.js');
@@ -2562,6 +3419,7 @@ describe('transform static import value inlining', () => {
     const barrelFile = join(root, 'barrel.js');
     const depFile = join(root, 'tokens.js');
     const cache = new TransformCacheCollection();
+    const resolver = createResolver(processorFile);
 
     writeFileSync(depFile, `export const color = 'red';`);
     writeFileSync(barrelFile, `export { color } from './tokens.js';`);
@@ -2578,9 +3436,23 @@ describe('transform static import value inlining', () => {
     );
 
     try {
-      const first = await runTransform(root, entryFile, cache);
+      const first = await runTransform(
+        root,
+        entryFile,
+        cache,
+        undefined,
+        {},
+        resolver
+      );
       writeFileSync(depFile, `export const color = 'blue';`);
-      const second = await runTransform(root, entryFile, cache);
+      const second = await runTransform(
+        root,
+        entryFile,
+        cache,
+        undefined,
+        {},
+        resolver
+      );
 
       expect(first.cssText).toContain('color:red');
       expect(second.cssText).toContain('color:blue');

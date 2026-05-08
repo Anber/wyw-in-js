@@ -36,10 +36,13 @@ export interface IPreevalResult {
   dependencyNames?: string[];
   evalCode?: string;
   metadata: WYWTransformMetadata | null;
+  processorClassNames?: Record<string, string>;
   staticSideEffectImportLocals?: string[];
   staticDependencies?: string[];
   staticNullWYWMetaExtendsHelpers?: string[];
+  staticValuesApplied?: boolean;
   staticValueCache?: Map<string, unknown>;
+  runtimeOnlyStaticValueNames?: string[];
   staticValueCandidates?: Array<{
     imports: Array<{
       imported: 'default' | string;

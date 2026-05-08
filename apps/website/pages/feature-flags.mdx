@@ -10,7 +10,6 @@ Feature flags are used to enable or disable specific features provided. The `fea
 - `["glob1", "glob2"]`: Enables the feature for files matching any of the specified glob patterns.
 - `["glob1", "!glob2"]`: Enables the feature for files matching `glob1` but excludes files that match `glob2`.
 
-
 # `dangerousCodeRemover` Feature
 
 The `dangerousCodeRemover` is a flag that is enabled by default. It is designed to enhance the static evaluation of values that are interpolated in styles and to optimize the processing of styled-wrapped components during the build stage. This optimization is crucial for maintaining a stable and fast build process. It is important to note that the `dangerousCodeRemover` does not impact the runtime code; it solely focuses on the code used during the build.
@@ -47,11 +46,9 @@ Suppose you have a file named `specialComponent.js` that contains code that shou
 
 You are instructing WyW-in-JS to exclude the `specialComponent.js` file from the removal process. As a result, any code within this file that would have been removed by the `dangerousCodeRemover` will be retained in the build output.
 
-
 # `globalCache` Feature
 
 The `globalCache` is enabled by default. WyW-in-JS uses two levels of caching to improve the performance of the build process. The first level is used to cache transformation and evaluation results for each `transform` call, usually a single call of Webpack's loader or Vite's transform hook. The second level is used to cache the results of the entire build process. The `globalCache` feature controls the second level of caching. Turning off this feature will result in a slower build process but decreased memory usage.
-
 
 # `happyDOM` Feature
 
@@ -64,34 +61,9 @@ so `happy-dom` is loaded via `import()` and works on Node 22+.
 
 - To disable DOM emulation explicitly: `features: { happyDOM: false }`.
 
-
 # `softErrors` Feature
 
 The `softErrors` is disabled by default. It is designed to provide a more lenient evaluation of styles and values that are interpolated in styles. This flag is useful for debugging and prevents the build from failing even if some files cannot be processed with WyW-in-JS.
-
-# `staticImportValues` Feature
-
-The `staticImportValues` feature is disabled by default. It lets the Oxc transform inline values that can be proven static, such as primitives, `null`, arrays, and plain objects, without sending those bindings through build-time evaluation.
-
-Enable it when your project has many style interpolations that point at static design tokens, constant objects, constant arrays, compiled enum objects, or simple static metadata chains. In those cases, WyW-in-JS can skip some eval work and can avoid importing token-only modules during eval.
-
-Keep it disabled when a project has few static imports, when most candidate modules are runtime-heavy, or when you are comparing build performance with and without the extra static analysis. The pass has to parse and resolve extra modules before it can prove that a value is safe, so codebases with little static data may see extra build overhead.
-
-## Limitations
-
-The resolver is intentionally conservative. If it cannot prove a value is static and serializable, WyW-in-JS falls back to the existing eval path.
-
-It does not inline arbitrary runtime-created values. Functions, classes, symbols, getters, non-plain objects, mutable bindings, dynamic imports, unresolved imports, cycles, side-effectful module shapes, and ambiguous computed or namespace access stay in eval.
-
-```js
-{
-  features: {
-    staticImportValues: true,
-  },
-}
-```
-
-You can also use `WYW_STATIC_IMPORT_VALUES=1` to force the feature on for local validation or performance comparison. `0`, `false`, `no`, and `off` force it off.
 
 # `useWeakRefInEval` Feature
 

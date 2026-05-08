@@ -9,7 +9,7 @@ import type { SerializedError, SerializedValue } from './serialize';
 
 export type EvalRunnerInitPayload = {
   evalOptions: {
-    mode: 'strict' | 'loose';
+    errors: 'strict' | 'loose';
     require: 'warn-and-run' | 'error' | 'off';
     globals: Record<string, unknown>;
     importOverrides?: ImportOverrides;
@@ -17,6 +17,7 @@ export type EvalRunnerInitPayload = {
     extensions?: string[];
   };
   features: FeatureFlags<'happyDOM'>;
+  debugEvalFiles?: boolean;
   entrypoint: string;
   reuseModules?: boolean;
 };
@@ -28,6 +29,23 @@ export type EvalRequest = {
 export type EvalResultPayload = {
   values: Record<string, SerializedValue> | null;
   modules?: Record<string, Record<string, SerializedValue>>;
+  debugEvalFiles?: Record<string, DebugEvalFileValues>;
+};
+
+export type DebugEvalFileValue =
+  | {
+      serialized: SerializedValue;
+      status: 'serialized';
+    }
+  | {
+      reason: string;
+      status: 'stringified';
+      stringified: string;
+    };
+
+export type DebugEvalFileValues = {
+  exports?: Record<string, DebugEvalFileValue>;
+  preval?: Record<string, DebugEvalFileValue>;
 };
 
 export type ResolveRequestPayload = {

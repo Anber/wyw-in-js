@@ -135,6 +135,12 @@ export type EvalResolverMode = 'bundler' | 'hybrid' | 'native' | 'custom';
 
 export type EvalRequireMode = 'warn-and-run' | 'error' | 'off';
 
+export type EvalStrategy = 'execute' | 'hybrid' | 'static';
+
+export type EvalRuntime = 'nodejs';
+
+export type EvalErrorMode = 'strict' | 'loose';
+
 export type EvalResolverKind = 'import' | 'dynamic-import' | 'require';
 
 export type EvalWarningCode =
@@ -157,6 +163,17 @@ export type EvalWarning = {
 
 export type EvalOptionsV2 = {
   /**
+   * Controls how interpolation values are computed.
+   * - `execute`: use the build-time evaluator.
+   * - `hybrid`: resolve provably static values first, then fall back to the evaluator.
+   * - `static`: resolve only provably static values and fail on evaluator fallback.
+   */
+  strategy?: EvalStrategy;
+  /**
+   * Runtime used by the build-time evaluator.
+   */
+  runtime?: EvalRuntime;
+  /**
    * Default is `bundler`. `hybrid` is an opt-in mode whose intended
    * precedence is customResolver -> native Oxc resolver -> bundler.
    */
@@ -170,7 +187,7 @@ export type EvalOptionsV2 = {
     id: string
   ) => Promise<{ code: string; map?: unknown; loader?: string } | null>;
   require?: EvalRequireMode; // default: 'warn-and-run'
-  mode?: 'strict' | 'loose'; // default: 'strict'
+  errors?: EvalErrorMode; // default: 'strict'
   globals?: Record<string, unknown>;
   onWarn?: (warning: EvalWarning) => void;
 };
@@ -185,7 +202,6 @@ type AllFeatureFlags = {
   globalCache: FeatureFlag;
   happyDOM: FeatureFlag;
   softErrors: FeatureFlag;
-  staticImportValues: FeatureFlag;
   useWeakRefInEval: FeatureFlag;
 };
 
@@ -219,7 +235,6 @@ export type StrictOptions = {
   codeRemover?: CodeRemoverOptions;
   conditionNames?: string[];
   displayName: boolean;
-  evaluate: boolean;
   eval?: EvalOptionsV2;
   extensions: string[];
   features: FeatureFlags;
@@ -227,6 +242,34 @@ export type StrictOptions = {
   ignore?: RegExp;
   importLoaders?: ImportLoaders;
   importOverrides?: ImportOverrides;
+  /**
+   * Per-source map of imported names to statically-known values. Used by
+   * the static evaluator when resolving imports from the listed sources.
+   *
+   * Each entry maps an import source (a package name or absolute file
+   * path) to a record of imported names. Each name's value is either:
+   *   - a function: treated as a pure helper. Called at every CallExpression
+   *     site whose callee resolves to this binding, with evaluator-resolved
+   *     args. Result is treated as a static value.
+   *   - any other value: treated as a literal binding override. Returned
+   *     wherever the binding is referenced.
+   *
+   * Trust model is the same as importOverrides / tagResolver: the user
+   * vouches that pure helpers are deterministic and that literal
+   * overrides reflect the runtime value (or knowingly diverge for
+   * prototyping / SSR theming).
+   *
+   * Example:
+   *   staticBindings: {
+   *     '@linaria/core': {
+   *       cx: (...args) => args.filter(Boolean).join(' '),
+   *     },
+   *     '/abs/path/to/theme.ts': {
+   *       themeVars: { panelBg: '#f00' },
+   *     },
+   *   }
+   */
+  staticBindings?: Record<string, Record<string, unknown>>;
   outputMetadata: boolean;
   overrideContext?: (
     context: Partial<VmContext>,
