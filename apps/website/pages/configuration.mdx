@@ -40,8 +40,8 @@ module.exports = {
 
   For `eval.strategy`:
 
-  - `execute` (default): compute interpolation values with the build-time evaluator.
-  - `hybrid`: resolve values that can be proven static first, then fall back to the build-time evaluator.
+  - `hybrid` (default): resolve values that can be proven static first, then fall back to the build-time evaluator.
+  - `execute`: compute interpolation values with the build-time evaluator.
   - `static`: resolve only values that can be proven static. Values that would need evaluator fallback fail the build.
 
   `eval.runtime` selects the runtime used by the build-time evaluator. The current runtime is `nodejs`.

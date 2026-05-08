@@ -177,7 +177,7 @@ describe('transform static import value inlining', () => {
     }
   });
 
-  it('keeps imported static values in eval by default', async () => {
+  it('inlines imported static values by default', async () => {
     const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
     const entryFile = join(root, 'entry.js');
     const depFile = join(root, 'tokens.js');
@@ -206,8 +206,9 @@ describe('transform static import value inlining', () => {
       );
 
       expect(result.cssText).toContain('color:red');
-      expect(result.dependencies).toContain('./tokens.js');
-      expect(perf.counts.get('transform:evalFile') ?? 0).toBeGreaterThan(0);
+      expect(result.code).not.toContain('./tokens.js');
+      expect(result.dependencies).toContain(depFile);
+      expect(perf.counts.get('transform:evalFile') ?? 0).toBe(0);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

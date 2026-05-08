@@ -157,7 +157,7 @@ export function loadWywOptions(
     require: 'warn-and-run',
     resolver: 'bundler',
     runtime: 'nodejs',
-    strategy: 'execute',
+    strategy: 'hybrid',
   };
 
   const config = (() => {

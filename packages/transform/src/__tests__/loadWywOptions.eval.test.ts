@@ -2,7 +2,7 @@
 import { loadWywOptions } from '../transform/helpers/loadWywOptions';
 
 describe('loadWywOptions eval options', () => {
-  it('defaults to execute strategy with nodejs runtime and strict errors', () => {
+  it('defaults to hybrid strategy with nodejs runtime and strict errors', () => {
     const options = loadWywOptions({ configFile: false });
 
     expect(options.eval).toMatchObject({
@@ -10,7 +10,7 @@ describe('loadWywOptions eval options', () => {
       require: 'warn-and-run',
       resolver: 'bundler',
       runtime: 'nodejs',
-      strategy: 'execute',
+      strategy: 'hybrid',
     });
     expect(options.features).not.toHaveProperty('staticImportValues');
   });
