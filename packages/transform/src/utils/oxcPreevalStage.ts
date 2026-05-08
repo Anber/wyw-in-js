@@ -107,16 +107,6 @@ export const runOxcPreevalStage = (
   const evalDependencyNames = staticValuesEnabled
     ? dependencyNames.filter((name) => !staticValueNames!.has(name))
     : dependencyNames;
-  if (
-    getEvalStrategy(options) === 'static' &&
-    evalDependencyNames.length > 0 &&
-    processed.staticValues.length === 0
-  ) {
-    throw new Error(
-      `[wyw-in-js] eval.strategy: "static" cannot fall back to the build-time evaluator for ${filename}.`
-    );
-  }
-
   let nextCode = eventEmitter.perf('transform:preeval:importMetaEnv', () =>
     replaceImportMetaEnvWithOxc(processed.code, filename)
   );

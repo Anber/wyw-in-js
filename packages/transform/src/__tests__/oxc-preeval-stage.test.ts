@@ -103,26 +103,27 @@ describe('runOxcPreevalStage', () => {
     expect(result.code).not.toContain('__wywPreval = { _exp: _exp }');
   });
 
-  it('rejects evaluator fallback when eval.strategy is static', () => {
-    expect(() =>
-      runOxcPreevalStage(
-        `
-          import { css } from 'test-package';
-          const color = getColor();
-          export const a = css\`
-            color: ${'${color}'};
-          \`;
-        `,
-        fileContext,
-        {
-          ...options,
-          eval: { strategy: 'static' },
-          features: {
-            dangerousCodeRemover: true,
-          },
-        } as typeof options
-      )
-    ).toThrow('eval.strategy: "static"');
+  it('keeps unresolved static-strategy dependencies for final validation', () => {
+    const result = runOxcPreevalStage(
+      `
+        import { css } from 'test-package';
+        const color = getColor();
+        export const a = css\`
+          color: ${'${color}'};
+        \`;
+      `,
+      fileContext,
+      {
+        ...options,
+        eval: { strategy: 'static' },
+        features: {
+          dangerousCodeRemover: true,
+        },
+      } as typeof options
+    );
+
+    expect(result.dependencyNames).toEqual(['_exp']);
+    expect(result.code).toContain('__wywPreval = { _exp: _exp }');
   });
 
   it('applies eval-time replacement and synthesizes __wywPreval dependencies', () => {
