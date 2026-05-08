@@ -1,6 +1,6 @@
 # TASK-10: Remove Core Static Heuristics
 
-Status: in_progress
+Status: done
 
 ## Goal
 
@@ -14,17 +14,20 @@ Remove old hardcoded static heuristics from transform core once processor adapte
 
 ## Checklist
 
-- [ ] Search for direct transform-core references to Linaria-shaped metadata such as `__wyw_meta.extends`.
-- [ ] Remove selector-only className and CSS artifact special cases from core.
-- [ ] Ensure core handles only generic static value kinds.
-- [ ] Add or update tests that fail if core directly hardcodes Linaria metadata again.
-- [ ] Run focused tests.
-- [ ] Update `PLAN.md` status and progress log.
+- [x] Search for direct transform-core references to Linaria-shaped metadata such as `__wyw_meta.extends`.
+- [x] Remove selector-only className and CSS artifact special cases from core.
+- [x] Ensure core handles generic static value kinds first and uses legacy metadata only as an adapter fallback.
+- [x] Add or update tests that fail if core directly hardcodes Linaria metadata again.
+- [x] Run focused tests.
+- [x] Update `PLAN.md` status and progress log.
 
 ## Progress Log
 
 - 2026-05-08 14:36 EEST: Task created by scaffold.
 - 2026-05-08 16:15 EEST: Started after Linaria processor static contract landed in separate worktree commit `951ad37c`.
+- 2026-05-08 16:25 EEST: Added `utils/processorStaticSemantics.ts` as the shared contract/legacy adapter. Same-file processor static collection now prefers `getStaticValue()` and only falls back to legacy `processor.value` parsing through that adapter.
+- 2026-05-08 16:25 EEST: Added a contract-precedence transform test and expanded the boundary test so same-file collection no longer contains direct `__wyw_meta` parsing.
+- 2026-05-08 16:25 EEST: Verification passed: `bun run --filter @wyw-in-js/transform build:types`, `bun run --filter @wyw-in-js/transform lint`, `bun run check:ts-size`, and `bun test src/__tests__/resolveStaticOxcValues.boundary.test.ts src/__tests__/transform.static-import-values.test.ts`.
 
 ## Context Recovery Notes
 

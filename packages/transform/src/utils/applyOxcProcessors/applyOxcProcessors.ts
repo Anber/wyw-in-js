@@ -12,6 +12,7 @@ import {
   createOxcLocationLookup,
 } from '../oxc/sourceLocations';
 import { getProcessorForImport } from '../processorLookup';
+import { resolveProcessorStaticClassName } from '../processorStaticSemantics';
 import { collectUsedNames } from './cleanupBindings';
 import {
   addCandidateInlineConstants,
@@ -240,16 +241,21 @@ export const applyOxcProcessors = (
           // runtime value IS the className string. Styled-component
           // bindings emit a richer value and must reach consumers via
           // resolveProcessorStaticExport so composition still works.
-          const replacement = processor.value as {
-            type?: string;
-            value?: unknown;
-          };
-          if (
-            (replacement?.type === 'StringLiteral' ||
-              replacement?.type === 'Literal') &&
-            typeof replacement.value === 'string'
-          ) {
-            processorClassNamesByLocal.set(id.name, processor.className);
+          const staticClassName = resolveProcessorStaticClassName(processor);
+          if (staticClassName) {
+            processorClassNamesByLocal.set(id.name, staticClassName);
+          } else {
+            const replacement = processor.value as {
+              type?: string;
+              value?: unknown;
+            };
+            if (
+              (replacement?.type === 'StringLiteral' ||
+                replacement?.type === 'Literal') &&
+              typeof replacement.value === 'string'
+            ) {
+              processorClassNamesByLocal.set(id.name, processor.className);
+            }
           }
         }
       }

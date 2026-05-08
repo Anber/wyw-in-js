@@ -1,10 +1,12 @@
 /* eslint-disable no-restricted-syntax,no-continue,@typescript-eslint/no-use-before-define */
 
+import type { BaseProcessor } from '@wyw-in-js/processor-utils';
 import type { Expression, Node, Program } from 'oxc-parser';
 
 import { collectOxcProcessorImportsFromProgram } from '../../../utils/collectOxcExportsAndImports';
 import { getOxcNodeChildren } from '../../../utils/oxc/ast';
 import { getProcessorForImport } from '../../../utils/processorLookup';
+import { resolveProcessorStaticClassName } from '../../../utils/processorStaticSemantics';
 import type { ITransformAction } from '../../types';
 import { parseProgram } from './environment';
 import {
@@ -446,11 +448,18 @@ export const isStaticWYWMetaTreeValue = (value: unknown): boolean => {
   return status.safe && status.hasMetadata;
 };
 
-export type StaticProcessorInstance = {
-  artifacts: unknown[];
-  build: (values: Map<string, unknown>) => void;
-  className: string;
-};
+export type StaticProcessorInstance = BaseProcessor;
+
+export const processorClassNameRuntimeValue = (
+  processor: StaticProcessorInstance
+): string => resolveProcessorStaticClassName(processor) ?? processor.className;
+
+export const isProcessorRuntimeClassName = (
+  processor: StaticProcessorInstance,
+  value: string
+): boolean =>
+  processor.className === value ||
+  resolveProcessorStaticClassName(processor) === value;
 
 export const isPlainObjectRecord = (
   value: unknown
@@ -506,7 +515,9 @@ export const isEmptyProcessorClassName = (
     return cache.get(value)!;
   }
 
-  const processor = processors.find((item) => item.className === value);
+  const processor = processors.find((item) =>
+    isProcessorRuntimeClassName(item, value)
+  );
   if (!processor) {
     cache.set(value, false);
     return false;
@@ -538,7 +549,9 @@ export const isProcessorClassName = (
     return cache.get(value)!;
   }
 
-  const processor = processors.find((item) => item.className === value);
+  const processor = processors.find((item) =>
+    isProcessorRuntimeClassName(item, value)
+  );
   if (!processor) {
     cache.set(value, false);
     return false;

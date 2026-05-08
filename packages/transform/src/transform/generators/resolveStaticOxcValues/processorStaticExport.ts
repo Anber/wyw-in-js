@@ -28,6 +28,7 @@ import {
   isKnownProcessorClassValue,
   isProcessorClassValue,
   isSelectorOnlyProcessorValue,
+  processorClassNameRuntimeValue,
   isStaticWYWMetaTreeValue,
   isStaticWYWMetaValue,
   type StaticProcessorInstance,
@@ -266,7 +267,7 @@ export function* resolveProcessorStaticExport(
   const processors = preevalResult.metadata
     .processors as unknown as StaticProcessorInstance[];
   const processorClassNames = new Set(
-    processors.map((processor) => processor.className)
+    processors.map((processor) => processorClassNameRuntimeValue(processor))
   );
   const isSelectorOnly =
     !isStaticMeta &&

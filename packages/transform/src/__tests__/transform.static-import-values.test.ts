@@ -21,6 +21,11 @@ const styledProcessorFile = join(
   '__fixtures__',
   'test-styled-processor.js'
 );
+const staticContractCssProcessorFile = join(
+  __dirname,
+  '__fixtures__',
+  'test-static-contract-css-processor.js'
+);
 const runtimeStyledProcessorFile = join(
   __dirname,
   '__fixtures__',
@@ -35,6 +40,10 @@ const createResolver =
 
     if (what === 'test-styled-processor') {
       return styledProcessorFile;
+    }
+
+    if (what === 'test-static-contract-css-processor') {
+      return staticContractCssProcessorFile;
     }
 
     if (what === 'test-runtime-styled-processor') {
@@ -73,6 +82,13 @@ const runTransformWithOptions = async (
 
             if (source === 'test-styled-processor' && tag === 'styled') {
               return styledProcessorFile;
+            }
+
+            if (
+              source === 'test-static-contract-css-processor' &&
+              tag === 'css'
+            ) {
+              return staticContractCssProcessorFile;
             }
 
             if (
@@ -1317,6 +1333,47 @@ describe('transform static import value inlining', () => {
             dependency === stylesFile || dependency === './styles.js'
         )
       ).toBe(true);
+      expect(perf.counts.get('transform:evalFile') ?? 0).toBe(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('prefers processor static contract values over legacy replacement expressions', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
+    const entryFile = join(root, 'entry.js');
+    const cache = new TransformCacheCollection();
+    const perf = createPerfEventRecorder();
+
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'app' }));
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { css } from 'test-static-contract-css-processor';
+        import { styled } from 'test-styled-processor';
+
+        const Base = css\`
+          color: red;
+        \`;
+
+        export const Box = styled.div\`
+          .${'${Base}'} {
+            color: blue;
+          }
+        \`;
+      `
+    );
+
+    try {
+      const result = await runTransform(
+        root,
+        entryFile,
+        cache,
+        perf.eventEmitter
+      );
+
+      expect(result.cssText).toContain('.contract-');
+      expect(result.cssText).not.toContain('.legacy-');
       expect(perf.counts.get('transform:evalFile') ?? 0).toBe(0);
     } finally {
       rmSync(root, { recursive: true, force: true });

@@ -5,9 +5,9 @@
 - Branch: `anber/static-eval-architecture`
 - Base branch: `anber/pr-312-static-imports-max`
 - Base commit: `58c8143f9a9f1cf8d9fd55e3875d0af960efc841`
-- Active task: `TASK-10-remove-core-heuristics.md`
+- Active task: `TASK-11-changeset.md`
 - Blocking questions: none
-- Last verification: Linaria worktree `/private/tmp/linaria-static-eval-architecture` pre-commit ran `turbo run check:all`, full lint, and syncpack successfully on 2026-05-08.
+- Last verification: `bun run --filter @wyw-in-js/transform build:types`, `bun run --filter @wyw-in-js/transform lint`, `bun run check:ts-size`, and `bun test src/__tests__/resolveStaticOxcValues.boundary.test.ts src/__tests__/transform.static-import-values.test.ts` passed on 2026-05-08.
 
 ## Working Rules
 
@@ -36,8 +36,8 @@
 | 07 | done | [PLAN.tasks/TASK-07-split-static-resolver.md](PLAN.tasks/TASK-07-split-static-resolver.md) | Split static resolver and move processor-specific semantics behind adapters. |
 | 08 | done | [PLAN.tasks/TASK-08-preeval-runtime-pipeline.md](PLAN.tasks/TASK-08-preeval-runtime-pipeline.md) | Update preeval/runtime pipeline to consume the new modules. |
 | 09 | done | [PLAN.tasks/TASK-09-linaria-contract.md](PLAN.tasks/TASK-09-linaria-contract.md) | Implement the contract in Linaria styled/core/atomic processors. |
-| 10 | in_progress | [PLAN.tasks/TASK-10-remove-core-heuristics.md](PLAN.tasks/TASK-10-remove-core-heuristics.md) | Remove old hardcoded static heuristics from transform core. |
-| 11 | pending | [PLAN.tasks/TASK-11-changeset.md](PLAN.tasks/TASK-11-changeset.md) | Add a public changeset for the v2 processor static contract. |
+| 10 | done | [PLAN.tasks/TASK-10-remove-core-heuristics.md](PLAN.tasks/TASK-10-remove-core-heuristics.md) | Remove old hardcoded static heuristics from transform core. |
+| 11 | in_progress | [PLAN.tasks/TASK-11-changeset.md](PLAN.tasks/TASK-11-changeset.md) | Add a public changeset for the v2 processor static contract. |
 | 12 | pending | [PLAN.tasks/TASK-12-verification-perf-cleanup.md](PLAN.tasks/TASK-12-verification-perf-cleanup.md) | Run verification, perf, and clean up statuses/logs. |
 
 ## Architecture Target

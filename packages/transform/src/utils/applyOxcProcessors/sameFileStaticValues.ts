@@ -1,94 +1,23 @@
 /* eslint-disable no-restricted-syntax */
 
-import type {
-  BaseProcessor,
-  Expression as ProcessorExpression,
-} from '@wyw-in-js/processor-utils';
+import type { BaseProcessor } from '@wyw-in-js/processor-utils';
 import type { ExpressionValue } from '@wyw-in-js/shared';
 import type { Node } from 'oxc-parser';
 
 import type { OxcStaticValueCandidate } from '../collectOxcTemplateDependencies';
 import { isOxcNode } from '../oxc/ast';
 import {
+  processorExpressionToStaticValue,
+  resolveProcessorStaticRuntimeValue,
+  type UnknownProcessorStaticValue,
+  unknownProcessorStaticValue,
+} from '../processorStaticSemantics';
+import {
   GENERATED_HELPER_NAME_RE,
   JS_IDENTIFIER_RE,
   WYW_META_EXTENDS_HELPER_RE,
 } from './shared';
 import type { AnyNode, SameFileProcessorObject } from './types';
-
-export const unknownProcessorStaticValue = Symbol(
-  'unknownProcessorStaticValue'
-);
-
-type UnknownProcessorStaticValue = typeof unknownProcessorStaticValue;
-
-export const processorLiteralValue = (
-  expression: ProcessorExpression
-): unknown | UnknownProcessorStaticValue => {
-  const expressionWithValue = expression as ProcessorExpression & {
-    value?: unknown;
-  };
-
-  if (
-    expression.type === 'StringLiteral' ||
-    expression.type === 'NumericLiteral' ||
-    expression.type === 'BooleanLiteral' ||
-    expression.type === 'Literal'
-  ) {
-    return expressionWithValue.value;
-  }
-
-  if (expression.type === 'NullLiteral') {
-    return null;
-  }
-
-  return unknownProcessorStaticValue;
-};
-
-export const processorPropertyKeyName = (
-  key: ProcessorExpression
-): string | null => {
-  if (key.type === 'Identifier') {
-    return (key as ProcessorExpression & { name: string }).name;
-  }
-
-  const value = processorLiteralValue(key);
-  return typeof value === 'string' ? value : null;
-};
-
-export const processorObjectPropertyValue = (
-  expression: ProcessorExpression,
-  name: string
-): ProcessorExpression | null => {
-  if (expression.type !== 'ObjectExpression') {
-    return null;
-  }
-
-  const { properties } = expression as ProcessorExpression & {
-    properties?: Array<
-      ProcessorExpression & {
-        key?: ProcessorExpression;
-        type: string;
-        value?: ProcessorExpression;
-      }
-    >;
-  };
-  if (!properties) {
-    return null;
-  }
-
-  for (const property of properties) {
-    if (
-      (property.type === 'ObjectProperty' || property.type === 'Property') &&
-      property.key &&
-      processorPropertyKeyName(property.key) === name
-    ) {
-      return property.value ?? null;
-    }
-  }
-
-  return null;
-};
 
 export const oxcLiteralValue = (
   expression: Node
@@ -220,97 +149,6 @@ export const getSameFileProcessorObjectProperty = (
   return null;
 };
 
-export const processorExpressionToStaticValue = (
-  expression: ProcessorExpression,
-  resolveHelperCall: (name: string) => unknown | UnknownProcessorStaticValue
-): unknown | UnknownProcessorStaticValue => {
-  const literal = processorLiteralValue(expression);
-  if (literal !== unknownProcessorStaticValue) {
-    return literal;
-  }
-
-  if (expression.type === 'ArrayExpression') {
-    const { elements } = expression as ProcessorExpression & {
-      elements?: Array<ProcessorExpression | null>;
-    };
-    if (!elements) {
-      return unknownProcessorStaticValue;
-    }
-
-    const result: unknown[] = [];
-    for (const element of elements) {
-      if (element === null) {
-        result.push(null);
-      } else {
-        const value = processorExpressionToStaticValue(
-          element,
-          resolveHelperCall
-        );
-        if (value === unknownProcessorStaticValue) {
-          return unknownProcessorStaticValue;
-        }
-
-        result.push(value);
-      }
-    }
-
-    return result;
-  }
-
-  if (expression.type === 'ObjectExpression') {
-    const metaExpression = processorObjectPropertyValue(
-      expression,
-      '__wyw_meta'
-    );
-    if (!metaExpression || metaExpression.type !== 'ObjectExpression') {
-      return unknownProcessorStaticValue;
-    }
-
-    const classNameExpression = processorObjectPropertyValue(
-      metaExpression,
-      'className'
-    );
-    const className = classNameExpression
-      ? processorLiteralValue(classNameExpression)
-      : unknownProcessorStaticValue;
-    if (typeof className !== 'string') {
-      return unknownProcessorStaticValue;
-    }
-
-    const extendsExpression = processorObjectPropertyValue(
-      metaExpression,
-      'extends'
-    );
-    const extended = extendsExpression
-      ? processorExpressionToStaticValue(extendsExpression, resolveHelperCall)
-      : null;
-    if (extended === unknownProcessorStaticValue) {
-      return unknownProcessorStaticValue;
-    }
-
-    return {
-      __wyw_meta: {
-        className,
-        extends: extended,
-      },
-    };
-  }
-
-  if (expression.type === 'CallExpression') {
-    const call = expression as ProcessorExpression & {
-      arguments?: ProcessorExpression[];
-      callee?: ProcessorExpression;
-    };
-    if (call.arguments?.length === 0 && call.callee?.type === 'Identifier') {
-      return resolveHelperCall(
-        (call.callee as ProcessorExpression & { name: string }).name
-      );
-    }
-  }
-
-  return unknownProcessorStaticValue;
-};
-
 export const createSameFileProcessorStaticValueResolver = (
   processorsByLocal: Map<string, BaseProcessor>,
   expressionValues: Omit<ExpressionValue, 'buildCodeFrameError'>[]
@@ -341,13 +179,14 @@ export const createSameFileProcessorStaticValueResolver = (
     }
 
     resolving.add(local);
-    const value = processorExpressionToStaticValue(
-      processor.value,
-      (helperName) => {
-        const source = expressionSourceByName.get(helperName);
-        return source ? resolveLocal(source) : unknownProcessorStaticValue;
-      }
-    );
+    const contractValue = resolveProcessorStaticRuntimeValue(processor);
+    const value =
+      contractValue !== unknownProcessorStaticValue
+        ? contractValue
+        : processorExpressionToStaticValue(processor.value, (helperName) => {
+            const source = expressionSourceByName.get(helperName);
+            return source ? resolveLocal(source) : unknownProcessorStaticValue;
+          });
     resolving.delete(local);
     memo.set(local, value);
     return value;
@@ -356,6 +195,11 @@ export const createSameFileProcessorStaticValueResolver = (
   function resolveProcessor(
     processor: BaseProcessor
   ): unknown | UnknownProcessorStaticValue {
+    const contractValue = resolveProcessorStaticRuntimeValue(processor);
+    if (contractValue !== unknownProcessorStaticValue) {
+      return contractValue;
+    }
+
     return processorExpressionToStaticValue(processor.value, (helperName) => {
       const source = expressionSourceByName.get(helperName);
       return source ? resolveLocal(source) : unknownProcessorStaticValue;
