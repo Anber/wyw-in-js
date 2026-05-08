@@ -35,16 +35,23 @@ import {
   type AddedImport,
   type OxcAstService,
 } from './oxcAstService';
-import { parseOxcProgramCached } from './parseOxc';
+import { getOxcNodeChildren, isOxcNode, walkOxc } from './oxc/ast';
+import { parseOxcProgram } from './oxc/parse';
+import {
+  applyOxcReplacements,
+  type OxcValueReplacement,
+} from './oxc/replacements';
+import {
+  buildOxcCodeFrameError,
+  createOxcLocationLookup,
+  createOxcSourceLocation,
+  type OxcLocationLookup,
+} from './oxc/sourceLocations';
 import { getProcessorForImport, type ProcessorClass } from './processorLookup';
 
 type DefinedProcessor = [ProcessorClass, { imported: string; source: string }];
 
-type Replacement = {
-  end: number;
-  start: number;
-  value: string;
-};
+type Replacement = OxcValueReplacement;
 
 type ApplyOxcProcessorsResult = {
   code: string;
@@ -109,7 +116,7 @@ type SequenceExpressionLike = Expression & {
   type: 'SequenceExpression';
 };
 
-type LocationLookup = (offset: number) => SourceLocation['start'];
+type LocationLookup = OxcLocationLookup;
 
 type TopLevelStatementInfo = {
   bindings: Set<string>;
@@ -145,67 +152,8 @@ const WYW_META_EXTENDS_HELPER_RE =
   /(?:\bextends|["']extends["'])\s*:\s*(_exp\d*)\s*\(\s*\)/g;
 const JS_IDENTIFIER_RE = /[$A-Z_a-z][$\w]*/g;
 
-const isNode = (value: unknown): value is Node =>
-  !!value &&
-  typeof value === 'object' &&
-  'type' in value &&
-  typeof (value as { type?: unknown }).type === 'string';
-
-const getChildren = (node: Node): Node[] => {
-  const result: Node[] = [];
-  const record = node as AnyNode;
-
-  Object.keys(record).forEach((key) => {
-    if (key === 'type' || key === 'start' || key === 'end' || key === 'range') {
-      return;
-    }
-
-    const value = record[key];
-    if (isNode(value)) {
-      result.push(value);
-      return;
-    }
-
-    if (Array.isArray(value)) {
-      value.forEach((item) => {
-        if (isNode(item)) {
-          result.push(item);
-        }
-      });
-    }
-  });
-
-  return result;
-};
-
 const parseOxc = (code: string, filename: string): Program => {
-  return parseOxcProgramCached(filename, code, 'module');
-};
-
-const visit = (
-  node: Node,
-  enter: (node: Node, parent: Node | null) => void,
-  parent: Node | null = null
-): void => {
-  enter(node, parent);
-  getChildren(node).forEach((child) => visit(child, enter, node));
-};
-
-const applyReplacements = (
-  code: string,
-  replacements: Replacement[]
-): string => {
-  let result = code;
-  replacements
-    .sort((a, b) => b.start - a.start)
-    .forEach((replacement) => {
-      result =
-        result.slice(0, replacement.start) +
-        replacement.value +
-        result.slice(replacement.end);
-    });
-
-  return result;
+  return parseOxcProgram(code, filename, 'module');
 };
 
 const insertAddedImports = (
@@ -245,96 +193,16 @@ const insertAddedImports = (
   return `${prefix}${leadingBreak}${importBlock}${trailingBreak}${suffix}`;
 };
 
-const createLocationLookup = (code: string): LocationLookup => {
-  const lineStarts = [0];
-  for (let idx = 0; idx < code.length; idx += 1) {
-    if (code[idx] === '\n') {
-      lineStarts.push(idx + 1);
-    }
-  }
-
-  return (offset) => {
-    let low = 0;
-    let high = lineStarts.length - 1;
-
-    while (low <= high) {
-      const mid = Math.floor((low + high) / 2);
-      const next = lineStarts[mid + 1] ?? Infinity;
-      if (lineStarts[mid] <= offset && offset < next) {
-        return {
-          column: offset - lineStarts[mid],
-          line: mid + 1,
-        };
-      }
-
-      if (offset < lineStarts[mid]) {
-        high = mid - 1;
-      } else {
-        low = mid + 1;
-      }
-    }
-
-    const lastLine = lineStarts.length - 1;
-    return {
-      column: Math.max(0, offset - lineStarts[lastLine]),
-      line: lastLine + 1,
-    };
-  };
-};
-
 const getSourceLocation = (
   start: number,
   end: number,
   loc: LocationLookup,
   filename?: string | null
-): SourceLocation => ({
-  end: loc(end),
-  filename: filename ?? undefined,
-  start: loc(start),
-});
-
-const buildCodeFrameError = (
-  code: string,
-  location: SourceLocation,
-  message: string
-): Error => {
-  const lines = code.split('\n');
-  const startLine = location.start.line;
-  const endLine = location.end.line;
-  const frameStart = Math.max(1, startLine - 2);
-  const frameEnd = Math.min(lines.length, endLine + 2);
-  const lineNoWidth = String(frameEnd).length;
-  const frame: string[] = [];
-
-  for (let lineNo = frameStart; lineNo <= frameEnd; lineNo += 1) {
-    const marker = lineNo === startLine ? '>' : ' ';
-    const line = lines[lineNo - 1] ?? '';
-    frame.push(
-      line.length > 0
-        ? `${marker} ${String(lineNo).padStart(lineNoWidth)} | ${line}`
-        : `${marker} ${String(lineNo).padStart(lineNoWidth)} |`
-    );
-
-    if (lineNo === startLine) {
-      const pointerLength =
-        startLine === endLine
-          ? Math.max(1, location.end.column - location.start.column)
-          : 1;
-      frame.push(
-        `  ${' '.repeat(lineNoWidth)} | ${' '.repeat(
-          location.start.column
-        )}${'^'.repeat(pointerLength)}`
-      );
-    }
-  }
-
-  const prefix = location.filename ? `${location.filename}: ` : '';
-  return new Error(`${prefix}${message}\n${frame.join('\n')}`);
-};
+): SourceLocation => createOxcSourceLocation(start, end, loc, filename);
 
 const collectUsedNames = (program: Program): Set<string> => {
   const names = new Set<string>();
-  visit(program, (node) => {
+  walkOxc(program, (node) => {
     if (node.type === 'Identifier') {
       names.add(node.name);
     }
@@ -427,7 +295,7 @@ const collectReferencedNames = (root: Node): Set<string> => {
       names.add(node.name);
     }
 
-    getChildren(node).forEach((child) => walk(child, node));
+    getOxcNodeChildren(node).forEach((child) => walk(child, node));
   };
 
   walk(root);
@@ -447,7 +315,9 @@ const collectImportLocalNames = (node: Node): string[] => {
   return specifiers
     .map((specifier) => {
       const { local } = specifier as AnyNode;
-      return isNode(local) && 'name' in local && typeof local.name === 'string'
+      return isOxcNode(local) &&
+        'name' in local &&
+        typeof local.name === 'string'
         ? local.name
         : null;
     })
@@ -456,7 +326,7 @@ const collectImportLocalNames = (node: Node): string[] => {
 
 const getImportSpecifierLocalName = (node: Node): string | null => {
   const { local } = node as AnyNode;
-  return isNode(local) && 'name' in local && typeof local.name === 'string'
+  return isOxcNode(local) && 'name' in local && typeof local.name === 'string'
     ? local.name
     : null;
 };
@@ -511,7 +381,7 @@ const collectTopLevelBindings = (statement: Node): Set<string> => {
 
     declarations.forEach((declarator) => {
       const { id } = declarator as AnyNode;
-      if (isNode(id)) {
+      if (isOxcNode(id)) {
         collectDeclaredNames(id).forEach((name) => bindings.add(name));
       }
     });
@@ -525,7 +395,7 @@ const collectTopLevelBindings = (statement: Node): Set<string> => {
     'id' in statement
   ) {
     const { id } = statement as AnyNode;
-    if (isNode(id) && id.type === 'Identifier') {
+    if (isOxcNode(id) && id.type === 'Identifier') {
       bindings.add(id.name);
     }
     return bindings;
@@ -533,7 +403,7 @@ const collectTopLevelBindings = (statement: Node): Set<string> => {
 
   if (statement.type === 'ExportNamedDeclaration') {
     const { declaration } = statement as AnyNode;
-    return isNode(declaration)
+    return isOxcNode(declaration)
       ? collectTopLevelBindings(declaration)
       : bindings;
   }
@@ -717,7 +587,7 @@ const collectScopedBindingInfos = (
           return;
         }
 
-        if (property.computed && isNode(property.key)) {
+        if (property.computed && isOxcNode(property.key)) {
           walk(property.key, scope, property, ownerBindingId);
         }
 
@@ -732,7 +602,7 @@ const collectScopedBindingInfos = (
 
     if (node.type === 'ArrayPattern') {
       node.elements.forEach((element) => {
-        if (element && isNode(element)) {
+        if (element && isOxcNode(element)) {
           walkPatternReferenceSubexpressions(element, scope, ownerBindingId);
         }
       });
@@ -751,7 +621,7 @@ const collectScopedBindingInfos = (
         specifiers.forEach((specifier) => {
           const { local } = specifier as AnyNode;
           if (
-            isNode(local) &&
+            isOxcNode(local) &&
             local.type === 'Identifier' &&
             typeof local.name === 'string'
           ) {
@@ -772,7 +642,7 @@ const collectScopedBindingInfos = (
 
     if (node.type === 'ExportDefaultDeclaration') {
       const { declaration } = node as AnyNode;
-      if (isNode(declaration)) {
+      if (isOxcNode(declaration)) {
         walk(declaration, scope, node, ownerBindingId);
         if (
           (declaration.type === 'FunctionDeclaration' ||
@@ -793,7 +663,7 @@ const collectScopedBindingInfos = (
 
       declarations.forEach((declarator) => {
         const { id } = declarator as AnyNode;
-        if (isNode(id)) {
+        if (isOxcNode(id)) {
           addPatternBindings(scope, id, 'variable', node);
         }
       });
@@ -801,7 +671,7 @@ const collectScopedBindingInfos = (
       declarations.forEach((declarator) => {
         const { id } = declarator as AnyNode;
         const { init } = declarator as AnyNode;
-        if (!isNode(id) || !isNode(init)) {
+        if (!isOxcNode(id) || !isOxcNode(init)) {
           return;
         }
 
@@ -855,7 +725,7 @@ const collectScopedBindingInfos = (
 
     if (node.type === 'BlockStatement') {
       const blockScope = createScopedCleanupScope(scope);
-      getChildren(node).forEach((child) =>
+      getOxcNodeChildren(node).forEach((child) =>
         walk(child, blockScope, node, ownerBindingId)
       );
       return;
@@ -869,7 +739,7 @@ const collectScopedBindingInfos = (
       recordReference(scope, node.name, ownerBindingId);
     }
 
-    getChildren(node).forEach((child) =>
+    getOxcNodeChildren(node).forEach((child) =>
       walk(child, scope, node, ownerBindingId)
     );
   };
@@ -1151,7 +1021,7 @@ const collectUnusedImportRemovals = (
     }
 
     specifiers.forEach((specifier) => {
-      if (!isNode(specifier)) {
+      if (!isOxcNode(specifier)) {
         return;
       }
 
@@ -1360,7 +1230,7 @@ const removeUnusedAfterReplacement = (
     ]);
     current =
       removals.length > 0
-        ? applyIfParsable(applyReplacements(current, removals))
+        ? applyIfParsable(applyOxcReplacements(current, removals))
         : current;
 
     if (current === previous) {
@@ -1557,7 +1427,7 @@ const collectProcessorUsages = (
       }
     }
 
-    getChildren(node).forEach((child) =>
+    getOxcNodeChildren(node).forEach((child) =>
       walk(child, [...ancestors, node], node)
     );
   };
@@ -1654,7 +1524,7 @@ const literalExpressionValue = (
 
     return {
       buildCodeFrameError: (message: string) =>
-        buildCodeFrameError(code, location, message),
+        buildOxcCodeFrameError(code, location, message),
       ex,
       kind: ValueType.CONST,
       source,
@@ -1706,7 +1576,7 @@ const expressionValue = (
 
   return {
     buildCodeFrameError: (message: string) =>
-      buildCodeFrameError(code, location, message),
+      buildOxcCodeFrameError(code, location, message),
     ex,
     kind:
       expression.type === 'ArrowFunctionExpression' ||
@@ -1916,7 +1786,7 @@ const buildParams = (
 
 const getPropertyKeyName = (property: AnyNode, code: string): string | null => {
   const { key } = property;
-  if (!isNode(key)) {
+  if (!isOxcNode(key)) {
     return null;
   }
 
@@ -1954,12 +1824,12 @@ const getDisplayName = (
     }
   } else if (owner?.type === 'JSXOpeningElement') {
     const { name } = owner;
-    if (isNode(name) && name.type === 'JSXIdentifier') {
+    if (isOxcNode(name) && name.type === 'JSXIdentifier') {
       return name.name;
     }
   } else if (owner?.type === 'VariableDeclarator') {
     const { id } = owner;
-    if (isNode(id) && id.type === 'Identifier') {
+    if (isOxcNode(id) && id.type === 'Identifier') {
       return id.name;
     }
   }
@@ -2001,7 +1871,7 @@ const isTagReferenced = (program: Program, ancestors: Node[]): boolean => {
   }
 
   const { id } = owner;
-  if (!isNode(id) || id.type !== 'Identifier') {
+  if (!isOxcNode(id) || id.type !== 'Identifier') {
     return true;
   }
 
@@ -2010,7 +1880,7 @@ const isTagReferenced = (program: Program, ancestors: Node[]): boolean => {
   }
 
   let referenced = false;
-  visit(program, (node, parent) => {
+  walkOxc(program, (node, parent) => {
     const referenceName =
       node.type === 'Identifier' || node.type === 'JSXIdentifier'
         ? node.name
@@ -2246,7 +2116,11 @@ const getSameFileProcessorObjectProperty = (
     const ancestor = ancestors[idx] as AnyNode;
     if (ancestor.type === 'VariableDeclarator') {
       const { id, init } = ancestor;
-      if (isNode(id) && id.type === 'Identifier' && init === objectExpression) {
+      if (
+        isOxcNode(id) &&
+        id.type === 'Identifier' &&
+        init === objectExpression
+      ) {
         return {
           localName: id.name,
           propertyName,
@@ -2592,7 +2466,7 @@ const createProcessor = (
           displayNameNode.type === 'MemberExpression'
             ? getRootIdentifier(displayNameNode) ?? displayNameNode
             : displayNameNode;
-        throw buildCodeFrameError(
+        throw buildOxcCodeFrameError(
           code,
           getSourceLocation(
             pointerNode.start,
@@ -2778,10 +2652,10 @@ export const applyOxcProcessors = (
       ({
         ...value,
         buildCodeFrameError: (message: string) =>
-          buildCodeFrameError(code, value.ex.loc!, message),
+          buildOxcCodeFrameError(code, value.ex.loc!, message),
       }) as ExpressionValue
   );
-  const loc = createLocationLookup(workingCode);
+  const loc = createOxcLocationLookup(workingCode);
   const usedNames = eventEmitter.perf(
     'transform:preeval:processTemplate:usedNames',
     () => collectUsedNames(program)
@@ -2838,7 +2712,7 @@ export const applyOxcProcessors = (
       const owner = getTagOwner(usage.ancestors);
       if (owner?.type === 'VariableDeclarator') {
         const { id } = owner;
-        if (isNode(id) && id.type === 'Identifier') {
+        if (isOxcNode(id) && id.type === 'Identifier') {
           removableExpressionRefs.add(id.name);
           sameFileProcessorsByLocal.set(id.name, processor);
           // Cross-file map (used as a className-only fallback in
@@ -2896,7 +2770,7 @@ export const applyOxcProcessors = (
     sameFileProcessorStaticValuesByLocal.set(local, value);
   });
 
-  const replacedCode = applyReplacements(workingCode, replacements);
+  const replacedCode = applyOxcReplacements(workingCode, replacements);
   const metadataExtendsHelperNames =
     collectWYWMetaExtendsHelperNames(replacedCode);
   const staticValueCandidates = extracted.staticValueCandidates.filter(

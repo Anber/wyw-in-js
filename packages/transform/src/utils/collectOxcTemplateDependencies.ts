@@ -1,6 +1,6 @@
 /* eslint-disable no-restricted-syntax,no-continue,@typescript-eslint/no-use-before-define */
 
-import type { ExpressionValue, Location } from '@wyw-in-js/shared';
+import type { ExpressionValue, SourceLocation } from '@wyw-in-js/shared';
 import { ValueType } from '@wyw-in-js/shared';
 import type {
   AssignmentExpression,
@@ -17,9 +17,18 @@ import type {
   VariableDeclarator,
 } from 'oxc-parser';
 
-import { parseOxcProgramCached } from './parseOxc';
+import { getOxcNodeChildren } from './oxc/ast';
+import { parseOxcProgram } from './oxc/parse';
+import {
+  applyOxcReplacements,
+  type OxcValueReplacement,
+} from './oxc/replacements';
+import {
+  createOxcLocationLookup,
+  createOxcSourceLocation,
+  type OxcLocationLookup,
+} from './oxc/sourceLocations';
 
-type AnyNode = Node & Record<string, unknown>;
 type OxcFunctionLikeNode = Node & {
   async: boolean;
   body: Node | null;
@@ -43,22 +52,11 @@ type Binding = {
   scope: Scope;
 };
 
-type Replacement = {
-  end: number;
-  start: number;
-  value: string;
-};
-
-type SourceLocation = {
-  end: Location;
-  filename?: string;
-  identifierName: string | null | undefined;
-  start: Location;
-};
+type Replacement = OxcValueReplacement;
 
 type SpanLookup = Set<string> | null;
 
-type LocationLookup = (offset: number) => Location;
+type LocationLookup = OxcLocationLookup;
 
 type ExpressionSpan = {
   end: number;
@@ -182,49 +180,16 @@ type ProgramAnalysis = {
   usedNames: Set<string>;
 };
 
-const isNode = (value: unknown): value is Node =>
-  !!value &&
-  typeof value === 'object' &&
-  'type' in value &&
-  typeof (value as { type?: unknown }).type === 'string';
-
-const getChildren = (node: Node): Node[] => {
-  const result: Node[] = [];
-  const record = node as AnyNode;
-
-  Object.keys(record).forEach((key) => {
-    if (key === 'type' || key === 'start' || key === 'end' || key === 'range') {
-      return;
-    }
-
-    const value = record[key];
-    if (isNode(value)) {
-      result.push(value);
-      return;
-    }
-
-    if (Array.isArray(value)) {
-      value.forEach((item) => {
-        if (isNode(item)) {
-          result.push(item);
-        }
-      });
-    }
-  });
-
-  return result;
-};
-
 const containsTaggedTemplateExpression = (node: Node): boolean => {
   if (node.type === 'TaggedTemplateExpression') {
     return true;
   }
 
-  return getChildren(node).some(containsTaggedTemplateExpression);
+  return getOxcNodeChildren(node).some(containsTaggedTemplateExpression);
 };
 
 const parseOxc = (code: string, filename: string): Program => {
-  return parseOxcProgramCached(filename, code, 'unambiguous');
+  return parseOxcProgram(code, filename, 'unambiguous');
 };
 
 const toSpanKey = (start: number, end: number): string => `${start}:${end}`;
@@ -242,53 +207,11 @@ const matchesSpanLookup = (
   spanLookup: SpanLookup
 ): boolean => !spanLookup || spanLookup.has(toSpanKey(node.start, node.end));
 
-const createLocationLookup = (code: string): LocationLookup => {
-  const lineStarts = [0];
-  for (let idx = 0; idx < code.length; idx += 1) {
-    if (code[idx] === '\n') {
-      lineStarts.push(idx + 1);
-    }
-  }
-
-  return (offset) => {
-    let low = 0;
-    let high = lineStarts.length - 1;
-
-    while (low <= high) {
-      const mid = Math.floor((low + high) / 2);
-      const next = lineStarts[mid + 1] ?? Infinity;
-      if (lineStarts[mid] <= offset && offset < next) {
-        return {
-          column: offset - lineStarts[mid],
-          line: mid + 1,
-        };
-      }
-
-      if (offset < lineStarts[mid]) {
-        high = mid - 1;
-      } else {
-        low = mid + 1;
-      }
-    }
-
-    const lastLine = lineStarts.length - 1;
-    return {
-      column: Math.max(0, offset - lineStarts[lastLine]),
-      line: lastLine + 1,
-    };
-  };
-};
-
 const getSourceLocation = (
   start: number,
   end: number,
   ctx: Pick<ExtractionContext, 'filename' | 'loc'>
-): SourceLocation => ({
-  end: ctx.loc(end),
-  filename: ctx.filename,
-  identifierName: undefined,
-  start: ctx.loc(start),
-});
+): SourceLocation => createOxcSourceLocation(start, end, ctx.loc, ctx.filename);
 
 const createScope = (
   parent: Scope | null,
@@ -523,7 +446,7 @@ const visit = (
     enter(currentNode, nextScope, currentParent, ancestors);
 
     ancestors.push(currentNode);
-    getChildren(currentNode).forEach((child) =>
+    getOxcNodeChildren(currentNode).forEach((child) =>
       visitNode(child, nextScope, currentNode)
     );
     ancestors.pop();
@@ -1246,7 +1169,7 @@ const collectIdentifierReferenceReplacements = (
     }
 
     ancestors.push(current);
-    getChildren(current).forEach((child) => walk(child, current));
+    getOxcNodeChildren(current).forEach((child) => walk(child, current));
     ancestors.pop();
   };
 
@@ -1369,7 +1292,7 @@ const collectStaticNamespaceMemberReferences = (
       }
     }
 
-    getChildren(node).forEach(walk);
+    getOxcNodeChildren(node).forEach(walk);
   };
 
   walk(expression);
@@ -2527,23 +2450,6 @@ const getInsertionPoints = (
   return insertionPoints;
 };
 
-const applyReplacements = (
-  code: string,
-  replacements: Replacement[]
-): string => {
-  let result = code;
-  replacements
-    .sort((a, b) => b.start - a.start)
-    .forEach((replacement) => {
-      result =
-        result.slice(0, replacement.start) +
-        replacement.value +
-        result.slice(replacement.end);
-    });
-
-  return result;
-};
-
 const extractExpressions = (
   code: string,
   filename: string,
@@ -2579,7 +2485,7 @@ const extractExpressions = (
     hoistedBindingNames: new Map(),
     hoistedDeclarations: new Map(),
     hoistedDeclarationsByInsertionPoint: new Map(),
-    loc: createLocationLookup(code),
+    loc: createOxcLocationLookup(code),
     referencesByNode: new WeakMap(),
     replacements: [],
     rootMutationsByBinding: analysis.rootMutationsByBinding,
@@ -2668,7 +2574,7 @@ const extractExpressions = (
   });
 
   return {
-    code: applyReplacements(code, ctx.replacements),
+    code: applyOxcReplacements(code, ctx.replacements),
     dependencyNames: [...ctx.dependencyNames],
     expressionValues: ctx.expressionValues,
     staticValueCandidates: ctx.staticValueCandidates,
@@ -2708,7 +2614,7 @@ export const evaluateOxcStaticExpressionAt = (
     hoistedBindingNames: new Map(),
     hoistedDeclarations: new Map(),
     hoistedDeclarationsByInsertionPoint: new Map(),
-    loc: createLocationLookup(code),
+    loc: createOxcLocationLookup(code),
     referencesByNode: new WeakMap(),
     replacements: [],
     rootMutationsByBinding: analysis.rootMutationsByBinding,

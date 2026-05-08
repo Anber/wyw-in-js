@@ -29,7 +29,12 @@ import {
   appendOxcWywPreval,
   runOxcPreevalStage,
 } from '../../utils/oxcPreevalStage';
-import { parseOxcProgramCached } from '../../utils/parseOxc';
+import { getOxcNodeChildren } from '../../utils/oxc/ast';
+import { parseOxcProgram } from '../../utils/oxc/parse';
+import {
+  applyOxcReplacements,
+  type OxcTextReplacement,
+} from '../../utils/oxc/replacements';
 import { stripQueryAndHash } from '../../utils/parseRequest';
 import { getProcessorForImport } from '../../utils/processorLookup';
 import { Entrypoint } from '../Entrypoint';
@@ -206,7 +211,7 @@ const debugStaticResolve = (
 };
 
 const parseProgram = (code: string, filename: string): Program =>
-  parseOxcProgramCached(filename, code, 'unambiguous');
+  parseOxcProgram(code, filename, 'unambiguous');
 
 const staticFileAnalysisCaches = new WeakMap<
   object,
@@ -527,35 +532,6 @@ const getStaticMetadataPreevalResult = (
   }
 };
 
-const getChildren = (node: Node): Node[] => {
-  const children: Node[] = [];
-  Object.entries(node as AnyNode).forEach(([key, value]) => {
-    if (
-      key === 'comments' ||
-      key === 'errors' ||
-      key === 'parent' ||
-      key === 'span'
-    ) {
-      return;
-    }
-
-    if (Array.isArray(value)) {
-      value.forEach((item) => {
-        if (item && typeof item === 'object' && 'type' in item) {
-          children.push(item as Node);
-        }
-      });
-      return;
-    }
-
-    if (value && typeof value === 'object' && 'type' in value) {
-      children.push(value as Node);
-    }
-  });
-
-  return children;
-};
-
 const moduleExportName = (node: ModuleExportName): string =>
   node.type === 'Literal' ? String(node.value) : node.name;
 
@@ -824,25 +800,7 @@ type Range = {
   start: number;
 };
 
-type Replacement = Range & {
-  text: string;
-};
-
-const applyReplacements = (
-  code: string,
-  replacements: Replacement[]
-): string => {
-  let result = code;
-  replacements
-    .sort((a, b) => b.start - a.start)
-    .forEach((replacement) => {
-      result =
-        result.slice(0, replacement.start) +
-        replacement.text +
-        result.slice(replacement.end);
-    });
-  return result;
-};
+type Replacement = Range & OxcTextReplacement;
 
 const isIdentifierBindingPosition = (
   node: Node,
@@ -908,7 +866,7 @@ const collectUsedIdentifierNames = (program: Program): Set<string> => {
       used.add(node.name);
     }
 
-    getChildren(node).forEach((child) => walk(child, node));
+    getOxcNodeChildren(node).forEach((child) => walk(child, node));
   };
 
   walk(program, null);
@@ -956,7 +914,7 @@ const collectImportLocalReferences = (
       result.add(item.name);
     }
 
-    getChildren(item).forEach((child) => walk(child, item));
+    getOxcNodeChildren(item).forEach((child) => walk(child, item));
   };
 
   walk(node, null);
@@ -1025,7 +983,7 @@ const expressionUsesNameOnlyAsZeroArgCalls = (
       }
     }
 
-    getChildren(node).forEach((child) => walk(child, node));
+    getOxcNodeChildren(node).forEach((child) => walk(child, node));
   };
 
   walk(expression, null);
@@ -1120,7 +1078,7 @@ const removeStaticHelperDeclarations = (
   });
 
   return {
-    code: applyReplacements(code, [
+    code: applyOxcReplacements(code, [
       ...ranges.map((range) => ({ ...range, text: '' })),
       ...replacements,
     ]),
@@ -1191,7 +1149,7 @@ const removeUnusedStaticImports = (
     }
   });
 
-  return applyReplacements(code, [
+  return applyOxcReplacements(code, [
     ...ranges.map((range) => ({ ...range, text: '' })),
     ...replacements,
   ]);
@@ -1234,11 +1192,11 @@ const replaceStaticWYWMetaExtendsHelpers = (
       }
     }
 
-    getChildren(node).forEach(visit);
+    getOxcNodeChildren(node).forEach(visit);
   };
 
   visit(program);
-  return applyReplacements(code, replacements);
+  return applyOxcReplacements(code, replacements);
 };
 
 const pruneStaticPreevalCode = (
@@ -2666,7 +2624,7 @@ const collectWYWMetaExtendsExpressionsDeep = (
       return;
     }
 
-    getChildren(node).forEach((child) => visit(child, node));
+    getOxcNodeChildren(node).forEach((child) => visit(child, node));
   };
 
   visit(expr);
@@ -3028,7 +2986,7 @@ const hasOnlySafeObjectAssignCallArgumentUses = (
       }
     }
 
-    getChildren(node).forEach(visit);
+    getOxcNodeChildren(node).forEach(visit);
   };
 
   topLevelStatements(program).forEach(visit);
@@ -3063,7 +3021,7 @@ const objectAssignAugmentationAliasExpressions = (
       }
     }
 
-    getChildren(node).forEach(visit);
+    getOxcNodeChildren(node).forEach(visit);
   };
 
   topLevelStatements(program).forEach(visit);
@@ -3577,7 +3535,7 @@ const collectOpaqueRuntimeReferenceNames = (
     return;
   }
 
-  getChildren(unwrapped).forEach((child) =>
+  getOxcNodeChildren(unwrapped).forEach((child) =>
     collectOpaqueRuntimeReferenceNames(program, child, names, seenHelpers)
   );
 };
@@ -3600,7 +3558,7 @@ const collectWYWMetaExtendsHelperNames = (program: Program): Set<string> => {
       }
     }
 
-    getChildren(node).forEach(visit);
+    getOxcNodeChildren(node).forEach(visit);
   };
 
   visit(program);
@@ -3647,7 +3605,7 @@ const prepareProcessorTarget = (
       start: extendsExpression.start,
       text: 'null',
     }));
-    const evaluationCode = applyReplacements(code, replacements);
+    const evaluationCode = applyOxcReplacements(code, replacements);
     const evaluationProgram = parseProgram(evaluationCode, filename);
     const evaluationTarget = findExportTarget(evaluationProgram, exportedName);
     if (!evaluationTarget || evaluationTarget.kind === 'import') {
