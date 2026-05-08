@@ -11,6 +11,7 @@ import type {
 } from './ast';
 import { expressionToCode } from './ast';
 import { createProcessorDiagnosticArtifact } from './diagnostics';
+import type { ProcessorStaticContext, ProcessorStaticValue } from './static';
 import type {
   IInterpolation,
   Params,
@@ -110,11 +111,28 @@ export abstract class BaseProcessor {
     );
   }
 
+  /* eslint-disable @typescript-eslint/member-ordering */
+  public getStaticValue?(
+    context: ProcessorStaticContext
+  ): ProcessorStaticValue | null | undefined;
+
+  public resolveStaticInterpolation?(
+    interpolation: IInterpolation,
+    value: ProcessorStaticValue,
+    context: ProcessorStaticContext
+  ): ProcessorStaticValue | null | undefined;
+
+  public resolveStaticTagTarget?(
+    target: ProcessorStaticValue,
+    context: ProcessorStaticContext
+  ): ProcessorStaticValue | null | undefined;
+
   public isValidValue(value: unknown): value is Value {
     return (
       typeof value === 'function' || isCSSable(value) || hasEvalMeta(value)
     );
   }
+  /* eslint-enable @typescript-eslint/member-ordering */
 
   public toString(): string {
     return this.tagSourceCode();

@@ -103,6 +103,57 @@ describe('runOxcPreevalStage', () => {
     expect(result.code).not.toContain('__wywPreval = { _exp: _exp }');
   });
 
+  it('keeps static local values in __wywPreval when eval.strategy uses execute', () => {
+    const result = runOxcPreevalStage(
+      `
+        import { css } from 'test-package';
+        const color = 'red';
+        export const a = css\`
+          color: ${'${color}'};
+        \`;
+      `,
+      fileContext,
+      {
+        ...options,
+        eval: { strategy: 'execute' },
+        features: {
+          dangerousCodeRemover: true,
+        },
+      } as typeof options
+    );
+
+    expect(result.staticValueCache.has('_exp')).toBe(false);
+    expect(result.dependencyNames).toEqual(['_exp']);
+    expect(result.code).toContain('__wywPreval = { _exp: _exp }');
+  });
+
+  it('keeps only unresolved dependencies in __wywPreval for hybrid strategy', () => {
+    const result = runOxcPreevalStage(
+      `
+        import { css } from 'test-package';
+        const color = 'red';
+        const spacing = getSpacing();
+        export const a = css\`
+          color: ${'${color}'};
+          margin: ${'${spacing}'};
+        \`;
+      `,
+      fileContext,
+      {
+        ...options,
+        eval: { strategy: 'hybrid' },
+        features: {
+          dangerousCodeRemover: true,
+        },
+      } as typeof options
+    );
+
+    expect(result.staticValueCache.get('_exp')).toBe('red');
+    expect(result.dependencyNames).toEqual(['_exp2']);
+    expect(result.code).toContain('__wywPreval = { _exp2: _exp2 }');
+    expect(result.code).not.toContain('_exp: _exp');
+  });
+
   it('keeps unresolved static-strategy dependencies for final validation', () => {
     const result = runOxcPreevalStage(
       `

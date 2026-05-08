@@ -1,5 +1,33 @@
 # @wyw-in-js/transform
 
+## 2.0.0-alpha.1
+
+### Minor Changes
+
+- 4fce392: Rename the eval resolver mode from `node` to `native` and resolve native eval imports with `oxc-resolver`. Hybrid eval resolution now tries the custom resolver, then native resolution, then the bundler resolver.
+
+  Native eval resolution now discovers `tsconfig.json` by default. Vite, esbuild, webpack, and Next Turbopack integrations forward static string aliases from their bundler config into native resolver options, while preserving explicitly configured `oxcOptions.resolver.alias` entries.
+
+- 0b44ada: Add an optional processor static evaluation contract. Processors can now describe statically known values as serializable values, class names, selector chains, runtime callbacks, opaque components, or unresolved values with reasons.
+
+  The transform static evaluator now consumes this contract before falling back to legacy eval-time replacement metadata, so processors can provide their own static semantics without relying on transform-specific metadata shapes.
+
+### Patch Changes
+
+- 32cdb0b: Add optional eval payload debug JSONL output, including shipped code and serialized or stringified value details for log analysis.
+- dc4e7f0: Improve evaluation diagnostics and recovery for transient missing imports.
+
+  Missing imports during evaluation now report the importing file, requested specifier, resolved path, and original error cause. The evaluator also evicts modules left in failed VM states and refreshes broker-side load tracking, so a subsequent evaluation can recover after the missing file is created instead of rethrowing stale module status errors.
+
+- df797cd: Lower explicit resource management syntax in ESM build output so the v2 package
+  can be parsed on Node 22. The previous v2 alpha build left raw
+  `using abortSignal` declarations in `@wyw-in-js/transform` ESM artifacts.
+- a227252: Add `perf-spans.jsonl` to debug output so transform perf spans can be analyzed alongside action, dependency, and entrypoint logs.
+- cb47dc2: Treat React `forwardRef` and `memo` as default code-remover HOCs, and inline same-file null component bases during Oxc static import value resolution.
+- Updated dependencies
+  - @wyw-in-js/processor-utils@2.0.0-alpha.1
+  - @wyw-in-js/shared@2.0.0-alpha.1
+
 ## 2.0.0-alpha.0
 
 ### Major Changes

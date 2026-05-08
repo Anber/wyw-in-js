@@ -145,7 +145,10 @@ const expressionToCodeWithContext = (
   }
 
   if (expression.type === 'StringLiteral') {
-    return stringLiteralCode((expression as StringLiteral).value, context.quote);
+    return stringLiteralCode(
+      (expression as StringLiteral).value,
+      context.quote
+    );
   }
 
   if (
@@ -161,7 +164,10 @@ const expressionToCodeWithContext = (
 
   if (expression.type === 'MemberExpression') {
     const memberExpression = expression as MemberExpression;
-    const object = expressionToCodeWithContext(memberExpression.object, context);
+    const object = expressionToCodeWithContext(
+      memberExpression.object,
+      context
+    );
     const property = expressionToCodeWithContext(
       memberExpression.property,
       context
@@ -193,9 +199,7 @@ const expressionToCodeWithContext = (
 
   if (expression.type === 'ArrayExpression') {
     return `[${(expression as ArrayExpression).elements
-      .map((item) =>
-        item ? expressionToCodeWithContext(item, context) : ''
-      )
+      .map((item) => (item ? expressionToCodeWithContext(item, context) : ''))
       .join(', ')}]`;
   }
 

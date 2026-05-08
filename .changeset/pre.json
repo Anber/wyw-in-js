@@ -35,12 +35,19 @@
     "@wyw-in-js/webpack-loader": "1.0.8"
   },
   "changesets": [
+    "eval-files-debug-output",
+    "eval-load-recovery",
     "fair-radios-fail",
+    "loud-cycles-using",
+    "native-resolver-oxc",
     "oxc-config-foundation",
+    "perf-spans-debug-output",
     "processor-diagnostics-reporting",
     "purple-bears-peel",
     "spotty-moments-bow",
     "static-import-values",
+    "static-null-component-bases",
+    "static-processor-contract",
     "steady-trains-smoke",
     "transform-metadata-manifests"
   ]
