@@ -498,6 +498,22 @@ describe('oxc preeval transforms', () => {
       expect(code).toContain('const Second = () => null;');
     });
 
+    it('replaces default React HOC calls with null-returning functions', () => {
+      const code = removeDangerousCodeWithOxc(
+        [
+          'import React, { memo } from "react";',
+          'const BareFirst = () => null;',
+          'const BareSecond = () => null;',
+          'const First = React.forwardRef(BareFirst);',
+          'const Second = memo(BareSecond);',
+        ].join('\n'),
+        filename
+      );
+
+      expect(code).toContain('const First = () => null;');
+      expect(code).toContain('const Second = () => null;');
+    });
+
     it('replaces class render components with null-returning functions', () => {
       const code = removeDangerousCodeWithOxc(
         'class Component { render() { return <div />; } }',

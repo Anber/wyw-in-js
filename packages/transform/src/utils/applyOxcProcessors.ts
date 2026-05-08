@@ -134,6 +134,11 @@ type ScopedCleanupScope = {
   parent: ScopedCleanupScope | null;
 };
 
+type SameFileProcessorObject = {
+  properties: Map<string, BaseProcessor>;
+  propertyNames: Set<string>;
+};
+
 let didWarnSkipSymbolMismatch = false;
 const GENERATED_HELPER_NAME_RE = /^_exp\d*$/;
 const WYW_META_EXTENDS_HELPER_RE =
@@ -2128,6 +2133,132 @@ const processorObjectPropertyValue = (
   return null;
 };
 
+const oxcLiteralValue = (
+  expression: Node
+): unknown | UnknownProcessorStaticValue => {
+  const expressionWithValue = expression as Node & {
+    value?: unknown;
+  };
+  const expressionType = expression.type as string;
+
+  if (
+    expressionType === 'StringLiteral' ||
+    expressionType === 'NumericLiteral' ||
+    expressionType === 'BooleanLiteral' ||
+    expressionType === 'Literal'
+  ) {
+    return expressionWithValue.value;
+  }
+
+  if (expressionType === 'NullLiteral') {
+    return null;
+  }
+
+  return unknownProcessorStaticValue;
+};
+
+const oxcPropertyKeyName = (key: Node): string | null => {
+  if (key.type === 'Identifier') {
+    return (key as Node & { name: string }).name;
+  }
+
+  const value = oxcLiteralValue(key);
+  return typeof value === 'string' ? value : null;
+};
+
+const collectStaticObjectPropertyNames = (
+  objectExpression: Node
+): Set<string> | null => {
+  if (objectExpression.type !== 'ObjectExpression') {
+    return null;
+  }
+
+  const { properties } = objectExpression as Node & {
+    properties?: Array<
+      Node & {
+        computed?: boolean;
+        key?: Node;
+        type: string;
+        value?: Node;
+      }
+    >;
+  };
+  if (!properties) {
+    return null;
+  }
+
+  const names = new Set<string>();
+  for (const property of properties) {
+    const propertyType = property.type as string;
+    if (propertyType !== 'ObjectProperty' && propertyType !== 'Property') {
+      return null;
+    }
+
+    if (!property.key || !property.value) {
+      return null;
+    }
+
+    const name = oxcPropertyKeyName(property.key);
+    if (!name || names.has(name)) {
+      return null;
+    }
+
+    names.add(name);
+  }
+
+  return names;
+};
+
+const getSameFileProcessorObjectProperty = (
+  ancestors: Node[]
+): {
+  localName: string;
+  propertyName: string;
+  propertyNames: Set<string>;
+} | null => {
+  let propertyIndex = -1;
+  for (let idx = ancestors.length - 1; idx >= 0; idx -= 1) {
+    if (ancestors[idx].type === 'Property') {
+      propertyIndex = idx;
+      break;
+    }
+  }
+
+  if (propertyIndex <= 0) {
+    return null;
+  }
+
+  const property = ancestors[propertyIndex] as Node & {
+    key?: Node;
+  };
+  const objectExpression = ancestors[propertyIndex - 1];
+  if (!property.key || objectExpression.type !== 'ObjectExpression') {
+    return null;
+  }
+
+  const propertyName = oxcPropertyKeyName(property.key);
+  const propertyNames = collectStaticObjectPropertyNames(objectExpression);
+  if (!propertyName || !propertyNames) {
+    return null;
+  }
+
+  for (let idx = propertyIndex - 2; idx >= 0; idx -= 1) {
+    const ancestor = ancestors[idx] as AnyNode;
+    if (ancestor.type === 'VariableDeclarator') {
+      const { id, init } = ancestor;
+      if (isNode(id) && id.type === 'Identifier' && init === objectExpression) {
+        return {
+          localName: id.name,
+          propertyName,
+          propertyNames,
+        };
+      }
+    }
+  }
+
+  return null;
+};
+
 const processorExpressionToStaticValue = (
   expression: ProcessorExpression,
   resolveHelperCall: (name: string) => unknown | UnknownProcessorStaticValue
@@ -2219,10 +2350,15 @@ const processorExpressionToStaticValue = (
   return unknownProcessorStaticValue;
 };
 
-const collectSameFileProcessorStaticValuesByLocal = (
+const createSameFileProcessorStaticValueResolver = (
   processorsByLocal: Map<string, BaseProcessor>,
   expressionValues: Omit<ExpressionValue, 'buildCodeFrameError'>[]
-): Map<string, unknown> => {
+): {
+  resolveLocal: (local: string) => unknown | UnknownProcessorStaticValue;
+  resolveProcessor: (
+    processor: BaseProcessor
+  ) => unknown | UnknownProcessorStaticValue;
+} => {
   const expressionSourceByName = new Map<string, string>();
   expressionValues.forEach((value) => {
     if (value.ex.type === 'Identifier') {
@@ -2233,9 +2369,7 @@ const collectSameFileProcessorStaticValuesByLocal = (
   const memo = new Map<string, unknown | UnknownProcessorStaticValue>();
   const resolving = new Set<string>();
 
-  const resolveLocal = (
-    local: string
-  ): unknown | UnknownProcessorStaticValue => {
+  function resolveLocal(local: string): unknown | UnknownProcessorStaticValue {
     if (memo.has(local)) {
       return memo.get(local)!;
     }
@@ -2256,7 +2390,28 @@ const collectSameFileProcessorStaticValuesByLocal = (
     resolving.delete(local);
     memo.set(local, value);
     return value;
-  };
+  }
+
+  function resolveProcessor(
+    processor: BaseProcessor
+  ): unknown | UnknownProcessorStaticValue {
+    return processorExpressionToStaticValue(processor.value, (helperName) => {
+      const source = expressionSourceByName.get(helperName);
+      return source ? resolveLocal(source) : unknownProcessorStaticValue;
+    });
+  }
+
+  return { resolveLocal, resolveProcessor };
+};
+
+const collectSameFileProcessorStaticValuesByLocal = (
+  processorsByLocal: Map<string, BaseProcessor>,
+  expressionValues: Omit<ExpressionValue, 'buildCodeFrameError'>[]
+): Map<string, unknown> => {
+  const { resolveLocal } = createSameFileProcessorStaticValueResolver(
+    processorsByLocal,
+    expressionValues
+  );
 
   const result = new Map<string, unknown>();
   processorsByLocal.forEach((_processor, local) => {
@@ -2265,6 +2420,46 @@ const collectSameFileProcessorStaticValuesByLocal = (
       result.set(local, value);
     }
   });
+
+  return result;
+};
+
+const collectSameFileProcessorObjectStaticValuesByLocal = (
+  processorObjectsByLocal: Map<string, SameFileProcessorObject>,
+  processorsByLocal: Map<string, BaseProcessor>,
+  expressionValues: Omit<ExpressionValue, 'buildCodeFrameError'>[]
+): Map<string, unknown> => {
+  const { resolveProcessor } = createSameFileProcessorStaticValueResolver(
+    processorsByLocal,
+    expressionValues
+  );
+
+  const result = new Map<string, unknown>();
+  for (const [local, object] of processorObjectsByLocal) {
+    if (object.properties.size === object.propertyNames.size) {
+      const value: Record<string, unknown> = {};
+      let complete = true;
+      for (const propertyName of object.propertyNames) {
+        const processor = object.properties.get(propertyName);
+        if (!processor) {
+          complete = false;
+          break;
+        }
+
+        const propertyValue = resolveProcessor(processor);
+        if (propertyValue === unknownProcessorStaticValue) {
+          complete = false;
+          break;
+        }
+
+        value[propertyName] = propertyValue;
+      }
+
+      if (complete) {
+        result.set(local, value);
+      }
+    }
+  }
 
   return result;
 };
@@ -2590,6 +2785,10 @@ export const applyOxcProcessors = (
   const processors: BaseProcessor[] = [];
   const processorClassNamesByLocal = new Map<string, string>();
   const sameFileProcessorsByLocal = new Map<string, BaseProcessor>();
+  const sameFileProcessorObjectsByLocal = new Map<
+    string,
+    SameFileProcessorObject
+  >();
   extracted.dependencyNames.forEach((name: string) =>
     removableImportLocals.add(name)
   );
@@ -2655,6 +2854,22 @@ export const applyOxcProcessors = (
         }
       }
 
+      const objectProperty = getSameFileProcessorObjectProperty(
+        usage.ancestors
+      );
+      if (objectProperty) {
+        const existing = sameFileProcessorObjectsByLocal.get(
+          objectProperty.localName
+        );
+        const object = existing ?? {
+          properties: new Map<string, BaseProcessor>(),
+          propertyNames: objectProperty.propertyNames,
+        };
+
+        object.properties.set(objectProperty.propertyName, processor);
+        sameFileProcessorObjectsByLocal.set(objectProperty.localName, object);
+      }
+
       processors.push(processor);
       callback(processor);
       addedImports.push(...astService.getAddedImports());
@@ -2665,6 +2880,15 @@ export const applyOxcProcessors = (
       sameFileProcessorsByLocal,
       extracted.expressionValues
     );
+  const sameFileProcessorObjectStaticValuesByLocal =
+    collectSameFileProcessorObjectStaticValuesByLocal(
+      sameFileProcessorObjectsByLocal,
+      sameFileProcessorsByLocal,
+      extracted.expressionValues
+    );
+  sameFileProcessorObjectStaticValuesByLocal.forEach((value, local) => {
+    sameFileProcessorStaticValuesByLocal.set(local, value);
+  });
 
   const replacedCode = applyReplacements(workingCode, replacements);
   const metadataExtendsHelperNames =

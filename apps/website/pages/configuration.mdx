@@ -549,6 +549,7 @@ module.exports = {
 
   An object with two keys `componentTypes` and `hocs`. It specifies types of variables and HOCs that will be replaced
   with an empty function before evaluation (useful to avoid executing runtime-only component/HOC code at build time).
+  React `forwardRef` and `memo` are included in `hocs` by default.
 
   ```js
   {

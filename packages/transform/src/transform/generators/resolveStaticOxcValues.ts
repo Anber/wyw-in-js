@@ -1430,11 +1430,51 @@ const zeroArgFunctionExpressionBody = (expr: Expression): Expression | null => {
   return body && body.type !== 'BlockStatement' ? (body as Expression) : null;
 };
 
+const isNullLiteralExpression = (node: Node): boolean => {
+  const unwrapped = unwrapExpression(node);
+  return isSafeLiteral(unwrapped) && unwrapped.value === null;
+};
+
+const isNullReturningFunctionExpression = (expr: Expression): boolean => {
+  const unwrapped = unwrapExpression(expr) as AnyNode;
+  if (
+    unwrapped.type !== 'ArrowFunctionExpression' &&
+    unwrapped.type !== 'FunctionExpression'
+  ) {
+    return false;
+  }
+
+  if (unwrapped.async || unwrapped.generator) {
+    return false;
+  }
+
+  const body = unwrapped.body as Node | undefined;
+  if (!body) {
+    return false;
+  }
+
+  if (body.type !== 'BlockStatement') {
+    return isNullLiteralExpression(body);
+  }
+
+  if (!Array.isArray(body.body) || body.body.length !== 1) {
+    return false;
+  }
+
+  const [statement] = body.body;
+  return (
+    statement?.type === 'ReturnStatement' &&
+    !!statement.argument &&
+    isNullLiteralExpression(statement.argument)
+  );
+};
+
 const createSameFileStaticWYWMetaHelperResolver = (
   code: string,
   filename: string
 ): ((seedValues: Map<string, unknown>) => Map<string, unknown>) => {
   const declarations = new Map<string, Expression>();
+  const nullFunctionNames = new Set<string>();
 
   try {
     const program = parseProgram(code, filename);
@@ -1447,6 +1487,11 @@ const createSameFileStaticWYWMetaHelperResolver = (
 
           const { name } = declarator.id;
           const init = declarator.init as Expression;
+          if (isNullReturningFunctionExpression(init)) {
+            nullFunctionNames.add(name);
+            return;
+          }
+
           const unwrapped = unwrapExpression(init);
           if (
             unwrapped.type === 'ObjectExpression' &&
@@ -1494,6 +1539,11 @@ const createSameFileStaticWYWMetaHelperResolver = (
 
       const expression = declarations.get(name);
       if (!expression || resolving.has(name)) {
+        if (nullFunctionNames.has(name)) {
+          memo.set(name, null);
+          return null;
+        }
+
         return unknownStaticWYWMetaValue;
       }
 
@@ -1565,7 +1615,10 @@ const createSameFileStaticWYWMetaHelperResolver = (
       }
 
       const value = resolveName(name);
-      if (value !== unknownStaticWYWMetaValue && isStaticWYWMetaValue(value)) {
+      if (
+        value !== unknownStaticWYWMetaValue &&
+        (value === null || isStaticWYWMetaValue(value))
+      ) {
         result.set(name, value);
       }
     });
@@ -2745,43 +2798,6 @@ const functionReturnExpression = (
     : null;
 };
 
-const isReactImport = (
-  imports: Map<string, ImportBinding>,
-  localName: string
-): boolean => imports.get(localName)?.source === 'react';
-
-const isReactFactoryName = (name: string): boolean =>
-  name === 'forwardRef' || name === 'memo';
-
-const isKnownReactFactoryCall = (
-  expr: Node,
-  imports: Map<string, ImportBinding>
-): boolean => {
-  const unwrapped = unwrapExpression(expr);
-  if (unwrapped.type !== 'CallExpression') {
-    return false;
-  }
-
-  const callee = unwrapExpression(unwrapped.callee);
-  if (callee.type === 'Identifier') {
-    return (
-      isReactFactoryName(callee.name) && isReactImport(imports, callee.name)
-    );
-  }
-
-  if (callee.type !== 'MemberExpression' || callee.computed) {
-    return false;
-  }
-
-  const methodName = staticMemberName(callee.property);
-  return (
-    !!methodName &&
-    isReactFactoryName(methodName) &&
-    callee.object.type === 'Identifier' &&
-    isReactImport(imports, callee.object.name)
-  );
-};
-
 const isKnownOpaqueRuntimeWrapperImport = (
   binding: ImportBinding | undefined
 ): boolean => {
@@ -3447,10 +3463,6 @@ const isOpaqueRuntimeComponentExpression = (
     unwrapped.type === 'FunctionExpression' ||
     unwrapped.type === 'ClassExpression'
   ) {
-    return true;
-  }
-
-  if (isKnownReactFactoryCall(unwrapped, imports)) {
     return true;
   }
 
@@ -4377,7 +4389,17 @@ function* resolveExportAsOpaqueRuntimeImport(
     return null;
   }
 
-  const program = parseProgram(loadedAndParsed.code, filename);
+  const codeHash = hashStaticContent(loadedAndParsed.code);
+  const preevalResult = getStaticMetadataPreevalResult(
+    action,
+    filename,
+    loadedAndParsed.code,
+    codeHash
+  );
+  const program = parseProgram(
+    preevalResult?.baseCode ?? loadedAndParsed.code,
+    filename
+  );
   const target = findExportTarget(program, exportedName);
   if (!target) {
     memo.set(memoKey, null);
@@ -5795,8 +5817,13 @@ export function* resolveStaticOxcPreevalValues(
   this: ITransformAction
 ): SyncScenarioFor<boolean> {
   const preevalResult = this.entrypoint.getPreevalResult();
-  const candidates = preevalResult?.staticValueCandidates ?? [];
-  if (!preevalResult || candidates.length === 0) {
+  if (!preevalResult) {
+    return false;
+  }
+
+  const candidates = preevalResult.staticValueCandidates ?? [];
+  const evalDependencyNames = new Set(preevalResult.dependencyNames ?? []);
+  if (candidates.length === 0 && evalDependencyNames.size === 0) {
     return false;
   }
 
@@ -5806,12 +5833,6 @@ export function* resolveStaticOxcPreevalValues(
       : this.entrypoint.loadedAndParsed.evalConfig.filename ??
         this.entrypoint.name;
   if (!isStaticImportValuesEnabled(this, filename)) {
-    debugStaticResolve(this, {
-      filename,
-      phase: 'entrypoint',
-      reason: 'feature-disabled',
-      status: 'skipped',
-    });
     return false;
   }
 
@@ -5827,7 +5848,6 @@ export function* resolveStaticOxcPreevalValues(
   const opaqueRuntimeBaseHelpers = collectWYWMetaExtendsHelperNames(
     parseProgram(preevalResult.baseCode ?? preevalResult.code, filename)
   );
-  const evalDependencyNames = new Set(preevalResult.dependencyNames ?? []);
   // Names of candidates resolved to runtime callbacks (function values).
   // They keep the file out of evalFile but their helper declarations must
   // not be pruned — the runtime call site relies on them.

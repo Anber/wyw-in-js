@@ -215,6 +215,14 @@ const getChildren = (node: Node): Node[] => {
   return result;
 };
 
+const containsTaggedTemplateExpression = (node: Node): boolean => {
+  if (node.type === 'TaggedTemplateExpression') {
+    return true;
+  }
+
+  return getChildren(node).some(containsTaggedTemplateExpression);
+};
+
 const parseOxc = (code: string, filename: string): Program => {
   return parseOxcProgramCached(filename, code, 'unambiguous');
 };
@@ -2402,16 +2410,14 @@ const extractExpression = (
       }
 
       const init = binding.declarator?.init;
-      // Processor-managed bindings (const x = css``) carry a value (the
-      // generated class name) that only becomes known after processors run.
-      // Leave the identifier free in the candidate source so the resolver
-      // can supply it via inlineConstants at evaluation time. Substituting
-      // the TaggedTemplateExpression text would just guarantee evaluator
-      // failure since evaluateStatic can't fold tagged templates.
-      const isProcessorTagged =
-        evaluate && init?.type === 'TaggedTemplateExpression';
+      // Processor-managed bindings (`const x = css```, or object literals
+      // containing processor tags) carry values that only become known after
+      // processors run. Leave the identifier free in the candidate source so
+      // the resolver can supply it via inlineConstants at evaluation time.
+      const isProcessorManagedLocal =
+        !!evaluate && !!init && containsTaggedTemplateExpression(init);
       const staticLocalExpression =
-        evaluate && init && !isProcessorTagged
+        evaluate && init && !isProcessorManagedLocal
           ? collectStaticLocalExpression(init, ctx, [
               hoistedBindingKey(binding),
             ])
@@ -2420,7 +2426,7 @@ const extractExpression = (
         staticIdentifierReplacements.set(name, staticLocalExpression.source);
         importedFrom.push(...staticLocalExpression.importedFrom);
         staticImports.push(...staticLocalExpression.imports);
-      } else if (isProcessorTagged) {
+      } else if (isProcessorManagedLocal) {
         hasInlinableLocalReference = true;
       } else {
         hasNonStaticLocalReference = true;

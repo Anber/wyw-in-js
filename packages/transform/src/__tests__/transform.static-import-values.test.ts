@@ -956,6 +956,50 @@ describe('transform static import value inlining', () => {
     }
   });
 
+  it('inlines same-file selector-only processor object members without eval', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
+    const entryFile = join(root, 'entry.js');
+    const cache = new TransformCacheCollection();
+    const perf = createPerfEventRecorder();
+
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'app' }));
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { css } from 'test-css-processor';
+        import { styled } from 'test-styled-processor';
+
+        export const modifiers = {
+          empty: css\`\`,
+        };
+
+        const UnstyledNotice = () => null;
+
+        const Notice = styled(UnstyledNotice)\`
+          &.${'${modifiers.empty}'} {
+            color: red;
+          }
+        \`;
+
+        export default Object.assign(Notice, modifiers);
+      `
+    );
+
+    try {
+      const result = await runTransform(
+        root,
+        entryFile,
+        cache,
+        perf.eventEmitter
+      );
+
+      expect(result.cssText).toContain('color:red');
+      expect(perf.counts.get('transform:evalFile') ?? 0).toBe(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('inlines namespace selector-only processor class names without eval', async () => {
     const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
     const entryFile = join(root, 'entry.js');
@@ -2753,6 +2797,121 @@ describe('transform static import value inlining', () => {
       expect(result.cssText).toMatch(
         /\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\s*\{[^}]*font-size:12px;[^}]*\}/s
       );
+      expect(perf.counts.get('transform:evalFile') ?? 0).toBe(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('inlines same-file null component bases without eval', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
+    const entryFile = join(root, 'entry.js');
+    const cache = new TransformCacheCollection();
+    const perf = createPerfEventRecorder();
+
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'app' }));
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { jsx as _jsx, jsxs as _jsxs } from 'react/jsx-runtime';
+        import { styled } from 'test-styled-processor';
+        import Feature from './Feature';
+
+        const Features = ({ className }) => _jsxs('ul', {
+          className,
+          children: [_jsx(Feature, { icon: 'cloud' })],
+        });
+
+        export const Root = styled(Features)\`
+          color: red;
+        \`;
+      `
+    );
+
+    try {
+      const result = await runTransform(
+        root,
+        entryFile,
+        cache,
+        perf.eventEmitter
+      );
+
+      expect(result.cssText).toContain('color:red');
+      expect(perf.counts.get('transform:evalFile') ?? 0).toBe(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('inlines same-file React wrapper null component bases without eval', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
+    const entryFile = join(root, 'entry.js');
+    const cache = new TransformCacheCollection();
+    const perf = createPerfEventRecorder();
+
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'app' }));
+    writeFileSync(
+      entryFile,
+      dedent`
+        import React from 'react';
+        import { jsx as _jsx } from 'react/jsx-runtime';
+        import { styled } from 'test-styled-processor';
+
+        const BareAlert = ({ children }, ref) => {
+          return _jsx('span', { ref, children });
+        };
+        const UnstyledAlert = React.forwardRef(BareAlert);
+
+        export const Alert = styled(UnstyledAlert)\`
+          color: red;
+        \`;
+      `
+    );
+
+    try {
+      const result = await runTransform(
+        root,
+        entryFile,
+        cache,
+        perf.eventEmitter
+      );
+
+      expect(result.cssText).toContain('color:red');
+      expect(perf.counts.get('transform:evalFile') ?? 0).toBe(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('inlines same-file default null component bases without eval', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
+    const entryFile = join(root, 'entry.js');
+    const cache = new TransformCacheCollection();
+    const perf = createPerfEventRecorder();
+
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'app' }));
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { styled } from 'test-styled-processor';
+
+        const BareEditor = () => null;
+
+        export default styled(BareEditor)\`
+          color: red;
+        \`;
+      `
+    );
+
+    try {
+      const result = await runTransform(
+        root,
+        entryFile,
+        cache,
+        perf.eventEmitter
+      );
+
+      expect(result.cssText).toContain('color:red');
       expect(perf.counts.get('transform:evalFile') ?? 0).toBe(0);
     } finally {
       rmSync(root, { recursive: true, force: true });
