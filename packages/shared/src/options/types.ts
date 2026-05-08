@@ -235,7 +235,6 @@ export type StrictOptions = {
   codeRemover?: CodeRemoverOptions;
   conditionNames?: string[];
   displayName: boolean;
-  evaluate: boolean;
   eval?: EvalOptionsV2;
   extensions: string[];
   features: FeatureFlags;

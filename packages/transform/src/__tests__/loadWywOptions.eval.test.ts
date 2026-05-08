@@ -13,6 +13,7 @@ describe('loadWywOptions eval options', () => {
       strategy: 'hybrid',
     });
     expect(options.features).not.toHaveProperty('staticImportValues');
+    expect(options).not.toHaveProperty('evaluate');
   });
 
   it('keeps strategy separate from error policy', () => {

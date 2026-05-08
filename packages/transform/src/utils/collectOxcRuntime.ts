@@ -14,7 +14,7 @@ type OxcCollectOptions = Pick<
   StrictOptions,
   | 'classNameSlug'
   | 'displayName'
-  | 'evaluate'
+  | 'eval'
   | 'extensions'
   | 'tagResolver'
   | 'variableNameConfig'

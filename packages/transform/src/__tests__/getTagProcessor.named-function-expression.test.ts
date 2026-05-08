@@ -40,14 +40,9 @@ describe('getTagProcessor', () => {
 
     const options: Pick<
       StrictOptions,
-      | 'classNameSlug'
-      | 'displayName'
-      | 'extensions'
-      | 'evaluate'
-      | 'tagResolver'
+      'classNameSlug' | 'displayName' | 'extensions' | 'tagResolver'
     > = {
       displayName: false,
-      evaluate: true,
       extensions: ['.js'],
       tagResolver: (source, imported) => {
         if (source !== '@linaria/atomic' || imported !== 'css') {

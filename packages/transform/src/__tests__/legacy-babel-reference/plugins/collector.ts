@@ -26,8 +26,8 @@ export function collector(
   file: BabelFile,
   options: Pick<
     StrictOptions,
-    'classNameSlug' | 'displayName' | 'extensions' | 'evaluate' | 'tagResolver'
-  > & { eventEmitter?: EventEmitter },
+    'classNameSlug' | 'displayName' | 'extensions' | 'tagResolver'
+  > & { evaluate: boolean; eventEmitter?: EventEmitter },
   values: ValueCache
 ) {
   const eventEmitter = options.eventEmitter ?? EventEmitter.dummy;

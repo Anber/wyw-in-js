@@ -75,11 +75,13 @@ function buildCodeFrameError(path: NodePath, message: string): Error {
 
 let didWarnSkipSymbolMismatch = false;
 
+type LegacyEvaluateOptions = { evaluate: boolean };
+
 function getBuilderForIdentifier(
   definedProcessor: DefinedProcessor,
   path: NodePath<Identifier>,
   imports: IImport[],
-  options: Pick<StrictOptions, 'evaluate'>
+  options: LegacyEvaluateOptions
 ): Builder | null {
   const [Processor, tagSource] = definedProcessor;
   let tagPath: NodePath<Identifier | MemberExpression> = path;
@@ -371,8 +373,9 @@ function createProcessorInstance(
   fileContext: IFileContext,
   options: Pick<
     StrictOptions,
-    'classNameSlug' | 'displayName' | 'extensions' | 'evaluate' | 'tagResolver'
-  >
+    'classNameSlug' | 'displayName' | 'extensions' | 'tagResolver'
+  > &
+    LegacyEvaluateOptions
 ): BaseProcessor | null {
   const cache = getTraversalCache<BaseProcessor | null, Identifier>(
     path,
@@ -449,8 +452,9 @@ export function applyProcessors(
   fileContext: IFileContext,
   options: Pick<
     StrictOptions,
-    'classNameSlug' | 'displayName' | 'extensions' | 'evaluate' | 'tagResolver'
-  >,
+    'classNameSlug' | 'displayName' | 'extensions' | 'tagResolver'
+  > &
+    LegacyEvaluateOptions,
   callback: (processor: BaseProcessor) => void
 ) {
   const imports = collectExportsAndImports(path).imports.filter(explicitImport);

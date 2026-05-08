@@ -19,7 +19,6 @@ import { EventEmitter } from '../utils/EventEmitter';
 const options: StrictOptions = {
   babelOptions: {},
   displayName: false,
-  evaluate: true,
   extensions: ['.cjs', '.js', '.jsx', '.ts', '.tsx'],
   features: {
     dangerousCodeRemover: true,

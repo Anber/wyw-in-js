@@ -19,7 +19,6 @@ type OxcPreevalOptions = Pick<
   | 'classNameSlug'
   | 'codeRemover'
   | 'displayName'
-  | 'evaluate'
   | 'eval'
   | 'extensions'
   | 'features'
@@ -42,7 +41,7 @@ const DYNAMIC_IMPORT_RE = /\bimport(?:\s|\/\*[\s\S]*?\*\/)*\(/;
 const REQUIRE_CALL_RE = /\brequire(?:\s|\/\*[\s\S]*?\*\/)*\(/;
 
 const getEvalStrategy = (options: OxcPreevalOptions) =>
-  options.eval?.strategy ?? 'execute';
+  options.eval?.strategy ?? 'hybrid';
 
 const usesStaticEvaluation = (options: OxcPreevalOptions): boolean =>
   getEvalStrategy(options) !== 'execute';

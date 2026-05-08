@@ -25,7 +25,6 @@ const pluginOptions: StrictOptions = {
     ],
   },
   displayName: false,
-  evaluate: true,
   extensions: ['.cjs', '.js', '.jsx', '.ts', '.tsx'],
   features: {
     dangerousCodeRemover: true,

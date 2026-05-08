@@ -37,7 +37,6 @@ const options: Pick<
   | 'classNameSlug'
   | 'codeRemover'
   | 'displayName'
-  | 'evaluate'
   | 'eval'
   | 'extensions'
   | 'features'
@@ -46,7 +45,6 @@ const options: Pick<
   codeRemover: {},
   displayName: false,
   eval: { strategy: 'hybrid' },
-  evaluate: true,
   extensions: ['.tsx'],
   features: {
     dangerousCodeRemover: true,
@@ -65,7 +63,6 @@ const linariaOptions: Pick<
   | 'classNameSlug'
   | 'codeRemover'
   | 'displayName'
-  | 'evaluate'
   | 'extensions'
   | 'features'
   | 'tagResolver'

@@ -2529,6 +2529,10 @@ const addCandidateInlineConstants = (
 const isReplacementPure = (replacement: ProcessorExpression): boolean =>
   replacement.type === 'CallExpression';
 
+const shouldCollectStaticExpressionValues = (
+  options: Pick<StrictOptions, 'eval'>
+): boolean => (options.eval?.strategy ?? 'hybrid') !== 'execute';
+
 const createProcessor = (
   definedProcessor: DefinedProcessor,
   params: Params,
@@ -2538,7 +2542,7 @@ const createProcessor = (
   fileContext: IFileContext,
   options: Pick<
     StrictOptions,
-    'classNameSlug' | 'displayName' | 'extensions' | 'evaluate' | 'tagResolver'
+    'classNameSlug' | 'displayName' | 'extensions' | 'tagResolver'
   >,
   code: string,
   loc: LocationLookup,
@@ -2652,8 +2656,8 @@ export const applyOxcProcessors = (
     StrictOptions,
     | 'classNameSlug'
     | 'displayName'
+    | 'eval'
     | 'extensions'
-    | 'evaluate'
     | 'staticBindings'
     | 'tagResolver'
   > & {
@@ -2665,6 +2669,8 @@ export const applyOxcProcessors = (
 ): ApplyOxcProcessorsResult => {
   const filename = fileContext.filename ?? 'unknown.js';
   const eventEmitter = options.eventEmitter ?? EventEmitter.dummy;
+  const collectStaticExpressionValues =
+    shouldCollectStaticExpressionValues(options);
   let workingCode = code;
   let program = parseOxc(workingCode, filename);
   const definedProcessors = new Map<string, DefinedProcessor>();
@@ -2742,7 +2748,7 @@ export const applyOxcProcessors = (
           collectOxcExpressionDependencies(
             workingCode,
             filename,
-            options.evaluate,
+            collectStaticExpressionValues,
             targetExpressionSpans,
             options.staticBindings
           )

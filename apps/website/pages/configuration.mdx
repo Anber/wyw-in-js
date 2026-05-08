@@ -12,7 +12,6 @@ Example `wyw-in-js.config.mjs`:
 
 ```js
 export default {
-  evaluate: true,
   displayName: false,
 };
 ```
@@ -23,16 +22,11 @@ Legacy/CommonJS compatibility (`wyw-in-js.config.cjs`):
 
 ```js
 module.exports = {
-  evaluate: true,
   displayName: false,
 };
 ```
 
 ## Options
-
-- `evaluate: boolean` (default: `true`):
-
-  Controls static evaluation of template expressions during dependency collection. It does **not** disable module evaluation. If there is nothing to evaluate, WyW-in-JS skips evaluation regardless of this flag. The old behavior of `evaluate: false` (throwing on unsupported interpolation) is deprecated and kept only for legacy configs.
 
 - `eval: EvalOptionsV2`:
 

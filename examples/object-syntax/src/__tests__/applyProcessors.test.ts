@@ -20,7 +20,6 @@ const run = (code: string, options: IRunOptions = {}): BaseProcessor | null => {
     fileContext,
     {
       displayName: true,
-      evaluate: true,
       extensions: ['.js', '.ts'],
     },
     (p) => {
