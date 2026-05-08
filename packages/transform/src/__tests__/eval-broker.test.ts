@@ -22,6 +22,7 @@ import {
   stripEntrypointGlobalsFromRunnerContext,
 } from '../eval/broker';
 import { serializeValue } from '../eval/serialize';
+import { EventEmitter } from '../utils/EventEmitter';
 
 const createPluginOptions = (overrides: PartialOptions = {}) =>
   loadWywOptions({
@@ -108,6 +109,19 @@ const getPrivateBroker = (broker: EvalBroker) =>
     }) => Promise<{ resolvedId: string | null }>;
     runner: unknown;
   };
+
+const createActionIdHandler = () => {
+  let actionId = 0;
+  return (phase: string) => {
+    if (phase !== 'start') {
+      return undefined;
+    }
+
+    const id = actionId;
+    actionId += 1;
+    return id;
+  };
+};
 
 describe('EvalBroker', () => {
   it('strips default entrypoint globals from stable override context payloads', () => {
@@ -1208,6 +1222,137 @@ describe('EvalBroker', () => {
 
     broker.dispose();
     rmSync(root, { recursive: true, force: true });
+  });
+
+  it('enables eval-file debug in the runner only for enabled emitters', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
+    const entry = join(root, 'entry.js');
+    writeFileSync(entry, 'export const __wywPreval = {};');
+
+    const services = createServices(root, entry);
+    const broker = new EvalBroker(
+      services,
+      jest.fn(async () => null)
+    );
+    const privateBroker = getPrivateBroker(broker);
+    privateBroker.request = jest.fn(async () => ({})) as never;
+
+    try {
+      const entrypoint = Entrypoint.createRoot(
+        services,
+        entry,
+        ['__wywPreval'],
+        readFileSync(entry, 'utf-8')
+      );
+
+      await privateBroker.initRunner(entrypoint);
+      const disabledPayload = (privateBroker.request as jest.Mock).mock
+        .calls[0][1] as Record<string, unknown>;
+      expect(disabledPayload.debugEvalFiles).toBeUndefined();
+
+      services.eventEmitter = new EventEmitter(
+        () => {},
+        createActionIdHandler(),
+        () => {}
+      );
+      privateBroker.lastInitKey = null;
+      (privateBroker.request as jest.Mock).mockClear();
+
+      await privateBroker.initRunner(entrypoint);
+      const enabledPayload = (privateBroker.request as jest.Mock).mock
+        .calls[0][1] as Record<string, unknown>;
+      expect(enabledPayload.debugEvalFiles).toBe(true);
+    } finally {
+      broker.dispose();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('emits eval-file debug rows with serialized and stringified export values', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
+    const entry = join(root, 'entry.js');
+    const dep = join(root, 'dep.js');
+
+    writeFileSync(
+      dep,
+      ['export const value = 41;', 'export const helper = () => value;'].join(
+        '\n'
+      )
+    );
+    writeFileSync(
+      entry,
+      [
+        "import { value, helper } from './dep.js';",
+        'export const __wywPreval = {',
+        '  result: () => value + (typeof helper === "function" ? 1 : 0),',
+        '};',
+      ].join('\n')
+    );
+
+    const services = createServices(root, entry);
+    const events: Record<string, unknown>[] = [];
+    services.eventEmitter = new EventEmitter(
+      (meta, type) => {
+        if (type === 'single') {
+          events.push(meta);
+        }
+      },
+      createActionIdHandler(),
+      () => {}
+    );
+
+    const broker = new EvalBroker(
+      services,
+      jest.fn(async () => null)
+    );
+
+    try {
+      const entrypoint = Entrypoint.createRoot(
+        services,
+        entry,
+        ['__wywPreval'],
+        readFileSync(entry, 'utf-8')
+      );
+
+      const result = await broker.evaluate(entrypoint);
+      expect(result.values?.get('result')).toBe(42);
+
+      const resolvedDep = realpathSync(dep);
+      const depEvent = events.find(
+        (event) =>
+          event.type === 'eval-file' &&
+          (event.id === dep || event.id === resolvedDep)
+      );
+      expect(depEvent).toEqual(
+        expect.objectContaining({
+          contentBase64: expect.any(String),
+          evalSeq: 1,
+          payloadKind: 'code',
+          valuesBase64: expect.any(String),
+        })
+      );
+
+      const code = Buffer.from(
+        depEvent!.contentBase64 as string,
+        'base64'
+      ).toString('utf8');
+      expect(code).toContain('export const value = 41');
+
+      const values = JSON.parse(
+        Buffer.from(depEvent!.valuesBase64 as string, 'base64').toString('utf8')
+      ) as {
+        exports: Record<
+          string,
+          { reason?: string; status: 'serialized' | 'stringified' }
+        >;
+      };
+      expect(values.exports.value.status).toBe('serialized');
+      expect(values.exports.helper.status).toBe('stringified');
+      expect(values.exports.helper.reason).toContain('unsupported function');
+    } finally {
+      broker.dispose();
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it('keeps package subdirectory modules classified as ESM after cached package misses', async () => {

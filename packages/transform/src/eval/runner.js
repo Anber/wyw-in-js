@@ -952,6 +952,7 @@ const state = {
     extensions: [],
   },
   features: {},
+  debugEvalFiles: false,
   entrypoint: 'eval-runner',
 };
 
@@ -2054,8 +2055,27 @@ const resolveExportValue = (source, key) => {
   return undefined;
 };
 
+const stringifyDebugValue = (value) => {
+  try {
+    const json = JSON.stringify(value);
+    if (json !== undefined) return json;
+  } catch {
+    // fall through
+  }
+
+  try {
+    return String(value);
+  } catch {
+    return Object.prototype.toString.call(value);
+  }
+};
+
+const serializeDebugReason = (error) =>
+  error instanceof Error ? error.message : String(error);
+
 const collectModuleExports = () => {
   const exportsByModule = {};
+  const debugEvalFiles = state.debugEvalFiles ? {} : undefined;
 
   moduleOnly.forEach((only, id) => {
     if (!only || only.length === 0) return;
@@ -2106,6 +2126,7 @@ const collectModuleExports = () => {
     if (keys.length === 0) return;
 
     const serialized = {};
+    const debugExports = state.debugEvalFiles ? {} : undefined;
     keys.forEach((key) => {
       const value = resolveExportValue(source, key);
       try {
@@ -2113,10 +2134,29 @@ const collectModuleExports = () => {
           rootLabel: 'module exports',
           path: [id, key],
         });
-      } catch {
+        if (debugExports) {
+          debugExports[key] = {
+            serialized: serialized[key],
+            status: 'serialized',
+          };
+        }
+      } catch (error) {
+        if (debugExports) {
+          debugExports[key] = {
+            reason: serializeDebugReason(error),
+            status: 'stringified',
+            stringified: stringifyDebugValue(value),
+          };
+        }
         // Skip non-serializable exports when caching eval values.
       }
     });
+
+    if (debugEvalFiles && debugExports && Object.keys(debugExports).length) {
+      debugEvalFiles[id] = {
+        exports: debugExports,
+      };
+    }
 
     if (Object.keys(serialized).length) {
       exportsByModule[id] = serialized;
@@ -2124,7 +2164,7 @@ const collectModuleExports = () => {
     }
   });
 
-  return exportsByModule;
+  return { debugEvalFiles, modules: exportsByModule };
 };
 
 async function evaluateEntrypoint(id) {
@@ -2147,20 +2187,21 @@ async function evaluateEntrypoint(id) {
   const hasPrevalNamespace =
     namespace && typeof namespace === 'object' && '__wywPreval' in namespace;
 
-  const modules = collectModuleExports();
+  const { debugEvalFiles, modules } = collectModuleExports();
 
   if (!hasPrevalExport && !hasPrevalNamespace) {
-    return { values: null, modules };
+    return { debugEvalFiles, values: null, modules };
   }
 
   const preval = hasPrevalExport
     ? exportsValue.__wywPreval
     : namespace.__wywPreval;
   if (!preval || typeof preval !== 'object') {
-    return { values: null, modules };
+    return { debugEvalFiles, values: null, modules };
   }
 
   const values = {};
+  const debugPreval = state.debugEvalFiles ? {} : undefined;
   Object.entries(preval).forEach(([key, lazy]) => {
     let value;
     try {
@@ -2174,9 +2215,22 @@ async function evaluateEntrypoint(id) {
       rootLabel: '__wywPreval',
       path: [key],
     });
+    if (debugPreval) {
+      debugPreval[key] = {
+        serialized: values[key],
+        status: 'serialized',
+      };
+    }
   });
 
-  return { values, modules };
+  if (debugEvalFiles && debugPreval && Object.keys(debugPreval).length) {
+    debugEvalFiles[id] = {
+      ...(debugEvalFiles[id] ?? {}),
+      preval: debugPreval,
+    };
+  }
+
+  return { debugEvalFiles, values, modules };
 }
 
 const handleMessage = async (message) => {
@@ -2190,6 +2244,7 @@ const handleMessage = async (message) => {
           canonicalizeForSignature(encodedGlobals)
         );
         const nextFeatures = message.payload.features ?? {};
+        const nextDebugEvalFiles = Boolean(message.payload.debugEvalFiles);
         const nextEntrypoint = message.payload.entrypoint ?? 'eval-runner';
         const nextHappyDomEnabled = isFeatureEnabled(
           nextFeatures,
@@ -2234,6 +2289,7 @@ const handleMessage = async (message) => {
           }
           state.evalOptions = nextEvalOptions;
           state.features = nextFeatures;
+          state.debugEvalFiles = nextDebugEvalFiles;
           state.entrypoint = nextEntrypoint;
           Object.assign(state.context, {
             __dirname: path.dirname(nextEntrypoint),
@@ -2250,6 +2306,7 @@ const handleMessage = async (message) => {
         resetEvaluationState();
         state.evalOptions = nextEvalOptions;
         state.features = nextFeatures;
+        state.debugEvalFiles = nextDebugEvalFiles;
         state.entrypoint = nextEntrypoint;
         debug('init:globals', Date.now() - initStart);
 
@@ -2283,13 +2340,14 @@ const handleMessage = async (message) => {
     case 'EVAL': {
       evictedThisSession.clear();
       try {
-        const { values, modules } = await evaluateEntrypoint(
+        const { debugEvalFiles, values, modules } = await evaluateEntrypoint(
           message.payload.id
         );
         sendMessage({
           type: 'EVAL_RESULT',
           id: message.id,
           payload: {
+            ...(debugEvalFiles ? { debugEvalFiles } : {}),
             values,
             modules,
             evictedIds: Array.from(evictedThisSession),

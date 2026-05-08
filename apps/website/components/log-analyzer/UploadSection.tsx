@@ -22,7 +22,8 @@ export function UploadSection({ state }: { state: LogAnalyzerState }) {
         <div className={styles.stackSm}>
           <h2 className="nx-text-lg nx-font-semibold">Upload logs</h2>
           <p className="nx-text-sm nx-text-neutral-600 dark:nx-text-neutral-400">
-            Drag &amp; drop the 3 files, or pick them using the inputs.
+            Drag &amp; drop the required files plus optional eval details, or
+            pick them using the inputs.
           </p>
         </div>
 
@@ -53,7 +54,8 @@ export function UploadSection({ state }: { state: LogAnalyzerState }) {
           <div className="nx-text-sm nx-font-medium">Drop zone</div>
           <p className="nx-mt-1 nx-text-sm nx-text-neutral-600 dark:nx-text-neutral-400">
             Drop <code>actions.jsonl</code>, <code>dependencies.jsonl</code> and{' '}
-            <code>entrypoints.jsonl</code> here.
+            <code>entrypoints.jsonl</code> here. Include{' '}
+            <code>eval-files.jsonl</code> to inspect eval payloads.
           </p>
 
           <div className="nx-mt-4 nx-grid nx-gap-2 nx-text-xs nx-text-neutral-600 dark:nx-text-neutral-400">
@@ -108,7 +110,8 @@ export function UploadSection({ state }: { state: LogAnalyzerState }) {
           <div className="nx-text-xs nx-text-neutral-600 dark:nx-text-neutral-400">
             Expected file names: <code>{FILE_NAME_BY_KEY.actions}</code>,{' '}
             <code>{FILE_NAME_BY_KEY.dependencies}</code>,{' '}
-            <code>{FILE_NAME_BY_KEY.entrypoints}</code>
+            <code>{FILE_NAME_BY_KEY.entrypoints}</code>; optional:{' '}
+            <code>{FILE_NAME_BY_KEY.evalFiles}</code>
           </div>
         </div>
       </div>

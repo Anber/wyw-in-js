@@ -1,5 +1,9 @@
-import { FILE_NAME_BY_KEY, REQUIRED_FILENAMES } from './constants';
-import type { RequiredFiles } from './state';
+import {
+  FILE_NAME_BY_KEY,
+  OPTIONAL_FILENAMES,
+  REQUIRED_FILENAMES,
+} from './constants';
+import type { SelectedFiles } from './state';
 
 export function detectRequiredFiles(files: File[]) {
   const byName = new Map<string, File[]>();
@@ -9,7 +13,7 @@ export function detectRequiredFiles(files: File[]) {
     byName.set(f.name, list);
   }
 
-  const required: RequiredFiles = {};
+  const selected: SelectedFiles = {};
   const problems: string[] = [];
 
   for (const key of REQUIRED_FILENAMES) {
@@ -24,9 +28,23 @@ export function detectRequiredFiles(files: File[]) {
       );
     } else {
       const [file] = matches;
-      required[key] = file;
+      selected[key] = file;
     }
   }
 
-  return { required, problems };
+  for (const key of OPTIONAL_FILENAMES) {
+    const expected = FILE_NAME_BY_KEY[key];
+    const matches = byName.get(expected) ?? [];
+
+    if (matches.length > 1) {
+      problems.push(
+        `Multiple files named ${expected} found (${matches.length}). Upload exactly one run.`
+      );
+    } else if (matches.length === 1) {
+      const [file] = matches;
+      selected[key] = file;
+    }
+  }
+
+  return { selected, problems };
 }
