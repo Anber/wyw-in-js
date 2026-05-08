@@ -1,5 +1,18 @@
 # @wyw-in-js/processor-utils
 
+## 2.0.0-alpha.1
+
+### Minor Changes
+
+- 0b44ada: Add an optional processor static evaluation contract. Processors can now describe statically known values as serializable values, class names, selector chains, runtime callbacks, opaque components, or unresolved values with reasons.
+
+  The transform static evaluator now consumes this contract before falling back to legacy eval-time replacement metadata, so processors can provide their own static semantics without relying on transform-specific metadata shapes.
+
+### Patch Changes
+
+- Updated dependencies
+  - @wyw-in-js/shared@2.0.0-alpha.1
+
 ## 2.0.0-alpha.0
 
 ### Major Changes
