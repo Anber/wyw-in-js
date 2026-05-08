@@ -5,9 +5,9 @@
 - Branch: `anber/static-eval-architecture`
 - Base branch: `anber/pr-312-static-imports-max`
 - Base commit: `58c8143f9a9f1cf8d9fd55e3875d0af960efc841`
-- Active task: `TASK-02-characterization-tests.md`
+- Active task: `TASK-03-shared-oxc-utils.md`
 - Blocking questions: none
-- Last verification: `git status` before branch creation was clean on `anber/pr-312-static-imports-max`.
+- Last verification: `bun test src/__tests__/oxc-preeval-stage.test.ts src/__tests__/transform.static-import-values.test.ts` in `packages/transform`, `bun run check:ts-size`, and `bun run lint:scripts` passed on 2026-05-08.
 
 ## Working Rules
 
@@ -28,7 +28,7 @@
 | ID | Status | Task File | Goal |
 | --- | --- | --- | --- |
 | 01 | done | [PLAN.tasks/TASK-01-planning-scaffold.md](PLAN.tasks/TASK-01-planning-scaffold.md) | Create branch and task tracking scaffold. |
-| 02 | pending | [PLAN.tasks/TASK-02-characterization-tests.md](PLAN.tasks/TASK-02-characterization-tests.md) | Lock current strategy behavior and add file-size guard. |
+| 02 | done | [PLAN.tasks/TASK-02-characterization-tests.md](PLAN.tasks/TASK-02-characterization-tests.md) | Lock current strategy behavior and add file-size guard. |
 | 03 | pending | [PLAN.tasks/TASK-03-shared-oxc-utils.md](PLAN.tasks/TASK-03-shared-oxc-utils.md) | Extract shared Oxc parsing, visiting, replacement, and location helpers. |
 | 04 | pending | [PLAN.tasks/TASK-04-split-template-dependencies.md](PLAN.tasks/TASK-04-split-template-dependencies.md) | Split `collectOxcTemplateDependencies` behind the same public API. |
 | 05 | pending | [PLAN.tasks/TASK-05-split-apply-processors.md](PLAN.tasks/TASK-05-split-apply-processors.md) | Split `applyOxcProcessors` behind the same public API. |
