@@ -1,6 +1,6 @@
 # TASK-10: Remove Core Static Heuristics
 
-Status: pending
+Status: in_progress
 
 ## Goal
 
@@ -24,6 +24,7 @@ Remove old hardcoded static heuristics from transform core once processor adapte
 ## Progress Log
 
 - 2026-05-08 14:36 EEST: Task created by scaffold.
+- 2026-05-08 16:15 EEST: Started after Linaria processor static contract landed in separate worktree commit `951ad37c`.
 
 ## Context Recovery Notes
 
