@@ -514,6 +514,24 @@ describe('oxc preeval transforms', () => {
       expect(code).toContain('const Second = () => null;');
     });
 
+    it('keeps default React HOC bindings when arguments use forbidden globals', () => {
+      const code = removeDangerousCodeWithOxc(
+        [
+          'import React from "react";',
+          'const InputFieldRender = () => {',
+          '  setTimeout(() => {}, 1);',
+          '  return null;',
+          '};',
+          'const BareInputField = React.forwardRef(InputFieldRender);',
+          'const _exp = () => BareInputField;',
+        ].join('\n'),
+        filename
+      );
+
+      expect(code).toContain('const BareInputField = () => null;');
+      expect(code).toContain('const _exp = () => BareInputField;');
+    });
+
     it('replaces class render components with null-returning functions', () => {
       const code = removeDangerousCodeWithOxc(
         'class Component { render() { return <div />; } }',

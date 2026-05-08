@@ -2883,6 +2883,46 @@ describe('transform static import value inlining', () => {
     }
   });
 
+  it('inlines same-file React wrapper bases with sanitized render functions without eval', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
+    const entryFile = join(root, 'entry.js');
+    const cache = new TransformCacheCollection();
+    const perf = createPerfEventRecorder();
+
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'app' }));
+    writeFileSync(
+      entryFile,
+      dedent`
+        import React from 'react';
+        import { styled } from 'test-styled-processor';
+
+        const InputFieldRender = () => {
+          setTimeout(() => {}, 1);
+          return null;
+        };
+        const BareInputField = React.forwardRef(InputFieldRender);
+
+        export const LabelsInputField = styled(BareInputField)\`
+          color: red;
+        \`;
+      `
+    );
+
+    try {
+      const result = await runTransform(
+        root,
+        entryFile,
+        cache,
+        perf.eventEmitter
+      );
+
+      expect(result.cssText).toContain('color:red');
+      expect(perf.counts.get('transform:evalFile') ?? 0).toBe(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('inlines same-file default null component bases without eval', async () => {
     const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
     const entryFile = join(root, 'entry.js');

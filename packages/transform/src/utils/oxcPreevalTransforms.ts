@@ -1336,6 +1336,16 @@ const isHocCall = (
   return !!matched && hocs[matched[0]]?.includes(matched[1]);
 };
 
+const isInsideHocCall = (
+  ancestors: Node[],
+  hocs: Record<string, string[]>,
+  imports: ImportBinding[]
+): boolean =>
+  ancestors.some(
+    (ancestor): ancestor is CallExpression =>
+      ancestor.type === 'CallExpression' && isHocCall(ancestor, hocs, imports)
+  );
+
 const getComponentTypes = (
   options?: CodeRemoverOptions
 ): Record<string, string[]> => {
@@ -1694,6 +1704,10 @@ export const removeDangerousCodeWithOxc = (
       }
 
       if (!isAlwaysForbidden && isInDeferredFunctionScope(ancestors)) {
+        return;
+      }
+
+      if (hasHocs && isInsideHocCall(ancestors, hocs, imports)) {
         return;
       }
 
