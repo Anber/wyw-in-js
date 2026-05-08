@@ -21,6 +21,10 @@ const run = (code: string, options: IRunOptions = {}): BaseProcessor | null => {
     {
       displayName: true,
       extensions: ['.js', '.ts'],
+      tagResolver: (source, imported) =>
+        source === '../css' && imported === 'css'
+          ? join(__dirname, '..', 'processors', 'css.ts')
+          : null,
     },
     (p) => {
       result = p;

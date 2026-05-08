@@ -4,7 +4,8 @@ import { withWyw } from '../index';
 
 describe('withWyw', () => {
   const getTurbopackLoaderOptions = (nextConfig: any) => {
-    const rules = nextConfig.turbopack?.rules ?? nextConfig.experimental?.turbo?.rules;
+    const rules =
+      nextConfig.turbopack?.rules ?? nextConfig.experimental?.turbo?.rules;
     const tsRule = rules['*.ts'];
 
     if (Array.isArray(tsRule)) {

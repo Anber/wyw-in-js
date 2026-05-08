@@ -79,10 +79,7 @@ const warnBabelPresetDeprecation = () => {
 };
 
 const warnSynchronousModuleConfig = (configFile: unknown) => {
-  if (
-    typeof configFile !== 'string' ||
-    !/\.(?:mjs|mts)$/iu.test(configFile)
-  ) {
+  if (typeof configFile !== 'string' || !/\.(?:mjs|mts)$/iu.test(configFile)) {
     return;
   }
 

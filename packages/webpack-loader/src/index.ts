@@ -338,10 +338,7 @@ const webpack5Loader: Loader = function webpack5LoaderPlugin(
       inputSourceMap: convertSourceMap(inputSourceMap, this.resourcePath),
       pluginOptions: {
         ...rest,
-        oxcOptions: mergeOxcResolverAlias(
-          rest.oxcOptions,
-          nativeResolverAlias
-        ),
+        oxcOptions: mergeOxcResolverAlias(rest.oxcOptions, nativeResolverAlias),
       },
       prefixer,
       keepComments,

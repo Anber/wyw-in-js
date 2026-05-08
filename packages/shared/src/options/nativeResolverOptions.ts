@@ -32,19 +32,19 @@ const toAliasTargets = (
   return null;
 };
 
-export const toNativeResolverAlias = (
-  alias: unknown
-): NativeResolverAlias => {
+export const toNativeResolverAlias = (alias: unknown): NativeResolverAlias => {
   const nativeAlias: NativeResolverAlias = {};
 
-  const entries = Array.isArray(alias)
-    ? alias
-    : isNativeResolverAlias(alias)
-      ? Object.entries(alias).map(([find, replacement]) => ({
-          find,
-          replacement,
-        }))
-      : [];
+  let entries: unknown[] = [];
+
+  if (Array.isArray(alias)) {
+    entries = alias;
+  } else if (isNativeResolverAlias(alias)) {
+    entries = Object.entries(alias).map(([find, replacement]) => ({
+      find,
+      replacement,
+    }));
+  }
 
   entries.forEach((rawEntry) => {
     if (!isNativeResolverAlias(rawEntry)) {

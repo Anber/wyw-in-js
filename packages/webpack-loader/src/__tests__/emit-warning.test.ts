@@ -29,9 +29,7 @@ describe('webpack-loader emitWarning', () => {
 
     transformMock.mockImplementation(
       async (services: { emitWarning: (msg: string) => void }) => {
-        services.emitWarning(
-          '[wyw-eval-runner] defsFromColors: 5.312ms'
-        );
+        services.emitWarning('[wyw-eval-runner] defsFromColors: 5.312ms');
         return {
           code: 'module.exports = 1;',
           sourceMap: null,
@@ -82,9 +80,7 @@ describe('webpack-loader emitWarning', () => {
     const warning = emitWarning.mock.calls[0][0];
 
     expect(warning).toBeInstanceOf(Error);
-    expect(warning.message).toBe(
-      '[wyw-eval-runner] defsFromColors: 5.312ms'
-    );
+    expect(warning.message).toBe('[wyw-eval-runner] defsFromColors: 5.312ms');
     // stack is deleted so ModuleWarning.details stays undefined —
     // webpack won't render the message a second time as "Error: <msg>"
     expect(warning.stack).toBeUndefined();
