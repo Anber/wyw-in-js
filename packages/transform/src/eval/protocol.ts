@@ -9,7 +9,7 @@ import type { SerializedError, SerializedValue } from './serialize';
 
 export type EvalRunnerInitPayload = {
   evalOptions: {
-    mode: 'strict' | 'loose';
+    errors: 'strict' | 'loose';
     require: 'warn-and-run' | 'error' | 'off';
     globals: Record<string, unknown>;
     importOverrides?: ImportOverrides;

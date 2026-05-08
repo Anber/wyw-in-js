@@ -88,9 +88,11 @@ const getEvalCacheKey = (
 ) => {
   const evalOptions = pluginOptions.eval ?? {};
   const payload = JSON.stringify({
-    mode: evalOptions.mode,
+    errors: evalOptions.errors,
     resolver: evalOptions.resolver,
     require: evalOptions.require,
+    runtime: evalOptions.runtime,
+    strategy: evalOptions.strategy,
     globals: canonicalizeForHash(encodeGlobals(evalOptions.globals ?? {})),
     customResolver: getResolverId(evalOptions.customResolver),
     customLoader: getResolverId(evalOptions.customLoader),

@@ -84,10 +84,11 @@ const runTransform = async (
         pluginOptions: {
           configFile: false,
           ...pluginOptions,
-          features: {
-            staticImportValues: true,
-            ...pluginOptions.features,
+          eval: {
+            strategy: 'hybrid',
+            ...pluginOptions.eval,
           },
+          features: pluginOptions.features,
           tagResolver: (source, tag) => {
             if (source === 'test-css-processor' && tag === 'css') {
               return processorFile;
@@ -121,7 +122,7 @@ const collectStaticResolveEvents = (
     (event): event is StaticResolveEvent => event.type === 'staticResolve'
   );
 
-describe('design-system chain repro for staticImportValues', () => {
+describe('design-system chain repro for static eval strategy', () => {
   const previousDebug = process.env.WYW_DEBUG_STATIC_RESOLVE;
 
   beforeAll(() => {
@@ -307,7 +308,7 @@ describe('design-system chain repro for staticImportValues', () => {
             root: appRoot,
             pluginOptions: {
               configFile: false,
-              features: { staticImportValues: true },
+              eval: { strategy: 'hybrid' },
               tagResolver: (source, tag) =>
                 source === 'test-css-processor' && tag === 'css'
                   ? processorFile
@@ -744,7 +745,7 @@ describe('design-system chain repro for staticImportValues', () => {
             root,
             pluginOptions: {
               configFile: false,
-              features: { staticImportValues: true },
+              eval: { strategy: 'hybrid' },
               tagResolver: (source, tag) =>
                 source === 'test-css-processor' && tag === 'css'
                   ? processorFile
@@ -2077,7 +2078,7 @@ describe('design-system chain repro for staticImportValues', () => {
             root,
             pluginOptions: {
               configFile: false,
-              features: { staticImportValues: true },
+              eval: { strategy: 'hybrid' },
               tagResolver: (source, tag) =>
                 source === 'test-css-processor' && tag === 'css'
                   ? processorFile
@@ -2163,7 +2164,7 @@ describe('design-system chain repro for staticImportValues', () => {
             root,
             pluginOptions: {
               configFile: false,
-              features: { staticImportValues: true },
+              eval: { strategy: 'hybrid' },
               tagResolver: (source, tag) => {
                 if (source === 'test-css-processor' && tag === 'css') {
                   return processorFile;
@@ -2278,7 +2279,7 @@ describe('design-system chain repro for staticImportValues', () => {
             root,
             pluginOptions: {
               configFile: false,
-              features: { staticImportValues: true },
+              eval: { strategy: 'hybrid' },
               tagResolver: (source, tag) => {
                 if (source === 'test-styled-processor' && tag === 'styled') {
                   return styledProcessorFile;
@@ -2443,7 +2444,7 @@ describe('design-system chain repro for staticImportValues', () => {
             root,
             pluginOptions: {
               configFile: false,
-              features: { staticImportValues: true },
+              eval: { strategy: 'hybrid' },
               staticBindings: {
                 '@my/cn-utils': {
                   cx: (...args: unknown[]) => args.filter(Boolean).join(' '),
@@ -2583,7 +2584,7 @@ describe('design-system chain repro for staticImportValues', () => {
             root,
             pluginOptions: {
               configFile: false,
-              features: { staticImportValues: true },
+              eval: { strategy: 'hybrid' },
               staticBindings: {
                 '@my/cn-utils': {
                   cx: (...args: unknown[]) => args.filter(Boolean).join(' '),
@@ -2698,7 +2699,7 @@ describe('design-system chain repro for staticImportValues', () => {
             root,
             pluginOptions: {
               configFile: false,
-              features: { staticImportValues: true },
+              eval: { strategy: 'hybrid' },
               staticBindings: {
                 '@my/cn-utils': {
                   cx: (...args: unknown[]) => args.filter(Boolean).join(' '),
@@ -2808,7 +2809,7 @@ describe('design-system chain repro for staticImportValues', () => {
             root,
             pluginOptions: {
               configFile: false,
-              features: { staticImportValues: true },
+              eval: { strategy: 'hybrid' },
               staticBindings: {
                 [flagsFile]: {
                   isFlagPresent: () => false,

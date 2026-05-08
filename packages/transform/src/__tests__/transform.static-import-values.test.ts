@@ -106,10 +106,11 @@ const runTransform = async (
     eventEmitter,
     {
       ...pluginOptions,
-      features: {
-        staticImportValues: true,
-        ...pluginOptions.features,
+      eval: {
+        strategy: 'hybrid',
+        ...pluginOptions.eval,
       },
+      features: pluginOptions.features,
     },
     asyncResolve
   );
@@ -302,9 +303,7 @@ describe('transform static import value inlining', () => {
         cache,
         perf.eventEmitter,
         {
-          features: {
-            staticImportValues: false,
-          },
+          eval: { strategy: 'execute' },
         }
       );
 
@@ -342,9 +341,7 @@ describe('transform static import value inlining', () => {
         cache,
         perf.eventEmitter,
         {
-          features: {
-            staticImportValues: false,
-          },
+          eval: { strategy: 'execute' },
         }
       );
 
@@ -621,7 +618,42 @@ describe('transform static import value inlining', () => {
     }
   });
 
-  it('emits static resolve debug rejection reasons whenever the feature is enabled', async () => {
+  it('rejects unsafe dependency modules when eval.strategy is static', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
+    const entryFile = join(root, 'entry.js');
+    const depFile = join(root, 'tokens.js');
+    const cache = new TransformCacheCollection();
+
+    writeFileSync(
+      depFile,
+      dedent`
+        export const color = Date.now() > 0 ? 'red' : 'blue';
+      `
+    );
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { css } from 'test-css-processor';
+        import { color } from './tokens.js';
+
+        export const className = css\`
+          color: ${'${color}'};
+        \`;
+      `
+    );
+
+    try {
+      await expect(
+        runTransform(root, entryFile, cache, undefined, {
+          eval: { strategy: 'static' },
+        })
+      ).rejects.toThrow('eval.strategy: "static"');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('emits static resolve debug rejection reasons when eval.strategy enables static resolution', async () => {
     const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
 
     const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
@@ -672,7 +704,7 @@ describe('transform static import value inlining', () => {
     }
   });
 
-  it('does not emit static resolve debug events when the feature is disabled', async () => {
+  it('does not emit static resolve debug events when eval.strategy uses execute', async () => {
     const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
     const entryFile = join(root, 'entry.js');
     const depFile = join(root, 'unsafe.js');
@@ -700,7 +732,7 @@ describe('transform static import value inlining', () => {
 
     try {
       await runTransformWithOptions(root, entryFile, cache, perf.eventEmitter, {
-        features: { staticImportValues: false },
+        eval: { strategy: 'execute' },
       });
 
       expect(

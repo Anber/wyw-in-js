@@ -38,17 +38,18 @@ const options: Pick<
   | 'codeRemover'
   | 'displayName'
   | 'evaluate'
+  | 'eval'
   | 'extensions'
   | 'features'
   | 'tagResolver'
 > = {
   codeRemover: {},
   displayName: false,
+  eval: { strategy: 'hybrid' },
   evaluate: true,
   extensions: ['.tsx'],
   features: {
     dangerousCodeRemover: true,
-    staticImportValues: true,
   },
   tagResolver: (source, imported) => {
     if (source !== 'test-package' || imported !== 'css') {
@@ -81,6 +82,52 @@ const linariaOptions: Pick<
 };
 
 describe('runOxcPreevalStage', () => {
+  it('uses eval.strategy to keep static values out of __wywPreval', () => {
+    const result = runOxcPreevalStage(
+      `
+        import { css } from 'test-package';
+        const color = 'red';
+        export const a = css\`
+          color: ${'${color}'};
+        \`;
+      `,
+      fileContext,
+      {
+        ...options,
+        eval: { strategy: 'hybrid' },
+        features: {
+          dangerousCodeRemover: true,
+        },
+      } as typeof options
+    );
+
+    expect(result.staticValueCache.get('_exp')).toBe('red');
+    expect(result.code).toContain('export const __wywPreval = {};');
+    expect(result.code).not.toContain('__wywPreval = { _exp: _exp }');
+  });
+
+  it('rejects evaluator fallback when eval.strategy is static', () => {
+    expect(() =>
+      runOxcPreevalStage(
+        `
+          import { css } from 'test-package';
+          const color = getColor();
+          export const a = css\`
+            color: ${'${color}'};
+          \`;
+        `,
+        fileContext,
+        {
+          ...options,
+          eval: { strategy: 'static' },
+          features: {
+            dangerousCodeRemover: true,
+          },
+        } as typeof options
+      )
+    ).toThrow('eval.strategy: "static"');
+  });
+
   it('applies eval-time replacement and synthesizes __wywPreval dependencies', () => {
     const result = runOxcPreevalStage(
       `

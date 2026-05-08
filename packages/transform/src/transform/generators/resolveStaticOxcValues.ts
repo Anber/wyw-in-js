@@ -4,7 +4,6 @@ import { createHash } from 'crypto';
 import { readFileSync, statSync } from 'fs';
 import { dirname, isAbsolute, relative, resolve as resolvePath } from 'path';
 
-import { isFeatureEnabled, type FeatureFlag } from '@wyw-in-js/shared';
 import type {
   ExportSpecifier,
   Expression,
@@ -112,10 +111,6 @@ type StaticExportCacheEntry =
 const STATIC_EXPORT_MAX_NULL_ATTEMPTS = 2;
 const GENERATED_HELPER_NAME_RE = /^_exp\d*$/;
 
-type StaticImportValueFeatures = {
-  staticImportValues?: FeatureFlag;
-};
-
 type StaticExpressionOptions = {
   allowMetadataCalls?: boolean;
   ignoredMutableCallArgumentNames?: Set<string>;
@@ -184,21 +179,17 @@ const isLocalStaticMetadataFile = (filename: string, root: string): boolean => {
 const isEnvDisabled = (value: string): boolean =>
   value === '0' || value === 'false' || value === 'no' || value === 'off';
 
-const isStaticImportValuesEnabled = (
-  action: ITransformAction,
-  filename: string
-): boolean => {
-  const envValue = process.env.WYW_STATIC_IMPORT_VALUES?.trim().toLowerCase();
-  if (envValue) {
-    return !isEnvDisabled(envValue);
-  }
+const getEvalStrategy = (action: ITransformAction) =>
+  action.services.options.pluginOptions.eval?.strategy ?? 'execute';
 
-  return isFeatureEnabled(
-    action.services.options.pluginOptions.features as StaticImportValueFeatures,
-    'staticImportValues',
-    filename
+const getStaticStrategyFailure = (
+  filename: string,
+  dependencyNames: Iterable<string>
+): Error =>
+  new Error(
+    `[wyw-in-js] eval.strategy: "static" cannot fall back to the build-time evaluator for ${filename}. ` +
+      `Unresolved values: ${[...dependencyNames].join(', ')}.`
   );
-};
 
 const debugStaticResolve = (
   action: ITransformAction,
@@ -5832,9 +5823,11 @@ export function* resolveStaticOxcPreevalValues(
       ? this.entrypoint.name
       : this.entrypoint.loadedAndParsed.evalConfig.filename ??
         this.entrypoint.name;
-  if (!isStaticImportValuesEnabled(this, filename)) {
+  const evalStrategy = getEvalStrategy(this);
+  if (evalStrategy === 'execute') {
     return false;
   }
+  const staticOnly = evalStrategy === 'static';
 
   const staticValueCache =
     preevalResult.staticValueCache ?? new Map<string, unknown>();
@@ -6008,6 +6001,9 @@ export function* resolveStaticOxcPreevalValues(
     !changed &&
     (!hasKnownStaticCandidate || preevalResult.staticValuesApplied)
   ) {
+    if (staticOnly && evalDependencyNames.size > 0) {
+      throw getStaticStrategyFailure(filename, evalDependencyNames);
+    }
     return false;
   }
 
@@ -6015,6 +6011,9 @@ export function* resolveStaticOxcPreevalValues(
     (name) =>
       !staticValueCache.has(name) && !runtimeOnlyCandidateNames.has(name)
   );
+  if (staticOnly && dependencyNames.length > 0) {
+    throw getStaticStrategyFailure(filename, dependencyNames);
+  }
   preevalResult.dependencyNames = dependencyNames;
   preevalResult.staticValueCache = staticValueCache;
   preevalResult.staticDependencies = [...staticDependencies];

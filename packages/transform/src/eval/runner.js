@@ -944,7 +944,7 @@ const state = {
   happyDomEnabled: null,
   globalsSignature: null,
   evalOptions: {
-    mode: 'strict',
+    errors: 'strict',
     require: 'warn-and-run',
     globals: {},
     importOverrides: undefined,
@@ -1350,7 +1350,7 @@ const createRequireFn = (importer) => {
     }
 
     if (nonLiteral || typeof specifier !== 'string') {
-      if (state.evalOptions.mode === 'strict') {
+      if (state.evalOptions.errors === 'strict') {
         throw new Error(
           `[wyw-in-js] Non-literal require() is not supported during eval.\n` +
             `importer: ${importerFile}\n` +
@@ -1361,7 +1361,7 @@ const createRequireFn = (importer) => {
       sendWarn({
         code: 'require-error',
         message:
-          '[wyw-in-js] Non-literal require() reached during eval (loose mode).',
+          '[wyw-in-js] Non-literal require() reached during eval (eval.errors: "loose").',
         importer: importerFile,
       });
       return {};
@@ -1684,7 +1684,7 @@ resolveModule = async (specifier, importer, kind) => {
   const cached = resolveCache.get(key);
   if (cached) {
     if (!cached.resolvedId) {
-      if (state.evalOptions.mode === 'loose') {
+      if (state.evalOptions.errors === 'loose') {
         return createSyntheticModule(specifier, { default: undefined });
       }
       throw new Error(
@@ -1766,7 +1766,7 @@ resolveModule = async (specifier, importer, kind) => {
     });
 
     if (!normalized) {
-      if (state.evalOptions.mode === 'loose') {
+      if (state.evalOptions.errors === 'loose') {
         return createSyntheticModule(specifier, { default: undefined });
       }
       throw new Error(
@@ -1985,7 +1985,7 @@ const createDynamicImportFn = (importer) => {
           '[wyw-in-js] Dynamic import with non-string specifier during eval.',
         importer,
       });
-      if (state.evalOptions.mode === 'strict') {
+      if (state.evalOptions.errors === 'strict') {
         throw new Error(
           `[wyw-in-js] Dynamic import with non-string specifier is not supported during eval.\n` +
             `importer: ${importer}\n` +

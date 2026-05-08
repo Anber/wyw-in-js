@@ -135,6 +135,12 @@ export type EvalResolverMode = 'bundler' | 'hybrid' | 'native' | 'custom';
 
 export type EvalRequireMode = 'warn-and-run' | 'error' | 'off';
 
+export type EvalStrategy = 'execute' | 'hybrid' | 'static';
+
+export type EvalRuntime = 'nodejs';
+
+export type EvalErrorMode = 'strict' | 'loose';
+
 export type EvalResolverKind = 'import' | 'dynamic-import' | 'require';
 
 export type EvalWarningCode =
@@ -157,6 +163,17 @@ export type EvalWarning = {
 
 export type EvalOptionsV2 = {
   /**
+   * Controls how interpolation values are computed.
+   * - `execute`: use the build-time evaluator.
+   * - `hybrid`: resolve provably static values first, then fall back to the evaluator.
+   * - `static`: resolve only provably static values and fail on evaluator fallback.
+   */
+  strategy?: EvalStrategy;
+  /**
+   * Runtime used by the build-time evaluator.
+   */
+  runtime?: EvalRuntime;
+  /**
    * Default is `bundler`. `hybrid` is an opt-in mode whose intended
    * precedence is customResolver -> native Oxc resolver -> bundler.
    */
@@ -170,7 +187,7 @@ export type EvalOptionsV2 = {
     id: string
   ) => Promise<{ code: string; map?: unknown; loader?: string } | null>;
   require?: EvalRequireMode; // default: 'warn-and-run'
-  mode?: 'strict' | 'loose'; // default: 'strict'
+  errors?: EvalErrorMode; // default: 'strict'
   globals?: Record<string, unknown>;
   onWarn?: (warning: EvalWarning) => void;
 };
@@ -185,7 +202,6 @@ type AllFeatureFlags = {
   globalCache: FeatureFlag;
   happyDOM: FeatureFlag;
   softErrors: FeatureFlag;
-  staticImportValues: FeatureFlag;
   useWeakRefInEval: FeatureFlag;
 };
 

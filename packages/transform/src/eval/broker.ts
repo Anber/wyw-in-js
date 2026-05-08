@@ -327,9 +327,9 @@ const getSerializableStaticImportKeys = (
 };
 
 const DEFAULT_EVAL_OPTIONS: Required<
-  Pick<EvalOptionsV2, 'mode' | 'require' | 'resolver'>
+  Pick<EvalOptionsV2, 'errors' | 'require' | 'resolver'>
 > = {
-  mode: 'strict',
+  errors: 'strict',
   require: 'warn-and-run',
   resolver: 'bundler',
 };
@@ -695,7 +695,7 @@ const buildRunnerInitPayload = (
     evalOptions: {
       globals: encodeGlobalsCached(sanitizedGlobals),
       importOverrides,
-      mode: evalOptions.mode ?? 'strict',
+      errors: evalOptions.errors ?? 'strict',
       require: evalOptions.require ?? 'warn-and-run',
       root,
       extensions,

@@ -20,6 +20,7 @@ type OxcPreevalOptions = Pick<
   | 'codeRemover'
   | 'displayName'
   | 'evaluate'
+  | 'eval'
   | 'extensions'
   | 'features'
   | 'staticBindings'
@@ -40,20 +41,11 @@ type OxcPreevalResult = {
 const DYNAMIC_IMPORT_RE = /\bimport(?:\s|\/\*[\s\S]*?\*\/)*\(/;
 const REQUIRE_CALL_RE = /\brequire(?:\s|\/\*[\s\S]*?\*\/)*\(/;
 
-const isEnvDisabled = (value: string): boolean =>
-  value === '0' || value === 'false' || value === 'no' || value === 'off';
+const getEvalStrategy = (options: OxcPreevalOptions) =>
+  options.eval?.strategy ?? 'execute';
 
-const isStaticImportValuesEnabled = (
-  features: StrictOptions['features'],
-  filename: string
-): boolean => {
-  const envValue = process.env.WYW_STATIC_IMPORT_VALUES?.trim().toLowerCase();
-  if (envValue) {
-    return !isEnvDisabled(envValue);
-  }
-
-  return isFeatureEnabled(features, 'staticImportValues', filename);
-};
+const usesStaticEvaluation = (options: OxcPreevalOptions): boolean =>
+  getEvalStrategy(options) !== 'execute';
 
 const parseSourceType = (
   code: string,
@@ -109,16 +101,22 @@ export const runOxcPreevalStage = (
       processor.doEvaltimeReplacement();
     })
   );
-  const staticValuesEnabled = isStaticImportValuesEnabled(
-    options.features,
-    filename
-  );
+  const staticValuesEnabled = usesStaticEvaluation(options);
   const staticValueNames = staticValuesEnabled
     ? new Set(processed.staticValues.map((item) => item.name))
     : null;
   const evalDependencyNames = staticValuesEnabled
     ? dependencyNames.filter((name) => !staticValueNames!.has(name))
     : dependencyNames;
+  if (
+    getEvalStrategy(options) === 'static' &&
+    evalDependencyNames.length > 0 &&
+    processed.staticValues.length === 0
+  ) {
+    throw new Error(
+      `[wyw-in-js] eval.strategy: "static" cannot fall back to the build-time evaluator for ${filename}.`
+    );
+  }
 
   let nextCode = eventEmitter.perf('transform:preeval:importMetaEnv', () =>
     replaceImportMetaEnvWithOxc(processed.code, filename)

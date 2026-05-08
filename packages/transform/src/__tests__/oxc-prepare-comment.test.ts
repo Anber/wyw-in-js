@@ -18,7 +18,7 @@ const createServices = (filename: string, root: string) =>
       root,
       pluginOptions: loadWywOptions({
         configFile: false,
-        features: { staticImportValues: true },
+        eval: { strategy: 'hybrid' },
         rules: [{ action: oxcShaker, test: () => true }],
         tagResolver: (source, tag) =>
           source === 'test-css-processor' && tag === 'css'

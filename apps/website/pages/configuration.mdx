@@ -36,7 +36,20 @@ module.exports = {
 
 - `eval: EvalOptionsV2`:
 
-  Controls v2 evaluator behavior (`resolver`, `require`, `mode`, `globals`, `onWarn`, and custom resolver/loader hooks).
+  Controls v2 evaluation behavior (`strategy`, `runtime`, `errors`, `resolver`, `require`, `globals`, `onWarn`, and custom resolver/loader hooks).
+
+  For `eval.strategy`:
+
+  - `execute` (default): compute interpolation values with the build-time evaluator.
+  - `hybrid`: resolve values that can be proven static first, then fall back to the build-time evaluator.
+  - `static`: resolve only values that can be proven static. Values that would need evaluator fallback fail the build.
+
+  `eval.runtime` selects the runtime used by the build-time evaluator. The current runtime is `nodejs`.
+
+  `eval.errors` controls evaluator fallback errors:
+
+  - `strict` (default): unsupported eval-time imports, non-literal `require()`, and non-string dynamic imports throw.
+  - `loose`: unsupported cases emit warnings and use synthetic empty values where possible.
 
   For `eval.resolver`:
 
@@ -520,7 +533,7 @@ module.exports = {
 
 - `staticBindings: Record<string, Record<string, unknown>>`
 
-  A per-source map of statically-known imported values used by `features.staticImportValues`. Keys are either the import
+  A per-source map of statically-known imported values used by `eval.strategy: "hybrid"` and `eval.strategy: "static"`. Keys are either the import
   source as written, such as `@linaria/core`, or the resolved absolute file path. Values map imported names to either
   literal replacements or pure helper functions. Helper functions are called only when all call arguments can also be
   resolved statically.
@@ -531,8 +544,8 @@ module.exports = {
 
   ```js
   export default {
-    features: {
-      staticImportValues: true,
+    eval: {
+      strategy: 'hybrid',
     },
     staticBindings: {
       '@linaria/core': {

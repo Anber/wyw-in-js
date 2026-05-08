@@ -167,9 +167,9 @@ type NativeFallbackOptions = {
 };
 
 const defaultEvalOptions: Required<
-  Pick<EvalOptionsV2, 'mode' | 'require' | 'resolver'>
+  Pick<EvalOptionsV2, 'errors' | 'require' | 'resolver'>
 > = {
-  mode: 'strict',
+  errors: 'strict',
   require: 'warn-and-run',
   resolver: 'bundler',
 };
@@ -865,7 +865,7 @@ export class Module {
     const evalOptions = getEvalOptions(this.services);
 
     if (!resolved) {
-      if (evalOptions.mode === 'loose') {
+      if (evalOptions.errors === 'loose') {
         return this.createSyntheticModule(specifier, { default: undefined });
       }
 
@@ -1335,7 +1335,7 @@ export class Module {
   ): unknown {
     const evalOptions = getEvalOptions(this.services);
     if (nonLiteral || typeof id !== 'string') {
-      if (evalOptions.mode === 'strict') {
+      if (evalOptions.errors === 'strict') {
         throw new Error(
           `[wyw-in-js] Non-literal require() is not supported during eval.\n` +
             `importer: ${importer.name}\n` +
@@ -1346,7 +1346,7 @@ export class Module {
       emitEvalWarning(this.services, {
         code: 'require-error',
         message:
-          '[wyw-in-js] Non-literal require() reached during eval (loose mode).',
+          '[wyw-in-js] Non-literal require() reached during eval (eval.errors: "loose").',
         importer: importer.name,
       });
       return {};

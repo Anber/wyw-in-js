@@ -2736,7 +2736,7 @@ describe('EvalBroker', () => {
     rmSync(root, { recursive: true, force: true });
   });
 
-  it('throws on non-literal require in strict mode', async () => {
+  it('throws on non-literal require with strict eval errors', async () => {
     const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
     const entry = join(root, 'entry.js');
 
@@ -2753,7 +2753,7 @@ describe('EvalBroker', () => {
 
     const services = createServices(root, entry, {
       eval: {
-        mode: 'strict',
+        errors: 'strict',
       },
     });
     const broker = new EvalBroker(
@@ -3524,7 +3524,7 @@ describe('EvalBroker', () => {
       return null;
     });
     const services = createServices(root, entryA, {
-      features: { staticImportValues: true },
+      eval: { strategy: 'hybrid' },
     });
     const broker = new EvalBroker(services, asyncResolve);
 
@@ -3617,7 +3617,7 @@ describe('EvalBroker', () => {
       return null;
     });
     const services = createServices(root, entryNarrow, {
-      features: { staticImportValues: true },
+      eval: { strategy: 'hybrid' },
     });
     const broker = new EvalBroker(services, asyncResolve);
     const privateBroker = getPrivateBroker(broker);
