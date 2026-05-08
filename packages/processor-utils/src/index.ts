@@ -30,6 +30,21 @@ export type {
   TagSource,
   TailProcessorParams,
 } from './BaseProcessor';
+export type {
+  ProcessorStaticClassNameValue,
+  ProcessorStaticContext,
+  ProcessorStaticDebugReason,
+  ProcessorStaticDependency,
+  ProcessorStaticInterpolationResolver,
+  ProcessorStaticMetadata,
+  ProcessorStaticOpaqueComponentValue,
+  ProcessorStaticRuntimeCallbackValue,
+  ProcessorStaticSelectorChainValue,
+  ProcessorStaticSerializableValue,
+  ProcessorStaticTagTargetResolver,
+  ProcessorStaticUnresolvedValue,
+  ProcessorStaticValue,
+} from './static';
 export * from './types';
 export { buildSlug } from './utils/buildSlug';
 export type { IOptions, IFileContext } from './utils/types';
