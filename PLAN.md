@@ -5,9 +5,9 @@
 - Branch: `anber/static-eval-architecture`
 - Base branch: `anber/pr-312-static-imports-max`
 - Base commit: `58c8143f9a9f1cf8d9fd55e3875d0af960efc841`
-- Active task: `TASK-04-split-template-dependencies.md`
+- Active task: `TASK-05-split-apply-processors.md`
 - Blocking questions: none
-- Last verification: `bun test src/__tests__/applyOxcProcessors.test.ts src/__tests__/collectOxcTemplateDependencies.test.ts src/__tests__/transform.static-import-values.test.ts` in `packages/transform`, `bun run --filter @wyw-in-js/transform build:types`, `bun run --filter @wyw-in-js/transform lint`, and `bun run check:ts-size` passed on 2026-05-08.
+- Last verification: `bun test src/__tests__/collectOxcTemplateDependencies.test.ts src/__tests__/transform.static-import-values.test.ts` in `packages/transform`, `bun run --filter @wyw-in-js/transform build:types`, `bun run --filter @wyw-in-js/transform lint`, `bun run check:ts-size`, and `bun run lint:scripts` passed on 2026-05-08.
 
 ## Working Rules
 
@@ -30,7 +30,7 @@
 | 01 | done | [PLAN.tasks/TASK-01-planning-scaffold.md](PLAN.tasks/TASK-01-planning-scaffold.md) | Create branch and task tracking scaffold. |
 | 02 | done | [PLAN.tasks/TASK-02-characterization-tests.md](PLAN.tasks/TASK-02-characterization-tests.md) | Lock current strategy behavior and add file-size guard. |
 | 03 | done | [PLAN.tasks/TASK-03-shared-oxc-utils.md](PLAN.tasks/TASK-03-shared-oxc-utils.md) | Extract shared Oxc parsing, visiting, replacement, and location helpers. |
-| 04 | pending | [PLAN.tasks/TASK-04-split-template-dependencies.md](PLAN.tasks/TASK-04-split-template-dependencies.md) | Split `collectOxcTemplateDependencies` behind the same public API. |
+| 04 | done | [PLAN.tasks/TASK-04-split-template-dependencies.md](PLAN.tasks/TASK-04-split-template-dependencies.md) | Split `collectOxcTemplateDependencies` behind the same public API. |
 | 05 | pending | [PLAN.tasks/TASK-05-split-apply-processors.md](PLAN.tasks/TASK-05-split-apply-processors.md) | Split `applyOxcProcessors` behind the same public API. |
 | 06 | pending | [PLAN.tasks/TASK-06-processor-static-contract.md](PLAN.tasks/TASK-06-processor-static-contract.md) | Add public optional processor static contract in `processor-utils`. |
 | 07 | pending | [PLAN.tasks/TASK-07-split-static-resolver.md](PLAN.tasks/TASK-07-split-static-resolver.md) | Split static resolver and move processor-specific semantics behind adapters. |
