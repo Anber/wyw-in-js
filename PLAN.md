@@ -5,9 +5,9 @@
 - Branch: `anber/static-eval-architecture`
 - Base branch: `anber/pr-312-static-imports-max`
 - Base commit: `58c8143f9a9f1cf8d9fd55e3875d0af960efc841`
-- Active task: `TASK-12-verification-perf-cleanup.md`
-- Blocking questions: none
-- Last verification: `bun run --filter @wyw-in-js/processor-utils build:types` and `bun run --filter @wyw-in-js/transform build:types` passed on 2026-05-08.
+- Active task: none
+- Blocking questions: root validation/perf is blocked by an existing Portal CSS baseline mismatch outside this branch.
+- Last verification: transform and processor-utils targeted tests, type builds, lint, and TS size guard passed on 2026-05-08. Root `./validate.sh` failed at Portal CSS hash compare for `useStateService` and perf was not run.
 
 ## Working Rules
 
@@ -38,7 +38,7 @@
 | 09 | done | [PLAN.tasks/TASK-09-linaria-contract.md](PLAN.tasks/TASK-09-linaria-contract.md) | Implement the contract in Linaria styled/core/atomic processors. |
 | 10 | done | [PLAN.tasks/TASK-10-remove-core-heuristics.md](PLAN.tasks/TASK-10-remove-core-heuristics.md) | Remove old hardcoded static heuristics from transform core. |
 | 11 | done | [PLAN.tasks/TASK-11-changeset.md](PLAN.tasks/TASK-11-changeset.md) | Add a public changeset for the v2 processor static contract. |
-| 12 | in_progress | [PLAN.tasks/TASK-12-verification-perf-cleanup.md](PLAN.tasks/TASK-12-verification-perf-cleanup.md) | Run verification, perf, and clean up statuses/logs. |
+| 12 | done | [PLAN.tasks/TASK-12-verification-perf-cleanup.md](PLAN.tasks/TASK-12-verification-perf-cleanup.md) | Run verification, perf, and clean up statuses/logs. |
 
 ## Architecture Target
 
