@@ -2757,6 +2757,10 @@ describe('design-system chain repro for staticImportValues', () => {
       dedent`
         import { isFlagPresent } from './flags';
 
+        declare global {
+          const __DISABLE_VERTICAL_MOBILE_BREAKPOINT__: boolean | undefined;
+        }
+
         export const phoneMediaQuery =
           (typeof __DISABLE_VERTICAL_MOBILE_BREAKPOINT__ !== 'undefined' &&
             __DISABLE_VERTICAL_MOBILE_BREAKPOINT__) ||
