@@ -2677,7 +2677,7 @@ export const applyOxcProcessors = (
   const sameFileProcessorStaticValues = collectSameFileProcessorStaticValues(
     extracted.expressionValues,
     sameFileProcessorStaticValuesByLocal
-  ).filter((value) => !metadataExtendsHelperNames.has(value.name));
+  );
   const codeWithAddedImports = insertAddedImports(
     replacedCode,
     program,

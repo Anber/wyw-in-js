@@ -110,6 +110,7 @@ type StaticExportCacheEntry =
     };
 
 const STATIC_EXPORT_MAX_NULL_ATTEMPTS = 2;
+const GENERATED_HELPER_NAME_RE = /^_exp\d*$/;
 
 type StaticImportValueFeatures = {
   staticImportValues?: FeatureFlag;
@@ -1411,6 +1412,168 @@ const staticWYWMetaExtendsReplacementCode = (value: unknown): string | null => {
   return selectorMeta ? `(${JSON.stringify(selectorMeta)})` : null;
 };
 
+const unknownStaticWYWMetaValue = Symbol('unknownStaticWYWMetaValue');
+
+type UnknownStaticWYWMetaValue = typeof unknownStaticWYWMetaValue;
+
+const zeroArgFunctionExpressionBody = (expr: Expression): Expression | null => {
+  const unwrapped = unwrapExpression(expr) as AnyNode;
+  if (
+    unwrapped.type !== 'ArrowFunctionExpression' ||
+    !Array.isArray(unwrapped.params) ||
+    unwrapped.params.length !== 0
+  ) {
+    return null;
+  }
+
+  const body = unwrapped.body as Node | undefined;
+  return body && body.type !== 'BlockStatement' ? (body as Expression) : null;
+};
+
+const createSameFileStaticWYWMetaHelperResolver = (
+  code: string,
+  filename: string
+): ((seedValues: Map<string, unknown>) => Map<string, unknown>) => {
+  const declarations = new Map<string, Expression>();
+
+  try {
+    const program = parseProgram(code, filename);
+    const collectDeclarations = (statement: Node): void => {
+      if (statement.type === 'VariableDeclaration') {
+        statement.declarations.forEach((declarator) => {
+          if (declarator.id.type !== 'Identifier' || !declarator.init) {
+            return;
+          }
+
+          const { name } = declarator.id;
+          const init = declarator.init as Expression;
+          const unwrapped = unwrapExpression(init);
+          if (
+            unwrapped.type === 'ObjectExpression' &&
+            findObjectPropertyValue(unwrapped, '__wyw_meta')
+          ) {
+            declarations.set(name, init);
+            return;
+          }
+
+          const body = zeroArgFunctionExpressionBody(init);
+          if (body && GENERATED_HELPER_NAME_RE.test(name)) {
+            declarations.set(name, body);
+          }
+        });
+      }
+    };
+
+    program.body.forEach((statement) => {
+      if (
+        statement.type === 'ExportNamedDeclaration' &&
+        statement.declaration
+      ) {
+        collectDeclarations(statement.declaration);
+        return;
+      }
+
+      collectDeclarations(statement);
+    });
+  } catch {
+    return () => new Map();
+  }
+
+  return (seedValues) => {
+    const memo = new Map<string, unknown | UnknownStaticWYWMetaValue>();
+    const resolving = new Set<string>();
+
+    const resolveName = (name: string): unknown | UnknownStaticWYWMetaValue => {
+      if (seedValues.has(name)) {
+        return seedValues.get(name);
+      }
+
+      if (memo.has(name)) {
+        return memo.get(name)!;
+      }
+
+      const expression = declarations.get(name);
+      if (!expression || resolving.has(name)) {
+        return unknownStaticWYWMetaValue;
+      }
+
+      resolving.add(name);
+      const value = resolveExpression(expression);
+      resolving.delete(name);
+      memo.set(name, value);
+      return value;
+    };
+
+    const resolveExpression = (
+      expression: Node
+    ): unknown | UnknownStaticWYWMetaValue => {
+      const unwrapped = unwrapExpression(expression);
+      if (isSafeLiteral(unwrapped)) {
+        return unwrapped.value;
+      }
+
+      if (unwrapped.type === 'Identifier') {
+        return resolveName(unwrapped.name);
+      }
+
+      if (unwrapped.type === 'CallExpression') {
+        const callee = unwrapExpression(unwrapped.callee);
+        if (callee.type === 'Identifier' && unwrapped.arguments.length === 0) {
+          return resolveName(callee.name);
+        }
+
+        return unknownStaticWYWMetaValue;
+      }
+
+      if (unwrapped.type !== 'ObjectExpression') {
+        return unknownStaticWYWMetaValue;
+      }
+
+      const value: Record<string, unknown> = {};
+      for (const property of unwrapped.properties) {
+        if (property.type === 'SpreadElement') {
+          return unknownStaticWYWMetaValue;
+        }
+
+        const propertyNode = property as AnyNode;
+        if (propertyNode.computed) {
+          return unknownStaticWYWMetaValue;
+        }
+
+        const propertyKey = propertyNode.key as Node | undefined;
+        const key = propertyKey ? objectPropertyKeyName(propertyKey) : null;
+        const propertyValue = propertyNode.value as Expression | undefined;
+        if (key === null || !propertyValue) {
+          return unknownStaticWYWMetaValue;
+        }
+
+        const resolved = resolveExpression(propertyValue);
+        if (resolved === unknownStaticWYWMetaValue) {
+          return unknownStaticWYWMetaValue;
+        }
+
+        value[key] = resolved;
+      }
+
+      return value;
+    };
+
+    const result = new Map<string, unknown>();
+    declarations.forEach((_expression, name) => {
+      if (!GENERATED_HELPER_NAME_RE.test(name)) {
+        return;
+      }
+
+      const value = resolveName(name);
+      if (value !== unknownStaticWYWMetaValue && isStaticWYWMetaValue(value)) {
+        result.set(name, value);
+      }
+    });
+
+    return result;
+  };
+};
+
 const staticWYWMetaTreeValueStatus = (
   value: unknown,
   seen: Set<unknown> = new Set()
@@ -1607,6 +1770,11 @@ const isProcessorClassName = (
   return result;
 };
 
+const isKnownProcessorClassName = (
+  value: string,
+  processorClassNames: ReadonlySet<string>
+): boolean => processorClassNames.has(value);
+
 const isSelectorOnlyProcessorValue = (
   value: unknown,
   processors: StaticProcessorInstance[],
@@ -1671,6 +1839,40 @@ const isProcessorClassValue = (
     seen.add(value);
     return Object.values(value).every((item) =>
       isProcessorClassValue(item, processors, cache, seen)
+    );
+  }
+
+  return false;
+};
+
+const isKnownProcessorClassValue = (
+  value: unknown,
+  processorClassNames: ReadonlySet<string>,
+  seen: Set<unknown> = new Set()
+): boolean => {
+  if (typeof value === 'string') {
+    return isKnownProcessorClassName(value, processorClassNames);
+  }
+
+  if (Array.isArray(value)) {
+    if (seen.has(value)) {
+      return false;
+    }
+
+    seen.add(value);
+    return value.every((item) =>
+      isKnownProcessorClassValue(item, processorClassNames, seen)
+    );
+  }
+
+  if (typeof value === 'object' && value !== null) {
+    if (seen.has(value)) {
+      return false;
+    }
+
+    seen.add(value);
+    return Object.values(value).every((item) =>
+      isKnownProcessorClassValue(item, processorClassNames, seen)
     );
   }
 
@@ -2379,19 +2581,48 @@ const findWYWMetaExtendsExpression = (expr: Expression): Expression | null => {
   return findObjectPropertyValue(meta, 'extends');
 };
 
-const collectWYWMetaExtendsExpressions = (expr: Expression): Expression[] => {
+const collectWYWMetaExtendsExpressionsDeep = (
+  program: Program,
+  expr: Expression
+): Expression[] => {
   const result: Expression[] = [];
-  const visit = (node: Node): void => {
+  const seenLocals = new Set<string>();
+  const seenRanges = new Set<string>();
+
+  const visit = (node: Node, parent: Node | null = null): void => {
+    const parentRecord = parent as AnyNode | null;
+    if (
+      parentRecord &&
+      parentRecord.type === 'Property' &&
+      parentRecord.key === node &&
+      !parentRecord.computed
+    ) {
+      return;
+    }
+
     if (node.type === 'ObjectExpression') {
       const extendsExpression = findWYWMetaExtendsExpression(
         node as Expression
       );
       if (extendsExpression) {
-        result.push(extendsExpression);
+        const key = `${extendsExpression.start}:${extendsExpression.end}`;
+        if (!seenRanges.has(key)) {
+          seenRanges.add(key);
+          result.push(extendsExpression);
+        }
       }
     }
 
-    getChildren(node).forEach(visit);
+    if (node.type === 'Identifier') {
+      const local = findTopLevelConstExpression(program, node.name);
+      if (local && !seenLocals.has(node.name)) {
+        seenLocals.add(node.name);
+        visit(local);
+      }
+      return;
+    }
+
+    getChildren(node).forEach((child) => visit(child, node));
   };
 
   visit(expr);
@@ -3373,44 +3604,12 @@ const collectWYWMetaExtendsHelperNames = (program: Program): Set<string> => {
   return result;
 };
 
-const replaceExpressionChildren = (
-  code: string,
-  expression: Expression,
-  replacements: Array<{ child: Expression; replacement: string }>
-): string => {
-  const expressionCode = code.slice(expression.start, expression.end);
-  return applyReplacements(
-    expressionCode,
-    replacements.map(({ child, replacement }) => ({
-      end: child.end - expression.start,
-      start: child.start - expression.start,
-      text: replacement,
-    }))
-  );
-};
-
-const parseSyntheticExpression = (
-  expressionCode: string,
-  filename: string
-): Expression | null => {
-  const program = parseProgram(
-    `const __wyw_static_target = ${expressionCode};`,
-    filename
-  );
-  const declaration = program.body[0];
-  if (declaration?.type !== 'VariableDeclaration') {
-    return null;
-  }
-
-  const [declarator] = declaration.declarations;
-  return declarator?.init ?? null;
-};
-
 const prepareProcessorTarget = (
   code: string,
   filename: string,
   program: Program,
   target: Extract<ExportTarget, { kind: 'expression' }>,
+  exportedName: string,
   opaqueImportNames: Set<string> = new Set()
 ): PreparedProcessorTarget | null => {
   const ignoredMutableCallArgumentNames =
@@ -3426,7 +3625,10 @@ const prepareProcessorTarget = (
     program,
     target.expression
   );
-  const extendsExpressions = collectWYWMetaExtendsExpressions(expression);
+  const extendsExpressions = collectWYWMetaExtendsExpressionsDeep(
+    program,
+    expression
+  );
   const opaqueExtendsExpressions = extendsExpressions.filter(
     (extendsExpression) =>
       isOpaqueRuntimeComponentExpression(
@@ -3438,27 +3640,26 @@ const prepareProcessorTarget = (
 
   if (opaqueExtendsExpressions.length > 0) {
     const replacements = opaqueExtendsExpressions.map((extendsExpression) => ({
-      child: extendsExpression,
-      replacement: 'null',
+      end: extendsExpression.end,
+      start: extendsExpression.start,
+      text: 'null',
     }));
-    const expressionCode = replaceExpressionChildren(
-      code,
-      expression,
-      replacements
-    );
-    const syntheticExpression = parseSyntheticExpression(
-      expressionCode,
-      filename
-    );
-    if (!syntheticExpression) {
+    const evaluationCode = applyReplacements(code, replacements);
+    const evaluationProgram = parseProgram(evaluationCode, filename);
+    const evaluationTarget = findExportTarget(evaluationProgram, exportedName);
+    if (!evaluationTarget || evaluationTarget.kind === 'import') {
       return null;
     }
 
+    const evaluationExpression = resolveObjectAssignProcessorExpression(
+      evaluationProgram,
+      evaluationTarget.expression
+    );
     const dependencies = collectStaticExpressionDependencies(
-      program,
+      evaluationProgram,
       {
-        ...target,
-        expression: syntheticExpression,
+        ...evaluationTarget,
+        expression: evaluationExpression,
       },
       dependencyOptions
     );
@@ -3466,25 +3667,12 @@ const prepareProcessorTarget = (
     return dependencies
       ? {
           dependencies,
-          evaluationCode: applyReplacements(
-            code,
-            replacements.map(({ child, replacement }) => ({
-              end: child.end,
-              start: child.start,
-              text: replacement,
-            }))
-          ),
+          evaluationCode,
           evaluationSpan: {
-            end:
-              expression.end +
-              replacements.reduce(
-                (delta, { child, replacement }) =>
-                  delta + replacement.length - (child.end - child.start),
-                0
-              ),
-            start: expression.start,
+            end: evaluationExpression.end,
+            start: evaluationExpression.start,
           },
-          expression,
+          expression: evaluationExpression,
           opaqueRuntimeBase: true,
         }
       : null;
@@ -4359,7 +4547,10 @@ function* collectOpaqueRuntimeImportProof(
   program: Program,
   expression: Expression
 ): SyncScenarioFor<OpaqueRuntimeImportProof> {
-  const extendsExpressions = collectWYWMetaExtendsExpressions(expression);
+  const extendsExpressions = collectWYWMetaExtendsExpressionsDeep(
+    program,
+    expression
+  );
   if (extendsExpressions.length === 0) {
     return {
       dependencies: [],
@@ -4504,6 +4695,7 @@ function* resolveProcessorStaticExport(
     filename,
     preevalProgram,
     target,
+    exportedName,
     opaqueRuntimeImportProof.names
   );
   if (!preparedTarget) {
@@ -4635,6 +4827,9 @@ function* resolveProcessorStaticExport(
     !isStaticMeta && isStaticWYWMetaTreeValue(resolvedValue);
   const processors = preevalResult.metadata
     .processors as unknown as StaticProcessorInstance[];
+  const processorClassNames = new Set(
+    processors.map((processor) => processor.className)
+  );
   const isSelectorOnly =
     !isStaticMeta &&
     !isStaticMetaTree &&
@@ -4643,7 +4838,8 @@ function* resolveProcessorStaticExport(
     !isStaticMeta &&
     !isStaticMetaTree &&
     !isSelectorOnly &&
-    isProcessorClassValue(resolvedValue, processors, new Map());
+    (isProcessorClassValue(resolvedValue, processors, new Map()) ||
+      isKnownProcessorClassValue(resolvedValue, processorClassNames));
   if (
     !isStaticMeta &&
     !isStaticMetaTree &&
@@ -5335,6 +5531,26 @@ function* resolveStaticExport(
     getStaticBindings(action)
   );
   if (!isOxcStaticSerializableValue(value)) {
+    const metadataResult = yield* resolveProcessorStaticExport(
+      action,
+      filename,
+      code,
+      codeHash,
+      program,
+      exportedName,
+      stack,
+      memo
+    );
+    if (metadataResult) {
+      debugStaticResolve(action, {
+        exported: exportedName,
+        filename,
+        phase: 'export',
+        status: 'resolved',
+      });
+      return finish(metadataResult);
+    }
+
     debugStaticResolve(action, {
       exported: exportedName,
       filename,
@@ -5620,8 +5836,57 @@ export function* resolveStaticOxcPreevalValues(
   );
   let changed = false;
   let hasKnownStaticCandidate = false;
+  const resolveSameFileStaticWYWMetaHelpers =
+    createSameFileStaticWYWMetaHelperResolver(
+      preevalResult.baseCode ?? preevalResult.code,
+      filename
+    );
+  const applySameFileStaticWYWMetaHelpers = (): boolean => {
+    let appliedAny = false;
+
+    for (;;) {
+      let applied = false;
+      const values = resolveSameFileStaticWYWMetaHelpers(staticValueCache);
+      values.forEach((value, name) => {
+        if (
+          staticValueCache.has(name) ||
+          (!evalDependencyNames.has(name) &&
+            !opaqueRuntimeBaseHelpers.has(name))
+        ) {
+          return;
+        }
+
+        staticValueCache.set(name, value);
+        debugStaticResolve(this, {
+          candidate: name,
+          filename,
+          phase: 'candidate',
+          reason: 'same-file-static-metadata',
+          status: 'resolved',
+        });
+        applied = true;
+      });
+
+      if (!applied) {
+        break;
+      }
+
+      appliedAny = true;
+    }
+
+    if (appliedAny) {
+      changed = true;
+      hasKnownStaticCandidate = true;
+    }
+
+    return appliedAny;
+  };
+
+  applySameFileStaticWYWMetaHelpers();
 
   for (const candidate of candidates) {
+    applySameFileStaticWYWMetaHelpers();
+
     const isOpaqueRuntimeBaseHelper = opaqueRuntimeBaseHelpers.has(
       candidate.name
     );
@@ -5716,6 +5981,7 @@ export function* resolveStaticOxcPreevalValues(
       sideEffectImportLocals.add(local)
     );
     changed = true;
+    applySameFileStaticWYWMetaHelpers();
   }
 
   if (
