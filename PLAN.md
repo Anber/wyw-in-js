@@ -5,9 +5,9 @@
 - Branch: `anber/static-eval-architecture`
 - Base branch: `anber/pr-312-static-imports-max`
 - Base commit: `58c8143f9a9f1cf8d9fd55e3875d0af960efc841`
-- Active task: `TASK-07-split-static-resolver.md`
+- Active task: `TASK-08-preeval-runtime-pipeline.md`
 - Blocking questions: none
-- Last verification: `bun test src` in `packages/processor-utils`, `bun run --filter @wyw-in-js/processor-utils build:types`, `bun run --filter @wyw-in-js/processor-utils lint`, and `bun run check:ts-size` passed on 2026-05-08.
+- Last verification: `bun run --filter @wyw-in-js/transform build:types`, `bun run --filter @wyw-in-js/transform lint`, `bun run check:ts-size`, `bun run lint:scripts`, and `bun test src/__tests__/transform.static-import-values.test.ts src/__tests__/oxc-preeval-stage.test.ts src/__tests__/resolveStaticOxcValues.boundary.test.ts` passed on 2026-05-08.
 
 ## Working Rules
 
@@ -33,7 +33,7 @@
 | 04 | done | [PLAN.tasks/TASK-04-split-template-dependencies.md](PLAN.tasks/TASK-04-split-template-dependencies.md) | Split `collectOxcTemplateDependencies` behind the same public API. |
 | 05 | done | [PLAN.tasks/TASK-05-split-apply-processors.md](PLAN.tasks/TASK-05-split-apply-processors.md) | Split `applyOxcProcessors` behind the same public API. |
 | 06 | done | [PLAN.tasks/TASK-06-processor-static-contract.md](PLAN.tasks/TASK-06-processor-static-contract.md) | Add public optional processor static contract in `processor-utils`. |
-| 07 | pending | [PLAN.tasks/TASK-07-split-static-resolver.md](PLAN.tasks/TASK-07-split-static-resolver.md) | Split static resolver and move processor-specific semantics behind adapters. |
+| 07 | done | [PLAN.tasks/TASK-07-split-static-resolver.md](PLAN.tasks/TASK-07-split-static-resolver.md) | Split static resolver and move processor-specific semantics behind adapters. |
 | 08 | pending | [PLAN.tasks/TASK-08-preeval-runtime-pipeline.md](PLAN.tasks/TASK-08-preeval-runtime-pipeline.md) | Update preeval/runtime pipeline to consume the new modules. |
 | 09 | pending | [PLAN.tasks/TASK-09-linaria-contract.md](PLAN.tasks/TASK-09-linaria-contract.md) | Implement the contract in Linaria styled/core/atomic processors. |
 | 10 | pending | [PLAN.tasks/TASK-10-remove-core-heuristics.md](PLAN.tasks/TASK-10-remove-core-heuristics.md) | Remove old hardcoded static heuristics from transform core. |
