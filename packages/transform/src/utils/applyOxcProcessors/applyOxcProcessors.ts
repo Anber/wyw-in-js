@@ -57,6 +57,7 @@ export const applyOxcProcessors = (
     | 'tagResolver'
   > & {
     eventEmitter?: EventEmitter;
+    preserveSideEffectImportOrderLocals?: Set<string>;
     preserveSideEffectImportLocals?: Set<string>;
   },
   callback: (processor: BaseProcessor) => void,
@@ -322,7 +323,10 @@ export const applyOxcProcessors = (
             filename,
             removableImportLocals,
             new Set([...removableExpressionRefs, ...extracted.dependencyNames]),
-            options.preserveSideEffectImportLocals ?? new Set()
+            options.preserveSideEffectImportLocals ?? new Set(),
+            options.preserveSideEffectImportOrderLocals ??
+              options.preserveSideEffectImportLocals ??
+              new Set()
           )
         )
       : codeWithAddedImports,

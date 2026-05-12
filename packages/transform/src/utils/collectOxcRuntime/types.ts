@@ -12,6 +12,7 @@ export type OxcCollectOptions = Pick<
   | 'tagResolver'
   | 'variableNameConfig'
 > & {
+  preserveSideEffectImportOrderLocals?: Set<string>;
   preserveSideEffectImportLocals?: Set<string>;
 };
 

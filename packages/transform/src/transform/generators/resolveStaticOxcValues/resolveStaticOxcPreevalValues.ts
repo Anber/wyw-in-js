@@ -51,7 +51,9 @@ export function* resolveStaticOxcPreevalValues(
   const staticValueCache =
     preevalResult.staticValueCache ?? new Map<string, unknown>();
   const staticDependencies = new Set(preevalResult.staticDependencies ?? []);
-  const staticImportLocals = new Set<string>();
+  const staticImportLocals = new Set<string>(
+    preevalResult.staticImportLocals ?? []
+  );
   const sideEffectImportLocals = new Set<string>();
   const staticNullWYWMetaExtendsHelpers = new Set(
     preevalResult.staticNullWYWMetaExtendsHelpers ?? []
@@ -283,6 +285,7 @@ export function* resolveStaticOxcPreevalValues(
     filename,
     dependencyNames
   );
+  preevalResult.staticImportLocals = [...staticImportLocals];
   preevalResult.staticSideEffectImportLocals = [...sideEffectImportLocals];
 
   for (const dependency of staticDependencies) {

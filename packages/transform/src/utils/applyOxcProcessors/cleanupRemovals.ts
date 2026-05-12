@@ -547,9 +547,16 @@ export const collectUnusedImportRemovals = (
   program: Program,
   referencedNames: Set<string>,
   removableNames: Set<string>,
-  preserveSideEffectImportLocals: Set<string>
+  preserveSideEffectImportLocals: Set<string>,
+  preserveSideEffectImportOrderLocals: Set<string> = preserveSideEffectImportLocals
 ): Replacement[] => {
   const removals: Replacement[] = [];
+  const importSourceByLocal = new Map<string, string>();
+  const removedSideEffectImportRanges: { end: number; start: number }[] = [];
+  const keptImportRangesBySource = new Map<
+    string,
+    { end: number; start: number }
+  >();
 
   program.body.forEach((statement) => {
     if (statement.type !== 'ImportDeclaration') {
@@ -557,6 +564,16 @@ export const collectUnusedImportRemovals = (
     }
 
     const localNames = collectImportLocalNames(statement);
+    const source = code.slice(statement.source.start, statement.source.end);
+    const orderedLocalNames = localNames.filter((localName) =>
+      preserveSideEffectImportOrderLocals.has(localName)
+    );
+    const sideEffectLocalNames = localNames.filter((localName) =>
+      preserveSideEffectImportLocals.has(localName)
+    );
+    [...orderedLocalNames, ...sideEffectLocalNames].forEach((localName) => {
+      importSourceByLocal.set(localName, source);
+    });
     const removableLocalNames = localNames.filter((localName) =>
       removableNames.has(localName)
     );
@@ -570,13 +587,9 @@ export const collectUnusedImportRemovals = (
           preserveSideEffectImportLocals.has(localName)
         )
       ) {
-        removals.push({
+        removedSideEffectImportRanges.push({
           end: statement.end,
           start: statement.start,
-          value: `import ${code.slice(
-            statement.source.start,
-            statement.source.end
-          )};`,
         });
         return;
       }
@@ -585,6 +598,16 @@ export const collectUnusedImportRemovals = (
         expandImportRemovalRange(code, statement.start, statement.end)
       );
       return;
+    }
+
+    if (
+      orderedLocalNames.length > 0 &&
+      !keptImportRangesBySource.has(source)
+    ) {
+      keptImportRangesBySource.set(source, {
+        end: statement.end,
+        start: statement.start,
+      });
     }
 
     const { specifiers } = statement as AnyNode;
@@ -613,6 +636,80 @@ export const collectUnusedImportRemovals = (
       }
     });
   });
+
+  if (removedSideEffectImportRanges.length > 0) {
+    const seenSources = new Set<string>();
+    const removedRanges = removedSideEffectImportRanges.sort(
+      (a, b) => a.start - b.start
+    );
+    const [firstRemoved, ...restRemoved] = removedRanges;
+    const pendingImports: string[] = [];
+    let insertionAfterLastKept: number | null = null;
+    let usedFirstRemovedRange = false;
+    const flushBefore = (position: number): void => {
+      if (pendingImports.length === 0) {
+        return;
+      }
+
+      removals.push({
+        end: position,
+        start: position,
+        value: `${pendingImports.join('\n')}\n`,
+      });
+      pendingImports.length = 0;
+    };
+
+    [...preserveSideEffectImportOrderLocals].forEach((localName) => {
+      const source = importSourceByLocal.get(localName);
+      if (!source) {
+        return;
+      }
+
+      const keptRange = keptImportRangesBySource.get(source);
+      if (keptRange) {
+        flushBefore(keptRange.start);
+        insertionAfterLastKept = keptRange.end;
+        if (preserveSideEffectImportLocals.has(localName)) {
+          seenSources.add(source);
+        }
+        return;
+      }
+
+      if (
+        !preserveSideEffectImportLocals.has(localName) ||
+        seenSources.has(source)
+      ) {
+        return;
+      }
+
+      seenSources.add(source);
+      pendingImports.push(`import ${source};`);
+    });
+
+    if (pendingImports.length > 0) {
+      if (insertionAfterLastKept !== null) {
+        removals.push({
+          end: insertionAfterLastKept,
+          start: insertionAfterLastKept,
+          value: `\n${pendingImports.join('\n')}`,
+        });
+      } else if (firstRemoved) {
+        usedFirstRemovedRange = true;
+        removals.push({
+          end: firstRemoved.end,
+          start: firstRemoved.start,
+          value: pendingImports.join('\n'),
+        });
+      }
+    }
+
+    removals.push(
+      ...(usedFirstRemovedRange ? restRemoved : removedRanges).map((range) => ({
+        ...range,
+        value: '',
+      }))
+    );
+  }
 
   return removals;
 };
@@ -743,7 +840,8 @@ export const removeUnusedAfterReplacement = (
   filename: string,
   initialRemovableNames: Set<string>,
   removableExpressionRefs: Set<string>,
-  preserveSideEffectImportLocals: Set<string>
+  preserveSideEffectImportLocals: Set<string>,
+  preserveSideEffectImportOrderLocals: Set<string> = preserveSideEffectImportLocals
 ): string => {
   let current = code;
   const cumulativeRemovableNames = new Set(initialRemovableNames);
@@ -790,7 +888,8 @@ export const removeUnusedAfterReplacement = (
         program,
         referencedNames,
         cumulativeRemovableNames,
-        preserveSideEffectImportLocals
+        preserveSideEffectImportLocals,
+        preserveSideEffectImportOrderLocals
       ),
       ...collectTopLevelExpressionStatementRemovals(
         current,

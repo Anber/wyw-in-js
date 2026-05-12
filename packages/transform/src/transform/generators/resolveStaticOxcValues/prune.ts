@@ -209,7 +209,8 @@ export const removeUnusedStaticImports = (
   code: string,
   filename: string,
   staticImportLocals: Set<string>,
-  sideEffectImportLocals: Set<string>
+  sideEffectImportLocals: Set<string>,
+  sideEffectImportOrderLocals: Set<string> = sideEffectImportLocals
 ): string => {
   if (staticImportLocals.size === 0) {
     return code;
@@ -219,6 +220,9 @@ export const removeUnusedStaticImports = (
   const used = collectUsedIdentifierNames(program);
   const ranges: Range[] = [];
   const replacements: Replacement[] = [];
+  const importSourceByLocal = new Map<string, string>();
+  const removedSideEffectImportRanges: Range[] = [];
+  const keptImportRangesBySource = new Map<string, Range>();
 
   program.body.forEach((statement) => {
     if (
@@ -227,6 +231,23 @@ export const removeUnusedStaticImports = (
     ) {
       return;
     }
+
+    const source = code.slice(statement.source.start, statement.source.end);
+    const orderedLocalNames = statement.specifiers.flatMap((specifier) => {
+      const localName = importSpecifierLocalName(specifier);
+      return localName && sideEffectImportOrderLocals.has(localName)
+        ? [localName]
+        : [];
+    });
+    const sideEffectLocalNames = statement.specifiers.flatMap((specifier) => {
+      const localName = importSpecifierLocalName(specifier);
+      return localName && sideEffectImportLocals.has(localName)
+        ? [localName]
+        : [];
+    });
+    [...orderedLocalNames, ...sideEffectLocalNames].forEach((localName) => {
+      importSourceByLocal.set(localName, source);
+    });
 
     const removable = statement.specifiers.flatMap((specifier, index) => {
       const localName = importSpecifierLocalName(specifier);
@@ -238,6 +259,15 @@ export const removeUnusedStaticImports = (
     });
 
     if (removable.length === 0) {
+      if (
+        orderedLocalNames.length > 0 &&
+        !keptImportRangesBySource.has(source)
+      ) {
+        keptImportRangesBySource.set(source, {
+          end: statement.end,
+          start: statement.start,
+        });
+      }
       return;
     }
 
@@ -245,13 +275,9 @@ export const removeUnusedStaticImports = (
       if (
         removable.some((item) => sideEffectImportLocals.has(item.localName))
       ) {
-        replacements.push({
+        removedSideEffectImportRanges.push({
           end: statement.end,
           start: statement.start,
-          text: `import ${code.slice(
-            statement.source.start,
-            statement.source.end
-          )};`,
         });
         return;
       }
@@ -260,8 +286,89 @@ export const removeUnusedStaticImports = (
         end: statement.end,
         start: statement.start,
       });
+      return;
+    }
+
+    if (
+      orderedLocalNames.length > 0 &&
+      !keptImportRangesBySource.has(source)
+    ) {
+      keptImportRangesBySource.set(source, {
+        end: statement.end,
+        start: statement.start,
+      });
     }
   });
+
+  if (removedSideEffectImportRanges.length > 0) {
+    const seenSources = new Set<string>();
+    const removedRanges = removedSideEffectImportRanges.sort(
+      (a, b) => a.start - b.start
+    );
+    const [firstRemoved, ...restRemoved] = removedRanges;
+    const pendingImports: string[] = [];
+    let insertionAfterLastKept: number | null = null;
+    let usedFirstRemovedRange = false;
+    const flushBefore = (position: number): void => {
+      if (pendingImports.length === 0) {
+        return;
+      }
+
+      replacements.push({
+        end: position,
+        start: position,
+        text: `${pendingImports.join('\n')}\n`,
+      });
+      pendingImports.length = 0;
+    };
+
+    [...sideEffectImportOrderLocals].forEach((local) => {
+      const source = importSourceByLocal.get(local);
+      if (!source) {
+        return;
+      }
+
+      const keptRange = keptImportRangesBySource.get(source);
+      if (keptRange) {
+        flushBefore(keptRange.start);
+        insertionAfterLastKept = keptRange.end;
+        if (sideEffectImportLocals.has(local)) {
+          seenSources.add(source);
+        }
+        return;
+      }
+
+      if (!sideEffectImportLocals.has(local) || seenSources.has(source)) {
+        return;
+      }
+
+      seenSources.add(source);
+      pendingImports.push(`import ${source};`);
+    });
+
+    if (pendingImports.length > 0) {
+      if (insertionAfterLastKept !== null) {
+        replacements.push({
+          end: insertionAfterLastKept,
+          start: insertionAfterLastKept,
+          text: `\n${pendingImports.join('\n')}`,
+        });
+      } else if (firstRemoved) {
+        usedFirstRemovedRange = true;
+        replacements.push({
+          end: firstRemoved.end,
+          start: firstRemoved.start,
+          text: pendingImports.join('\n'),
+        });
+      }
+    }
+
+    ranges.push(...(usedFirstRemovedRange ? restRemoved : removedRanges));
+  }
+
+  if (ranges.length > 1) {
+    ranges.sort((a, b) => a.start - b.start);
+  }
 
   return applyOxcReplacements(code, [
     ...ranges.map((range) => ({ ...range, text: '' })),
@@ -344,6 +451,7 @@ export const pruneStaticPreevalCode = (
     helpersRemoved.code,
     filename,
     importLocalsToPrune,
-    sideEffectImportLocals
+    sideEffectImportLocals,
+    new Set([...staticImportLocals, ...sideEffectImportLocals])
   );
 };

@@ -32,6 +32,9 @@ export function* collect(
     options.root ?? process.cwd(),
     {
       ...options.pluginOptions,
+      preserveSideEffectImportOrderLocals: new Set(
+        preevalResult?.staticImportLocals ?? []
+      ),
       preserveSideEffectImportLocals: new Set(
         preevalResult?.staticSideEffectImportLocals ?? []
       ),

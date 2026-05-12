@@ -37,6 +37,7 @@ export interface IPreevalResult {
   evalCode?: string;
   metadata: WYWTransformMetadata | null;
   processorClassNames?: Record<string, string>;
+  staticImportLocals?: string[];
   staticSideEffectImportLocals?: string[];
   staticDependencies?: string[];
   staticNullWYWMetaExtendsHelpers?: string[];

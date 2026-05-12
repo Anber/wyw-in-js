@@ -1188,6 +1188,225 @@ describe('transform static import value inlining', () => {
     }
   });
 
+  it('orders preserved static side-effect imports by template dependency order', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
+    const entryFile = join(root, 'entry.js');
+    const layoutFile = join(root, 'layout.js');
+    const checkboxFile = join(root, 'checkbox.js');
+    const cache = new TransformCacheCollection();
+    const perf = createPerfEventRecorder();
+
+    writeFileSync(
+      layoutFile,
+      dedent`
+        import { css } from 'test-css-processor';
+
+        export const modal = css\`
+          color: blue;
+        \`;
+      `
+    );
+    writeFileSync(
+      checkboxFile,
+      dedent`
+        import { css } from 'test-css-processor';
+
+        export const checkboxClass = css\`
+          color: green;
+        \`;
+      `
+    );
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { css } from 'test-css-processor';
+        import { checkboxClass } from './checkbox.js';
+        import { modal } from './layout.js';
+
+        export const className = css\`
+          .${'${modal}'} {
+            color: red;
+          }
+
+          .${'${checkboxClass}'} {
+            color: black;
+          }
+        \`;
+      `
+    );
+
+    try {
+      const result = await runTransform(
+        root,
+        entryFile,
+        cache,
+        perf.eventEmitter
+      );
+
+      expect(result.cssText).toContain('color:red');
+      expect(result.cssText).toContain('color:black');
+      expect(result.cssText).not.toContain('color:blue');
+      expect(result.cssText).not.toContain('color:green');
+      const layoutImportIndex = result.code.indexOf("import './layout.js';");
+      const checkboxImportIndex = result.code.indexOf(
+        "import './checkbox.js';"
+      );
+
+      expect(layoutImportIndex).toBeGreaterThanOrEqual(0);
+      expect(checkboxImportIndex).toBeGreaterThanOrEqual(0);
+      expect(layoutImportIndex).toBeLessThan(checkboxImportIndex);
+      expect(perf.counts.get('transform:evalFile') ?? 0).toBe(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('orders removed static side-effect imports after kept side-effect anchors', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
+    const entryFile = join(root, 'entry.js');
+    const layoutFile = join(root, 'layout.js');
+    const checkboxFile = join(root, 'checkbox.js');
+    const cache = new TransformCacheCollection();
+    const perf = createPerfEventRecorder();
+
+    writeFileSync(
+      layoutFile,
+      dedent`
+        import { css } from 'test-css-processor';
+
+        export const modal = css\`
+          color: blue;
+        \`;
+      `
+    );
+    writeFileSync(
+      checkboxFile,
+      dedent`
+        import { css } from 'test-css-processor';
+
+        export const checkboxClass = css\`
+          color: green;
+        \`;
+      `
+    );
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { css } from 'test-css-processor';
+        import { checkboxClass } from './checkbox.js';
+        import { modal } from './layout.js';
+
+        export const kept = modal;
+        export const className = css\`
+          .${'${modal}'} {
+            color: red;
+          }
+
+          .${'${checkboxClass}'} {
+            color: black;
+          }
+        \`;
+      `
+    );
+
+    try {
+      const result = await runTransform(
+        root,
+        entryFile,
+        cache,
+        perf.eventEmitter
+      );
+
+      const layoutImportIndex = result.code.indexOf(
+        "import { modal } from './layout.js';"
+      );
+      const checkboxImportIndex = result.code.indexOf(
+        "import './checkbox.js';"
+      );
+
+      expect(layoutImportIndex).toBeGreaterThanOrEqual(0);
+      expect(checkboxImportIndex).toBeGreaterThanOrEqual(0);
+      expect(layoutImportIndex).toBeLessThan(checkboxImportIndex);
+      expect(result.code).toContain('export const kept = modal;');
+      expect(perf.counts.get('transform:evalFile') ?? 0).toBe(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('orders removed static side-effect imports after kept static metadata anchors', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
+    const entryFile = join(root, 'entry.js');
+    const layoutFile = join(root, 'layout.js');
+    const checkboxFile = join(root, 'checkbox.js');
+    const cache = new TransformCacheCollection();
+    const perf = createPerfEventRecorder();
+
+    writeFileSync(
+      layoutFile,
+      dedent`
+        import { styled } from 'test-runtime-styled-processor';
+
+        export const modal = styled.div\`
+          color: blue;
+        \`;
+      `
+    );
+    writeFileSync(
+      checkboxFile,
+      dedent`
+        import { css } from 'test-css-processor';
+
+        export const checkboxClass = css\`
+          color: green;
+        \`;
+      `
+    );
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { css } from 'test-css-processor';
+        import { checkboxClass } from './checkbox.js';
+        import { modal } from './layout.js';
+
+        export const kept = modal;
+        export const className = css\`
+          .${'${modal}'} {
+            color: red;
+          }
+
+          .${'${checkboxClass}'} {
+            color: black;
+          }
+        \`;
+      `
+    );
+
+    try {
+      const result = await runTransform(
+        root,
+        entryFile,
+        cache,
+        perf.eventEmitter
+      );
+
+      const layoutImportIndex = result.code.indexOf(
+        "import { modal } from './layout.js';"
+      );
+      const checkboxImportIndex = result.code.indexOf(
+        "import './checkbox.js';"
+      );
+
+      expect(layoutImportIndex).toBeGreaterThanOrEqual(0);
+      expect(checkboxImportIndex).toBeGreaterThanOrEqual(0);
+      expect(layoutImportIndex).toBeLessThan(checkboxImportIndex);
+      expect(result.code).toContain('export const kept = modal;');
+      expect(perf.counts.get('transform:evalFile') ?? 0).toBe(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('inlines imported processor class name objects with static imports without eval', async () => {
     const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
     const entryFile = join(root, 'entry.js');
