@@ -746,19 +746,19 @@ export const removeUnusedAfterReplacement = (
   preserveSideEffectImportLocals: Set<string>
 ): string => {
   let current = code;
+  let program: Program | null = null;
   const cumulativeRemovableNames = new Set(initialRemovableNames);
-  const applyIfParsable = (next: string): string => {
-    try {
-      parseOxc(next, filename);
-      return next;
-    } catch {
-      return current;
-    }
-  };
 
+  // Incremental cleanup loop: validate-by-parsing the next iteration's
+  // candidate code AND reuse that parse as the next iter's `program` input,
+  // instead of re-parsing at the top of the next iter. Saves one parse per
+  // loop revolution (N+1 parses for an N-iter loop instead of 2N).
+  // Also short-circuits a round earlier when no removals were collected.
   for (let idx = 0; idx < 5; idx += 1) {
     const previous = current;
-    const program = parseOxc(current, filename);
+    if (program === null) {
+      program = parseOxc(current, filename);
+    }
     const statements = collectTopLevelStatementInfos(program);
     const removableNames = collectRemovableNamesFromStatements(
       statements,
@@ -800,10 +800,22 @@ export const removeUnusedAfterReplacement = (
       ),
       ...collectEmptyTopLevelBlockRemovals(current, program),
     ]);
-    current =
-      removals.length > 0
-        ? applyIfParsable(applyOxcReplacements(current, removals))
-        : current;
+
+    if (removals.length === 0) {
+      // Convergence: next iter would parse the same code and see the same
+      // removable set. Skip the round of walks + parse.
+      return current;
+    }
+
+    const next = applyOxcReplacements(current, removals);
+    try {
+      // Validate + capture the AST for the next iteration in one parse.
+      program = parseOxc(next, filename);
+      current = next;
+    } catch {
+      // Pathological removal — drop this iteration and return prior state.
+      return current;
+    }
 
     if (current === previous) {
       return current;
