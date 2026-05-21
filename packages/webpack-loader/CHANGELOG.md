@@ -1,5 +1,12 @@
 # @wyw-in-js/webpack-loader
 
+## 2.0.0-alpha.2
+
+### Patch Changes
+
+- Updated dependencies
+  - @wyw-in-js/transform@2.0.0-alpha.2
+
 ## 2.0.0-alpha.1
 
 ### Patch Changes

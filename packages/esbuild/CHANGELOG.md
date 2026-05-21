@@ -1,5 +1,13 @@
 # @wyw-in-js/esbuild
 
+## 2.0.0-alpha.2
+
+### Patch Changes
+
+- ccaf03e: Improve transform performance by caching OXC visitor keys, reusing cleanup parses, bypassing disabled emitter instrumentation, and updating OXC packages.
+- Updated dependencies
+  - @wyw-in-js/transform@2.0.0-alpha.2
+
 ## 2.0.0-alpha.1
 
 ### Patch Changes
