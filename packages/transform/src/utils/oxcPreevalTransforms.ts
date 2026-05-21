@@ -12,6 +12,7 @@ import type { CodeRemoverOptions } from '@wyw-in-js/shared';
 
 import { collectOxcExportsAndImports } from './collectOxcExportsAndImports';
 import { EventEmitter } from './EventEmitter';
+import { getOxcNodeChildren } from './oxc/ast';
 import { parseOxcProgramCached } from './parseOxc';
 
 type AnyNode = Node & Record<string, unknown>;
@@ -169,32 +170,11 @@ const isNode = (value: unknown): value is Node =>
   'type' in value &&
   typeof (value as { type?: unknown }).type === 'string';
 
-const getChildren = (node: Node): Node[] => {
-  const result: Node[] = [];
-  const record = node as AnyNode;
-
-  Object.keys(record).forEach((key) => {
-    if (key === 'type' || key === 'start' || key === 'end' || key === 'range') {
-      return;
-    }
-
-    const value = record[key];
-    if (isNode(value)) {
-      result.push(value);
-      return;
-    }
-
-    if (Array.isArray(value)) {
-      value.forEach((item) => {
-        if (isNode(item)) {
-          result.push(item);
-        }
-      });
-    }
-  });
-
-  return result;
-};
+// Reuses the per-node.type visitor-key cache in utils/oxc/ast.ts. This file's
+// getChildren shape historically diverged from the canonical one (a smaller
+// metadata-key skip set), but the produced children list is identical in
+// practice because oxc-parser nodes don't carry the extra metadata fields.
+const getChildren = getOxcNodeChildren;
 
 const parseOxc = (code: string, filename: string): Program => {
   return parseOxcProgramCached(filename, code, 'unambiguous');
@@ -523,78 +503,97 @@ const predeclareScopeNames = (node: Node, scope: Scope): void => {
   }
 
   const visitScopeDescendants = (child: Node): void => {
-    if (child.type === 'VariableDeclarator') {
-      collectBindingNames(child.id).forEach((name) => {
-        scope.names.add(name);
-      });
-    } else if (child.type === 'FunctionDeclaration' && child.id) {
-      scope.names.add(child.id.name);
-    } else if (child.type === 'ClassDeclaration' && child.id) {
-      scope.names.add(child.id.name);
-    } else if (
-      child.type === 'ImportDefaultSpecifier' ||
-      child.type === 'ImportNamespaceSpecifier' ||
-      child.type === 'ImportSpecifier'
-    ) {
-      scope.names.add(child.local.name);
+    switch (child.type) {
+      case 'VariableDeclarator': {
+        const names = collectBindingNames(child.id);
+        for (let i = 0; i < names.length; i += 1) {
+          scope.names.add(names[i]);
+        }
+        break;
+      }
+      case 'FunctionDeclaration':
+      case 'ClassDeclaration':
+        if (child.id) {
+          scope.names.add(child.id.name);
+        }
+        break;
+      case 'ImportDefaultSpecifier':
+      case 'ImportNamespaceSpecifier':
+      case 'ImportSpecifier':
+        scope.names.add(child.local.name);
+        break;
     }
 
     if (createsScope(child)) {
       return;
     }
 
-    getChildren(child).forEach(visitScopeDescendants);
+    const children = getChildren(child);
+    for (let i = 0; i < children.length; i += 1) {
+      visitScopeDescendants(children[i]);
+    }
   };
 
-  getChildren(node).forEach(visitScopeDescendants);
+  const rootChildren = getChildren(node);
+  for (let i = 0; i < rootChildren.length; i += 1) {
+    visitScopeDescendants(rootChildren[i]);
+  }
 };
 
 const declareBindings = (node: Node, scope: Scope): void => {
-  if (node.type === 'VariableDeclarator') {
-    const names = collectBindingNames(node.id);
-    names.forEach((name) => {
-      scope.names.add(name);
-      scope.bindings.set(name, null);
-    });
-
-    if (node.id.type === 'Identifier' && node.init) {
-      scope.bindings.set(node.id.name, node.init);
-    }
-    return;
-  }
-
-  if (node.type === 'FunctionDeclaration' && node.id) {
-    scope.names.add(node.id.name);
-    scope.bindings.set(node.id.name, null);
-  }
-
-  if (node.type === 'ClassDeclaration' && node.id) {
-    scope.names.add(node.id.name);
-    scope.bindings.set(node.id.name, null);
-    return;
-  }
-
-  if (
-    node.type === 'ImportDefaultSpecifier' ||
-    node.type === 'ImportNamespaceSpecifier' ||
-    node.type === 'ImportSpecifier'
-  ) {
-    scope.names.add(node.local.name);
-    scope.bindings.set(node.local.name, null);
-    return;
-  }
-
-  if (
-    node.type === 'FunctionDeclaration' ||
-    node.type === 'FunctionExpression' ||
-    node.type === 'ArrowFunctionExpression'
-  ) {
-    node.params.forEach((param) => {
-      collectBindingNames(param).forEach((name) => {
+  // Called for every visited AST node, so the dispatch is hot. A switch lets
+  // V8 generate a jump table on node.type; the previous chained `if`s walked
+  // each branch's string-compare for every non-matching node.
+  switch (node.type) {
+    case 'VariableDeclarator': {
+      const names = collectBindingNames(node.id);
+      for (let i = 0; i < names.length; i += 1) {
+        const name = names[i];
         scope.names.add(name);
         scope.bindings.set(name, null);
-      });
-    });
+      }
+      if (node.id.type === 'Identifier' && node.init) {
+        scope.bindings.set(node.id.name, node.init);
+      }
+      return;
+    }
+    case 'ClassDeclaration': {
+      if (node.id) {
+        scope.names.add(node.id.name);
+        scope.bindings.set(node.id.name, null);
+      }
+      return;
+    }
+    case 'ImportDefaultSpecifier':
+    case 'ImportNamespaceSpecifier':
+    case 'ImportSpecifier': {
+      scope.names.add(node.local.name);
+      scope.bindings.set(node.local.name, null);
+      return;
+    }
+    case 'FunctionDeclaration': {
+      if (node.id) {
+        scope.names.add(node.id.name);
+        scope.bindings.set(node.id.name, null);
+      }
+      // Fall through to declare params.
+    }
+    // eslint-disable-next-line no-fallthrough
+    case 'FunctionExpression':
+    case 'ArrowFunctionExpression': {
+      const params = node.params;
+      for (let i = 0; i < params.length; i += 1) {
+        const names = collectBindingNames(params[i]);
+        for (let j = 0; j < names.length; j += 1) {
+          const name = names[j];
+          scope.names.add(name);
+          scope.bindings.set(name, null);
+        }
+      }
+      return;
+    }
+    default:
+      return;
   }
 };
 
@@ -619,9 +618,17 @@ const visit = (
   declareBindings(node, currentScope);
   enter(node, currentScope, parent, ancestors);
 
-  getChildren(node).forEach((child) =>
-    visit(child, currentScope, enter, node, [...ancestors, node])
-  );
+  // Push onto a shared ancestors stack instead of allocating `[...ancestors,
+  // node]` per child step (O(n × depth) extra allocation on deep ASTs).
+  // Every consumer of `ancestors` in this file reads it synchronously inside
+  // the enter callback; future callers that need to retain the reference
+  // must .slice() it themselves.
+  ancestors.push(node);
+  const children = getChildren(node);
+  for (let i = 0; i < children.length; i += 1) {
+    visit(children[i], currentScope, enter, node, ancestors);
+  }
+  ancestors.pop();
 };
 
 export const replaceImportMetaEnvWithOxc = (

@@ -10,7 +10,12 @@ type ParsedOxc = {
   program: Program;
 };
 
-const MAX_PARSE_CACHE_ENTRIES = 200;
+// 200 evicts under sustained pressure on large monorepos — the
+// removeUnusedAfterReplacement cleanup loop reparses on every iteration
+// (new content -> new key) and applyOxcProcessors reparses after extraction.
+// 1000 is still bounded (~50-100 MB worst case for an enormous build) and
+// keeps every entry hot across the actions for a single file.
+const MAX_PARSE_CACHE_ENTRIES = 1000;
 const parseCache = new Map<string, ParsedOxc>();
 
 const getAstType = (filename: string): 'js' | 'ts' =>

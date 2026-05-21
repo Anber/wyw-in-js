@@ -1337,6 +1337,18 @@ const getChildren = (node: Node): { key: string; node: Node }[] => {
 };
 
 const precollectRequireSources = (node: Node, state: AnalyzerState): void => {
+  // Cheap text precheck at the Program entry: if the file body has no
+  // 'require(' substring there can be no CommonJS require() init to collect.
+  // Skip the full AST walk — meaningful saving on ESM-only modules in large
+  // monorepos. Done at Program-level only so nested recursion doesn't pay
+  // the indexOf cost per node.
+  if (
+    node.type === 'Program' &&
+    state.code.indexOf('require(') === -1
+  ) {
+    return;
+  }
+
   if (node.type === 'VariableDeclarator' && node.id.type === 'Identifier') {
     const source = node.init ? sourceFromRequireSyntax(node.init) : null;
     if (source) {
