@@ -24,6 +24,7 @@ Breaking changes in v2:
   - function-valued preset/plugin options are supported when loaded from config files, while inline non-serializable options now error with migration guidance
   - `eval.globals` encoding and invalidation are more predictable and reject unsupported values earlier
 - `require()` inside eval now follows fallback semantics controlled by `eval.require` (`warn-and-run` / `error` / `off`).
+- CSS rule emission order may differ from v1 for equivalent extracted rule sets. Projects that rely on cascade ties between generated WyW rules should verify the v2 output and, where needed, make precedence explicit in selectors or source order.
 
 This release also updates the published bundler integrations, adapter coverage,
 and migration/docs around the v2 evaluator contract, and includes cache and
