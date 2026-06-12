@@ -38,6 +38,14 @@ module.exports = {
   - `execute`: compute interpolation values with the build-time evaluator.
   - `static`: resolve only values that can be proven static. Values that would need evaluator fallback fail the build.
 
+  `hybrid` is the recommended v2 default. It can use processor static semantics, statically resolvable imports, static
+  metadata, and configured `staticBindings` without invoking the evaluator for those values, then fall back to the Node
+  ESM evaluator for dynamic cases.
+
+  Use `execute` as a compatibility escape hatch if a project depends on eval-time side effects or needs the closest
+  behavior to always evaluating build-time values. Use `static` as a strict validation mode when any evaluator fallback
+  should fail the build.
+
   `eval.runtime` selects the runtime used by the build-time evaluator. The current runtime is `nodejs`.
 
   `eval.errors` controls evaluator fallback errors:
@@ -527,10 +535,10 @@ module.exports = {
 
 - `staticBindings: Record<string, Record<string, unknown>>`
 
-  A per-source map of statically-known imported values used by `eval.strategy: "hybrid"` and `eval.strategy: "static"`. Keys are either the import
-  source as written, such as `@linaria/core`, or the resolved absolute file path. Values map imported names to either
-  literal replacements or pure helper functions. Helper functions are called only when all call arguments can also be
-  resolved statically.
+  A per-source map of statically-known imported values used by `eval.strategy: "hybrid"` and `eval.strategy: "static"`.
+  These bindings are one of the inputs to v2 static-first value resolution. Keys are either the import source as written,
+  such as `@linaria/core`, or the resolved absolute file path. Values map imported names to either literal replacements
+  or pure helper functions. Helper functions are called only when all call arguments can also be resolved statically.
 
   Use this for deterministic helpers or build-time constants that WyW cannot inspect directly. The trust model is the
   same as `importOverrides`: the project config vouches that these values are deterministic and intentionally match, or

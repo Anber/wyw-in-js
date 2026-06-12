@@ -9,8 +9,9 @@
 - `eval.resolver: "node"` was replaced by `eval.resolver: "native"`, backed by `oxc-resolver`.
 - `eval.resolver: "hybrid"` now tries `eval.customResolver`, then native resolution, then the bundler resolver.
 - `eval.globals` updates are supported between runs (value changes and removals both trigger re-init).
-- The old top-level `evaluate` toggle is replaced by `eval.strategy`.
-- CSS rule emission order can differ from v1 for equivalent extracted rule sets.
+- `eval.strategy: "hybrid"` is the v2 default and enables static-first value resolution with evaluator fallback.
+- CSS rule emission order can differ from v1 for equivalent extracted rule sets, especially where cascade ties rely on
+  generated source order.
 - Turbopack loader options must be **JSON-serializable**.
 - `@wyw-in-js/babel-preset` is still supported, but runs evaluation in a separate Node process.
   Keep inline preset options JSON-serializable, and use `configFile` for function-valued WyW config.
@@ -46,13 +47,23 @@ export default {
 };
 ```
 
-### `evaluate` → `eval.strategy`
+### Default hybrid static-first evaluation (`evaluate` → `eval.strategy`)
 
-The old top-level `evaluate` toggle is folded into `eval.strategy`:
+The old top-level `evaluate` toggle is folded into `eval.strategy`. The v2 default is `hybrid`, not strict `static`.
+
+In `hybrid` mode, WyW first tries to prove values without running the evaluator. This static path can use statically
+resolvable imported literals and objects, processor-provided static semantics, static metadata, and configured
+`staticBindings`. When a value cannot be proven static, WyW falls back to the Node ESM evaluator.
 
 - `eval.strategy: "hybrid"` is the v2 default. WyW resolves statically provable values first and falls back to the evaluator.
 - `eval.strategy: "execute"` is the evaluator-only mode for projects that want the closest equivalent to always executing build-time values.
 - `eval.strategy: "static"` rejects values that need evaluator fallback.
+
+Static-first resolution can improve build performance when interpolation values are known from source, processor
+metadata, or project config: WyW can avoid starting the evaluator and loading parts of the module graph for those values.
+It is not a universal speed-up. Dynamic values, runtime-only modules, and values with unsupported static shapes still use
+the evaluator fallback in `hybrid` mode. Debug directories and `perf-spans.jsonl` can help show where evaluator work
+still happens.
 
 ```js
 // wyw-in-js.config.mjs
@@ -62,6 +73,10 @@ export default {
   },
 };
 ```
+
+If your project relied on eval-time side effects or the exact order in which eval imports executed, review the generated
+output while upgrading. Use `eval.strategy: "execute"` as a compatibility escape hatch while you make those dependencies
+explicit.
 
 ### Native eval resolution
 
@@ -133,8 +148,9 @@ export default withWyw(
 
 ### CSS rule emission order
 
-The Oxc-backed pipeline can emit equivalent extracted rule sets in a different order from v1. This matters when two
-generated WyW rules have the same cascade weight and the project relies on source-order ties.
+The Oxc-backed, static-first pipeline can emit equivalent extracted rule sets in a different order from v1. Static value
+inlining and Oxc processing can change where equivalent generated rules are emitted, even when the final rule set is the
+same. This matters when two generated WyW rules have the same cascade weight and the project relies on source-order ties.
 
 Review generated CSS when upgrading. If order matters, make precedence explicit with selectors, composition, or source
 structure rather than relying on a tie between generated rules.
