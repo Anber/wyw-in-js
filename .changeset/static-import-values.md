@@ -3,10 +3,10 @@
 '@wyw-in-js/shared': minor
 ---
 
-Inline statically resolvable imported literals, fixed objects, compiled TypeScript enum objects, zero-argument helper returns, compound component alias metadata, same-module and post-declaration alias metadata, primitive processor metadata, and static metadata helper chains during Oxc pre-evaluation. Static-first value resolution is enabled by default with `eval.strategy: "hybrid"`, while `eval.strategy: "static"` rejects evaluator fallback.
+Enable static-first value resolution by default with `eval.strategy: "hybrid"`.
 
-Fold the previous top-level `evaluate` toggle into `eval.strategy`; use `eval.strategy: "execute"` for evaluator-only value resolution.
+WyW can now resolve many imported literals, fixed objects, compiled TypeScript enum objects, zero-argument helper returns, compound component aliases, processor metadata values, and static metadata helper chains without starting the evaluator or loading the full module graph.
 
-Add `staticBindings` config for opt-in static values and pure helper functions used by static import value inlining.
+The default `hybrid` mode keeps evaluator fallback for values that are not statically provable. Use `eval.strategy: "execute"` for evaluator-only compatibility and `eval.strategy: "static"` to reject fallback.
 
-Cache per-file static metadata pre-evaluation results so multiple static exports from the same module do not repeat the same processor pre-evaluation work.
+Add `staticBindings` config for declaring additional statically-known imported values and pure helper functions.

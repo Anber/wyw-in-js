@@ -5,7 +5,7 @@
 '@wyw-in-js/vite': minor
 ---
 
-Add a supported processor diagnostics seam that lets library-owned processors emit structured non-fatal warnings through WyW.
+Add a supported processor diagnostics API that lets library-owned processors emit structured non-fatal warnings through WyW.
 
 This adds:
 
