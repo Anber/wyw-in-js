@@ -38,6 +38,7 @@
     "eval-files-debug-output",
     "eval-load-recovery",
     "fair-radios-fail",
+    "fast-transform-oxc",
     "loud-cycles-using",
     "native-resolver-oxc",
     "oxc-config-foundation",
