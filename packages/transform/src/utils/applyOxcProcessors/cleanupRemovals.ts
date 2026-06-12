@@ -600,10 +600,7 @@ export const collectUnusedImportRemovals = (
       return;
     }
 
-    if (
-      orderedLocalNames.length > 0 &&
-      !keptImportRangesBySource.has(source)
-    ) {
+    if (orderedLocalNames.length > 0 && !keptImportRangesBySource.has(source)) {
       keptImportRangesBySource.set(source, {
         end: statement.end,
         start: statement.start,

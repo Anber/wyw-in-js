@@ -1342,10 +1342,7 @@ const precollectRequireSources = (node: Node, state: AnalyzerState): void => {
   // Skip the full AST walk — meaningful saving on ESM-only modules in large
   // monorepos. Done at Program-level only so nested recursion doesn't pay
   // the indexOf cost per node.
-  if (
-    node.type === 'Program' &&
-    state.code.indexOf('require(') === -1
-  ) {
+  if (node.type === 'Program' && state.code.indexOf('require(') === -1) {
     return;
   }
 

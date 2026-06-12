@@ -522,6 +522,8 @@ const predeclareScopeNames = (node: Node, scope: Scope): void => {
       case 'ImportSpecifier':
         scope.names.add(child.local.name);
         break;
+      default:
+        break;
     }
 
     if (createsScope(child)) {
@@ -581,7 +583,7 @@ const declareBindings = (node: Node, scope: Scope): void => {
     // eslint-disable-next-line no-fallthrough
     case 'FunctionExpression':
     case 'ArrowFunctionExpression': {
-      const params = node.params;
+      const { params } = node;
       for (let i = 0; i < params.length; i += 1) {
         const names = collectBindingNames(params[i]);
         for (let j = 0; j < names.length; j += 1) {
@@ -590,10 +592,10 @@ const declareBindings = (node: Node, scope: Scope): void => {
           scope.bindings.set(name, null);
         }
       }
-      return;
+      break;
     }
     default:
-      return;
+      break;
   }
 };
 
