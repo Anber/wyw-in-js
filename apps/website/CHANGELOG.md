@@ -1,5 +1,11 @@
 # @wyw-in-js/website
 
+## 2.0.0-alpha.1
+
+### Patch Changes
+
+- 6a2c32b: Expand the v2 migration and configuration docs for default `eval.strategy: "hybrid"` static-first evaluation, including performance guidance and CSS ordering migration notes.
+
 ## 2.0.0-alpha.0
 
 ### Major Changes

@@ -1,5 +1,14 @@
 # @wyw-in-js/transform
 
+## 2.0.0-alpha.3
+
+### Patch Changes
+
+- bd2ae63: Fix eval shaking for chained dead export property assignments that reference export aliases.
+- a6bc855: Avoid rereading and rehashing unchanged dependency graphs during entrypoint cache invalidation while preserving stale-dependency detection.
+- 9904102: Fix shaker export stripping for exported classes that must remain as local declarations when surviving exports reference them.
+- 0ba1fa6: Stabilize preserved static side-effect import order when static import value inlining removes processor-only imports.
+
 ## 2.0.0-alpha.2
 
 ### Patch Changes

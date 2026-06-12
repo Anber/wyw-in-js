@@ -35,6 +35,8 @@
     "@wyw-in-js/webpack-loader": "1.0.8"
   },
   "changesets": [
+    "bright-pens-brake",
+    "cheap-mtime-gate",
     "eval-files-debug-output",
     "eval-load-recovery",
     "fair-radios-fail",
@@ -45,11 +47,14 @@
     "perf-spans-debug-output",
     "processor-diagnostics-reporting",
     "purple-bears-peel",
+    "quiet-plums-walk",
+    "shaggy-points-cough",
     "spotty-moments-bow",
     "static-import-values",
     "static-null-component-bases",
     "static-processor-contract",
     "steady-trains-smoke",
+    "tame-side-effects-grin",
     "transform-metadata-manifests"
   ]
 }
