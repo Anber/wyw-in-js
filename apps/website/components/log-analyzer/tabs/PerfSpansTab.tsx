@@ -7,7 +7,7 @@ import { TruncateCell } from '../ui/TruncateCell';
 import { cx, formatMs } from '../utils';
 
 export function PerfSpansTab({ data }: { data: ParsedData }) {
-  const perfSpans = data.perfSpans;
+  const { perfSpans } = data;
 
   if (!perfSpans) {
     return null;
@@ -84,7 +84,10 @@ export function PerfSpansTab({ data }: { data: ParsedData }) {
                     className="nx-border-t nx-border-neutral-200 dark:nx-border-neutral-800"
                   >
                     <td className="nx-px-3 nx-py-2">
-                      <TruncateCell value={method.method} title={method.method} />
+                      <TruncateCell
+                        value={method.method}
+                        title={method.method}
+                      />
                     </td>
                     <td className="nx-px-3 nx-py-2 nx-text-right">
                       {method.count.toLocaleString()}

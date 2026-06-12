@@ -39,7 +39,7 @@ export function EvalFilesTab({
   pathDisplay,
   view,
 }: EvalFilesTabProps) {
-  const evalFiles = data.evalFiles;
+  const { evalFiles } = data;
   const {
     kind,
     matched,
@@ -117,9 +117,7 @@ export function EvalFilesTab({
         <Field label="Kind">
           <select
             value={kind}
-            onChange={(e) =>
-              setKind(e.currentTarget.value as typeof kind)
-            }
+            onChange={(e) => setKind(e.currentTarget.value as typeof kind)}
             className={styles.fieldInput}
           >
             <option value="all">All</option>
@@ -130,9 +128,7 @@ export function EvalFilesTab({
         <Field label="Value status">
           <select
             value={status}
-            onChange={(e) =>
-              setStatus(e.currentTarget.value as typeof status)
-            }
+            onChange={(e) => setStatus(e.currentTarget.value as typeof status)}
             className={styles.fieldInput}
           >
             <option value="all">All</option>
@@ -167,8 +163,7 @@ export function EvalFilesTab({
               </thead>
               <tbody>
                 {matched.map((record) => {
-                  const isSelected =
-                    selected?.lineNumber === record.lineNumber;
+                  const isSelected = selected?.lineNumber === record.lineNumber;
                   return (
                     <tr
                       key={record.lineNumber}
@@ -188,12 +183,8 @@ export function EvalFilesTab({
                           startEllipsis
                         />
                       </td>
-                      <td className="nx-px-3 nx-py-2">
-                        {record.payloadKind}
-                      </td>
-                      <td className="nx-px-3 nx-py-2">
-                        {record.valueStatus}
-                      </td>
+                      <td className="nx-px-3 nx-py-2">{record.payloadKind}</td>
+                      <td className="nx-px-3 nx-py-2">{record.valueStatus}</td>
                     </tr>
                   );
                 })}
@@ -226,7 +217,9 @@ export function EvalFilesTab({
                 <div className="nx-flex nx-flex-wrap nx-gap-2">
                   <Button
                     disabled={!decoded.code}
-                    onClick={() => clipboard.copyText(decoded.code, 'Copied code')}
+                    onClick={() =>
+                      clipboard.copyText(decoded.code, 'Copied code')
+                    }
                   >
                     Copy code
                   </Button>
