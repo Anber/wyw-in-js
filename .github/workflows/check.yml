@@ -6,24 +6,23 @@ on:
   pull_request:
     branches: [ main ]
 
+permissions:
+  contents: read
+
 jobs:
   bun:
     runs-on: ubuntu-latest
 
-    env:
-      TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
-      TURBO_TEAM: ${{ secrets.TURBO_TEAM }}
-
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744 # v3
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: 1.3.5
 
       - name: Setup Bun cache
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ~/.bun/install/cache
           key: ${{ runner.os }}-wyw-v2-bun-${{ hashFiles('bun.lock') }}
@@ -45,10 +44,6 @@ jobs:
   node-smoke:
     runs-on: ${{ matrix.os }}
 
-    env:
-      TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
-      TURBO_TEAM: ${{ secrets.TURBO_TEAM }}
-
     strategy:
       fail-fast: false
       matrix:
@@ -59,21 +54,21 @@ jobs:
             node-version: 22.x
 
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744 # v3
 
       - name: Use Node.js ${{ matrix.node-version }}
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@3235b876344d2a9aa001b8d1453c930bba69e610 # v3
         with:
           node-version: ${{ matrix.node-version }}
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: 1.3.5
 
       - name: Setup Bun cache
         if: runner.os != 'Windows'
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ~/.bun/install/cache
           key: ${{ runner.os }}-node-${{ matrix.node-version }}-wyw-v2-bun-${{ hashFiles('bun.lock') }}
@@ -83,7 +78,7 @@ jobs:
 
       - name: Setup Bun cache (Windows exact match only)
         if: runner.os == 'Windows'
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ~/.bun/install/cache
           key: ${{ runner.os }}-node-${{ matrix.node-version }}-wyw-v2-bun-${{ hashFiles('bun.lock') }}

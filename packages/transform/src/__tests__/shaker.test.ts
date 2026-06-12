@@ -266,6 +266,41 @@ describe('shaker', () => {
     expect(code).not.toContain('Primary.play');
   });
 
+  it('should drop chained property assignments for dead exports', () => {
+    const code = run(['__wywPreval'])`
+      var CompA = function CompA() {};
+      CompA.dark = "m1e5nhk3";
+      export var DefaultComp = CompA;
+      export var Mono = function Mono() {};
+      Mono.dark = DefaultComp.dark;
+      export var Duo = function Duo() {};
+      Duo.dark = Mono.dark;
+      exports.__wywPreval = {};
+    `;
+
+    expect(code).toContain('__wywPreval');
+    expect(code).not.toContain('CompA');
+    expect(code).not.toContain('DefaultComp');
+    expect(code).not.toContain('Mono');
+    expect(code).not.toContain('Duo');
+  });
+
+  it('should keep property assignments read by surviving code', () => {
+    const code = run(['__wywPreval'])`
+      export var Mono = function Mono() {};
+      Mono.dark = "m1e5nhk3";
+      const _exp = /*#__PURE__*/() => Mono.dark;
+      exports.__wywPreval = {
+        _exp: _exp,
+      };
+    `;
+
+    expect(code).toContain('var Mono');
+    expect(code).toContain('Mono.dark = "m1e5nhk3"');
+    expect(code).toContain('() => Mono.dark');
+    expect(code).not.toContain('exports.Mono');
+  });
+
   it('should drop imports when default and named exports share the same binding', () => {
     const code = run(['__wywPreval'])`
       import { jsxDEV as _jsxDEV } from 'react/jsx-dev-runtime';
@@ -323,6 +358,20 @@ describe('shaker', () => {
     expect(code).toContain('function spring');
     expect(code).toContain('function fallback');
     expect(code).not.toContain('exports.fallback');
+  });
+
+  it('should keep class declarations local when surviving exports instantiate them', () => {
+    const code = run(['fragment', 'BADGE_COLOR'])`
+      export class TagProcessor {}
+
+      export const fragment = new TagProcessor();
+      export const BADGE_COLOR = '#c00';
+    `;
+
+    expect(code).toContain('class TagProcessor');
+    expect(code).toContain('exports.fragment');
+    expect(code).toContain('exports.BADGE_COLOR');
+    expect(code).not.toContain('exports.TagProcessor');
   });
 
   it('should keep declaration when a dead export is referenced by a surviving export', () => {

@@ -3,16 +3,20 @@ on:
   issues:
     types: [opened, edited, reopened]
 
+permissions:
+  contents: read
+  issues: write
+
 jobs:
   labeler:
     runs-on: ubuntu-latest
     name: Label issues
     steps:
       - name: check-out-repository
-        uses: actions/checkout@v2
+        uses: actions/checkout@ee0669bd1cc54295c223e0bb666b733df41de1c5 # v2
 
       - name: labeler
-        uses: jayu/super-labeler-action@develop
+        uses: jayu/super-labeler-action@e0d24c761fc20458dafd9f3951698e94b1822657 # develop
         env:
           ACTIONS_STEP_DEBUG: ${{ secrets.ACTIONS_STEP_DEBUG }}
         with:
