@@ -9,6 +9,7 @@ import { EntrypointsTab } from './tabs/EntrypointsTab';
 import { EvalFilesTab } from './tabs/EvalFilesTab';
 import { HelpTab } from './tabs/HelpTab';
 import { OverviewTab } from './tabs/OverviewTab';
+import { PerfSpansTab } from './tabs/PerfSpansTab';
 import { Button, TabButton } from './ui/Button';
 
 export function AnalysisSection({ state }: { state: LogAnalyzerState }) {
@@ -43,6 +44,9 @@ export function AnalysisSection({ state }: { state: LogAnalyzerState }) {
                 ['actions', 'Actions'],
                 ...(data.evalFiles
                   ? ([['evalFiles', 'Eval files']] as const)
+                  : []),
+                ...(data.perfSpans
+                  ? ([['perfSpans', 'Perf spans']] as const)
                   : []),
                 ['entrypoints', 'Entrypoints'],
                 ['dependencies', 'Dependencies'],
@@ -115,6 +119,9 @@ export function AnalysisSection({ state }: { state: LogAnalyzerState }) {
             pathDisplay={pathDisplay}
             view={evalFiles}
           />
+        )}
+        {activeTab === 'perfSpans' && data.perfSpans && (
+          <PerfSpansTab data={data} />
         )}
         {activeTab === 'entrypoints' && (
           <EntrypointsTab

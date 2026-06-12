@@ -6,11 +6,12 @@ import type {
   EvalFilesStats,
   EntrypointFileStats,
   EntrypointInstance,
+  PerfSpansStats,
 } from './types';
 
 export type RequiredFileKey = 'actions' | 'dependencies' | 'entrypoints';
 
-export type OptionalFileKey = 'evalFiles';
+export type OptionalFileKey = 'evalFiles' | 'perfSpans';
 
 export type FileKey = RequiredFileKey | OptionalFileKey;
 
@@ -28,6 +29,7 @@ export type ParsedData = {
   entrypointsFiles: EntrypointFileStats[];
   entrypointsInstances: EntrypointInstance[];
   pathPrefix: string;
+  perfSpans?: PerfSpansStats;
   skippedLines: Record<FileKey, number>;
 };
 
@@ -42,4 +44,5 @@ export type TabId =
   | 'evalFiles'
   | 'entrypoints'
   | 'dependencies'
+  | 'perfSpans'
   | 'help';

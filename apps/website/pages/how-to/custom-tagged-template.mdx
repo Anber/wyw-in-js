@@ -114,9 +114,64 @@ This method is called during the runtime phase. It should replace the tagged tem
 
 This method is called to extract the CSS rules from the tagged template. It should return an object that represents the CSS rules.
 
+### `addDiagnostic(diagnostic)`
+
+Processors can emit structured non-fatal diagnostics with `BaseProcessor.addDiagnostic()`. Use this when the processor can
+continue extracting CSS but wants to report a library-owned warning or error with source location.
+
+```typescript
+this.addDiagnostic({
+  category: 'design-system',
+  message: 'Token "legacy.space.1" is deprecated; use "space.100".',
+  severity: 'warning',
+});
+```
+
+WyW attaches the processor location when `start` / `end` are not provided. Diagnostics are returned from
+`@wyw-in-js/transform`, reported by `@wyw-in-js/vite`, and printed by `@wyw-in-js/cli`. Metadata sidecars stay free of
+diagnostic artifacts.
+
 ### `toString()`
 
 This method should return a string that represents the source code of the tagged template.
+
+## Static Evaluation Contract
+
+In v2, processors can optionally describe their static semantics without relying on transform-specific metadata shapes.
+Implement these methods only when the processor can prove a value statically:
+
+- `getStaticValue(context)`: returns the static value represented by the processor instance.
+- `resolveStaticInterpolation(interpolation, value, context)`: maps a statically resolved interpolation into the
+  processor's static value model.
+- `resolveStaticTagTarget(target, context)`: maps a statically resolved tag target such as `styled(Button)`.
+
+Static values use explicit `kind` tags: `serializable`, `class-name`, `selector-chain`, `runtime-callback`,
+`opaque-component`, or `unresolved`. Use `context.unresolved(reason, details)` when a value is intentionally not
+statically representable. Use `context.addDependency(...)` when the static result depends on another import, and
+`context.debug(...)` for debug-only static resolution breadcrumbs.
+
+```typescript
+import type {
+  ProcessorStaticContext,
+  ProcessorStaticValue,
+} from '@wyw-in-js/processor-utils';
+
+public override getStaticValue(
+  context: ProcessorStaticContext
+): ProcessorStaticValue {
+  if (!this.className) {
+    return context.unresolved('missing-class-name');
+  }
+
+  context.debug({ reason: 'processor-static-class-name' });
+
+  return {
+    className: this.className,
+    kind: 'class-name',
+    value: this.className,
+  };
+}
+```
 
 ## Example
 

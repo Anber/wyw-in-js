@@ -19,8 +19,9 @@ export function LogAnalyzer() {
           <p className="nx-text-sm nx-text-neutral-600 dark:nx-text-neutral-400">
             Analyze WyW debug logs (<code>actions.jsonl</code>,{' '}
             <code>dependencies.jsonl</code>, <code>entrypoints.jsonl</code>,
-            optional <code>eval-files.jsonl</code>). Runs fully in your browser
-            — files are not uploaded anywhere.
+            optional <code>eval-files.jsonl</code> and{' '}
+            <code>perf-spans.jsonl</code>). Runs fully in your browser — files
+            are not uploaded anywhere.
           </p>
         </header>
 

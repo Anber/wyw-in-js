@@ -5,6 +5,7 @@ import {
   createDependenciesAccumulator,
   createEvalFilesAccumulator,
   createEntrypointsAccumulator,
+  createPerfSpansAccumulator,
   getCommonPathPrefix,
 } from './analyze';
 import {
@@ -12,6 +13,7 @@ import {
   isDependenciesLine,
   isEntrypointLine,
   isEvalFilesLine,
+  isPerfSpansLine,
 } from './guards';
 import { parseJsonlFile } from './jsonl';
 import type { JsonlProgress } from './jsonl';
@@ -20,6 +22,7 @@ import type {
   DependenciesLine,
   EntrypointLine,
   EvalFilesLine,
+  PerfSpanLine,
 } from './types';
 import type {
   FileKey,
@@ -80,6 +83,7 @@ export function useParseWywLogs() {
       dependencies: 0,
       evalFiles: 0,
       entrypoints: 0,
+      perfSpans: 0,
     };
 
     const updateProgress = (file: FileKey) => (p: JsonlProgress) => {
@@ -168,6 +172,28 @@ export function useParseWywLogs() {
         evalFilesErrors = evalFilesParse.errors;
       }
 
+      let perfSpans: ParsedData['perfSpans'] | undefined;
+      let perfSpansErrors: ParseErrors['perfSpans'] = [];
+      if (selected.perfSpans) {
+        const perfSpansAcc = createPerfSpansAccumulator();
+        const perfSpansParse = await parseJsonlFile<unknown>(
+          selected.perfSpans,
+          (value, lineNumber) => {
+            if (!isPerfSpansLine(value)) {
+              skippedLines.perfSpans += 1;
+              return;
+            }
+            perfSpansAcc.addLine(value as PerfSpanLine, lineNumber);
+          },
+          {
+            signal: abort.signal,
+            onProgress: updateProgress('perfSpans'),
+          }
+        );
+        perfSpans = perfSpansAcc.finish();
+        perfSpansErrors = perfSpansParse.errors;
+      }
+
       const allPaths = [
         ...entry.instances.map((i) => i.filename ?? ''),
         ...dependencies.files,
@@ -188,6 +214,7 @@ export function useParseWywLogs() {
         actions: actionsParse.errors,
         dependencies: depsParse.errors,
         evalFiles: evalFilesErrors,
+        perfSpans: perfSpansErrors,
       });
 
       setData({
@@ -198,6 +225,7 @@ export function useParseWywLogs() {
         entrypointsFiles: entry.files,
         entrypointsInstances: entry.instances,
         pathPrefix: nextPathPrefix,
+        perfSpans,
         skippedLines,
       });
     } catch (error) {

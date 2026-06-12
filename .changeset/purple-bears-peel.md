@@ -19,4 +19,4 @@
 'nextjs-wyw-demo': major
 ---
 
-Bump versions
+Align private workspace packages and examples for v2.

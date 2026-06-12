@@ -11,7 +11,7 @@
 
 ### Major Changes
 
-- Bump versions
+- Align private workspace packages and examples for v2.
 
 ### Patch Changes
 

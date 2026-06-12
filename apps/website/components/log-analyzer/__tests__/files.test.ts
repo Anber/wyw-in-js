@@ -18,6 +18,7 @@ describe('detectRequiredFiles', () => {
     expect(result.selected.dependencies).toBe(dependencies);
     expect(result.selected.entrypoints).toBe(entrypoints);
     expect(result.selected.evalFiles).toBeUndefined();
+    expect(result.selected.perfSpans).toBeUndefined();
   });
 
   test('detects optional eval-files.jsonl when present', () => {
@@ -32,5 +33,19 @@ describe('detectRequiredFiles', () => {
 
     expect(result.problems).toEqual([]);
     expect(result.selected.evalFiles).toBe(evalFiles);
+  });
+
+  test('detects optional perf-spans.jsonl when present', () => {
+    const perfSpans = file('perf-spans.jsonl');
+
+    const result = detectRequiredFiles([
+      file('actions.jsonl'),
+      file('dependencies.jsonl'),
+      file('entrypoints.jsonl'),
+      perfSpans,
+    ]);
+
+    expect(result.problems).toEqual([]);
+    expect(result.selected.perfSpans).toBe(perfSpans);
   });
 });

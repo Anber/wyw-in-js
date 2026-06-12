@@ -55,7 +55,8 @@ export function UploadSection({ state }: { state: LogAnalyzerState }) {
           <p className="nx-mt-1 nx-text-sm nx-text-neutral-600 dark:nx-text-neutral-400">
             Drop <code>actions.jsonl</code>, <code>dependencies.jsonl</code> and{' '}
             <code>entrypoints.jsonl</code> here. Include{' '}
-            <code>eval-files.jsonl</code> to inspect eval payloads.
+            <code>eval-files.jsonl</code> to inspect eval payloads and{' '}
+            <code>perf-spans.jsonl</code> to inspect transform spans.
           </p>
 
           <div className="nx-mt-4 nx-grid nx-gap-2 nx-text-xs nx-text-neutral-600 dark:nx-text-neutral-400">
@@ -111,7 +112,8 @@ export function UploadSection({ state }: { state: LogAnalyzerState }) {
             Expected file names: <code>{FILE_NAME_BY_KEY.actions}</code>,{' '}
             <code>{FILE_NAME_BY_KEY.dependencies}</code>,{' '}
             <code>{FILE_NAME_BY_KEY.entrypoints}</code>; optional:{' '}
-            <code>{FILE_NAME_BY_KEY.evalFiles}</code>
+            <code>{FILE_NAME_BY_KEY.evalFiles}</code>,{' '}
+            <code>{FILE_NAME_BY_KEY.perfSpans}</code>
           </div>
         </div>
       </div>

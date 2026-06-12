@@ -36,7 +36,8 @@ export default {
         <p className="nx-mt-3 nx-text-sm nx-text-neutral-700 dark:nx-text-neutral-300">
           The directory will contain <code>actions.jsonl</code>,{' '}
           <code>dependencies.jsonl</code>, <code>entrypoints.jsonl</code> and
-          optional detail files such as <code>eval-files.jsonl</code>.
+          optional detail files such as <code>eval-files.jsonl</code> and{' '}
+          <code>perf-spans.jsonl</code>.
         </p>
       </div>
 

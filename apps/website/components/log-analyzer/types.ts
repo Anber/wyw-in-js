@@ -177,6 +177,46 @@ export type EvalFilesStats = {
   summary: EvalFilesSummary;
 };
 
+export type PerfSpanLine = {
+  durationMs: number;
+  error?: unknown;
+  finishedAt: number;
+  isAsync: boolean;
+  method: string;
+  spanId: number;
+  startedAt: number;
+  status: 'failed' | 'finished';
+  type: 'perf-span';
+};
+
+export type PerfSpanRecord = PerfSpanLine & {
+  lineNumber: number;
+};
+
+export type PerfMethodStats = {
+  asyncSpans: number;
+  avgDurationMs: number;
+  count: number;
+  failedSpans: number;
+  maxDurationMs: number;
+  method: string;
+  totalDurationMs: number;
+};
+
+export type PerfSpansSummary = {
+  asyncSpans: number;
+  failedSpans: number;
+  slowestSpans: PerfSpanRecord[];
+  topMethods: PerfMethodStats[];
+  totalDurationMs: number;
+  totalSpans: number;
+};
+
+export type PerfSpansStats = {
+  records: PerfSpanRecord[];
+  summary: PerfSpansSummary;
+};
+
 export type ActionsSummary = {
   spanMs: number;
   startedAt: number | null;

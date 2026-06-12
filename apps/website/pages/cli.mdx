@@ -58,7 +58,8 @@ The CLI options below are based on `wyw-in-js --help`.
 - `--source-maps`, `-s`: generate `.map` files for extracted CSS.
 - `--parallel`, `-p`: run extraction in parallel.
 - `--ignore`, `-x`: glob pattern to exclude files (passed to `glob`).
-- `--debug`, `-d`: write debug output (transform events) into a directory.
+- `--debug`, `-d`: write debug output into a directory. The log analyzer reads `actions.jsonl`,
+  `dependencies.jsonl`, `entrypoints.jsonl`, and optional `eval-files.jsonl` / `perf-spans.jsonl`.
 
 ## Performance warnings (optional)
 

@@ -9,6 +9,8 @@
 - `eval.resolver: "node"` was replaced by `eval.resolver: "native"`, backed by `oxc-resolver`.
 - `eval.resolver: "hybrid"` now tries `eval.customResolver`, then native resolution, then the bundler resolver.
 - `eval.globals` updates are supported between runs (value changes and removals both trigger re-init).
+- The old top-level `evaluate` toggle is replaced by `eval.strategy`.
+- CSS rule emission order can differ from v1 for equivalent extracted rule sets.
 - Turbopack loader options must be **JSON-serializable**.
 - `@wyw-in-js/babel-preset` is still supported, but runs evaluation in a separate Node process.
   Keep inline preset options JSON-serializable, and use `configFile` for function-valued WyW config.
@@ -40,6 +42,23 @@ Control it via `eval.require`:
 export default {
   eval: {
     require: 'error', // or 'off'
+  },
+};
+```
+
+### `evaluate` → `eval.strategy`
+
+The old top-level `evaluate` toggle is folded into `eval.strategy`:
+
+- `eval.strategy: "hybrid"` is the v2 default. WyW resolves statically provable values first and falls back to the evaluator.
+- `eval.strategy: "execute"` is the evaluator-only mode for projects that want the closest equivalent to always executing build-time values.
+- `eval.strategy: "static"` rejects values that need evaluator fallback.
+
+```js
+// wyw-in-js.config.mjs
+export default {
+  eval: {
+    strategy: 'execute',
   },
 };
 ```
@@ -112,6 +131,14 @@ export default withWyw(
 );
 ```
 
+### CSS rule emission order
+
+The Oxc-backed pipeline can emit equivalent extracted rule sets in a different order from v1. This matters when two
+generated WyW rules have the same cascade weight and the project relies on source-order ties.
+
+Review generated CSS when upgrading. If order matters, make precedence explicit with selectors, composition, or source
+structure rather than relying on a tie between generated rules.
+
 ## Fixing `eval.require` warnings with `importOverrides`
 
 Use `importOverrides` to mock or skip heavy runtime-only dependencies:
@@ -130,7 +157,8 @@ export default {
 
 - Enable debug logs: `DEBUG=wyw-in-js:*`
 - Trace resolver/loader decisions: `WYW_DEBUG_EVAL_RESOLVE=1`
-- Inspect logs with the [log analyzer](/debug/log-analyzer)
+- Inspect debug directories with the [log analyzer](/debug/log-analyzer). It requires `actions.jsonl`,
+  `dependencies.jsonl`, and `entrypoints.jsonl`, and can also read optional `eval-files.jsonl` and `perf-spans.jsonl`.
 
 ## Adapter notes
 
