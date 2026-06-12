@@ -1,33 +1,39 @@
 {
   "name": "@wyw-in-js/babel-preset",
-  "version": "1.1.0",
+  "version": "2.0.0-alpha.2",
+  "type": "module",
   "dependencies": {
     "@babel/core": "^7.23.5",
+    "@wyw-in-js/shared": "workspace:*",
     "@wyw-in-js/transform": "workspace:*"
   },
   "devDependencies": {
     "@types/babel__core": "^7.20.5",
-    "@wyw-in-js/babel-config": "workspace:*",
+    "@types/node": "^22.0.0",
     "@wyw-in-js/eslint-config": "workspace:*",
     "@wyw-in-js/ts-config": "workspace:*"
   },
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=22.0.0"
+  },
+  "exports": {
+    ".": {
+      "types": "./types/index.d.ts",
+      "default": "./esm/index.js"
+    }
   },
   "files": [
     "esm/",
-    "lib/",
     "types/"
   ],
   "license": "MIT",
-  "main": "lib/index.js",
+  "main": "esm/index.js",
   "module": "esm/index.js",
   "publishConfig": {
     "access": "public"
   },
   "scripts": {
-    "build:esm": "babel src --out-dir esm --extensions '.js,.jsx,.ts,.tsx' --source-maps --delete-dir-on-start",
-    "build:lib": "cross-env NODE_ENV=legacy babel src --out-dir lib --extensions '.js,.jsx,.ts,.tsx' --source-maps --delete-dir-on-start",
+    "build:esm": "node ../../scripts/build-esm-oxc.mjs",
     "build:types": "tsc --project ./tsconfig.lib.json --baseUrl . --rootDir ./src",
     "lint": "eslint --ext .js,.ts ."
   },

@@ -102,7 +102,8 @@ export class EventEmitter {
   static dummy = new EventEmitter(
     () => {},
     () => 0,
-    () => {}
+    () => {},
+    false
   );
 
   private perfSpanId = 0;
@@ -110,7 +111,8 @@ export class EventEmitter {
   constructor(
     protected onEvent: OnEvent,
     protected onAction: OnAction,
-    protected onEntrypointEvent: OnEntrypointEvent
+    protected onEntrypointEvent: OnEntrypointEvent,
+    public readonly enabled = true
   ) {}
 
   public action<TRes>(
@@ -119,6 +121,13 @@ export class EventEmitter {
     entrypointRef: string,
     fn: () => TRes
   ) {
+    // Fast path: when the emitter is disabled (the dummy used by the
+    // production transform path) skip start/finish bookkeeping and the
+    // Promise hookup. action() is on the hot path for every step of every
+    // action — its per-call overhead is small but ubiquitous.
+    if (!this.enabled) {
+      return fn();
+    }
     const id = this.onAction(
       'start',
       performance.now(),
@@ -150,6 +159,12 @@ export class EventEmitter {
   }
 
   public perf<TRes>(method: string, fn: () => TRes): TRes {
+    // Fast path: see action() above. perf() wraps ~28s of cumulative time
+    // in the production-path CPU profile; the wrapper overhead per call is
+    // small but everywhere.
+    if (!this.enabled) {
+      return fn();
+    }
     const spanId = this.perfSpanId;
     this.perfSpanId += 1;
     const startedAt = performance.now();

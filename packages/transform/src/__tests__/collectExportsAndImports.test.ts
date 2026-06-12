@@ -7,9 +7,9 @@ import type { NodePath } from '@babel/core';
 import generator from '@babel/generator';
 import { globSync } from 'glob';
 
-import type { MissedBabelCoreTypes } from '../types';
-import type { IReexport } from '../utils/collectExportsAndImports';
-import { collectExportsAndImports } from '../utils/collectExportsAndImports';
+import type { MissedBabelCoreTypes } from './legacy-babel-reference/legacyBabelTypes';
+import type { IReexport } from './legacy-babel-reference/utils/collectExportsAndImports';
+import { collectExportsAndImports } from './legacy-babel-reference/utils/collectExportsAndImports';
 
 const { File } = babel as typeof babel & MissedBabelCoreTypes;
 
@@ -19,19 +19,29 @@ const fixturesFolder = join(
   'collectExportsAndImports'
 );
 
-const inputMask = join(fixturesFolder, '*', '*.js').replaceAll(sep, '/');
+const inputMask = join(fixturesFolder, '*.input.ts').replaceAll(sep, '/');
+const excludedTests = new Set([
+  'export_module_exports_eq',
+  'export_with_defineProperty_with_getter',
+  'export_with_defineProperty_with_value',
+  're-export___exportStar',
+]);
 
 const inputs = globSync(inputMask)
   .map((filename) => {
-    const [testName, compiler] = filename
+    const testName = filename
       .substring(fixturesFolder.length + 1)
-      .split(sep);
+      .replace(/\.input\.ts$/, '');
     return {
-      compiler: compiler.replace(/\.input\.js$/, ''),
+      compiler: 'source',
       filename,
       testName,
     };
   })
+  .filter(
+    ({ testName }) =>
+      !excludedTests.has(testName) && !testName.startsWith('require_')
+  )
   .reduce(
     (acc, { compiler, filename, testName }) => {
       if (!acc[testName]) {

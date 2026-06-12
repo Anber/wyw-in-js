@@ -1,17 +1,15 @@
-// Jest Snapshot v1, https://goo.gl/fbAQLP
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
 
 exports[`shaker should carefully shake used exports 1`] = `
 ""use strict";
 
-var _activeClass;
 Object.defineProperty(exports, "__esModule", {
   value: true
 });
-exports.activeClass = void 0;
-_activeClass = "s1gxjcbn";
-exports.activeClass = _activeClass;
-const _exp = /*#__PURE__*/() => _activeClass;
-exports.__wywPreval = {
+exports.__wywPreval = void 0;
+const activeClass = "s1gxjcbn";
+const _exp = /*#__PURE__*/() => activeClass;
+const __wywPreval = exports.__wywPreval = {
   _exp: _exp
 };"
 `;

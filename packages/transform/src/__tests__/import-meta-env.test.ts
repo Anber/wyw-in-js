@@ -4,7 +4,7 @@ import path from 'path';
 
 import dedent from 'dedent';
 
-import { transformSync } from '../transform';
+import { transform } from '../transform';
 
 const resolveWithExtensions = (candidate: string) => {
   if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
@@ -22,7 +22,7 @@ const resolveWithExtensions = (candidate: string) => {
   return null;
 };
 
-it('supports Vite-style import.meta.env.* during build-time evaluation', () => {
+it('supports Vite-style import.meta.env.* during build-time evaluation', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wyw-import-meta-env-'));
   const entryFile = path.join(root, 'main.ts');
   const processorFile = path.resolve(
@@ -47,7 +47,7 @@ it('supports Vite-style import.meta.env.* during build-time evaluation', () => {
     `
   );
 
-  const result = transformSync(
+  const result = await transform(
     {
       options: {
         filename: entryFile,
@@ -81,7 +81,7 @@ it('supports Vite-style import.meta.env.* during build-time evaluation', () => {
       },
     },
     fs.readFileSync(entryFile, 'utf8'),
-    (what, importer) => {
+    async (what, importer) => {
       if (what === 'test-css-processor') {
         return processorFile;
       }

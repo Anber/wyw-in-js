@@ -32,4 +32,10 @@ describe('makeCssModuleGlobal', () => {
       )
     ).toBe(':global(.a){animation: spin 1s;}@keyframes spin{from{a:0}to{a:1}}');
   });
+
+  it('handles complex selectors', () => {
+    expect(
+      makeCssModuleGlobal('.a:hover > .b, .c[data-x="y"]{color:red}')
+    ).toBe(':global(.a:hover > .b), :global(.c[data-x="y"]){color:red}');
+  });
 });

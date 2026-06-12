@@ -1,9 +1,7 @@
-import type { BabelFileResult } from '@babel/core';
-
 import type { ValueCache } from '@wyw-in-js/processor-utils';
 import type { Debugger, Artifact, StrictOptions } from '@wyw-in-js/shared';
+import type { RawSourceMap } from 'source-map';
 
-import type { Core } from '../babel';
 import type { TransformCacheCollection } from '../cache';
 import type { Options, ITransformFileResult } from '../types';
 import type { EventEmitter } from '../utils/EventEmitter';
@@ -17,9 +15,9 @@ import type {
   IWorkflowActionLinariaResult,
   IWorkflowActionNonLinariaResult,
 } from './actions/types';
+import type { EvalBroker } from '../eval/broker';
 
 export type Services = {
-  babel: Core;
   cache: TransformCacheCollection;
   emitWarning?: (message: string) => void;
   eventEmitter: EventEmitter;
@@ -28,6 +26,13 @@ export type Services = {
   options: Options & {
     pluginOptions: StrictOptions;
   };
+  asyncResolve?: (
+    what: string,
+    importer: string,
+    stack: string[]
+  ) => Promise<string | null>;
+  asyncResolveKey?: string;
+  evalBroker?: EvalBroker;
 };
 
 export interface IBaseNode {
@@ -136,9 +141,9 @@ export type GetNext = <
 >;
 
 export interface ICollectActionResult {
-  ast: BabelFileResult['ast']; // FIXME: looks like this is not used
-  code: BabelFileResult['code'];
-  map?: BabelFileResult['map'];
+  ast: unknown; // FIXME: looks like this is not used
+  code: string | null | undefined;
+  map?: RawSourceMap | null;
   metadata?: WYWTransformMetadata | null;
 }
 
@@ -186,6 +191,7 @@ export interface IProcessImportsAction
     void,
     {
       resolved: IEntrypointDependency[];
+      skipParentDependencyTracking?: string[];
     }
   > {
   type: 'processImports';

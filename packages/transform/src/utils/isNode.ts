@@ -1,6 +1,6 @@
-import type { Node } from '@babel/types';
+import type { AstNode } from '@wyw-in-js/shared';
 
-export const isNode = (obj: unknown): obj is Node =>
+export const isNode = (obj: unknown): obj is AstNode =>
   typeof obj === 'object' &&
   obj !== null &&
-  (obj as { type: unknown })?.type !== undefined;
+  typeof (obj as { type?: unknown }).type === 'string';

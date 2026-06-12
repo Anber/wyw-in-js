@@ -1,6 +1,6 @@
 import * as babel from '@babel/core';
 
-import { analyzeBarrelFile } from '../barrelManifest';
+import { analyzeBarrelFile } from '../../__tests__/legacy-babel-reference/transform/barrelManifest';
 
 const analyze = (code: string) =>
   analyzeBarrelFile(

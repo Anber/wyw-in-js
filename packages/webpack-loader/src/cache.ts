@@ -1,3 +1,7 @@
+import { createRequire } from 'module';
+
+const nodeRequire = createRequire(import.meta.url);
+
 export interface ICache {
   get: (key: string) => Promise<string>;
   getDependencies?: (key: string) => Promise<string[]>;
@@ -72,7 +76,7 @@ export const getCacheInstance = async (
     return memoryCache;
   }
   if (typeof cacheProvider === 'string') {
-    return require(cacheProvider);
+    return nodeRequire(cacheProvider);
   }
   if (
     typeof cacheProvider === 'object' &&

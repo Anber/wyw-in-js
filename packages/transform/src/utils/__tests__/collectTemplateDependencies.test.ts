@@ -4,8 +4,12 @@ import generate from '@babel/generator';
 import dedent from 'dedent';
 import stripAnsi from 'strip-ansi';
 
-import type { MissedBabelCoreTypes } from '../../types';
-import { extractExpression } from '../collectTemplateDependencies';
+import type { MissedBabelCoreTypes } from '../../__tests__/legacy-babel-reference/legacyBabelTypes';
+import {
+  collectExportsAndImports,
+  explicitImport,
+} from '../../__tests__/legacy-babel-reference/utils/collectExportsAndImports';
+import { extractExpression } from '../../__tests__/legacy-babel-reference/utils/collectTemplateDependencies';
 
 const { File } = babel as typeof babel & MissedBabelCoreTypes;
 
@@ -28,6 +32,31 @@ async function go(code: string): Promise<string> {
   });
 
   return generate(parsed).code;
+}
+
+async function extractFirstValue(code: string) {
+  const parsed = (await parseAsync(code, {
+    filename: __filename,
+  }))!;
+
+  const file = new File({ filename: __filename }, { code, ast: parsed });
+  const imports = collectExportsAndImports(file.path).imports.filter(
+    explicitImport
+  );
+
+  let extracted: ReturnType<typeof extractExpression> | undefined;
+  file.path.traverse({
+    TemplateLiteral(path) {
+      const [expression] = path.get('expressions');
+      if (expression?.isExpression()) {
+        extracted = extractExpression(expression, true, imports);
+      }
+
+      path.stop();
+    },
+  });
+
+  return extracted;
 }
 
 describe('collectTemplateDependencies', () => {
@@ -121,5 +150,20 @@ describe('collectTemplateDependencies', () => {
     `;
 
     expect(await go(code)).toMatchSnapshot();
+  });
+
+  it('keeps importedFrom after hoisting local identifiers', async () => {
+    const code = dedent`
+      import slugify from '../__fixtures__/slugify';
+
+      function fn() {
+        const input = 'test';
+        const template = tag\`${'${slugify(input)}'}\`;
+      }
+    `;
+
+    await expect(extractFirstValue(code)).resolves.toMatchObject({
+      importedFrom: ['../__fixtures__/slugify'],
+    });
   });
 });

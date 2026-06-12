@@ -12,5 +12,8 @@ WyW provides plugins/loaders for several bundlers and frameworks. Pick the one y
 - [Vite](/bundlers/vite)
 - [Webpack](/bundlers/webpack)
 
-If you need bundler-agnostic extraction, see [Bundler-agnostic extraction](/how-to/bundler-agnostic).
+> Note: WyW packages are ESM-only. If your bundler config is still CommonJS,
+> switch to an ESM config file (for example `vite.config.mjs`, `next.config.mjs`,
+> `webpack.config.mjs`) or use dynamic `import()`.
 
+If you need bundler-agnostic extraction, see [Bundler-agnostic extraction](/how-to/bundler-agnostic).

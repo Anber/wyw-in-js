@@ -15,26 +15,45 @@ pnpm add -D @wyw-in-js/nextjs
 bun add -d @wyw-in-js/nextjs
 ```
 
+> Note: WyW packages are ESM-only and require Node.js `>=22`.
+
 ### Configuration
 
 ```js
-// next.config.js
-const { withWyw } = require('@wyw-in-js/nextjs');
+// next.config.mjs
+import { withWyw } from '@wyw-in-js/nextjs';
 
-module.exports = withWyw({
+export default withWyw({
   // your Next config
 });
 ```
+
+`eval.require` defaults to `warn-and-run` in v2. If eval-time `require()` happens, WyW will warn and execute it at
+runtime; use `importOverrides` or `eval.require: 'error'` to make it explicit.
+
+### Eval resolver modes
+
+`eval.resolver: 'native'` and the native step of `eval.resolver: 'hybrid'` use `oxc-resolver` with automatic
+`tsconfig.json` discovery, so TypeScript `baseUrl`/`paths` aliases work by default.
+
+For the webpack pipeline, `@wyw-in-js/webpack-loader` forwards static string entries from webpack `resolve.alias`.
+For the Turbopack pipeline configured through `withWyw()`, static string aliases from `turbopack.resolveAlias` or
+`experimental.turbo.resolveAlias` are forwarded into native resolver options.
+
+- `hybrid`: tries `eval.customResolver`, then native resolution, then the active Next bundler resolver. Use this when
+  evaluated imports may depend on Next, webpack, or Turbopack resolver behavior.
+- `native`: uses only `oxc-resolver`; Next's bundler resolver is not called. Mirror bundler-only aliases in
+  `oxcOptions.resolver.alias` or keep using `hybrid`.
 
 ### Customizing the loader
 
 Pass `loaderOptions` through to `@wyw-in-js/webpack-loader`:
 
 ```js
-// next.config.js
-const { withWyw } = require('@wyw-in-js/nextjs');
+// next.config.mjs
+import { withWyw } from '@wyw-in-js/nextjs';
 
-module.exports = withWyw(
+export default withWyw(
   {
     reactStrictMode: true,
   },
@@ -51,10 +70,10 @@ module.exports = withWyw(
 Stylis adds vendor-prefixed CSS by default. To disable it (and reduce CSS size), pass `prefixer: false`:
 
 ```js
-// next.config.js
-const { withWyw } = require('@wyw-in-js/nextjs');
+// next.config.mjs
+import { withWyw } from '@wyw-in-js/nextjs';
 
-module.exports = withWyw(
+export default withWyw(
   {},
   {
     loaderOptions: {
@@ -71,6 +90,8 @@ module.exports = withWyw(
 
 - The plugin emits styles as `*.wyw-in-js.module.css` so imports are allowed from any module.
 - Add `**/*.wyw-in-js.module.css` to your `.gitignore` since these files are generated.
+- By default, WyW injects `importOverrides` for `react`/`react/jsx-runtime` to avoid resolving Next’s vendored React runtime
+  during eval. Override if you need a different runtime.
 
 ### Turbopack
 
@@ -91,17 +112,17 @@ To keep WyW class names stable, selectors are wrapped in `:global(...)` (so Next
 Use `turbopackLoaderOptions` to customize `@wyw-in-js/turbopack-loader`:
 
 ```js
-// next.config.js
-const { withWyw } = require('@wyw-in-js/nextjs');
+// next.config.mjs
+import { withWyw } from '@wyw-in-js/nextjs';
 
-module.exports = withWyw(
+export default withWyw(
   {
     reactStrictMode: true,
   },
   {
     turbopackLoaderOptions: {
-      // Turbopack requires JSON-serializable options.
-      // Pass all function-based config via a configFile path.
+      // Turbopack requires JSON-serializable options (plain objects/arrays/primitives).
+      // Pass any function/RegExp-based config via a configFile path.
       configFile: './wyw-in-js.config.js',
     },
   }

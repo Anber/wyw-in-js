@@ -95,7 +95,6 @@ describe('issue #96: actions must not run with multiple handlers', () => {
             root,
             pluginOptions: {
               configFile: false,
-              evaluate: true,
               tagResolver: (source, tag) => {
                 if (source === 'test-css-processor' && tag === 'css') {
                   return processorFile;
@@ -211,7 +210,6 @@ describe('issue #96: actions must not run with multiple handlers', () => {
             root,
             pluginOptions: {
               configFile: false,
-              evaluate: true,
               tagResolver: (source, tag) => {
                 if (source === 'test-css-processor' && tag === 'css') {
                   return processorFile;
@@ -327,7 +325,6 @@ describe('issue #96: actions must not run with multiple handlers', () => {
             root,
             pluginOptions: {
               configFile: false,
-              evaluate: true,
               tagResolver: (source, tag) => {
                 if (source === 'test-css-processor' && tag === 'css') {
                   return processorFile;

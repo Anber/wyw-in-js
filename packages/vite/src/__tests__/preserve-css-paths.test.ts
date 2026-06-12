@@ -15,7 +15,9 @@ jest.mock('@wyw-in-js/shared', () => ({
   __esModule: true,
   asyncResolverFactory: jest.fn(() => jest.fn()),
   logger: createLogger(),
+  mergeOxcResolverAlias: (oxcOptions: any) => oxcOptions,
   syncResolve: jest.fn(),
+  toNativeResolverAlias: jest.fn(() => ({})),
 }));
 
 jest.mock('vite', () => require('./viteMock').createViteMock());
@@ -29,6 +31,7 @@ jest.mock('@wyw-in-js/transform', () => ({
   getFileIdx: () => '1',
   TransformCacheCollection: class TransformCacheCollection {},
   transform: (...args: unknown[]) => transformMock(...args),
+  disposeEvalBroker: jest.fn(),
 }));
 
 describe('vite preserveCssPaths', () => {

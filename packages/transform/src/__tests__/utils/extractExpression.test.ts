@@ -5,8 +5,8 @@ import * as babel from '@babel/core';
 import generator from '@babel/generator';
 import dedent from 'dedent';
 
-import type { MissedBabelCoreTypes } from '../../types';
-import { extractExpression } from '../../utils/collectTemplateDependencies';
+import type { MissedBabelCoreTypes } from '../legacy-babel-reference/legacyBabelTypes';
+import { extractExpression } from '../legacy-babel-reference/utils/collectTemplateDependencies';
 
 const { File } = babel as typeof babel & MissedBabelCoreTypes;
 

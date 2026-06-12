@@ -4,12 +4,11 @@
  * It uses CSS code from template literals and evaluated values of lazy dependencies stored in ValueCache.
  */
 
-import type { TemplateElement } from '@babel/types';
-
 import type { ExpressionValue, Replacements } from '@wyw-in-js/shared';
 import { hasEvalMeta, ValueType } from '@wyw-in-js/shared';
 
 import type { TaggedTemplateProcessor } from '../TaggedTemplateProcessor';
+import type { Expression, TemplateElement } from '../ast';
 import type { ValueCache, Rules } from '../types';
 
 import { getVariableName } from './getVariableName';
@@ -78,7 +77,7 @@ export default function templateProcessor(
           const [unit] = matches;
 
           const varId = tagProcessor.addInterpolation(
-            item.ex,
+            item.ex as Expression,
             cssText,
             item.source,
             unit
@@ -88,7 +87,7 @@ export default function templateProcessor(
           cssText += next.value.cooked?.substring(unit?.length ?? 0) ?? '';
         } else {
           const varId = tagProcessor.addInterpolation(
-            item.ex,
+            item.ex as Expression,
             cssText,
             item.source
           );

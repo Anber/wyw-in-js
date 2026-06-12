@@ -17,6 +17,10 @@ pnpm add -D rollup-plugin-css-only @wyw-in-js/rollup
 bun add -d rollup-plugin-css-only @wyw-in-js/rollup
 ```
 
+> Note: WyW packages are ESM-only and require Node.js `>=22`. Use an ESM Rollup
+> config (for example `rollup.config.mjs`) or dynamic `import()` if your project
+> still uses CommonJS.
+
 ### Configuration
 
 ```js
@@ -34,6 +38,22 @@ export default {
   ],
 };
 ```
+
+`eval.require` defaults to `warn-and-run` in v2. If eval-time `require()` happens, WyW will warn and execute it at
+runtime; use `importOverrides` or `eval.require: 'error'` to make it explicit.
+
+### Eval resolver modes
+
+`eval.resolver: 'native'` and the native step of `eval.resolver: 'hybrid'` use `oxc-resolver` with automatic
+`tsconfig.json` discovery, so TypeScript `baseUrl`/`paths` aliases work by default.
+
+Rollup core does not expose a single static alias map. Aliases implemented by plugins such as `@rollup/plugin-alias` are
+part of the plugin resolver pipeline and are resolved only by the bundler fallback.
+
+- `hybrid`: tries `eval.customResolver`, then native resolution, then Rollup's resolver. Use this when evaluated imports
+  depend on Rollup resolver plugins.
+- `native`: uses only `oxc-resolver`; Rollup resolver plugins are not called. Mirror plugin aliases in
+  `oxcOptions.resolver.alias` or keep using `hybrid`.
 
 ### Concurrency (tsdown/rolldown)
 

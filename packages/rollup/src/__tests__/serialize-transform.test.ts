@@ -28,6 +28,7 @@ jest.mock('@wyw-in-js/transform', () => ({
   getFileIdx: () => 'file',
   TransformCacheCollection: function TransformCacheCollection() {},
   transform: (...args: unknown[]) => transformMock(...args),
+  disposeEvalBroker: jest.fn(),
 }));
 
 const sleep = (ms: number) =>

@@ -1,11 +1,24 @@
 /* eslint-disable no-continue */
+
 import type {
   IProcessImportsAction,
   Services,
   SyncScenarioForAction,
 } from '../types';
 
+import {
+  hasCachedWywPrevalExport,
+  type CachedEntrypointLike,
+} from '../../utils/hasCachedWywPrevalExport';
 import { toImportKey } from '../../utils/importOverrides';
+import { stripQueryAndHash } from '../../utils/parseRequest';
+import { isSuperSet, mergeOnly } from '../Entrypoint.helpers';
+
+type ProcessImportsCachedEntrypoint = CachedEntrypointLike & {
+  only: string[];
+  parents?: Array<{ name: string }>;
+  transformed?: boolean;
+};
 
 const warnedSlowImportsByServices = new WeakMap<Services, Set<string>>();
 
@@ -32,9 +45,29 @@ function isWarningEnabled(value: string | undefined): boolean {
   return Boolean(value) && value !== '0' && value !== 'false';
 }
 
-/**
- * Creates new entrypoints and emits processEntrypoint for each resolved import
- */
+function hasLoop(
+  name: string,
+  parent: {
+    name: string;
+    parents: { name: string; parents: { name: string }[] }[];
+  },
+  processed: string[] = []
+): boolean {
+  if (parent.name === name || processed.includes(parent.name)) {
+    return true;
+  }
+
+  for (const nextParent of parent.parents) {
+    if (
+      hasLoop(name, nextParent as typeof parent, [...processed, parent.name])
+    ) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 export function* processImports(
   this: IProcessImportsAction
 ): SyncScenarioForAction<IProcessImportsAction> {
@@ -55,6 +88,11 @@ export function* processImports(
     : null;
 
   const { root } = this.services.options;
+  const prepareStageRequiresEvaluatedDeps =
+    this.entrypoint.only.includes('__wywPreval');
+  const skippedParentDependencySources = new Set(
+    this.data.skipParentDependencyTracking ?? []
+  );
 
   for (const dependency of this.data.resolved) {
     const { resolved, only } = dependency;
@@ -62,9 +100,49 @@ export function* processImports(
       continue;
     }
 
-    this.entrypoint.addDependency(dependency);
+    const cached = this.services.cache.get('entrypoints', resolved) as
+      | ProcessImportsCachedEntrypoint
+      | undefined;
+    const shouldRequireWywPreval =
+      prepareStageRequiresEvaluatedDeps &&
+      (!cached?.evaluated ||
+        cached.ignored ||
+        hasCachedWywPrevalExport(this.services, resolved, cached));
+    const requiredOnly = shouldRequireWywPreval
+      ? mergeOnly(only, ['__wywPreval'])
+      : only;
 
-    const nextEntrypoint = this.entrypoint.createChild(resolved, only);
+    if (!skippedParentDependencySources.has(dependency.source)) {
+      this.entrypoint.addDependency({
+        ...dependency,
+        only: requiredOnly,
+      });
+    }
+
+    const canReuseTransformedDependency =
+      !prepareStageRequiresEvaluatedDeps &&
+      Boolean(cached && !cached.evaluated && cached.transformed);
+    if (
+      cached &&
+      (cached.evaluated || canReuseTransformedDependency) &&
+      isSuperSet(cached.only, requiredOnly) &&
+      !hasLoop(resolved, this.entrypoint) &&
+      !this.services.cache.checkFreshness(resolved, stripQueryAndHash(resolved))
+    ) {
+      if (Array.isArray(cached.parents)) {
+        if (
+          !cached.parents
+            .map((parent) => parent.name)
+            .includes(this.entrypoint.name)
+        ) {
+          cached.parents.push(this.entrypoint);
+        }
+      }
+
+      continue;
+    }
+
+    const nextEntrypoint = this.entrypoint.createChild(resolved, requiredOnly);
     if (nextEntrypoint === 'loop' || nextEntrypoint.ignored) {
       continue;
     }
@@ -90,20 +168,20 @@ export function* processImports(
           warnedSlowImports.add(dedupeKey);
 
           const warning = [
-            `[wyw-in-js] Slow import during prepare stage`,
-            ``,
+            '[wyw-in-js] Slow import during prepare stage',
+            '',
             `file: ${this.entrypoint.name}`,
             `import: ${dependency.source}`,
             `resolved: ${resolved}`,
             `duration: ${durationMs.toFixed(1)}ms`,
-            ``,
-            `tip: if this import is runtime-only or heavy, mock it during evaluation via importOverrides:`,
-            `  importOverrides: {`,
+            '',
+            'tip: if this import is runtime-only or heavy, mock it during evaluation via importOverrides:',
+            '  importOverrides: {',
             `    '${importKey}': { mock: './path/to/mock' },`,
-            `  }`,
-            ``,
-            `note: importOverrides affects only build-time evaluation (it does not change your bundler runtime behavior)`,
-            ``,
+            '  }',
+            '',
+            'note: importOverrides affects only build-time evaluation (it does not change your bundler runtime behavior)',
+            '',
             `note: configure threshold with WYW_WARN_SLOW_IMPORTS_MS (current: ${slowImportThresholdMs}ms)`,
           ].join('\n');
 

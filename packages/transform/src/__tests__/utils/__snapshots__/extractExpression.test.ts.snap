@@ -1,4 +1,13 @@
-// Jest Snapshot v1, https://goo.gl/fbAQLP
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`extractExpression should extract expression 1`] = `
+"let a = 1;
+let b = 2;
+const _exp = () => a + b;
+function foo() {
+  return _exp();
+}"
+`;
 
 exports[`extractExpression does not emit PURE annotation for extracted function expressions 1`] = `
 "const _exp = () => (props: {
@@ -9,10 +18,18 @@ function foo() {
 }"
 `;
 
-exports[`extractExpression should extract expression 1`] = `
-"let a = 1;
+exports[`extractExpression should rename identifier if it already exists in the root 1`] = `
+"const a = 42;
+let _a = 1;
 let b = 2;
-const _exp = () => a + b;
+const _exp = () => _a + b;
+function foo() {
+  return _exp();
+}"
+`;
+
+exports[`extractExpression should inline values and remove bindings 1`] = `
+"const _exp = () => 3;
 function foo() {
   return _exp();
 }"
@@ -40,23 +57,6 @@ function foo() {
     className?: string;
     children?: React.ReactNode;
   };
-  return _exp();
-}"
-`;
-
-exports[`extractExpression should inline values and remove bindings 1`] = `
-"const _exp = () => 3;
-function foo() {
-  return _exp();
-}"
-`;
-
-exports[`extractExpression should rename identifier if it already exists in the root 1`] = `
-"const a = 42;
-let _a = 1;
-let b = 2;
-const _exp = () => _a + b;
-function foo() {
   return _exp();
 }"
 `;

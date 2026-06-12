@@ -85,7 +85,9 @@ export function OverviewTab({ data }: { data: ParsedData }) {
           <li>
             Skipped lines (shape mismatch): actions {data.skippedLines.actions},
             dependencies {data.skippedLines.dependencies}, entrypoints{' '}
-            {data.skippedLines.entrypoints}
+            {data.skippedLines.entrypoints}, eval files{' '}
+            {data.skippedLines.evalFiles}, perf spans{' '}
+            {data.skippedLines.perfSpans}
           </li>
           <li>
             <code>entrypointRef</code> in <code>actions.jsonl</code> is a stable

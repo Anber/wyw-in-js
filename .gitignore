@@ -25,6 +25,7 @@ target
 *.node
 tmp/*
 .tmp/*
+**/.tmp-check-*
 .tmp-log-analyzer-sample/
 .log-analyzer-*.png
 AGENTS.md

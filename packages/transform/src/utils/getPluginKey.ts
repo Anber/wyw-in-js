@@ -1,6 +1,12 @@
-import type { PluginItem } from '@babel/core';
+type PluginItemLike =
+  | string
+  | readonly [PluginItemLike, ...unknown[]]
+  | { key?: string | null }
+  | object
+  | null
+  | undefined;
 
-export const getPluginKey = (plugin: PluginItem): string | null => {
+export const getPluginKey = (plugin: PluginItemLike): string | null => {
   if (typeof plugin === 'string') {
     return plugin;
   }

@@ -1,0 +1,189 @@
+# WyW v2 migration guide
+
+## Summary
+
+- WyW packages are **ESM-only**.
+- **Node.js >= 22** is required for evaluation.
+- Evaluation runs in an async **Node ESM runner** (vm.SourceTextModule).
+- `eval.require` defaults to **warn-and-run**; use `importOverrides` to avoid runtime-only code during eval.
+- `eval.resolver: "node"` was replaced by `eval.resolver: "native"`, backed by `oxc-resolver`.
+- `eval.resolver: "hybrid"` now tries `eval.customResolver`, then native resolution, then the bundler resolver.
+- `eval.globals` updates are supported between runs (value changes and removals both trigger re-init).
+- `eval.strategy: "hybrid"` is the v2 default and enables static-first value resolution with evaluator fallback.
+- CSS rule emission order can differ from v1 for equivalent extracted rule sets, especially where cascade ties rely on
+  generated source order.
+- Turbopack loader options must be **JSON-serializable**.
+- `@wyw-in-js/babel-preset` is still supported, but runs evaluation in a separate Node process.
+  Keep inline preset options JSON-serializable, and use `configFile` for function-valued WyW config.
+
+## Breaking changes
+
+### ESM-only packages
+
+`require('@wyw-in-js/*')` no longer works. Move config files to ESM:
+
+- `next.config.js` → `next.config.mjs`
+- `wyw-in-js.config.js` → `wyw-in-js.config.mjs`
+
+If you must keep CJS, use dynamic `import()` and re-export from a thin CJS wrapper.
+
+### Node >= 22
+
+WyW v2 uses `vm.SourceTextModule`. Update your runtime to Node 22+ in CI and local dev.
+
+### Async evaluation + `require` fallback
+
+Eval-time `require()` is no longer part of the resolver/loader pipeline. By default, WyW will **warn and execute** it at
+runtime during eval. This can pull in heavy or browser-only modules.
+
+Control it via `eval.require`:
+
+```js
+// wyw-in-js.config.mjs
+export default {
+  eval: {
+    require: 'error', // or 'off'
+  },
+};
+```
+
+### Default hybrid static-first evaluation (`evaluate` → `eval.strategy`)
+
+The old top-level `evaluate` toggle is folded into `eval.strategy`. The v2 default is `hybrid`, not strict `static`.
+
+In `hybrid` mode, WyW first tries to prove values without running the evaluator. This static path can use statically
+resolvable imported literals and objects, processor-provided static semantics, static metadata, and configured
+`staticBindings`. When a value cannot be proven static, WyW falls back to the Node ESM evaluator.
+
+- `eval.strategy: "hybrid"` is the v2 default. WyW resolves statically provable values first and falls back to the evaluator.
+- `eval.strategy: "execute"` is the evaluator-only mode for projects that want the closest equivalent to always executing build-time values.
+- `eval.strategy: "static"` rejects values that need evaluator fallback.
+
+Static-first resolution can improve build performance when interpolation values are known from source, processor
+metadata, or project config: WyW can avoid starting the evaluator and loading parts of the module graph for those values.
+It is not a universal speed-up. Dynamic values, runtime-only modules, and values with unsupported static shapes still use
+the evaluator fallback in `hybrid` mode. Debug directories and `perf-spans.jsonl` can help show where evaluator work
+still happens.
+
+```js
+// wyw-in-js.config.mjs
+export default {
+  eval: {
+    strategy: 'execute',
+  },
+};
+```
+
+If your project relied on eval-time side effects or the exact order in which eval imports executed, review the generated
+output while upgrading. Use `eval.strategy: "execute"` as a compatibility escape hatch while you make those dependencies
+explicit.
+
+### Native eval resolution
+
+Use `eval.resolver: "native"` to resolve eval imports with `oxc-resolver`.
+The default remains `"bundler"`.
+Native resolution discovers `tsconfig.json` by default, so TypeScript `baseUrl`/`paths` aliases work without additional
+WyW config unless `oxcOptions.resolver.tsconfig` overrides that behavior.
+
+```js
+// wyw-in-js.config.mjs
+export default {
+  eval: {
+    resolver: 'native',
+  },
+};
+```
+
+`hybrid` mode is native-first in v2: WyW tries `eval.customResolver`, then native resolution, then the bundler resolver for
+bundler-only aliases and virtual modules. The old `"node"` resolver mode is removed.
+
+### `eval.globals` lifecycle (watch/dev)
+
+`eval.globals` is treated as part of evaluator input identity in v2.
+
+- If you change a global value between runs, WyW re-evaluates with the new value.
+- If you remove a global key, WyW re-evaluates without it.
+- Re-init is based on serialized globals payload (keys + values), not just key names.
+- Mutating globals at runtime inside evaluated modules is not a durable source of truth; subsequent runs read from config.
+- Non-plain object globals (`Date`, `Map`, `Set`, class instances) are rejected; use plain objects/arrays/primitives, functions, or symbols.
+
+Example:
+
+```js
+// wyw-in-js.config.mjs
+export default {
+  eval: {
+    globals: {
+      THEME_MODE: 'light',
+    },
+  },
+};
+```
+
+### Babel preset
+
+`@wyw-in-js/babel-preset` stays available, but uses a separate Node process for eval.
+
+- Treat it as a deprecated compatibility wrapper, not as the primary integration path for new setups.
+- Inline preset options are sent to that child process, so they must stay JSON-serializable.
+- If you need function-valued WyW options such as custom resolver/loader hooks, keep them in a WyW config file and pass only `configFile` inline.
+- `configFile` is the escape hatch for non-serializable WyW config. It does not make already-loaded inline values serializable.
+- `.mjs` WyW config files are supported, but they are loaded synchronously, so they must not use top-level `await`. The preset warns when this compatibility path is used.
+
+### Turbopack loader options
+
+Next Turbopack rules accept only JSON-serializable options. Use `configFile` to pass non-JSON config:
+
+```js
+// next.config.mjs
+export default withWyw(
+  {},
+  {
+    turbopackLoaderOptions: {
+      configFile: './wyw-in-js.config.mjs',
+    },
+  }
+);
+```
+
+### CSS rule emission order
+
+The Oxc-backed, static-first pipeline can emit equivalent extracted rule sets in a different order from v1. Static value
+inlining and Oxc processing can change where equivalent generated rules are emitted, even when the final rule set is the
+same. This matters when two generated WyW rules have the same cascade weight and the project relies on source-order ties.
+
+Review generated CSS when upgrading. If order matters, make precedence explicit with selectors, composition, or source
+structure rather than relying on a tie between generated rules.
+
+## Fixing `eval.require` warnings with `importOverrides`
+
+Use `importOverrides` to mock or skip heavy runtime-only dependencies:
+
+```js
+// wyw-in-js.config.mjs
+export default {
+  importOverrides: {
+    'browser-only-lib': { mock: './mocks/browser-only-lib.ts' },
+    'heavy-runtime-lib': { noShake: true },
+  },
+};
+```
+
+## Debugging
+
+- Enable debug logs: `DEBUG=wyw-in-js:*`
+- Trace resolver/loader decisions: `WYW_DEBUG_EVAL_RESOLVE=1`
+- Inspect debug directories with the [log analyzer](/debug/log-analyzer). It requires `actions.jsonl`,
+  `dependencies.jsonl`, and `entrypoints.jsonl`, and can also read optional `eval-files.jsonl` and `perf-spans.jsonl`.
+
+## Adapter notes
+
+See the bundler-specific pages for configuration details and v2 notes:
+
+- [Vite](/bundlers/vite)
+- [Webpack](/bundlers/webpack)
+- [Rollup](/bundlers/rollup)
+- [esbuild](/bundlers/esbuild)
+- [Next.js](/bundlers/nextjs)
+- [Bun](/bundlers/bun)
+- [Parcel](/bundlers/parcel)

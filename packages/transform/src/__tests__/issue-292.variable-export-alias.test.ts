@@ -4,7 +4,8 @@ import path from 'path';
 
 import dedent from 'dedent';
 
-import { transformSync } from '../transform';
+import { TransformCacheCollection } from '../cache';
+import { transform } from '../transform';
 
 const resolveWithExtensions = (candidate: string) => {
   if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
@@ -22,7 +23,7 @@ const resolveWithExtensions = (candidate: string) => {
   return null;
 };
 
-it('does not evaluate dead export property chains that reference aliases', () => {
+it('does not evaluate dead export property chains that reference aliases', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wyw-292-'));
   const entryFile = path.join(root, 'main.ts');
   const processorFile = path.resolve(
@@ -49,8 +50,9 @@ it('does not evaluate dead export property chains that reference aliases', () =>
       `
     );
 
-    const result = transformSync(
+    const result = await transform(
       {
+        cache: new TransformCacheCollection(),
         options: {
           filename: entryFile,
           root,
@@ -63,20 +65,11 @@ it('does not evaluate dead export property chains that reference aliases', () =>
 
               return null;
             },
-            babelOptions: {
-              babelrc: false,
-              configFile: false,
-              presets: [
-                ['@babel/preset-env', { loose: true }],
-                '@babel/preset-react',
-                '@babel/preset-typescript',
-              ],
-            },
           },
         },
       },
       fs.readFileSync(entryFile, 'utf8'),
-      (what, importer) => {
+      async (what, importer) => {
         if (what === 'test-css-processor') {
           return processorFile;
         }
@@ -90,7 +83,7 @@ it('does not evaluate dead export property chains that reference aliases', () =>
           }
         }
 
-        throw new Error(`Unable to resolve ${JSON.stringify(what)}`);
+        return null;
       }
     );
 

@@ -2,25 +2,88 @@
 
 WyW-in-JS can be customized using a JavaScript, JSON or YAML file. This can be in form of:
 
-- `wyw-in-js.config.js` JS file exporting the object (recommended).
+- `wyw-in-js.config.mjs` ESM config file using `export default` (recommended for synchronous ESM config).
+- `wyw-in-js.config.cjs` CommonJS compatibility config using `module.exports` (legacy mode).
 - `wyw-in-js` property in a `package.json` file.
 - `.wyw-in-jsrc` file with JSON or YAML syntax.
-- `.wyw-in-jsrc.json`, `.wyw-in-jsrc.yaml`, `.wyw-in-jsrc.yml`, or `.wyw-in-jsrc.js` file.
+- `.wyw-in-jsrc.json`, `.wyw-in-jsrc.yaml`, `.wyw-in-jsrc.yml`, `.wyw-in-jsrc.mjs`, `.wyw-in-jsrc.js`, or `.wyw-in-jsrc.cjs` file.
 
-Example `wyw-in-js.config.js`:
+Example `wyw-in-js.config.mjs`:
+
+```js
+export default {
+  displayName: false,
+};
+```
+
+`.mjs` config files are loaded synchronously. Keep them free of top-level `await` and async-only ESM dependency chains.
+
+Legacy/CommonJS compatibility (`wyw-in-js.config.cjs`):
 
 ```js
 module.exports = {
-  evaluate: true,
   displayName: false,
 };
 ```
 
 ## Options
 
-- `evaluate: boolean` (default: `true`):
+- `eval: EvalOptionsV2`:
 
-  Controls static evaluation of template expressions during dependency collection. It does **not** disable module evaluation. If there is nothing to evaluate, WyW-in-JS skips evaluation regardless of this flag. The old behavior of `evaluate: false` (throwing on unsupported interpolation) is deprecated and kept only for legacy configs.
+  Controls v2 evaluation behavior (`strategy`, `runtime`, `errors`, `resolver`, `require`, `globals`, `onWarn`, and custom resolver/loader hooks).
+
+  For `eval.strategy`:
+
+  - `hybrid` (default): resolve values that can be proven static first, then fall back to the build-time evaluator.
+  - `execute`: compute interpolation values with the build-time evaluator.
+  - `static`: resolve only values that can be proven static. Values that would need evaluator fallback fail the build.
+
+  `hybrid` is the recommended v2 default. It can use processor static semantics, statically resolvable imports, static
+  metadata, and configured `staticBindings` without invoking the evaluator for those values, then fall back to the Node
+  ESM evaluator for dynamic cases.
+
+  Use `execute` as a compatibility escape hatch if a project depends on eval-time side effects or needs the closest
+  behavior to always evaluating build-time values. Use `static` as a strict validation mode when any evaluator fallback
+  should fail the build.
+
+  `eval.runtime` selects the runtime used by the build-time evaluator. The current runtime is `nodejs`.
+
+  `eval.errors` controls evaluator fallback errors:
+
+  - `strict` (default): unsupported eval-time imports, non-literal `require()`, and non-string dynamic imports throw.
+  - `loose`: unsupported cases emit warnings and use synthetic empty values where possible.
+
+  For `eval.resolver`:
+
+  - `bundler` (default): use the bundler resolver first, then native fallback when enabled by `eval.require`.
+  - `native`: resolve eval imports with `oxc-resolver`. Native resolution discovers `tsconfig.json` by default, so TypeScript `baseUrl`/`paths` aliases are available unless `oxcOptions.resolver.tsconfig` overrides that behavior.
+  - `hybrid`: try `eval.customResolver`, then native `oxc-resolver`, then the bundler resolver. This keeps package/relative imports and TypeScript aliases native-first while still allowing bundler aliases and virtual modules to resolve.
+  - `custom`: use only `eval.customResolver`.
+
+  For `eval.globals`:
+
+  - Values are injected into the eval VM context for each transform run.
+  - Changing a global value between runs is supported.
+  - Removing a global key between runs is supported.
+  - WyW invalidates eval cache/re-init state when the serialized `eval.globals` payload changes (not just keys, but values too).
+  - Runtime mutations inside evaluated modules are not persisted as source of truth; the next run starts from `eval.globals` in config.
+  - Supported value shapes are JSON-like primitives/arrays/plain objects plus functions and symbols; non-plain objects (for example `Date`, `Map`, `Set`, class instances) are rejected to avoid silent prototype/state loss.
+
+  Keep `eval.globals` deterministic when possible (avoid `Date.now()`/`Math.random()` style values if you want stable cache behavior).
+
+  Example:
+
+  ```js
+  export default {
+    eval: {
+      require: 'warn-and-run',
+      globals: {
+        BUILD_TARGET: 'web',
+        FEATURE_FLAGS: { newNav: true },
+      },
+    },
+  };
+  ```
 
 - `displayName: boolean` (default: `false`):
 
@@ -141,9 +204,9 @@ module.exports = {
   are useful when you want to generate your own hash:
 
   ```js
-  const sha1 = require('sha1');
+  import sha1 from 'sha1';
 
-  module.exports = {
+  export default {
     classNameSlug: (hash, title, args) => sha1(`${args.name}-${title}`),
   };
   ```
@@ -191,7 +254,7 @@ module.exports = {
   A custom function to override the context used to evaluate modules. This can be used to add custom globals or override the default ones.
 
   ```js
-  module.exports = {
+  export default {
     overrideContext: (context, filename) => ({
       ...context,
       HighLevelAPI: () => "I'm a high level API",
@@ -217,12 +280,12 @@ module.exports = {
 
       - `mock`: replace the resolved target for the import (raw `source` stays intact).
       - `noShake`: disable tree-shaking for this import (forces `only=['*']`).
-      - `unknown`: controls behavior when an import reaches eval-time Node resolver fallback (`warn` by default).
+      - `unknown`: controls behavior when an import reaches eval-time native resolver fallback (`warn` by default).
 
   Example:
 
   ```js
-  module.exports = {
+  export default {
     importOverrides: {
       './src/i18n/messages/en.json': { unknown: 'allow' },
       react: { mock: './src/__mocks__/react.ts' },
@@ -258,7 +321,7 @@ module.exports = {
   Example (stub a problematic side-effect import during evaluation):
 
   ```js
-  module.exports = {
+  export default {
     importOverrides: {
       '@radix-ui/react-tooltip': { mock: './src/__mocks__/radix-tooltip.ts' },
     },
@@ -268,7 +331,7 @@ module.exports = {
   Example (speed up evaluation by mocking a heavy runtime-only dependency):
 
   ```js
-  module.exports = {
+  export default {
     importOverrides: {
       '@uiw/react-codemirror': {
         mock: './src/__mocks__/uiw-react-codemirror.ts',
@@ -280,7 +343,7 @@ module.exports = {
   Example (mock a whole group of query imports, e.g. SVGR `?react`):
 
   ```js
-  module.exports = {
+  export default {
     importOverrides: {
       '@/icons/svg/*.svg\\?react': { mock: './src/__mocks__/svg-react.ts' },
     },
@@ -325,7 +388,7 @@ module.exports = {
   Example:
 
   ```js
-  module.exports = {
+  export default {
     importLoaders: {
       // Disable defaults if you don't want them
       // raw: false,
@@ -383,7 +446,7 @@ module.exports = {
 
   A custom function to use when resolving template tags.
 
-  By default, linaria APIs like `css` and `styled` **must** be imported directly from the package – this is because babel needs to be able to recognize the API's to do static style extraction. `tagResolver` allows `css` and `styled` APIs to be imported from other files too.
+  By default, linaria APIs like `css` and `styled` **must** be imported directly from the package so the static extractor can recognize the APIs. `tagResolver` allows `css` and `styled` APIs to be imported from other files too.
 
   `tagResolver` takes the source specifier from the import (eg. `@linaria/core` or `./my-local-folder/linaria`), the imported tag name (eg. `css`), and `meta`:
 
@@ -395,10 +458,16 @@ module.exports = {
   For example, we can use this to map `@linaria/core` , `@linaria/react` or `@linaria/atomic` where we re-export the module.
 
   ```js
-  {
+  import { createRequire } from 'node:module';
+  import { dirname, join } from 'node:path';
+  import { fileURLToPath } from 'node:url';
+
+  const require = createRequire(import.meta.url);
+  const __filename = fileURLToPath(import.meta.url);
+  const __dirname = dirname(__filename);
+
+  export default {
     tagResolver: (source, tag, { sourceFile, resolvedSource }) => {
-      const { createRequire } = require('module');
-      const { join } = require('path');
       const pathToLocalFile = join(__dirname, './my-local-folder/linaria.js');
       const resolved =
         resolvedSource ??
@@ -415,8 +484,8 @@ module.exports = {
       }
 
       return null;
-    };
-  }
+    },
+  };
   ```
 
   We can then re-export and use linaria API's from `./my-local-folder`:
@@ -439,18 +508,63 @@ module.exports = {
   export * from '@linaria/core';
   ```
 
-- `babelOptions: Object`
+- `oxcOptions: Object`
 
-  If you need to specify custom babel configuration, you can pass them here. These babel options will be used by Linaria when parsing and evaluating modules.
+  Oxc-first parser, resolver, and transform options used by WyW when parsing, preparing, and evaluating modules.
+  `oxcOptions.resolver` is also used by `eval.resolver: "native"` and the native step of `eval.resolver: "hybrid"`.
+  By default, WyW passes `tsconfig: "auto"` to the native resolver. Bundler integrations may add static aliases from their
+  own config; explicitly configured `oxcOptions.resolver.alias` entries take precedence.
+
+  ```js
+  export default {
+    oxcOptions: {
+      parser: {},
+      resolver: {},
+      transform: {
+        define: {
+          __DEV__: 'false',
+        },
+      },
+    },
+  };
+  ```
 
 - `features: Record<string, FeatureFlag>`
 
   A map of feature flags to enable/disable. See [Feature Flags](/feature-flags) for more information.
 
+- `staticBindings: Record<string, Record<string, unknown>>`
+
+  A per-source map of statically-known imported values used by `eval.strategy: "hybrid"` and `eval.strategy: "static"`.
+  These bindings are one of the inputs to v2 static-first value resolution. Keys are either the import source as written,
+  such as `@linaria/core`, or the resolved absolute file path. Values map imported names to either literal replacements
+  or pure helper functions. Helper functions are called only when all call arguments can also be resolved statically.
+
+  Use this for deterministic helpers or build-time constants that WyW cannot inspect directly. The trust model is the
+  same as `importOverrides`: the project config vouches that these values are deterministic and intentionally match, or
+  intentionally replace, runtime behavior.
+
+  ```js
+  export default {
+    eval: {
+      strategy: 'hybrid',
+    },
+    staticBindings: {
+      '@linaria/core': {
+        cx: (...args) => args.filter(Boolean).join(' '),
+      },
+      '/absolute/path/to/theme.ts': {
+        themeVars: { panelBg: '#f00' },
+      },
+    },
+  };
+  ```
+
 - <a id="coderemover"></a> `codeRemover: CodeRemoverOptions`
 
   An object with two keys `componentTypes` and `hocs`. It specifies types of variables and HOCs that will be replaced
   with an empty function before evaluation (useful to avoid executing runtime-only component/HOC code at build time).
+  React `forwardRef` and `memo` are included in `hocs` by default.
 
   ```js
   {
@@ -468,9 +582,9 @@ module.exports = {
 
 ## `@wyw-in-js/babel-preset`
 
-The preset pre-processes and evaluates the CSS. The bundler plugins use this preset under the hood. You also might want to use this preset if you import the components outside of the files handled by your bundler, such as on your server or in unit tests.
+The preset is a deprecated compatibility wrapper for environments that still invoke WyW through Babel. Bundler plugins use the Oxc-first transform path directly and do not depend on this preset internally.
 
-To use this preset, add `@wyw-in-js/babel-preset` to your Babel configuration at the end of the presets list:
+Use this preset only when a non-bundler tool already runs Babel and you need WyW to participate in that pipeline, for example a legacy server build or a unit-test transform. Add `@wyw-in-js/babel-preset` at the end of the presets list:
 
 `.babelrc`:
 
@@ -484,4 +598,33 @@ To use this preset, add `@wyw-in-js/babel-preset` to your Babel configuration at
 }
 ```
 
-The babel preset can accept the same options supported by the configuration file, however it's recommended to use the configuration file directly.
+The preset understands the same option names as the configuration file, but not every option should be passed inline:
+
+- The preset emits a compatibility warning once per process so it is harder to miss during migration.
+- Inline preset options are forwarded to a separate Node process, so they must be JSON-serializable.
+- Function-valued WyW options such as `tagResolver`, `eval.customResolver`, `eval.onWarn`, or custom `importLoaders` should live in a WyW config file instead.
+- When you need those function-valued options, pass only `configFile` inline and let the preset load the rest from that file. That config file may be `.mjs`, but it still must be synchronous and must not use top-level `await`.
+
+Example:
+
+```json
+{
+  "presets": [
+    "@babel/preset-env",
+    "@babel/preset-react",
+    ["@wyw-in-js", { "configFile": "./wyw-in-js.config.mjs" }]
+  ]
+}
+```
+
+If you only need simple inline options, keep them JSON-serializable:
+
+```json
+{
+  "presets": [
+    "@babel/preset-env",
+    "@babel/preset-react",
+    ["@wyw-in-js", { "displayName": true }]
+  ]
+}
+```

@@ -1,41 +1,35 @@
 import { join } from 'path';
 
-import { parseSync } from '@babel/core';
-import traverse from '@babel/traverse';
 import dedent from 'dedent';
 
 import type { BaseProcessor } from '@wyw-in-js/processor-utils';
-import { applyProcessors } from '@wyw-in-js/transform';
+import { applyOxcProcessors } from '../../../../packages/transform/src/utils/applyOxcProcessors';
 
 interface IRunOptions {
   ts?: boolean;
 }
 
 const run = (code: string, options: IRunOptions = {}): BaseProcessor | null => {
-  const opts = {
+  const fileContext = {
     filename: join(__dirname, '..', options.ts ? 'test.ts' : 'test.js'),
     root: '.',
-    code: true,
-    ast: true,
-    presets: options.ts ? ['@babel/preset-typescript'] : [],
   };
-  const rootNode = parseSync(code, opts)!;
   let result: BaseProcessor | null = null;
-  traverse(rootNode, {
-    Program(path) {
-      applyProcessors(
-        path,
-        opts,
-        {
-          displayName: true,
-          evaluate: true,
-        },
-        (p) => {
-          result = p;
-        }
-      );
+  applyOxcProcessors(
+    code,
+    fileContext,
+    {
+      displayName: true,
+      extensions: ['.js', '.ts'],
+      tagResolver: (source, imported) =>
+        source === '../css' && imported === 'css'
+          ? join(__dirname, '..', 'processors', 'css.ts')
+          : null,
     },
-  });
+    (p) => {
+      result = p;
+    }
+  );
 
   return result;
 };
@@ -81,7 +75,7 @@ describe('applyProcessors', () => {
   it('(0, tagSyntax.css)``', () => {
     const result = run(
       dedent`
-        const tagSyntax = require("@wyw-in-js/template-tag-syntax");
+        import * as tagSyntax from "@wyw-in-js/template-tag-syntax";
 
         export const Square = (0, tagSyntax.css)\`\`;
       `
@@ -110,26 +104,15 @@ describe('applyProcessors', () => {
     });
   });
 
-  it('require and access with prop', () => {
+  it('namespace import usage', () => {
     const result = run(
       dedent`
-        const renamedCss = require('@wyw-in-js/template-tag-syntax').css;
-        export const Square = renamedCss\`\`;
+        import * as tagSyntax from "@wyw-in-js/template-tag-syntax";
+        export const Square = tagSyntax.css\`\`;
       `
     );
 
-    expect(tagToString(result)).toBe('renamedCss`…`');
-  });
-
-  it('require and destructing', () => {
-    const result = run(
-      dedent`
-        const { css } = require('@wyw-in-js/template-tag-syntax');
-        export const Square = css\`\`;
-      `
-    );
-
-    expect(tagToString(result)).toBe('css`…`');
+    expect(tagToString(result)).toBe('tagSyntax.css`…`');
   });
 
   describe('invalid usage', () => {

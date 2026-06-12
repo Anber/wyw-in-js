@@ -6,6 +6,7 @@ import { TransformCacheCollection } from '../cache';
 import { Entrypoint } from '../transform/Entrypoint';
 import { syncActionRunner } from '../transform/actions/actionRunner';
 import { baseProcessingHandlers } from '../transform/generators/baseProcessingHandlers';
+import { processEntrypoint } from '../transform/generators/processEntrypoint';
 import { syncResolveImports } from '../transform/generators/resolveImports';
 import { loadWywOptions } from '../transform/helpers/loadWywOptions';
 import { withDefaultServices } from '../transform/helpers/withDefaultServices';
@@ -131,6 +132,7 @@ const runEntrypoint = (
 
   const handlers = {
     ...baseProcessingHandlers,
+    processEntrypoint,
     resolveImports(this: IResolveImportsAction) {
       return syncResolveImports.call(this, resolve);
     },

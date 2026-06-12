@@ -9,6 +9,10 @@ import { dirname, isAbsolute, join, parse, posix } from 'path';
 
 import type { Plugin, TransformOptions, Loader } from 'esbuild';
 import { transformSync as esbuildTransformSync } from 'esbuild';
+import {
+  transformSync as oxcTransformSync,
+  type TransformOptions as OxcTransformOptions,
+} from 'oxc-transform';
 
 import type {
   PluginOptions,
@@ -16,21 +20,25 @@ import type {
   IFileReporterOptions,
 } from '@wyw-in-js/transform';
 import {
+  disposeEvalBroker,
   slugify,
   transform,
   TransformCacheCollection,
   createFileReporter,
   loadWywOptions,
-  withDefaultServices,
 } from '@wyw-in-js/transform';
-import { asyncResolverFactory } from '@wyw-in-js/shared';
+import {
+  asyncResolverFactory,
+  mergeOxcResolverAlias,
+  toNativeResolverAlias,
+} from '@wyw-in-js/shared';
 
 type EsbuildPluginOptions = {
-  babelTransform?: boolean;
   debug?: IFileReporterOptions | false | null | undefined;
   esbuildOptions?: TransformOptions;
   filter?: RegExp | string;
   keepComments?: boolean | RegExp;
+  oxcTransform?: boolean;
   prefixer?: boolean;
   preprocessor?: Preprocessor;
   sourceMap?: boolean;
@@ -42,10 +50,10 @@ const supportedFilterFlags = new Set(['i', 'm', 's']);
 const nodeModulesRegex = /^(?:.*[\\/])?node_modules(?:[\\/].*)?$/;
 
 export default function wywInJS({
-  babelTransform,
   debug,
   sourceMap,
   keepComments,
+  oxcTransform,
   prefixer,
   preprocessor,
   esbuildOptions,
@@ -55,18 +63,10 @@ export default function wywInJS({
 }: EsbuildPluginOptions = {}): Plugin {
   let options = esbuildOptions;
   const cache = new TransformCacheCollection();
-  let resolvedWywOptions: ReturnType<typeof loadWywOptions> | null = null;
-  let babel: ReturnType<typeof withDefaultServices>['babel'] | null = null;
-  if (babelTransform) {
-    resolvedWywOptions = loadWywOptions(rest);
-    babel = withDefaultServices({
-      options: {
-        filename: '<wyw-in-js/esbuild>',
-        pluginOptions: resolvedWywOptions,
-        root: process.cwd(),
-      },
-    }).babel;
-  }
+  const shouldRunOxcTransform = oxcTransform ?? false;
+  const resolvedWywOptions = shouldRunOxcTransform
+    ? loadWywOptions(rest)
+    : null;
   const createAsyncResolver = asyncResolverFactory(
     async (
       resolved: {
@@ -97,7 +97,10 @@ export default function wywInJS({
       const cssLookup = new Map<string, string>();
       const cssResolveDirs = new Map<string, string>();
       const warnedFilters = new Set<string>();
-      let warnedEmptyBabelOptions = false;
+      let warnedEmptyOxcOptions = false;
+      const nativeResolverAlias = toNativeResolverAlias(
+        build.initialOptions.alias
+      );
 
       const { emitter, onDone } = createFileReporter(debug ?? false);
 
@@ -137,10 +140,18 @@ export default function wywInJS({
         return new RegExp(filterRegexp.source, sanitizedFlags);
       };
 
+      const getOxcLang = (loader: Loader): OxcTransformOptions['lang'] => {
+        if (loader === 'tsx') return 'tsx';
+        if (loader === 'ts') return 'ts';
+        if (loader === 'jsx') return 'jsx';
+        return 'js';
+      };
+
       const asyncResolve = createAsyncResolver(build.resolve);
 
       build.onEnd(() => {
         onDone(process.cwd());
+        disposeEvalBroker(cache);
       });
 
       build.onResolve({ filter: /\.wyw\.css$/ }, (args) => {
@@ -186,52 +197,61 @@ export default function wywInJS({
         }
 
         let codeForEsbuild = rawCode;
-        if (babelTransform) {
-          if (!babel || !resolvedWywOptions) {
+        if (shouldRunOxcTransform) {
+          if (!resolvedWywOptions) {
             throw new Error(
-              '[wyw-in-js] Internal error: babelTransform is enabled but Babel services are not initialized'
+              '[wyw-in-js] Internal error: oxcTransform is enabled but WyW options are not initialized'
             );
           }
 
-          const { babelOptions } = resolvedWywOptions;
-          if (!Object.keys(babelOptions).length) {
-            if (!warnedEmptyBabelOptions) {
-              warnedEmptyBabelOptions = true;
+          const transformOptions = resolvedWywOptions.oxcOptions.transform as
+            | OxcTransformOptions
+            | undefined;
+          if (!transformOptions || !Object.keys(transformOptions).length) {
+            if (!warnedEmptyOxcOptions) {
+              warnedEmptyOxcOptions = true;
               // eslint-disable-next-line no-console
               console.warn(
-                '[wyw-in-js] babelTransform is enabled but babelOptions is empty; skipping Babel transform.'
+                '[wyw-in-js] oxcTransform is enabled but oxcOptions.transform is empty; skipping Oxc transform.'
               );
             }
           } else {
-            let babelResult;
+            let oxcResult;
             try {
-              babelResult = babel.transformSync(codeForEsbuild, {
-                ...babelOptions,
-                ast: false,
-                filename: args.path,
-                sourceFileName: args.path,
-                sourceMaps: sourceMap,
+              oxcResult = oxcTransformSync(args.path, codeForEsbuild, {
+                cwd: process.cwd(),
+                lang: getOxcLang(loader),
+                sourceType: 'module',
+                sourcemap: sourceMap,
+                ...transformOptions,
               });
             } catch (e) {
               const message = e instanceof Error ? e.message : String(e);
               throw new Error(
-                `[wyw-in-js] Babel transform failed for ${args.path}: ${message}`
+                `[wyw-in-js] Oxc transform failed for ${args.path}: ${message}`
               );
             }
 
-            if (!babelResult?.code) {
+            if (oxcResult.errors.length > 0) {
+              const details = oxcResult.errors
+                .map((error) =>
+                  error.codeframe
+                    ? `${error.message}\n${error.codeframe}`
+                    : error.message
+                )
+                .join('\n');
               throw new Error(
-                `[wyw-in-js] Babel transform failed for ${args.path}`
+                `[wyw-in-js] Oxc transform failed for ${args.path}: ${details}`
               );
             }
 
-            codeForEsbuild = babelResult.code;
+            codeForEsbuild = oxcResult.code;
 
-            if (sourceMap && babelResult.map) {
-              const babelMap = Buffer.from(
-                JSON.stringify(babelResult.map)
+            if (sourceMap && oxcResult.map) {
+              const oxcMap = Buffer.from(
+                JSON.stringify(oxcResult.map)
               ).toString('base64');
-              codeForEsbuild += `/*# sourceMappingURL=data:application/json;base64,${babelMap}*/`;
+              codeForEsbuild += `/*# sourceMappingURL=data:application/json;base64,${oxcMap}*/`;
             }
           }
         }
@@ -252,7 +272,13 @@ export default function wywInJS({
         const transformServices = {
           options: {
             filename: args.path,
-            pluginOptions: rest,
+            pluginOptions: {
+              ...rest,
+              oxcOptions: mergeOxcResolverAlias(
+                rest.oxcOptions,
+                nativeResolverAlias
+              ),
+            },
             prefixer,
             keepComments,
             preprocessor,

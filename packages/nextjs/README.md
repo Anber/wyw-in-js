@@ -23,10 +23,10 @@ bun add -d @wyw-in-js/nextjs
 ## Usage
 
 ```js
-// next.config.js
-const { withWyw } = require('@wyw-in-js/nextjs');
+// next.config.mjs
+import { withWyw } from '@wyw-in-js/nextjs';
 
-module.exports = withWyw({
+export default withWyw({
   // your Next config
 });
 ```
@@ -36,7 +36,18 @@ By default, the plugin:
 - injects `@wyw-in-js/webpack-loader` into Next's JS/TS pipeline;
 - emits styles as `*.wyw-in-js.module.css` so imports are allowed from any module;
 - keeps generated class names stable under Next CSS Modules (selectors are emitted as `:global(...)`).
-- defaults `babelOptions` to `presets: ['next/babel']` so TS/JSX parsing works out of the box.
+- parses and evaluates JS/TS/JSX/TSX through the Oxc-backed WyW transform.
+
+## Eval resolver modes
+
+`eval.resolver: 'native'` and the native step of `eval.resolver: 'hybrid'` use `oxc-resolver` with automatic
+`tsconfig.json` discovery.
+
+The webpack path inherits `@wyw-in-js/webpack-loader` static `resolve.alias` forwarding. The Turbopack path forwards
+string aliases from `turbopack.resolveAlias` or `experimental.turbo.resolveAlias` when configured through `withWyw()`.
+
+Use `hybrid` when evaluated imports may rely on Next, webpack, or Turbopack resolver behavior. Use `native` only when
+`oxc-resolver` can resolve all evaluated imports, or mirror bundler-only aliases in `oxcOptions.resolver.alias`.
 
 ## Options
 
@@ -47,6 +58,6 @@ import type { WywNextPluginOptions } from '@wyw-in-js/nextjs';
 Use `loaderOptions` to pass options through to `@wyw-in-js/webpack-loader`.
 
 Use `turbopackLoaderOptions` to pass JSON-serializable options to `@wyw-in-js/turbopack-loader` (use `configFile` for
-function-based config).
+function/RegExp-based config).
 
 To disable vendor prefixing (Stylis prefixer), set `prefixer: false` in `loaderOptions` and/or `turbopackLoaderOptions`.

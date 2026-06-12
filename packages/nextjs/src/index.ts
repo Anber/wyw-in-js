@@ -1,6 +1,10 @@
-import fs from 'fs';
-import path from 'path';
+import { createRequire } from 'module';
 
+import {
+  mergeOxcResolverAlias,
+  toNativeResolverAlias,
+} from '@wyw-in-js/shared';
+import type { LoaderOptions as WywTurbopackLoaderOptions } from '@wyw-in-js/turbopack-loader';
 import type { LoaderOptions as WywWebpackLoaderOptions } from '@wyw-in-js/webpack-loader';
 import type { NextConfig } from 'next';
 import type { Configuration, RuleSetRule, RuleSetUseItem } from 'webpack';
@@ -15,18 +19,12 @@ const DEFAULT_REACT_IMPORT_OVERRIDES = {
   'react/jsx-dev-runtime': { mock: 'react/jsx-dev-runtime' },
 } satisfies WywWebpackLoaderOptions['importOverrides'];
 
-const PLACEHOLDER_EXTENSIONS = new Set(['.js', '.jsx', '.ts', '.tsx']);
-const PLACEHOLDER_IGNORED_DIRS = new Set([
-  '.git',
-  '.next',
-  '.turbo',
-  'node_modules',
-]);
+const nodeRequire = createRequire(import.meta.url);
 
 export type WywNextPluginOptions = {
   loaderOptions?: Omit<WywWebpackLoaderOptions, 'extension' | 'sourceMap'> &
     Partial<Pick<WywWebpackLoaderOptions, 'extension' | 'sourceMap'>>;
-  turbopackLoaderOptions?: Record<string, unknown>;
+  turbopackLoaderOptions?: Partial<WywTurbopackLoaderOptions>;
 };
 
 type NextWebpackConfigFn = NonNullable<NextConfig['webpack']>;
@@ -127,7 +125,7 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return proto === Object.prototype || proto === null;
 }
 
-function assertNoFunctions(value: unknown, name: string) {
+function assertJsonSerializable(value: unknown, name: string) {
   const queue: Array<{ path: string; value: unknown }> = [
     { path: name, value },
   ];
@@ -136,14 +134,24 @@ function assertNoFunctions(value: unknown, name: string) {
   while (queue.length) {
     const current = queue.shift()!;
 
-    if (typeof current.value === 'function') {
-      throw new Error(
-        `${current.path} must be JSON-serializable (functions are not supported in Turbopack loader options). Use "configFile" to pass non-JSON config.`
-      );
-    }
-
     if (current.value === null) {
       // skip
+    } else if (typeof current.value === 'undefined') {
+      // skip
+    } else if (
+      typeof current.value === 'string' ||
+      typeof current.value === 'number' ||
+      typeof current.value === 'boolean'
+    ) {
+      // primitives are ok
+    } else if (
+      typeof current.value === 'function' ||
+      typeof current.value === 'symbol' ||
+      typeof current.value === 'bigint'
+    ) {
+      throw new Error(
+        `${current.path} must be JSON-serializable (functions, symbols and bigint are not supported in Turbopack loader options). Use "configFile" to pass non-JSON config.`
+      );
     } else if (Array.isArray(current.value)) {
       if (!seen.has(current.value)) {
         seen.add(current.value);
@@ -158,6 +166,10 @@ function assertNoFunctions(value: unknown, name: string) {
           queue.push({ path: `${current.path}.${key}`, value: item })
         );
       }
+    } else {
+      throw new Error(
+        `${current.path} must be JSON-serializable (only plain objects, arrays, and primitives are supported in Turbopack loader options). Use "configFile" to pass non-JSON config.`
+      );
     }
   }
 }
@@ -271,15 +283,9 @@ function injectWywLoader(
   nextOptions: NextWebpackOptions,
   wywNext: WywNextPluginOptions
 ) {
-  const loader = require.resolve('@wyw-in-js/webpack-loader');
-  const nextBabelPreset = require.resolve('next/babel', {
-    paths: [process.cwd()],
-  });
+  const loader = nodeRequire.resolve('@wyw-in-js/webpack-loader');
 
   const extension = wywNext.loaderOptions?.extension ?? DEFAULT_EXTENSION;
-  const babelOptions = wywNext.loaderOptions?.babelOptions ?? {
-    presets: [nextBabelPreset],
-  };
 
   const userImportOverrides = wywNext.loaderOptions?.importOverrides;
   const importOverrides = userImportOverrides
@@ -289,7 +295,6 @@ function injectWywLoader(
   const loaderOptions = {
     cssImport: 'import',
     ...wywNext.loaderOptions,
-    babelOptions,
     extension,
     importOverrides,
     sourceMap: wywNext.loaderOptions?.sourceMap ?? nextOptions.dev,
@@ -327,56 +332,6 @@ function injectWywLoader(
   ensureWywCssModuleRules(config, extension);
 }
 
-function ensureTurbopackCssPlaceholders(projectRoot: string) {
-  const queue: string[] = [projectRoot];
-
-  while (queue.length) {
-    const dir = queue.pop()!;
-    let entries: fs.Dirent[];
-
-    try {
-      entries = fs.readdirSync(dir, { withFileTypes: true });
-    } catch {
-      entries = [];
-    }
-
-    for (const entry of entries) {
-      if (entry.name !== '.' && entry.name !== '..') {
-        const entryPath = path.join(dir, entry.name);
-
-        if (entry.isDirectory()) {
-          if (!PLACEHOLDER_IGNORED_DIRS.has(entry.name)) {
-            queue.push(entryPath);
-          }
-        } else if (entry.isFile()) {
-          const shouldIgnore =
-            entry.name.startsWith('middleware.') ||
-            entry.name.endsWith('.d.ts');
-
-          if (!shouldIgnore) {
-            const ext = path.extname(entry.name);
-            if (PLACEHOLDER_EXTENSIONS.has(ext)) {
-              const baseName = path.basename(entry.name, ext);
-              const cssFilePath = path.join(
-                path.dirname(entryPath),
-                `${baseName}${DEFAULT_EXTENSION}`
-              );
-
-              try {
-                fs.writeFileSync(cssFilePath, '', { flag: 'wx' });
-              } catch (err) {
-                if ((err as NodeJS.ErrnoException).code !== 'EEXIST') {
-                  throw err;
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-  }
-}
-
 function shouldUseTurbopackConfig(nextConfig: NextConfig) {
   const explicit = (nextConfig as unknown as Record<string, unknown>).turbopack;
   if (typeof explicit !== 'undefined') {
@@ -384,10 +339,10 @@ function shouldUseTurbopackConfig(nextConfig: NextConfig) {
   }
 
   try {
-    const pkgPath = require.resolve('next/package.json', {
+    const pkgPath = nodeRequire.resolve('next/package.json', {
       paths: [process.cwd()],
     });
-    const pkg = require(pkgPath) as { version?: unknown };
+    const pkg = nodeRequire(pkgPath) as { version?: unknown };
     const version = typeof pkg.version === 'string' ? pkg.version : '';
     const major = Number.parseInt(version.split('.')[0] ?? '', 10);
     return Number.isFinite(major) && major >= 16;
@@ -400,41 +355,44 @@ function injectWywTurbopackRules(
   nextConfig: NextConfig,
   wywNext: WywNextPluginOptions
 ): NextConfig {
-  const loader = require.resolve('@wyw-in-js/turbopack-loader');
-  const nextBabelPreset = require.resolve('next/babel', {
-    paths: [process.cwd()],
-  });
+  const loader = nodeRequire.resolve('@wyw-in-js/turbopack-loader');
 
   const userOptions = wywNext.turbopackLoaderOptions ?? {};
 
-  assertNoFunctions(userOptions, 'turbopackLoaderOptions');
+  assertJsonSerializable(userOptions, 'turbopackLoaderOptions');
+
+  const turbopackConfig = (nextConfig as unknown as Record<string, unknown>)
+    .turbopack;
+  const userTurbopack = isPlainObject(turbopackConfig) ? turbopackConfig : {};
+  const userExperimental = isPlainObject(nextConfig.experimental)
+    ? (nextConfig.experimental as Record<string, unknown>)
+    : {};
+  const userTurbo = isPlainObject(userExperimental.turbo)
+    ? (userExperimental.turbo as Record<string, unknown>)
+    : {};
+
+  const nativeResolverAlias = toNativeResolverAlias(
+    userTurbopack.resolveAlias ?? userTurbo.resolveAlias
+  );
+  const oxcOptions = mergeOxcResolverAlias(
+    userOptions.oxcOptions,
+    nativeResolverAlias
+  );
 
   const userImportOverrides = isPlainObject(userOptions.importOverrides)
     ? (userOptions.importOverrides as Record<string, unknown>)
     : undefined;
 
   const loaderOptions = {
-    babelOptions: { presets: [nextBabelPreset] },
     sourceMap: process.env.NODE_ENV !== 'production',
     ...userOptions,
+    ...(oxcOptions ? { oxcOptions } : {}),
     importOverrides: userImportOverrides
       ? { ...DEFAULT_REACT_IMPORT_OVERRIDES, ...userImportOverrides }
       : DEFAULT_REACT_IMPORT_OVERRIDES,
   };
 
   const useTurbopackConfig = shouldUseTurbopackConfig(nextConfig);
-
-  const isNextBuild = process.argv.includes('build');
-  const isWebpackBuild = process.argv.includes('--webpack');
-
-  if (
-    useTurbopackConfig &&
-    process.env.NODE_ENV === 'production' &&
-    isNextBuild &&
-    !isWebpackBuild
-  ) {
-    ensureTurbopackCssPlaceholders(process.cwd());
-  }
 
   const ruleValue = useTurbopackConfig
     ? {
@@ -453,10 +411,6 @@ function injectWywTurbopackRules(
   );
 
   if (useTurbopackConfig) {
-    const turbopackConfig = (nextConfig as unknown as Record<string, unknown>)
-      .turbopack;
-    const userTurbopack = isPlainObject(turbopackConfig) ? turbopackConfig : {};
-
     const userRules = isPlainObject(userTurbopack.rules)
       ? (userTurbopack.rules as Record<string, unknown>)
       : {};
@@ -472,14 +426,6 @@ function injectWywTurbopackRules(
       },
     } as NextConfig;
   }
-
-  const userExperimental = isPlainObject(nextConfig.experimental)
-    ? (nextConfig.experimental as Record<string, unknown>)
-    : {};
-
-  const userTurbo = isPlainObject(userExperimental.turbo)
-    ? (userExperimental.turbo as Record<string, unknown>)
-    : {};
 
   const userRules = isPlainObject(userTurbo.rules)
     ? (userTurbo.rules as Record<string, unknown>)

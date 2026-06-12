@@ -3,19 +3,33 @@ import * as React from 'react';
 import {
   createActionsAccumulator,
   createDependenciesAccumulator,
+  createEvalFilesAccumulator,
   createEntrypointsAccumulator,
+  createPerfSpansAccumulator,
   getCommonPathPrefix,
 } from './analyze';
-import { isActionLine, isDependenciesLine, isEntrypointLine } from './guards';
+import {
+  isActionLine,
+  isDependenciesLine,
+  isEntrypointLine,
+  isEvalFilesLine,
+  isPerfSpansLine,
+} from './guards';
 import { parseJsonlFile } from './jsonl';
 import type { JsonlProgress } from './jsonl';
-import type { ActionLine, DependenciesLine, EntrypointLine } from './types';
 import type {
+  ActionLine,
+  DependenciesLine,
+  EntrypointLine,
+  EvalFilesLine,
+  PerfSpanLine,
+} from './types';
+import type {
+  FileKey,
   ParseErrors,
   ParseProgress,
   ParsedData,
-  RequiredFiles,
-  RequiredFileKey,
+  SelectedFiles,
 } from './state';
 import { isAbsolutePathLike } from './utils';
 
@@ -50,7 +64,7 @@ export function useParseWywLogs() {
     setFatalError(null);
   }, []);
 
-  const parse = React.useCallback(async (selected: RequiredFiles) => {
+  const parse = React.useCallback(async (selected: SelectedFiles) => {
     if (!selected.actions || !selected.dependencies || !selected.entrypoints) {
       return;
     }
@@ -64,13 +78,15 @@ export function useParseWywLogs() {
     setData(null);
     setFatalError(null);
 
-    const skippedLines: Record<RequiredFileKey, number> = {
+    const skippedLines: Record<FileKey, number> = {
       actions: 0,
       dependencies: 0,
+      evalFiles: 0,
       entrypoints: 0,
+      perfSpans: 0,
     };
 
-    const updateProgress = (file: RequiredFileKey) => (p: JsonlProgress) => {
+    const updateProgress = (file: FileKey) => (p: JsonlProgress) => {
       const now = performance.now();
       if (now - lastProgressUpdateRef.current < 120) return;
       lastProgressUpdateRef.current = now;
@@ -134,9 +150,57 @@ export function useParseWywLogs() {
 
       const dependencies = depsAcc.finish();
 
+      let evalFiles: ParsedData['evalFiles'] | undefined;
+      let evalFilesErrors: ParseErrors['evalFiles'] = [];
+      if (selected.evalFiles) {
+        const evalFilesAcc = createEvalFilesAccumulator();
+        const evalFilesParse = await parseJsonlFile<unknown>(
+          selected.evalFiles,
+          (value, lineNumber) => {
+            if (!isEvalFilesLine(value)) {
+              skippedLines.evalFiles += 1;
+              return;
+            }
+            evalFilesAcc.addLine(value as EvalFilesLine, lineNumber);
+          },
+          {
+            signal: abort.signal,
+            onProgress: updateProgress('evalFiles'),
+          }
+        );
+        evalFiles = evalFilesAcc.finish();
+        evalFilesErrors = evalFilesParse.errors;
+      }
+
+      let perfSpans: ParsedData['perfSpans'] | undefined;
+      let perfSpansErrors: ParseErrors['perfSpans'] = [];
+      if (selected.perfSpans) {
+        const perfSpansAcc = createPerfSpansAccumulator();
+        const perfSpansParse = await parseJsonlFile<unknown>(
+          selected.perfSpans,
+          (value, lineNumber) => {
+            if (!isPerfSpansLine(value)) {
+              skippedLines.perfSpans += 1;
+              return;
+            }
+            perfSpansAcc.addLine(value as PerfSpanLine, lineNumber);
+          },
+          {
+            signal: abort.signal,
+            onProgress: updateProgress('perfSpans'),
+          }
+        );
+        perfSpans = perfSpansAcc.finish();
+        perfSpansErrors = perfSpansParse.errors;
+      }
+
       const allPaths = [
         ...entry.instances.map((i) => i.filename ?? ''),
         ...dependencies.files,
+        ...(evalFiles?.records.flatMap((item) => [
+          item.id,
+          item.importer ?? '',
+        ]) ?? []),
       ].filter(Boolean);
 
       const absolutePaths = allPaths.filter(isAbsolutePathLike);
@@ -149,15 +213,19 @@ export function useParseWywLogs() {
         entrypoints: entryParse.errors,
         actions: actionsParse.errors,
         dependencies: depsParse.errors,
+        evalFiles: evalFilesErrors,
+        perfSpans: perfSpansErrors,
       });
 
       setData({
         actions,
         actionsSummary,
         dependencies,
+        evalFiles,
         entrypointsFiles: entry.files,
         entrypointsInstances: entry.instances,
         pathPrefix: nextPathPrefix,
+        perfSpans,
         skippedLines,
       });
     } catch (error) {

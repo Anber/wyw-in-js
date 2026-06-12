@@ -3,6 +3,12 @@ import type { IWorkflowAction, SyncScenarioForAction } from '../types';
 import { collectTransformDiagnostics } from '../../utils/TransformDiagnostics';
 import { toTransformResultMetadata } from '../../utils/TransformMetadata';
 
+const isLoadedEntrypointWithoutArtifacts = (
+  entrypoint: IWorkflowAction['entrypoint']
+) =>
+  entrypoint.initialCode !== undefined &&
+  entrypoint.only.includes('__wywPreval');
+
 /**
  * The entry point for file processing. Sequentially calls `processEntrypoint`,
  * `evalFile`, `collect`, and `extract`. Returns the result of transforming
@@ -40,11 +46,28 @@ export function* workflow(
 
   const originalCode = entrypoint.loadedAndParsed.code ?? '';
 
+  function* restartOnSupersede(
+    this: IWorkflowAction,
+    error: unknown
+  ): SyncScenarioForAction<IWorkflowAction> {
+    if (isAborted(error) && entrypoint.supersededWith) {
+      entrypoint.log('workflow aborted, schedule the next attempt');
+      return yield* this.getNext(
+        'workflow',
+        entrypoint.supersededWith,
+        undefined,
+        null
+      );
+    }
+
+    throw error;
+  }
+
   // File is ignored or does not contain any tags. Return original code.
   if (!entrypoint.hasWywMetadata()) {
-    if (entrypoint.generation === 1) {
-      // 1st generation here means that it's __wywPreval entrypoint
-      // without __wywPreval, so we don't need it cached
+    if (isLoadedEntrypointWithoutArtifacts(entrypoint)) {
+      // A root bundler pass for a plain dependency must not pin eval/cache state.
+      // If another WyW file needs this module, it will be prepared on demand.
       cache.delete('entrypoints', entrypoint.name);
     }
 
@@ -56,69 +79,80 @@ export function* workflow(
 
   // *** 2nd stage ***
 
-  const evalStageResult = yield* this.getNext(
-    'evalFile',
-    entrypoint,
-    undefined,
-    null
-  );
+  try {
+    const evalStageResult = yield* this.getNext(
+      'evalFile',
+      entrypoint,
+      undefined,
+      null
+    );
+    entrypoint.assertNotSuperseded();
 
-  if (evalStageResult === null) {
+    if (evalStageResult === null) {
+      return {
+        code: originalCode,
+        sourceMap: options.inputSourceMap,
+      };
+    }
+
+    const [valueCache, dependencies] = evalStageResult;
+
+    // *** 3rd stage ***
+
+    const collectStageResult = yield* this.getNext(
+      'collect',
+      entrypoint,
+      {
+        valueCache,
+      },
+      null
+    );
+    entrypoint.assertNotSuperseded();
+
+    if (!collectStageResult.metadata) {
+      if (isLoadedEntrypointWithoutArtifacts(entrypoint)) {
+        cache.delete('entrypoints', entrypoint.name);
+      }
+
+      return {
+        code: collectStageResult.code!,
+        sourceMap: collectStageResult.map,
+      };
+    }
+
+    const metadata = options.pluginOptions.outputMetadata
+      ? toTransformResultMetadata(collectStageResult.metadata, dependencies)
+      : null;
+    const diagnostics = collectTransformDiagnostics(
+      entrypoint.name,
+      collectStageResult.metadata.processors
+    );
+
+    // *** 4th stage
+
+    const extractStageResult = yield* this.getNext(
+      'extract',
+      entrypoint,
+      {
+        processors: collectStageResult.metadata.processors,
+      },
+      null
+    );
+    entrypoint.assertNotSuperseded();
+
     return {
-      code: originalCode,
-      sourceMap: options.inputSourceMap,
-    };
-  }
-
-  const [valueCache, dependencies] = evalStageResult;
-
-  // *** 3rd stage ***
-
-  const collectStageResult = yield* this.getNext(
-    'collect',
-    entrypoint,
-    {
-      valueCache,
-    },
-    null
-  );
-
-  if (!collectStageResult.metadata) {
-    return {
-      code: collectStageResult.code!,
+      ...extractStageResult,
+      code: collectStageResult.code ?? '',
+      dependencies,
+      ...(diagnostics.length > 0 ? { diagnostics } : {}),
+      ...(metadata ? { metadata } : {}),
+      replacements: [
+        ...extractStageResult.replacements,
+        ...collectStageResult.metadata.replacements,
+      ],
       sourceMap: collectStageResult.map,
     };
+  } catch (error) {
+    return yield* restartOnSupersede.call(this, error);
   }
-
-  const metadata = options.pluginOptions.outputMetadata
-    ? toTransformResultMetadata(collectStageResult.metadata, dependencies)
-    : null;
-  const diagnostics = collectTransformDiagnostics(
-    entrypoint.name,
-    collectStageResult.metadata.processors
-  );
-
-  // *** 4th stage
-
-  const extractStageResult = yield* this.getNext(
-    'extract',
-    entrypoint,
-    {
-      processors: collectStageResult.metadata.processors,
-    },
-    null
-  );
-
-  return {
-    ...extractStageResult,
-    code: collectStageResult.code ?? '',
-    dependencies,
-    ...(diagnostics.length > 0 ? { diagnostics } : {}),
-    ...(metadata ? { metadata } : {}),
-    replacements: [
-      ...extractStageResult.replacements,
-      ...collectStageResult.metadata.replacements,
-    ],
-    sourceMap: collectStageResult.map,
-  };
 }

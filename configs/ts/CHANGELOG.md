@@ -1,10 +1,10 @@
 # @wyw-in-js/ts-config
 
-## 1.1.0
+## 2.0.0-alpha.0
 
-### Minor Changes
+### Major Changes
 
-- Bump versions
+- Align private workspace packages and examples for v2.
 
 ## 1.0.2
 

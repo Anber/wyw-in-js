@@ -93,4 +93,14 @@ describe('Bun bundler', () => {
     expect(cssOutput).toContain('Hello from asset');
     expect(cssOutput).toContain('./sample-asset.txt');
   });
+
+  it('extracts CSS from TSX entrypoints', async () => {
+    await rm(outDir, { recursive: true, force: true });
+
+    const cssOutput = normalizeLineEndings(
+      await buildArtefact(outDir, undefined, 'tsx-entry.tsx')
+    );
+
+    expect(cssOutput).toMatch(/color:\s*(rebeccapurple|#639)/i);
+  });
 });

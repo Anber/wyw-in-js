@@ -7,6 +7,14 @@ import type {
   EntrypointFileStats,
   EntrypointInstance,
   EntrypointLine,
+  EvalFileRecord,
+  EvalFilesLine,
+  EvalFilesStats,
+  EvalFileValueStatus,
+  PerfMethodStats,
+  PerfSpanLine,
+  PerfSpanRecord,
+  PerfSpansStats,
 } from './types';
 
 export function getCommonPathPrefix(rawPaths: string[]) {
@@ -470,6 +478,183 @@ export function analyzeDependencies(
     acc.addLine(line);
   }
   return acc.finish();
+}
+
+const normalizeEvalValueStatus = (line: EvalFilesLine): EvalFileValueStatus => {
+  if (
+    line.valueStatus === 'serialized' ||
+    line.valueStatus === 'stringified' ||
+    line.valueStatus === 'mixed' ||
+    line.valueStatus === 'none'
+  ) {
+    return line.valueStatus;
+  }
+
+  return line.valuesBase64 ? 'serialized' : 'none';
+};
+
+export function createEvalFilesAccumulator() {
+  const records: EvalFileRecord[] = [];
+  type FileStats = EvalFilesStats['summary']['topFiles'][number];
+
+  const addLine = (line: EvalFilesLine, lineNumber: number) => {
+    records.push({
+      ...line,
+      lineNumber,
+      valueStatus: normalizeEvalValueStatus(line),
+    });
+  };
+
+  const finish = (): EvalFilesStats => {
+    records.sort((a, b) => {
+      if (a.evalSeq !== b.evalSeq) return a.evalSeq - b.evalSeq;
+      return a.lineNumber - b.lineNumber;
+    });
+
+    const byFile = new Map<string, FileStats>();
+
+    let codePayloads = 0;
+    let serializedPayloads = 0;
+    let withStringifiedValues = 0;
+
+    for (const record of records) {
+      if (record.payloadKind === 'code') {
+        codePayloads += 1;
+      } else {
+        serializedPayloads += 1;
+      }
+
+      if (
+        record.valueStatus === 'stringified' ||
+        record.valueStatus === 'mixed'
+      ) {
+        withStringifiedValues += 1;
+      }
+
+      const row: FileStats = byFile.get(record.id) ?? {
+        codePayloads: 0,
+        count: 0,
+        id: record.id,
+        serializedPayloads: 0,
+        withStringifiedValues: 0,
+      };
+
+      row.count += 1;
+      if (record.payloadKind === 'code') {
+        row.codePayloads += 1;
+      } else {
+        row.serializedPayloads += 1;
+      }
+      if (
+        record.valueStatus === 'stringified' ||
+        record.valueStatus === 'mixed'
+      ) {
+        row.withStringifiedValues += 1;
+      }
+      byFile.set(record.id, row);
+    }
+
+    return {
+      records,
+      summary: {
+        codePayloads,
+        serializedPayloads,
+        totalPayloads: records.length,
+        uniqueFiles: byFile.size,
+        withStringifiedValues,
+        topFiles: Array.from(byFile.values())
+          .sort((a, b) => {
+            if (b.count !== a.count) return b.count - a.count;
+            return a.id.localeCompare(b.id);
+          })
+          .slice(0, 50),
+      },
+    };
+  };
+
+  return { addLine, finish };
+}
+
+export function createPerfSpansAccumulator() {
+  const records: PerfSpanRecord[] = [];
+
+  const addLine = (line: PerfSpanLine, lineNumber: number) => {
+    records.push({
+      ...line,
+      lineNumber,
+    });
+  };
+
+  const finish = (): PerfSpansStats => {
+    records.sort((a, b) => {
+      if (a.startedAt !== b.startedAt) return a.startedAt - b.startedAt;
+      return a.lineNumber - b.lineNumber;
+    });
+
+    const byMethod = new Map<string, PerfMethodStats>();
+    let asyncSpans = 0;
+    let failedSpans = 0;
+    let totalDurationMs = 0;
+
+    for (const record of records) {
+      totalDurationMs += record.durationMs;
+      if (record.isAsync) asyncSpans += 1;
+      if (record.status === 'failed') failedSpans += 1;
+
+      const methodStats = byMethod.get(record.method) ?? {
+        asyncSpans: 0,
+        avgDurationMs: 0,
+        count: 0,
+        failedSpans: 0,
+        maxDurationMs: 0,
+        method: record.method,
+        totalDurationMs: 0,
+      };
+
+      methodStats.count += 1;
+      methodStats.totalDurationMs += record.durationMs;
+      methodStats.maxDurationMs = Math.max(
+        methodStats.maxDurationMs,
+        record.durationMs
+      );
+      if (record.isAsync) methodStats.asyncSpans += 1;
+      if (record.status === 'failed') methodStats.failedSpans += 1;
+      methodStats.avgDurationMs =
+        methodStats.count === 0
+          ? 0
+          : methodStats.totalDurationMs / methodStats.count;
+
+      byMethod.set(record.method, methodStats);
+    }
+
+    return {
+      records,
+      summary: {
+        asyncSpans,
+        failedSpans,
+        totalDurationMs,
+        totalSpans: records.length,
+        slowestSpans: [...records]
+          .sort((a, b) => {
+            if (b.durationMs !== a.durationMs) {
+              return b.durationMs - a.durationMs;
+            }
+            return a.method.localeCompare(b.method);
+          })
+          .slice(0, 50),
+        topMethods: Array.from(byMethod.values())
+          .sort((a, b) => {
+            if (b.totalDurationMs !== a.totalDurationMs) {
+              return b.totalDurationMs - a.totalDurationMs;
+            }
+            return a.method.localeCompare(b.method);
+          })
+          .slice(0, 50),
+      },
+    };
+  };
+
+  return { addLine, finish };
 }
 
 export function getSupersedeChain(

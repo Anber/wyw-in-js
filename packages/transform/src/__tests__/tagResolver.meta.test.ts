@@ -4,7 +4,7 @@ import * as babel from '@babel/core';
 
 import type { StrictOptions } from '@wyw-in-js/shared';
 
-import { applyProcessors } from '../utils/getTagProcessor';
+import { applyProcessors } from './legacy-babel-reference/utils/getTagProcessor';
 
 const processorPath = path.resolve(
   __dirname,
@@ -41,14 +41,9 @@ describe('tagResolver meta', () => {
 
     const options: Pick<
       StrictOptions,
-      | 'classNameSlug'
-      | 'displayName'
-      | 'extensions'
-      | 'evaluate'
-      | 'tagResolver'
+      'classNameSlug' | 'displayName' | 'extensions' | 'tagResolver'
     > = {
       displayName: false,
-      evaluate: true,
       extensions: ['.js'],
       tagResolver: (source, tag, meta) => {
         received = { source, tag, meta };

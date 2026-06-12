@@ -14,3 +14,12 @@ Prepend `@wyw-in-js/parcel-transformer` to the default JS pipeline in `.parcelrc
   }
 }
 ```
+
+## Eval resolver modes
+
+`eval.resolver: 'native'` and the native step of `eval.resolver: 'hybrid'` use `oxc-resolver` with automatic
+`tsconfig.json` discovery.
+
+Parcel aliases and resolver plugins are resolved only by the bundler fallback. Use `hybrid` when evaluated imports rely on
+Parcel resolver behavior. Use `native` only when `oxc-resolver` can resolve all evaluated imports, or mirror Parcel-only
+aliases in `oxcOptions.resolver.alias`.

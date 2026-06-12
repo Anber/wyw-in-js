@@ -1,19 +1,23 @@
-import type { TransformOptions } from '@babel/core';
-import type { File } from '@babel/types';
-
-import type { Debugger, Evaluator } from '@wyw-in-js/shared';
+import type {
+  Debugger,
+  Evaluator,
+  TransformEngineOptions,
+} from '@wyw-in-js/shared';
 
 import type { Services } from './types';
+import type { WYWTransformMetadata } from '../utils/TransformMetadata';
+
+export type ParsedAst = unknown;
 
 export interface IEntrypointCode {
-  readonly ast: File;
+  readonly ast: ParsedAst;
   code: string;
-  evalConfig: TransformOptions;
+  evalConfig: TransformEngineOptions;
   evaluator: Evaluator;
 }
 
 export interface IIgnoredEntrypoint {
-  readonly ast?: File;
+  readonly ast?: ParsedAst;
   readonly code?: string;
   evaluator: 'ignored';
   reason: 'extension' | 'rule';
@@ -23,6 +27,33 @@ export interface IEntrypointDependency {
   only: string[];
   resolved: string | null;
   source: string;
+}
+
+export interface IPreevalResult {
+  ast: ParsedAst | null;
+  baseCode?: string;
+  code: string;
+  dependencyNames?: string[];
+  evalCode?: string;
+  metadata: WYWTransformMetadata | null;
+  processorClassNames?: Record<string, string>;
+  staticImportLocals?: string[];
+  staticSideEffectImportLocals?: string[];
+  staticDependencies?: string[];
+  staticNullWYWMetaExtendsHelpers?: string[];
+  staticValuesApplied?: boolean;
+  staticValueCache?: Map<string, unknown>;
+  runtimeOnlyStaticValueNames?: string[];
+  staticValueCandidates?: Array<{
+    imports: Array<{
+      imported: 'default' | string;
+      importLocal?: string;
+      local: string;
+      source: string;
+    }>;
+    name: string;
+    source: string;
+  }>;
 }
 
 export type LoadAndParseFn = (

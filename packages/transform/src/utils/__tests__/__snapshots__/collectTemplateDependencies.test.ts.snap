@@ -1,4 +1,35 @@
-// Jest Snapshot v1, https://goo.gl/fbAQLP
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`collectTemplateDependencies hoist expressions 1`] = `
+"import x from "module";
+const _exp = () => 42;
+const _exp2 = () => "test";
+const _exp3 = () => () => "result";
+const _exp4 = () => 21 * x;
+function fn() {
+  const template = tag\`\${_exp()}\${_exp2()}\${_exp3()}\${_exp4()}\`;
+}"
+`;
+
+exports[`collectTemplateDependencies should hoist expressions after imports 1`] = `
+"import { styled } from '@linaria/react';
+import slugify from '../__fixtures__/slugify';
+const _exp = () => slugify('test');
+export const Title = styled.h1\`
+  &:before {
+    content: "\${_exp()}"
+  }
+\`;"
+`;
+
+exports[`collectTemplateDependencies non-hoistable expression 1`] = `
+"This identifier cannot be used in the template, because it is a function parameter.
+> 1 | function fn(arg) {
+    |             ^^^
+  2 |   {
+  3 |     const base = "base";
+  4 |     const variable = base + arg;"
+`;
 
 exports[`collectTemplateDependencies hoist chain of statements 1`] = `
 "import str from "module";
@@ -9,17 +40,6 @@ function fn() {
   {
     const template = tag\`\${_exp()}\`;
   }
-}"
-`;
-
-exports[`collectTemplateDependencies hoist expressions 1`] = `
-"import x from "module";
-const _exp = () => 42;
-const _exp2 = () => "test";
-const _exp3 = () => () => "result";
-const _exp4 = () => 21 * x;
-function fn() {
-  const template = tag\`\${_exp()}\${_exp2()}\${_exp3()}\${_exp4()}\`;
 }"
 `;
 
@@ -43,24 +63,4 @@ exports[`collectTemplateDependencies hoistExpression with object 1`] = `
 function fn() {
   const template = tag\`\${_exp()}\`;
 }"
-`;
-
-exports[`collectTemplateDependencies non-hoistable expression 1`] = `
-"This identifier cannot be used in the template, because it is a function parameter.
-> 1 | function fn(arg) {
-    |             ^^^
-  2 |   {
-  3 |     const base = "base";
-  4 |     const variable = base + arg;"
-`;
-
-exports[`collectTemplateDependencies should hoist expressions after imports 1`] = `
-"import { styled } from '@linaria/react';
-import slugify from '../__fixtures__/slugify';
-const _exp = () => slugify('test');
-export const Title = styled.h1\`
-  &:before {
-    content: "\${_exp()}"
-  }
-\`;"
 `;

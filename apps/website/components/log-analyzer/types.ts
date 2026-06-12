@@ -116,6 +116,107 @@ export type DependenciesStats = {
   importCountByFrom: Map<string, number>;
 };
 
+export type EvalFileValue =
+  | {
+      serialized: unknown;
+      status: 'serialized';
+    }
+  | {
+      reason: string;
+      status: 'stringified';
+      stringified: string;
+    };
+
+export type EvalFileValues = {
+  exports?: Record<string, EvalFileValue>;
+  preval?: Record<string, EvalFileValue>;
+};
+
+export type EvalFileValueStatus =
+  | 'mixed'
+  | 'none'
+  | 'serialized'
+  | 'stringified';
+
+export type EvalFilesLine = {
+  contentBase64: string | null;
+  evalSeq: number;
+  hash: string | null;
+  id: string;
+  importer: string | null;
+  only: string[];
+  payloadKind: 'code' | 'serialized-exports';
+  request: string | null;
+  type: 'eval-file';
+  valuesBase64: string | null;
+  valueStatus?: EvalFileValueStatus;
+};
+
+export type EvalFileRecord = EvalFilesLine & {
+  lineNumber: number;
+  valueStatus: EvalFileValueStatus;
+};
+
+export type EvalFilesSummary = {
+  codePayloads: number;
+  serializedPayloads: number;
+  totalPayloads: number;
+  uniqueFiles: number;
+  withStringifiedValues: number;
+  topFiles: Array<{
+    codePayloads: number;
+    count: number;
+    id: string;
+    serializedPayloads: number;
+    withStringifiedValues: number;
+  }>;
+};
+
+export type EvalFilesStats = {
+  records: EvalFileRecord[];
+  summary: EvalFilesSummary;
+};
+
+export type PerfSpanLine = {
+  durationMs: number;
+  error?: unknown;
+  finishedAt: number;
+  isAsync: boolean;
+  method: string;
+  spanId: number;
+  startedAt: number;
+  status: 'failed' | 'finished';
+  type: 'perf-span';
+};
+
+export type PerfSpanRecord = PerfSpanLine & {
+  lineNumber: number;
+};
+
+export type PerfMethodStats = {
+  asyncSpans: number;
+  avgDurationMs: number;
+  count: number;
+  failedSpans: number;
+  maxDurationMs: number;
+  method: string;
+  totalDurationMs: number;
+};
+
+export type PerfSpansSummary = {
+  asyncSpans: number;
+  failedSpans: number;
+  slowestSpans: PerfSpanRecord[];
+  topMethods: PerfMethodStats[];
+  totalDurationMs: number;
+  totalSpans: number;
+};
+
+export type PerfSpansStats = {
+  records: PerfSpanRecord[];
+  summary: PerfSpansSummary;
+};
+
 export type ActionsSummary = {
   spanMs: number;
   startedAt: number | null;

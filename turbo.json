@@ -1,15 +1,11 @@
 {
   "$schema": "https://turborepo.org/schema.json",
-  "globalDependencies": ["tsconfig.json"],
+  "globalDependencies": ["tsconfig.json", "scripts/build-esm-oxc.mjs"],
   "extends": ["//"],
   "pipeline": {
     "build:esm": {
-      "dependsOn": ["^build:esm", "@wyw-in-js/babel-config#check"],
+      "dependsOn": ["^build:esm"],
       "outputs": ["esm/**"]
-    },
-    "build:lib": {
-      "dependsOn": ["^build:lib", "@wyw-in-js/babel-config#check"],
-      "outputs": ["lib/**"]
     },
     "build:types": {
       "dependsOn": ["^build:types", "@wyw-in-js/ts-config#check"],

@@ -2,16 +2,17 @@ import * as React from 'react';
 
 import { REQUIRED_FILENAMES } from './constants';
 import { detectRequiredFiles } from './files';
-import type { RequiredFiles } from './state';
+import type { SelectedFiles } from './state';
 
 export function useUploadFiles() {
-  const [selected, setSelected] = React.useState<RequiredFiles>({});
+  const [selected, setSelected] = React.useState<SelectedFiles>({});
   const [problems, setProblems] = React.useState<string[]>([]);
   const [inputsKey, setInputsKey] = React.useState(0);
 
   const onPickFiles = React.useCallback((files: File[]) => {
-    const { required, problems: nextProblems } = detectRequiredFiles(files);
-    setSelected(required);
+    const { selected: nextSelected, problems: nextProblems } =
+      detectRequiredFiles(files);
+    setSelected(nextSelected);
     setProblems(nextProblems);
   }, []);
 

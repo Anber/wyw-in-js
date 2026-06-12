@@ -27,6 +27,15 @@ await Bun.build({
 });
 ```
 
+## Eval resolver modes
+
+`eval.resolver: 'native'` and the native step of `eval.resolver: 'hybrid'` use `oxc-resolver` with automatic
+`tsconfig.json` discovery.
+
+The Bun plugin does not receive a static bundler alias map. Use `hybrid` when evaluated imports may rely on Bun-specific
+resolution. Use `native` only when `oxc-resolver` can resolve all evaluated imports, or mirror Bun-only aliases in
+`oxcOptions.resolver.alias`.
+
 ## Transforming libraries in `node_modules`
 
 By default, the Bun plugin skips transforming files from `node_modules` for performance.

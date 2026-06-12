@@ -1,41 +1,35 @@
 import { join } from 'path';
 
-import { parseSync } from '@babel/core';
-import traverse from '@babel/traverse';
 import dedent from 'dedent';
 
 import type { BaseProcessor } from '@wyw-in-js/processor-utils';
-import { applyProcessors } from '@wyw-in-js/transform';
+import { applyOxcProcessors } from '../../../../packages/transform/src/utils/applyOxcProcessors';
 
 interface IRunOptions {
   ts?: boolean;
 }
 
 const run = (code: string, options: IRunOptions = {}): BaseProcessor | null => {
-  const opts = {
+  const fileContext = {
     filename: join(__dirname, '..', options.ts ? 'test.ts' : 'test.js'),
     root: '.',
-    code: true,
-    ast: true,
-    presets: options.ts ? ['@babel/preset-typescript'] : [],
   };
-  const rootNode = parseSync(code, opts)!;
   let result: BaseProcessor | null = null;
-  traverse(rootNode, {
-    Program(path) {
-      applyProcessors(
-        path,
-        opts,
-        {
-          displayName: true,
-          evaluate: true,
-        },
-        (p) => {
-          result = p;
-        }
-      );
+  applyOxcProcessors(
+    code,
+    fileContext,
+    {
+      displayName: true,
+      extensions: ['.js', '.ts'],
+      tagResolver: (source, imported) =>
+        source === '../makeStyles' && imported === 'makeStyles'
+          ? join(__dirname, '..', 'processors', 'makeStyles.ts')
+          : null,
     },
-  });
+    (p) => {
+      result = p;
+    }
+  );
 
   return result;
 };
@@ -81,7 +75,7 @@ describe('applyProcessors', () => {
   it('(0, objectSyntax.makeStyles)()', () => {
     const result = run(
       dedent`
-        const objectSyntax = require("@wyw-in-js/object-syntax");
+        import * as objectSyntax from "@wyw-in-js/object-syntax";
 
         export const Square = (0, objectSyntax.makeStyles)({});
       `
@@ -111,21 +105,11 @@ describe('applyProcessors', () => {
     });
   });
 
-  it('require and access with prop', () => {
+  it('namespace and destructuring', () => {
     const result = run(
       dedent`
-        const renamed = require('@wyw-in-js/object-syntax').makeStyles;
-        export const Square = renamed({});
-      `
-    );
-
-    expect(tagToString(result)).toBe('renamed(…)');
-  });
-
-  it('require and destructing', () => {
-    const result = run(
-      dedent`
-        const { makeStyles } = require('@wyw-in-js/object-syntax');
+        import * as objectSyntax from '@wyw-in-js/object-syntax';
+        const { makeStyles } = objectSyntax;
         export const Square = makeStyles({});
       `
     );

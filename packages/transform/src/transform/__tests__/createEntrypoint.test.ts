@@ -81,6 +81,27 @@ describe('createEntrypoint', () => {
     expect(entrypoint1).toBe(entrypoint2);
   });
 
+  it('widens root requests immediately when cached entrypoint is processing', () => {
+    const entrypoint1 = createEntrypoint(
+      services,
+      '/foo/bar.js',
+      ['__wywPreval'],
+      'export const named = 1;'
+    );
+
+    entrypoint1.beginProcessing();
+
+    try {
+      const entrypoint2 = createEntrypoint(services, '/foo/bar.js', ['named']);
+
+      expect(entrypoint2).not.toBe(entrypoint1);
+      expect(entrypoint1.supersededWith).toBe(entrypoint2);
+      expect(entrypoint2.only).toEqual(['__wywPreval', 'named']);
+    } finally {
+      entrypoint1.endProcessing();
+    }
+  });
+
   it('should call callback if entrypoint was superseded', () => {
     const callback = jest.fn();
     const entrypoint1 = createEntrypoint(services, '/foo/bar.js', ['default']);
@@ -140,5 +161,155 @@ describe('createEntrypoint', () => {
     );
     expect(entrypoint2).not.toBe(entrypoint1);
     expect(entrypoint2.only).toEqual(['a', 'b']);
+  });
+
+  it('reuses transformed state from evaluated cache when only is unchanged', () => {
+    const loadAndParseFn = jest.fn((s, name, loadedCode) => ({
+      ast: s.babel.parseSync(loadedCode ?? '', {
+        babelrc: false,
+        configFile: false,
+        filename: name,
+      })!,
+      code: loadedCode ?? '',
+      evaluator: jest.fn(),
+      evalConfig: {},
+    }));
+    services.loadAndParseFn = loadAndParseFn;
+
+    const code = 'export const value = 1;';
+    const entrypoint1 = createEntrypoint(
+      services,
+      '/foo/bar.js',
+      ['value'],
+      code
+    );
+    const preevalResult = {
+      ast: null,
+      code,
+      dependencyNames: [],
+      metadata: null,
+      staticValueCache: new Map([['_exp', 'red']]),
+    };
+    entrypoint1.setPreevalResult(preevalResult);
+    entrypoint1.setTransformResult({ code, metadata: null });
+    const evaluated = entrypoint1.createEvaluated();
+    services.cache.add('entrypoints', '/foo/bar.js', evaluated);
+
+    const entrypoint2 = createEntrypoint(
+      services,
+      '/foo/bar.js',
+      ['value'],
+      code
+    );
+
+    expect(loadAndParseFn).toHaveBeenCalledTimes(1);
+    expect(services.cache.get('entrypoints', '/foo/bar.js')).toBe(evaluated);
+    expect(entrypoint2.transformedCode).toBe(code);
+    expect(entrypoint2.loadedAndParsed.code).toBe(code);
+    expect(entrypoint2.loadedAndParsed).toBe(evaluated.loadedAndParsed);
+    expect(entrypoint2.getPreevalResult()).toBe(preevalResult);
+  });
+
+  it('reuses evaluated parsed state when only changes', () => {
+    const loadAndParseFn = jest.fn((s, name, loadedCode) => ({
+      ast: s.babel.parseSync(loadedCode ?? '', {
+        babelrc: false,
+        configFile: false,
+        filename: name,
+      })!,
+      code: loadedCode ?? '',
+      evaluator: jest.fn(),
+      evalConfig: {},
+    }));
+    services.loadAndParseFn = loadAndParseFn;
+
+    const code = 'export const a = 1; export const b = 2;';
+    const entrypoint1 = createEntrypoint(services, '/foo/bar.js', ['a'], code);
+    entrypoint1.setTransformResult({ code, metadata: null });
+    const evaluated = entrypoint1.createEvaluated();
+    services.cache.add('entrypoints', '/foo/bar.js', evaluated);
+
+    const entrypoint2 = createEntrypoint(services, '/foo/bar.js', ['b'], code);
+
+    expect(loadAndParseFn).toHaveBeenCalledTimes(1);
+    expect(entrypoint2.loadedAndParsed).toBe(evaluated.loadedAndParsed);
+  });
+
+  it('does not reuse transformed state when cached evaluated exports are narrower than requested only', () => {
+    const loadAndParseFn = jest.fn((s, name, loadedCode) => ({
+      ast: s.babel.parseSync(loadedCode ?? '', {
+        babelrc: false,
+        configFile: false,
+        filename: name,
+      })!,
+      code: loadedCode ?? '',
+      evaluator: jest.fn(),
+      evalConfig: {},
+    }));
+    services.loadAndParseFn = loadAndParseFn;
+
+    const code = 'export const a = 1; export const b = 2; export const c = 3;';
+    const narrowPreparedCode = 'export const a = 1; export const b = 2;';
+    const entrypoint1 = createEntrypoint(
+      services,
+      '/foo/bar.js',
+      ['a', 'b'],
+      code
+    );
+    entrypoint1.setTransformResult({
+      code: narrowPreparedCode,
+      metadata: null,
+    });
+    const evaluated = entrypoint1.createEvaluated();
+
+    (evaluated as unknown as { only: string[] }).only = ['a', 'b', 'c'];
+
+    services.cache.add('entrypoints', '/foo/bar.js', evaluated);
+
+    const entrypoint2 = createEntrypoint(services, '/foo/bar.js', ['c'], code);
+
+    expect(loadAndParseFn).toHaveBeenCalledTimes(1);
+    expect(entrypoint2.loadedAndParsed).toBe(evaluated.loadedAndParsed);
+    expect(entrypoint2.only).toEqual(['a', 'b', 'c']);
+    expect(entrypoint2.evaluatedOnly).toEqual(['a', 'b']);
+    expect(entrypoint2.transformedCode).toBeNull();
+  });
+
+  it('preserves wider cached only when creating loaded root passes', () => {
+    const loadAndParseFn = jest.fn((s, name, loadedCode) => ({
+      ast: s.babel.parseSync(loadedCode ?? '', {
+        babelrc: false,
+        configFile: false,
+        filename: name,
+      })!,
+      code: loadedCode ?? '',
+      evaluator: jest.fn(),
+      evalConfig: {},
+    }));
+    services.loadAndParseFn = loadAndParseFn;
+
+    const code = 'export const Styles = {};';
+    const dependencyEntrypoint = createEntrypoint(
+      services,
+      '/foo/styles.ts',
+      ['Styles'],
+      code
+    );
+    dependencyEntrypoint.setTransformResult({ code, metadata: null });
+    const evaluated = dependencyEntrypoint.createEvaluated();
+    services.cache.add('entrypoints', '/foo/styles.ts', evaluated);
+
+    const rootEntrypoint = createEntrypoint(
+      services,
+      '/foo/styles.ts',
+      ['__wywPreval'],
+      code
+    );
+
+    expect(loadAndParseFn).toHaveBeenCalledTimes(1);
+    expect(rootEntrypoint).not.toBe(evaluated);
+    expect(rootEntrypoint.only).toEqual(['Styles', '__wywPreval']);
+    expect(rootEntrypoint.loadedAndParsed).toBe(evaluated.loadedAndParsed);
+    expect(rootEntrypoint.transformedCode).toBeNull();
   });
 });

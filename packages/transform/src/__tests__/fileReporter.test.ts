@@ -3,6 +3,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 
 import { createFileReporter } from '../debug/fileReporter';
+import { EventEmitter } from '../utils/EventEmitter';
 
 const delay = (intervalMs: number) =>
   new Promise<void>((resolve) => {
@@ -37,6 +38,130 @@ const readJsonl = (file: string) =>
     .map((line) => JSON.parse(line));
 
 describe('createFileReporter', () => {
+  it('exposes a cheap enabled flag for debug-only work', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'wyw-file-reporter-'));
+    const reporter = createFileReporter({ dir });
+
+    try {
+      expect(EventEmitter.dummy.enabled).toBe(false);
+      expect(reporter.emitter.enabled).toBe(true);
+    } finally {
+      reporter.onDone(dir);
+      await waitFor(() => existsSync(join(dir, 'actions.jsonl')));
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('writes staticResolve single events to static-resolve.jsonl', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'wyw-file-reporter-'));
+    const reporter = createFileReporter({ dir });
+
+    try {
+      reporter.emitter.single({
+        filename: join(dir, 'foo.ts'),
+        phase: 'export',
+        reason: 'unsupported-expression',
+        status: 'rejected',
+        type: 'staticResolve',
+      });
+      reporter.emitter.single({
+        candidate: '_exp',
+        filename: join(dir, 'foo.ts'),
+        phase: 'candidate',
+        status: 'resolved',
+        type: 'staticResolve',
+      });
+      // unrelated single events should not land in the static-resolve stream
+      reporter.emitter.single({
+        file: join(dir, 'foo.ts'),
+        fileIdx: 'idx',
+        imports: [],
+        only: ['*'],
+        type: 'dependency',
+      });
+
+      reporter.onDone(dir);
+      const target = join(dir, 'static-resolve.jsonl');
+      await waitFor(
+        () => existsSync(target) && readFileSync(target).length > 0
+      );
+
+      const events = readJsonl(target);
+      expect(events).toHaveLength(2);
+      expect(events[0]).toEqual(
+        expect.objectContaining({
+          phase: 'export',
+          reason: 'unsupported-expression',
+          status: 'rejected',
+          type: 'staticResolve',
+        })
+      );
+      expect(events[1]).toEqual(
+        expect.objectContaining({
+          candidate: '_exp',
+          phase: 'candidate',
+          status: 'resolved',
+          type: 'staticResolve',
+        })
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('writes eval file payloads to eval-files.jsonl', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'wyw-file-reporter-'));
+    const reporter = createFileReporter({ dir });
+
+    try {
+      const values = {
+        exports: {
+          color: {
+            serialized: { kind: 'string', value: 'red' },
+            status: 'serialized',
+          },
+        },
+      };
+
+      reporter.emitter.single({
+        contentBase64: Buffer.from('export const color = "red";').toString(
+          'base64'
+        ),
+        evalSeq: 1,
+        hash: 'content-hash',
+        id: join(dir, 'theme.ts'),
+        importer: null,
+        only: ['color'],
+        payloadKind: 'code',
+        request: null,
+        type: 'eval-file',
+        valuesBase64: Buffer.from(JSON.stringify(values)).toString('base64'),
+      });
+
+      reporter.onDone(dir);
+
+      const target = join(dir, 'eval-files.jsonl');
+      await waitFor(
+        () => existsSync(target) && readFileSync(target).length > 0
+      );
+
+      const events = readJsonl(target);
+      expect(events).toHaveLength(1);
+      expect(events[0]).toEqual(
+        expect.objectContaining({
+          evalSeq: 1,
+          hash: 'content-hash',
+          only: ['color'],
+          payloadKind: 'code',
+          type: 'eval-file',
+        })
+      );
+      expect(events[0].id).toContain('theme.ts');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('writes perf spans to perf-spans.jsonl without changing actions.jsonl', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'wyw-file-reporter-'));
     const reporter = createFileReporter({ dir });

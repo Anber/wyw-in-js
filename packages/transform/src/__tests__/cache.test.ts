@@ -1,14 +1,15 @@
 import fs from 'node:fs';
 
 import { TransformCacheCollection } from '../cache';
-import type { BarrelManifest } from '../transform/barrelManifest';
+import type { BarrelManifest } from '../transform/barrelManifest.types';
 import type { IEntrypointDependency } from '../transform/Entrypoint.types';
 
 // Mocking the minimal interface needed by the cache
 type MockEntrypoint = {
   dependencies: Map<string, Pick<IEntrypointDependency, 'resolved'>>;
   generation: number;
-  initialCode: string;
+  initialCode?: string;
+  invalidateOnDependencyChange?: Set<string>;
   invalidationDependencies?: Map<
     string,
     Pick<IEntrypointDependency, 'resolved'>
@@ -257,6 +258,140 @@ describe('TransformCacheCollection', () => {
       expect(cache.has('entrypoints', depName)).toBe(true);
       expect(mockedReadFileSync).not.toHaveBeenCalledWith(depName, 'utf8');
       expect(mockedStatSync).toHaveBeenCalledWith(depName);
+    });
+
+    it('does not invalidate an output-affecting dependency when only its entrypoint was evicted', () => {
+      const depName = 'dep.js';
+      const depContent = 'export const token = "red";';
+      const parentName = 'parent.js';
+      const parentContent = 'import { token } from "./dep.js"; css`${token}`;';
+
+      const { entrypoint: depEntrypoint } = setupCacheWithEntrypoint(
+        depName,
+        depContent
+      );
+
+      const parentDeps = new Map<
+        string,
+        Pick<IEntrypointDependency, 'resolved'>
+      >([['./dep.js', { resolved: depName }]]);
+      const { cache, entrypoint: parentEntrypoint } = setupCacheWithEntrypoint(
+        parentName,
+        parentContent,
+        parentDeps
+      );
+      parentEntrypoint.invalidateOnDependencyChange = new Set([depName]);
+
+      cache.add('entrypoints', depName, depEntrypoint as any);
+
+      mockedStatSync.mockImplementation((path) => {
+        if (path === depName) {
+          return { mtimeMs: 123 } as fs.Stats;
+        }
+
+        throw new Error(`Unexpected statSync call: ${String(path)}`);
+      });
+      mockedReadFileSync.mockImplementation((path) => {
+        if (path === depName) {
+          return depContent;
+        }
+
+        throw new Error(`Unexpected readFileSync call: ${String(path)}`);
+      });
+
+      expect(cache.checkFreshness(depName, depName)).toBe(false);
+      cache.delete('entrypoints', depName);
+      mockedReadFileSync.mockClear();
+
+      const invalidated = cache.invalidateIfChanged(parentName, parentContent);
+
+      expect(invalidated).toBe(false);
+      expect(cache.has('entrypoints', parentName)).toBe(true);
+      expect(mockedReadFileSync).toHaveBeenCalledWith(depName, 'utf8');
+    });
+
+    it('memoizes unchanged shared dependency subtrees within one invalidation pass', () => {
+      const leafName = 'leaf.js';
+      const leafContent = 'export const c = 3;';
+      const leftName = 'left.js';
+      const leftContent = 'import { c } from "./leaf.js"; export const l = c;';
+      const rightName = 'right.js';
+      const rightContent =
+        'import { c } from "./leaf.js"; export const r = c + 1;';
+      const rootName = 'root.js';
+      const rootContent =
+        'import { l } from "./left.js"; import { r } from "./right.js";';
+
+      const { entrypoint: leafEntrypoint } = setupCacheWithEntrypoint(
+        leafName,
+        leafContent
+      );
+      const leftDeps = new Map<string, Pick<IEntrypointDependency, 'resolved'>>(
+        [['./leaf.js', { resolved: leafName }]]
+      );
+      const { entrypoint: leftEntrypoint } = setupCacheWithEntrypoint(
+        leftName,
+        leftContent,
+        leftDeps
+      );
+      const rightDeps = new Map<
+        string,
+        Pick<IEntrypointDependency, 'resolved'>
+      >([['./leaf.js', { resolved: leafName }]]);
+      const { entrypoint: rightEntrypoint } = setupCacheWithEntrypoint(
+        rightName,
+        rightContent,
+        rightDeps
+      );
+      const rootDeps = new Map<string, Pick<IEntrypointDependency, 'resolved'>>(
+        [
+          ['./left.js', { resolved: leftName }],
+          ['./right.js', { resolved: rightName }],
+        ]
+      );
+      const { cache } = setupCacheWithEntrypoint(
+        rootName,
+        rootContent,
+        rootDeps
+      );
+
+      cache.add('entrypoints', leafName, leafEntrypoint as any);
+      cache.add('entrypoints', leftName, leftEntrypoint as any);
+      cache.add('entrypoints', rightName, rightEntrypoint as any);
+
+      mockedStatSync.mockImplementation((path) => {
+        switch (path) {
+          case leafName:
+            return { mtimeMs: 101 } as fs.Stats;
+          case leftName:
+            return { mtimeMs: 202 } as fs.Stats;
+          case rightName:
+            return { mtimeMs: 303 } as fs.Stats;
+          default:
+            throw new Error(`Unexpected statSync call: ${String(path)}`);
+        }
+      });
+
+      cache.invalidateIfChanged(leafName, leafContent, undefined, 'fs');
+      cache.invalidateIfChanged(leftName, leftContent, undefined, 'fs');
+      cache.invalidateIfChanged(rightName, rightContent, undefined, 'fs');
+
+      mockedReadFileSync.mockClear();
+      mockedStatSync.mockClear();
+
+      const invalidated = cache.invalidateIfChanged(rootName, rootContent);
+
+      expect(invalidated).toBe(false);
+      expect(cache.has('entrypoints', rootName)).toBe(true);
+      expect(cache.has('entrypoints', leftName)).toBe(true);
+      expect(cache.has('entrypoints', rightName)).toBe(true);
+      expect(cache.has('entrypoints', leafName)).toBe(true);
+      expect(mockedReadFileSync).not.toHaveBeenCalled();
+
+      const statCalls = mockedStatSync.mock.calls.map(([path]) => path);
+      expect(statCalls.filter((path) => path === leafName)).toHaveLength(1);
+      expect(statCalls.filter((path) => path === leftName)).toHaveLength(1);
+      expect(statCalls.filter((path) => path === rightName)).toHaveLength(1);
     });
 
     it('should invalidate parent when an invalidation-only dependency changed', () => {
@@ -902,6 +1037,36 @@ describe('TransformCacheCollection', () => {
       expect(cache.has('entrypoints', fileA)).toBe(true);
       expect(mockedReadFileSync).toHaveBeenCalledWith(fileA, 'utf8');
       expect(mockedReadFileSync).not.toHaveBeenCalledWith(fileB, 'utf8');
+    });
+  });
+
+  describe('consumeInvalidation', () => {
+    it('consumes invalidation once per query/hash variant', () => {
+      const cache = new TransformCacheCollection();
+      const filename = '/tmp/data.txt';
+
+      cache.invalidateForFile(filename);
+
+      expect(cache.consumeInvalidation(`${filename}?raw`)).toBe(true);
+      expect(cache.consumeInvalidation(`${filename}?url`)).toBe(true);
+      expect(cache.consumeInvalidation(`${filename}#v1`)).toBe(true);
+
+      expect(cache.consumeInvalidation(`${filename}?raw`)).toBe(false);
+      expect(cache.consumeInvalidation(`${filename}?url`)).toBe(false);
+      expect(cache.consumeInvalidation(`${filename}#v1`)).toBe(false);
+    });
+
+    it('re-invalidates all variants after the same file changes again', () => {
+      const cache = new TransformCacheCollection();
+      const filename = '/tmp/data.txt';
+
+      cache.invalidateForFile(filename);
+      expect(cache.consumeInvalidation(`${filename}?raw`)).toBe(true);
+      expect(cache.consumeInvalidation(`${filename}?url`)).toBe(true);
+
+      cache.invalidateForFile(filename);
+      expect(cache.consumeInvalidation(`${filename}?raw`)).toBe(true);
+      expect(cache.consumeInvalidation(`${filename}?url`)).toBe(true);
     });
   });
 

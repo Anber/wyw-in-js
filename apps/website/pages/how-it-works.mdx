@@ -4,6 +4,10 @@ import { Callout } from 'nextra/components';
 
 `wyw-in-js` creates an **entrypoint** for each file to process, and transforms this entrypoint by running the workflow action.
 
+<Callout emoji="ℹ️">
+  The default v2 evaluation path does not execute the module graph in-process anymore. WyW still prepares entrypoints and `__wywPreval`, but actual evaluation now runs in a long-lived Node ESM runner. The host process serves module resolution and loading over `RESOLVE` / `LOAD` RPC, and child modules are prepared lazily when the runner asks for them. The action-level walkthrough below remains useful as compatibility context for the prepare/collect pipeline and older internals.
+</Callout>
+
 ## Entrypoint
 
 We runs the worlflow action with `actionRunner` and `actionsCache` for better performance by avoiding running the same action twice. A workflow contains the following nested actions:
@@ -16,8 +20,6 @@ workflow
 │   │   └── getExports
 │   │       └── resolveImports
 │   └── transform
-│       ├── resolveImports
-│       └── processImports
 ├── evalFile
 ├── collect
 └── extract
@@ -161,7 +163,7 @@ export const c = 'c';
 
 ## Transform Action
 
-Prepares the code for evaluation. This includes removing dead and potentially unsafe code. Emits `resolveImports` and `processImports` events.
+Prepares the code for evaluation. This includes removing dead and potentially unsafe code.
 
 ### Transform Preeval
 
@@ -251,7 +253,7 @@ Note about side-effect imports: during `__wywPreval` evaluation WyW may drop `im
 
 ## ProcessImports Action
 
-Creates new entrypoints and emits `processEntrypoint` for each resolved import. In our example, we create a child entrypoint for the `get-color` module to process `getColor`.
+Compatibility note: this section describes the older eager mental model. In the current v2 default path, WyW prepares child modules lazily when the external runner requests them over the broker `LOAD` RPC instead of eagerly walking the whole graph in-process first. In our example, `get-color` is prepared when the runner needs `getColor`.
 
 {/* prettier-ignore-start */}
 
@@ -267,7 +269,7 @@ const _exp = () => getColor('hawk');
 
 Executes the code prepared in previous steps, the [`processEntrypoint`](#processentrypoint-action) action, within the current `Entrypoint`. Returns all exports that were requested in `only`.
 
-In this step, we create `Module` for each entrypoint and evaluate each module recursively with [`node:vm`](https://nodejs.org/api/vm.html#vm-executing-javascript). After all modules are evaluated, we execute the extracted expressions `_exp`, `_exp2`, `_exp3` and `_exp4` which are extracted in [Transform Preeval](#transform-preeval) step.
+Compatibility note: older implementations created `Module` instances for each entrypoint and evaluated them recursively in-process with [`node:vm`](https://nodejs.org/api/vm.html#vm-executing-javascript). In the v2 default path, `evalFile` sends the prepared root module to the long-lived runner, then the runner asks the host process to `RESOLVE` and `LOAD` additional modules as needed. After the requested modules are evaluated in the runner, we execute the extracted expressions `_exp`, `_exp2`, `_exp3` and `_exp4` from the [Transform Preeval](#transform-preeval) step.
 
 {/* prettier-ignore-start */}
 ```js

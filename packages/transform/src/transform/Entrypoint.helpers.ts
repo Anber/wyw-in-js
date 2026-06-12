@@ -1,27 +1,25 @@
 import { readFileSync } from 'fs';
 import { dirname, extname, isAbsolute } from 'path';
+import { createRequire } from 'module';
 
-import type { TransformOptions, PluginItem } from '@babel/core';
-import type { File } from '@babel/types';
+import { parseSync } from 'oxc-parser';
 
-import type {
-  Debugger,
-  EvalRule,
-  Evaluator,
-  StrictOptions,
-} from '@wyw-in-js/shared';
-import { logger, isFeatureEnabled } from '@wyw-in-js/shared';
+import type { Debugger, EvalRule, Evaluator } from '@wyw-in-js/shared';
+import { logger } from '@wyw-in-js/shared';
 
-import type { Core } from '../babel';
-import { buildOptions } from '../options/buildOptions';
-import { loadBabelOptions } from '../options/loadBabelOptions';
+import { oxcShaker } from '../shaker';
 import type { ParentEntrypoint } from '../types';
 import { getFileIdx } from '../utils/getFileIdx';
-import { getPluginKey } from '../utils/getPluginKey';
 
-import type { IEntrypointCode, IIgnoredEntrypoint } from './Entrypoint.types';
+import type {
+  IEntrypointCode,
+  IIgnoredEntrypoint,
+  ParsedAst,
+} from './Entrypoint.types';
 import type { Services } from './types';
 import { stripQueryAndHash } from '../utils/parseRequest';
+
+const nodeRequire = createRequire(import.meta.url);
 
 export function getMatchedRule(
   rules: EvalRule[],
@@ -47,243 +45,28 @@ export function getMatchedRule(
 }
 
 export function parseFile(
-  babel: Core,
+  _runtime: unknown,
   filename: string,
-  originalCode: string,
-  parseConfig: TransformOptions
-): File {
+  originalCode: string
+): ParsedAst {
   const log = logger.extend('transform:parse').extend(getFileIdx(filename));
 
-  const parseResult = babel.parseSync(originalCode, parseConfig);
-  if (!parseResult) {
-    throw new Error(`Failed to parse ${filename}`);
+  const parseResult = parseSync(filename, originalCode, {
+    astType:
+      filename.endsWith('.ts') || filename.endsWith('.tsx') ? 'ts' : 'js',
+    range: true,
+    sourceType: 'module',
+  });
+  const fatalError = parseResult.errors.find(
+    (error) => error.severity === 'Error'
+  );
+  if (fatalError) {
+    throw new Error(fatalError.message);
   }
 
   log('stage-1', `${filename} has been parsed`);
 
-  return parseResult;
-}
-
-const isModuleResolver = (plugin: PluginItem) => {
-  const key = getPluginKey(plugin);
-  if (!key) return false;
-
-  if (['module-resolver', 'babel-plugin-module-resolver'].includes(key)) {
-    return true;
-  }
-
-  return /([\\/])babel-plugin-module-resolver\1/.test(key);
-};
-
-let moduleResolverWarned = false;
-
-const normalizeBabelKey = (key: string) => key.replace(/\\/g, '/');
-
-const isBabelPresetTypescript = (key: string) => {
-  const normalized = normalizeBabelKey(key);
-
-  if (normalized === 'typescript') return true;
-  return normalized.includes('preset-typescript');
-};
-
-const isBabelTransformTypescriptPlugin = (key: string) => {
-  const normalized = normalizeBabelKey(key);
-
-  if (normalized === 'transform-typescript') return true;
-  return normalized.includes('plugin-transform-typescript');
-};
-
-const withAllowDeclareFields = (item: PluginItem): PluginItem => {
-  if (!Array.isArray(item)) {
-    return [item, { allowDeclareFields: true }];
-  }
-
-  const [target, rawOptions, ...rest] = item;
-  const options =
-    typeof rawOptions === 'object' &&
-    rawOptions !== null &&
-    !Array.isArray(rawOptions)
-      ? rawOptions
-      : {};
-
-  if ('allowDeclareFields' in options) {
-    return item;
-  }
-
-  return [target, { ...options, allowDeclareFields: true }, ...rest];
-};
-
-type AllowDeclareFieldsPatchScope = 'top' | 'env' | 'override';
-
-const ensureAllowDeclareFieldsInBabelOptions = (
-  babelOptions: TransformOptions,
-  scope: AllowDeclareFieldsPatchScope = 'top'
-): TransformOptions => {
-  let presetsChanged = false;
-  let pluginsChanged = false;
-  let overridesChanged = false;
-  let envChanged = false;
-
-  const presets = babelOptions.presets?.map((item) => {
-    const key = getPluginKey(item);
-    if (!key || !isBabelPresetTypescript(key)) {
-      return item;
-    }
-
-    presetsChanged = true;
-    return withAllowDeclareFields(item);
-  });
-
-  const plugins = babelOptions.plugins?.map((item) => {
-    const key = getPluginKey(item);
-    if (!key || !isBabelTransformTypescriptPlugin(key)) {
-      return item;
-    }
-
-    pluginsChanged = true;
-    return withAllowDeclareFields(item);
-  });
-
-  const { overrides: baseOverrides } = babelOptions;
-  let overrides = baseOverrides;
-  if (scope === 'top' && baseOverrides) {
-    const patchedOverrides = baseOverrides.map((override) =>
-      ensureAllowDeclareFieldsInBabelOptions(
-        override as TransformOptions,
-        'override'
-      )
-    );
-
-    if (
-      patchedOverrides.some(
-        (patchedOverride, idx) => patchedOverride !== baseOverrides[idx]
-      )
-    ) {
-      overridesChanged = true;
-      overrides = patchedOverrides;
-    }
-  }
-
-  const { env: baseEnv } = babelOptions;
-  let env = baseEnv;
-  if (scope === 'top' && baseEnv) {
-    const entries = Object.entries(baseEnv);
-    const patchedEntries = entries.map(([envName, envOptions]) => [
-      envName,
-      envOptions
-        ? ensureAllowDeclareFieldsInBabelOptions(envOptions, 'env')
-        : envOptions,
-    ]) as Array<[string, TransformOptions | null | undefined]>;
-
-    if (
-      patchedEntries.some(([, patched], idx) => patched !== entries[idx][1])
-    ) {
-      envChanged = true;
-      env = Object.fromEntries(patchedEntries);
-    }
-  }
-
-  if (!presetsChanged && !pluginsChanged && !overridesChanged && !envChanged) {
-    return babelOptions;
-  }
-
-  const next: TransformOptions = { ...babelOptions };
-  if (presetsChanged) next.presets = presets;
-  if (pluginsChanged) next.plugins = plugins;
-  if (overridesChanged) next.overrides = overrides;
-  if (envChanged) next.env = env;
-
-  return next;
-};
-
-function buildConfigs(
-  services: Services,
-  name: string,
-  pluginOptions: StrictOptions,
-  babelOptions: TransformOptions | undefined
-): {
-  evalConfig: TransformOptions;
-  parseConfig: TransformOptions;
-} {
-  const { babel, options } = services;
-
-  const commonOptions = {
-    ast: true,
-    filename: name,
-    inputSourceMap: options.inputSourceMap,
-    root: options.root,
-    sourceFileName: name,
-    sourceMaps: true,
-  };
-
-  const isTypescriptFile =
-    name.endsWith('.ts') ||
-    name.endsWith('.tsx') ||
-    name.endsWith('.mts') ||
-    name.endsWith('.cts');
-
-  let rawConfig = buildOptions(
-    pluginOptions?.babelOptions,
-    babelOptions,
-    commonOptions
-  );
-
-  if (isTypescriptFile) {
-    rawConfig = ensureAllowDeclareFieldsInBabelOptions(rawConfig);
-  }
-
-  const useBabelConfigs = isFeatureEnabled(
-    pluginOptions.features,
-    'useBabelConfigs',
-    name
-  );
-
-  if (!useBabelConfigs) {
-    rawConfig = {
-      ...rawConfig,
-      configFile: false,
-    };
-  }
-
-  const parseConfig = loadBabelOptions(babel, name, {
-    babelrc: useBabelConfigs,
-    ...rawConfig,
-  });
-
-  const parseHasModuleResolver = parseConfig.plugins?.some(isModuleResolver);
-  const rawHasModuleResolver = rawConfig.plugins?.some(isModuleResolver);
-
-  if (parseHasModuleResolver && !rawHasModuleResolver) {
-    if (!moduleResolverWarned) {
-      // eslint-disable-next-line no-console
-      console.warn(
-        `[wyw-in-js] ${name} has a module-resolver plugin in its babelrc, but it is not present ` +
-          `in the babelOptions for the wyw-in-js plugin. This works for now but will be an error in the future. ` +
-          `Please add the module-resolver plugin to the babelOptions for the wyw-in-js plugin.`
-      );
-
-      moduleResolverWarned = true;
-    }
-
-    rawConfig = {
-      ...rawConfig,
-      plugins: [
-        ...(parseConfig.plugins?.filter((plugin) => isModuleResolver(plugin)) ??
-          []),
-        ...(rawConfig.plugins ?? []),
-      ],
-    };
-  }
-
-  const evalConfig = loadBabelOptions(babel, name, {
-    babelrc: false,
-    ...rawConfig,
-  });
-
-  return {
-    evalConfig,
-    parseConfig,
-  };
+  return parseResult.program;
 }
 
 export function loadAndParse(
@@ -293,8 +76,6 @@ export function loadAndParse(
   log: Debugger
 ): IEntrypointCode | IIgnoredEntrypoint {
   const {
-    babel,
-    eventEmitter,
     options: { pluginOptions },
   } = services;
 
@@ -330,36 +111,11 @@ export function loadAndParse(
 
   code ??= readFileSync(filename, 'utf-8');
 
-  const { action, babelOptions } = getMatchedRule(
-    pluginOptions.rules,
-    filename,
-    code
-  );
-
-  let ast: File | undefined;
-
-  const { evalConfig, parseConfig } = buildConfigs(
-    services,
-    filename,
-    pluginOptions,
-    babelOptions
-  );
-
-  const getOrParse = () => {
-    if (ast) return ast;
-    ast = eventEmitter.perf('parseFile', () =>
-      parseFile(babel, name, code, parseConfig)
-    );
-
-    return ast;
-  };
+  const { action } = getMatchedRule(pluginOptions.rules, filename, code);
 
   if (action === 'ignore') {
     log('[createEntrypoint] %s is ignored by rule', name);
     return {
-      get ast() {
-        return getOrParse();
-      },
       code,
       evaluator: 'ignored',
       reason: 'rule',
@@ -369,19 +125,30 @@ export function loadAndParse(
   const evaluator: Evaluator =
     typeof action === 'function'
       ? action
-      : require(
-          require.resolve(action, {
+      : nodeRequire(
+          nodeRequire.resolve(action, {
             paths: [dirname(filename)],
           })
         ).default;
 
+  if (evaluator !== oxcShaker) {
+    throw new Error(
+      `[wyw-in-js] ${filename} matched a legacy evaluator. The Oxc runtime path supports only the default Oxc evaluator.`
+    );
+  }
+
   return {
     get ast() {
-      return getOrParse();
+      return null;
     },
     code,
     evaluator,
-    evalConfig,
+    evalConfig: {
+      ast: false,
+      configFile: false,
+      filename,
+      root: services.options.root ?? process.cwd(),
+    },
   };
 }
 

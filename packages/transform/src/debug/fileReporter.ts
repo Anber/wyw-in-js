@@ -154,8 +154,16 @@ export const createFileReporter = (
     path.join(options.dir, 'entrypoints.jsonl')
   );
 
+  const staticResolveStream = createWriteStream(
+    path.join(options.dir, 'static-resolve.jsonl')
+  );
+
   const perfSpanStream = createWriteStream(
     path.join(options.dir, 'perf-spans.jsonl')
+  );
+
+  const evalFilesStream = createWriteStream(
+    path.join(options.dir, 'eval-files.jsonl')
   );
 
   const startedAt = performance.now();
@@ -188,6 +196,15 @@ export const createFileReporter = (
   ) => {
     if (meta.type === 'dependency') {
       processDependencyEvent(meta as IProcessedEvent);
+      return;
+    }
+
+    if (meta.type === 'staticResolve') {
+      writeJSONl(staticResolveStream, meta);
+    }
+
+    if (meta.type === 'eval-file') {
+      writeJSONl(evalFilesStream, meta);
     }
   };
 
@@ -277,7 +294,9 @@ export const createFileReporter = (
       actionStream.end();
       dependenciesStream.end();
       entrypointStream.end();
+      staticResolveStream.end();
       perfSpanStream.end();
+      evalFilesStream.end();
       timings.clear();
     },
   };

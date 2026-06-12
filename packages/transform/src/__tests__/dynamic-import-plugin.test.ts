@@ -2,8 +2,8 @@ import * as babel from '@babel/core';
 import type { Expression, File } from '@babel/types';
 import * as t from '@babel/types';
 
-import type { MissedBabelCoreTypes } from '../types';
-import dynamicImport from '../plugins/dynamic-import';
+import type { MissedBabelCoreTypes } from './legacy-babel-reference/legacyBabelTypes';
+import dynamicImport from './legacy-babel-reference/plugins/dynamic-import';
 
 const { File: BabelFile } = babel as typeof babel & MissedBabelCoreTypes;
 

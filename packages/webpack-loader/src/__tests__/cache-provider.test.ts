@@ -3,6 +3,8 @@ const transformMock = jest.fn();
 jest.mock('@wyw-in-js/shared', () => ({
   __esModule: true,
   logger: jest.fn(),
+  mergeOxcResolverAlias: (oxcOptions: any) => oxcOptions,
+  toNativeResolverAlias: jest.fn(() => ({})),
 }));
 
 jest.mock('@wyw-in-js/transform', () => ({
@@ -13,6 +15,7 @@ jest.mock('@wyw-in-js/transform', () => ({
   }),
   TransformCacheCollection: function TransformCacheCollection() {},
   transform: (...args: unknown[]) => transformMock(...args),
+  disposeEvalBroker: jest.fn(),
 }));
 
 class TestCache {

@@ -1,29 +1,32 @@
 import type { ValueCache } from '@wyw-in-js/processor-utils';
 
-import type { IEvaluateResult } from '../../evaluators';
-import evaluate from '../../evaluators';
-import hasWywPreval from '../../utils/hasWywPreval';
+import evaluate, { type IEvaluateResult } from '../../evaluators';
 import { isUnprocessedEntrypointError } from '../actions/UnprocessedEntrypointError';
-import type { IEvalAction, SyncScenarioForAction } from '../types';
-
-const wrap = <T>(fn: () => T): T | Error => {
-  try {
-    return fn();
-  } catch (e) {
-    return e as Error;
-  }
-};
+import type { AsyncScenarioForAction, IEvalAction } from '../types';
 
 /**
  * Executes the code prepared in previous steps within the current `Entrypoint`.
  * Returns all exports that were requested in `only`.
  */
 // eslint-disable-next-line require-yield
-export function* evalFile(
+export async function* evalFile(
   this: IEvalAction
-): SyncScenarioForAction<IEvalAction> {
+): AsyncScenarioForAction<IEvalAction> {
   const { entrypoint } = this;
   const { log } = entrypoint;
+  const preevalResult = entrypoint.getPreevalResult();
+
+  if (preevalResult && (preevalResult.dependencyNames?.length ?? 0) === 0) {
+    const valueCache: ValueCache = new Map();
+    preevalResult.staticValueCache?.forEach((value, key) => {
+      valueCache.set(key, value);
+    });
+
+    const dependencies = [...new Set(preevalResult.staticDependencies ?? [])];
+    log(`<< skipped evaluate __wywPreval %O`, valueCache);
+
+    return [valueCache, dependencies];
+  }
 
   log(`>> evaluate __wywPreval`);
 
@@ -31,7 +34,11 @@ export function* evalFile(
 
   while (evaluated === undefined) {
     try {
-      evaluated = evaluate(this.services, entrypoint);
+      // eslint-disable-next-line no-await-in-loop
+      evaluated = await this.services.eventEmitter.perf(
+        'transform:evalFile',
+        () => evaluate(this.services, entrypoint)
+      );
     } catch (e) {
       if (isUnprocessedEntrypointError(e)) {
         entrypoint.log(
@@ -44,21 +51,22 @@ export function* evalFile(
     }
   }
 
-  const wywPreval = hasWywPreval(evaluated.value)
-    ? evaluated.value.__wywPreval
-    : undefined;
-
-  if (!wywPreval) {
+  if (!evaluated.values) {
     return null;
   }
 
-  const valueCache: ValueCache = new Map();
-  Object.entries(wywPreval).forEach(([key, lazyValue]) => {
-    const value = wrap(lazyValue);
+  const valueCache: ValueCache = evaluated.values;
+  preevalResult?.staticValueCache?.forEach((value, key) => {
     valueCache.set(key, value);
   });
+  const dependencies = [
+    ...new Set([
+      ...evaluated.dependencies,
+      ...(preevalResult?.staticDependencies ?? []),
+    ]),
+  ];
 
   log(`<< evaluated __wywPreval %O`, valueCache);
 
-  return [valueCache, evaluated.dependencies];
+  return [valueCache, dependencies];
 }

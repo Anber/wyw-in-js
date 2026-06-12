@@ -9,6 +9,7 @@ import type {
   IEntrypointCode,
   IEntrypointDependency,
   IIgnoredEntrypoint,
+  IPreevalResult,
 } from './Entrypoint.types';
 import { EvaluatedEntrypoint } from './EvaluatedEntrypoint';
 import { AbortError } from './actions/AbortError';
@@ -20,6 +21,10 @@ import { stripQueryAndHash } from '../utils/parseRequest';
 
 const EMPTY_FILE = '=== empty file ===';
 const DEFAULT_ACTION_CONTEXT = Symbol('defaultActionContext');
+
+type CreateEntrypointOptions = {
+  mergeCachedOnly?: boolean;
+};
 
 function hasLoop(
   name: string,
@@ -53,11 +58,27 @@ export class Entrypoint extends BaseEntrypoint {
     Map<unknown, Map<unknown, BaseAction<ActionQueueItem>>>
   > = new Map();
 
+  // Tracks how many times resolveImports has settled with `resolved: null`
+  // for a given source. Bundler resolvers can return null transiently early
+  // in a build (loader context for that file isn't registered yet); after a
+  // bounded number of retries we accept the null as authoritative.
+  #resolveTaskNullAttempts = new Map<string, number>();
+
+  private static readonly RESOLVE_TASK_MAX_NULL_ATTEMPTS = 2;
+
   #hasWywMetadata: boolean = false;
+
+  #hasTransformResult = false;
 
   #isProcessing = false;
 
   #pendingOnly: string[] | null = null;
+
+  #preevalResult: IPreevalResult | null = null;
+
+  #processingPromise: Promise<void> | null = null;
+
+  #resolveProcessing: (() => void) | null = null;
 
   #supersededWith: Entrypoint | null = null;
 
@@ -82,7 +103,8 @@ export class Entrypoint extends BaseEntrypoint {
       IEntrypointDependency
     >(),
     readonly invalidateOnDependencyChange = new Set<string>(),
-    generation = 1
+    generation = 1,
+    private readonly skipCacheInvalidation = false
   ) {
     super(
       services,
@@ -106,7 +128,10 @@ export class Entrypoint extends BaseEntrypoint {
         parents[0]?.log ?? services.log
       );
 
-    if (this.loadedAndParsed.code !== undefined) {
+    if (
+      !this.skipCacheInvalidation &&
+      this.loadedAndParsed.code !== undefined
+    ) {
       services.cache.invalidateIfChanged(
         name,
         this.loadedAndParsed.code,
@@ -141,36 +166,43 @@ export class Entrypoint extends BaseEntrypoint {
     );
   }
 
+  public get transformed(): boolean {
+    return (
+      this.#hasTransformResult || this.supersededWith?.transformed || false
+    );
+  }
+
+  public get isProcessing(): boolean {
+    return this.#isProcessing;
+  }
+
   public static createRoot(
     services: Services,
     name: string,
     only: string[],
-    loadedCode: string | undefined
+    loadedCode: string | undefined,
+    options: CreateEntrypointOptions = {}
   ): Entrypoint {
-    const created = Entrypoint.create(services, null, name, only, loadedCode);
+    const created = Entrypoint.create(
+      services,
+      null,
+      name,
+      only,
+      loadedCode,
+      options
+    );
     invariant(created !== 'loop', 'loop detected');
 
     return created;
   }
 
-  /**
-   * Creates an entrypoint for the specified file.
-   * If there is already an entrypoint for this file, there will be four possible outcomes:
-   * 1. If `loadedCode` is specified and is different from the one that was used to create the existing entrypoint,
-   *   the existing entrypoint will be superseded by a new one and all cached results for it will be invalidated.
-   *   It can happen if the file was changed and the watcher notified us about it, or we received a new version
-   *   of the file from a loader whereas the previous one was loaded from the filesystem.
-   *   The new entrypoint will be returned.
-   * 2. If `only` is subset of the existing entrypoint's `only`, the existing entrypoint will be returned.
-   * 3. If `only` is superset of the existing entrypoint's `only`, the existing entrypoint will be superseded and the new one will be returned.
-   * 4. If a loop is detected, 'ignored' will be returned, the existing entrypoint will be superseded or not depending on the `only` value.
-   */
   protected static create(
     services: Services,
     parent: ParentEntrypoint | null,
     name: string,
     only: string[],
-    loadedCode: string | undefined
+    loadedCode: string | undefined,
+    options: CreateEntrypointOptions = {}
   ): Entrypoint | 'loop' {
     const { cache, eventEmitter } = services;
     return eventEmitter.perf('createEntrypoint', () => {
@@ -187,7 +219,8 @@ export class Entrypoint extends BaseEntrypoint {
           : null,
         name,
         only,
-        loadedCode
+        loadedCode,
+        options
       );
 
       if (status !== 'cached') {
@@ -203,7 +236,8 @@ export class Entrypoint extends BaseEntrypoint {
     parent: ParentEntrypoint | null,
     name: string,
     only: string[],
-    loadedCode: string | undefined
+    loadedCode: string | undefined,
+    options: CreateEntrypointOptions
   ): ['loop' | 'created' | 'cached', Entrypoint] {
     const { cache } = services;
 
@@ -235,11 +269,54 @@ export class Entrypoint extends BaseEntrypoint {
 
     const exports = cached?.exports;
     const evaluatedOnly = changed ? [] : cached?.evaluatedOnly ?? [];
-
-    const mergedOnly = cached?.only ? mergeOnly(cached.only, only) : [...only];
+    const mergedOnly =
+      options.mergeCachedOnly !== false && cached?.only
+        ? mergeOnly(cached.only, only)
+        : [...only];
+    const reusableEvaluatedState =
+      !changed && cached?.evaluated && cached.loadedAndParsed !== undefined;
+    const canReuseEvaluatedTransformResult =
+      reusableEvaluatedState &&
+      isSuperSet(cached.evaluatedOnly, mergedOnly) &&
+      cached.hasTransformResult &&
+      cached.loadedAndParsed !== undefined;
 
     if (cached?.evaluated) {
       cached.log('is already evaluated with', cached.evaluatedOnly);
+    }
+
+    if (canReuseEvaluatedTransformResult) {
+      const isLoop = parent && hasLoop(name, parent);
+      const reusedEntrypoint = new Entrypoint(
+        services,
+        parent ? [parent] : [],
+        loadedCode,
+        name,
+        mergedOnly,
+        exports,
+        evaluatedOnly,
+        cached.loadedAndParsed,
+        undefined,
+        cached.dependencies,
+        cached.invalidationDependencies,
+        cached.invalidateOnDependencyChange,
+        cached.generation + 1,
+        true
+      );
+
+      reusedEntrypoint.reuseTransformResult(
+        cached.transformResultCode,
+        cached.hasWywMetadata
+      );
+      if (
+        'preevalResult' in cached &&
+        cached.preevalResult !== null &&
+        cached.preevalResult !== undefined
+      ) {
+        reusedEntrypoint.setPreevalResult(cached.preevalResult);
+      }
+
+      return [isLoop ? 'loop' : 'cached', reusedEntrypoint];
     }
 
     if (!changed && cached && !cached.evaluated) {
@@ -264,6 +341,15 @@ export class Entrypoint extends BaseEntrypoint {
       );
 
       if (cached.#isProcessing) {
+        if (parent === null) {
+          cached.log(
+            'is being processed during root request, supersede immediately (%o -> %o)',
+            cached.only,
+            mergedOnly
+          );
+          return [isLoop ? 'loop' : 'created', cached.supersede(mergedOnly)];
+        }
+
         cached.deferOnlySupersede(mergedOnly);
         cached.log(
           'is being processed, defer supersede (%o -> %o)',
@@ -284,7 +370,7 @@ export class Entrypoint extends BaseEntrypoint {
       mergedOnly,
       exports,
       evaluatedOnly,
-      undefined,
+      reusableEvaluatedState ? cached.loadedAndParsed : undefined,
       cached && 'resolveTasks' in cached ? cached.resolveTasks : undefined,
       cached && 'dependencies' in cached ? cached.dependencies : undefined,
       cached && 'invalidationDependencies' in cached
@@ -295,6 +381,15 @@ export class Entrypoint extends BaseEntrypoint {
         : undefined,
       cached ? cached.generation + 1 : 1
     );
+
+    if (
+      reusableEvaluatedState &&
+      'preevalResult' in cached &&
+      cached.preevalResult !== null &&
+      cached.preevalResult !== undefined
+    ) {
+      newEntrypoint.setPreevalResult(cached.preevalResult);
+    }
 
     if (cached && !cached.evaluated) {
       cached.log('is cached, but with different code');
@@ -318,7 +413,28 @@ export class Entrypoint extends BaseEntrypoint {
     name: string,
     dependency: Promise<IEntrypointDependency>
   ): void {
-    this.resolveTasks.set(name, dependency);
+    // Bounded retry of transient null resolutions. The first time a
+    // resolveTask settles to null, evict it from the cache so the next
+    // consumer re-attempts the resolver. After RESOLVE_TASK_MAX_NULL_ATTEMPTS
+    // failures the entry stays cached so we don't thrash. Successful (non-null)
+    // resolutions remain cached normally; this branch only ever fires for null.
+    const tracked = dependency.then((resolved) => {
+      if (resolved.resolved !== null) {
+        return resolved;
+      }
+
+      const attempts = (this.#resolveTaskNullAttempts.get(name) ?? 0) + 1;
+      this.#resolveTaskNullAttempts.set(name, attempts);
+      if (
+        attempts < Entrypoint.RESOLVE_TASK_MAX_NULL_ATTEMPTS &&
+        this.resolveTasks.get(name) === tracked
+      ) {
+        this.resolveTasks.delete(name);
+      }
+
+      return resolved;
+    });
+    this.resolveTasks.set(name, tracked);
   }
 
   public applyDeferredSupersede() {
@@ -357,6 +473,11 @@ export class Entrypoint extends BaseEntrypoint {
 
   public beginProcessing() {
     this.#isProcessing = true;
+    if (!this.#processingPromise) {
+      this.#processingPromise = new Promise<void>((resolve) => {
+        this.#resolveProcessing = resolve;
+      });
+    }
   }
 
   public createAction<
@@ -429,16 +550,28 @@ export class Entrypoint extends BaseEntrypoint {
     );
 
     evaluated.initialCode = this.initialCode;
+    evaluated.hasTransformResult = this.#hasTransformResult;
+    evaluated.hasWywMetadata = this.#hasWywMetadata;
+    evaluated.loadedAndParsed = this.loadedAndParsed;
+    evaluated.preevalResult = this.#preevalResult;
+    evaluated.transformResultCode = this.#transformResultCode;
 
     return evaluated;
   }
 
   public endProcessing() {
     this.#isProcessing = false;
+    this.#resolveProcessing?.();
+    this.#resolveProcessing = null;
+    this.#processingPromise = null;
   }
 
   public getDependency(name: string): IEntrypointDependency | undefined {
     return this.dependencies.get(name);
+  }
+
+  public getPreevalResult(): IPreevalResult | null {
+    return this.#preevalResult;
   }
 
   public getInvalidationDependency(
@@ -461,6 +594,19 @@ export class Entrypoint extends BaseEntrypoint {
     return this.#hasWywMetadata;
   }
 
+  public waitForProcessing(): Promise<void> {
+    return this.#processingPromise ?? Promise.resolve();
+  }
+
+  public reuseTransformResult(
+    code: string | null,
+    hasWywMetadata: boolean
+  ): void {
+    this.#hasTransformResult = true;
+    this.#hasWywMetadata = hasWywMetadata;
+    this.#transformResultCode = code;
+  }
+
   public onSupersede(callback: (newEntrypoint: Entrypoint) => void) {
     if (this.#supersededWith) {
       callback(this.#supersededWith);
@@ -478,6 +624,7 @@ export class Entrypoint extends BaseEntrypoint {
   }
 
   public setTransformResult(res: ITransformFileResult | null) {
+    this.#hasTransformResult = true;
     this.#hasWywMetadata = Boolean(res?.metadata);
     this.#transformResultCode = res?.code ?? null;
 
@@ -485,6 +632,10 @@ export class Entrypoint extends BaseEntrypoint {
       isNull: res === null,
       type: 'setTransformResult',
     });
+  }
+
+  public setPreevalResult(result: IPreevalResult): void {
+    this.#preevalResult = result;
   }
 
   private deferOnlySupersede(only: string[]) {
@@ -495,24 +646,24 @@ export class Entrypoint extends BaseEntrypoint {
 
   private supersede(newOnlyOrEntrypoint: string[] | Entrypoint): Entrypoint {
     this.#pendingOnly = null;
-    const newEntrypoint =
-      newOnlyOrEntrypoint instanceof Entrypoint
-        ? newOnlyOrEntrypoint
-        : new Entrypoint(
-            this.services,
-            this.parents,
-            this.initialCode,
-            this.name,
-            newOnlyOrEntrypoint,
-            this.exports,
-            this.evaluatedOnly,
-            this.loadedAndParsed,
-            this.resolveTasks,
-            this.dependencies,
-            this.invalidationDependencies,
-            this.invalidateOnDependencyChange,
-            this.generation + 1
-          );
+    const widensOnly = !(newOnlyOrEntrypoint instanceof Entrypoint);
+    const newEntrypoint = widensOnly
+      ? new Entrypoint(
+          this.services,
+          this.parents,
+          this.initialCode,
+          this.name,
+          newOnlyOrEntrypoint,
+          this.exports,
+          this.evaluatedOnly,
+          this.loadedAndParsed,
+          this.resolveTasks,
+          this.dependencies,
+          this.invalidationDependencies,
+          this.invalidateOnDependencyChange,
+          this.generation + 1
+        )
+      : newOnlyOrEntrypoint;
 
     this.services.eventEmitter.entrypointEvent(this.seqId, {
       type: 'superseded',
@@ -524,6 +675,10 @@ export class Entrypoint extends BaseEntrypoint {
       this.only,
       newEntrypoint.only
     );
+    if (widensOnly) {
+      newEntrypoint.#preevalResult = this.#preevalResult;
+    }
+
     this.#supersededWith = newEntrypoint;
     this.onSupersedeHandlers.forEach((handler) => handler(newEntrypoint));
 

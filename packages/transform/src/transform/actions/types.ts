@@ -1,6 +1,5 @@
-import type { BabelFileResult } from '@babel/core';
-
 import type { Replacements, Rules } from '@wyw-in-js/shared';
+import type { RawSourceMap } from 'source-map';
 
 import type { WYWTransformDiagnostic } from '../../utils/TransformDiagnostics';
 import type { WYWTransformResultMetadata } from '../../utils/TransformMetadata';
@@ -14,7 +13,7 @@ export interface IExtracted {
 
 export interface IWorkflowActionNonLinariaResult {
   code: string;
-  sourceMap: BabelFileResult['map'];
+  sourceMap: RawSourceMap | null | undefined;
 }
 
 export interface IWorkflowActionLinariaResult

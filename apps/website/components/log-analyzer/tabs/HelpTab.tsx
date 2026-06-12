@@ -2,7 +2,11 @@ import * as React from 'react';
 
 import styles from '../LogAnalyzer.module.css';
 
-import { FILE_NAME_BY_KEY, REQUIRED_FILENAMES } from '../constants';
+import {
+  FILE_NAME_BY_KEY,
+  OPTIONAL_FILENAMES,
+  REQUIRED_FILENAMES,
+} from '../constants';
 import type { ParseErrors } from '../state';
 import { cx } from '../utils';
 
@@ -31,7 +35,9 @@ export default {
         </pre>
         <p className="nx-mt-3 nx-text-sm nx-text-neutral-700 dark:nx-text-neutral-300">
           The directory will contain <code>actions.jsonl</code>,{' '}
-          <code>dependencies.jsonl</code> and <code>entrypoints.jsonl</code>.
+          <code>dependencies.jsonl</code>, <code>entrypoints.jsonl</code> and
+          optional detail files such as <code>eval-files.jsonl</code> and{' '}
+          <code>perf-spans.jsonl</code>.
         </p>
       </div>
 
@@ -43,8 +49,8 @@ export default {
           </div>
         ) : (
           <div className={cx('nx-mt-3', styles.stackMd)}>
-            {REQUIRED_FILENAMES.map((k) => {
-              const errors = parseErrors[k];
+            {[...REQUIRED_FILENAMES, ...OPTIONAL_FILENAMES].map((k) => {
+              const errors = parseErrors[k] ?? [];
               if (!errors || errors.length === 0) return null;
               return (
                 <details
@@ -66,7 +72,9 @@ export default {
                 </details>
               );
             })}
-            {REQUIRED_FILENAMES.every((k) => parseErrors[k].length === 0) && (
+            {[...REQUIRED_FILENAMES, ...OPTIONAL_FILENAMES].every(
+              (k) => (parseErrors[k] ?? []).length === 0
+            ) && (
               <div className="nx-text-sm nx-text-neutral-600 dark:nx-text-neutral-400">
                 No JSON parse errors found.
               </div>
