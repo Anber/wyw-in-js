@@ -26,17 +26,8 @@ import { transform as transformFile } from '../transform';
 const processorFile = join(__dirname, '__fixtures__', 'test-css-processor.js');
 const linariaStyledProcessorFile = join(
   __dirname,
-  '..',
-  '..',
-  '..',
-  '..',
-  '..',
-  'linaria',
-  'packages',
-  'react',
-  'src',
-  'processors',
-  'styled.ts'
+  '__fixtures__',
+  'test-styled-processor.js'
 );
 
 const resolveWithExtensions = (candidate: string) => {

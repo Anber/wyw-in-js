@@ -14,17 +14,8 @@ const processorPath = path.resolve(
 );
 const linariaStyledProcessorPath = path.resolve(
   __dirname,
-  '..',
-  '..',
-  '..',
-  '..',
-  '..',
-  'linaria',
-  'packages',
-  'react',
-  'src',
-  'processors',
-  'styled.ts'
+  '__fixtures__',
+  'test-styled-processor.js'
 );
 
 const fileContext = {
