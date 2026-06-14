@@ -491,10 +491,12 @@ const extractExpression = (
         hasNonStaticLocalReference = true;
       }
 
-      assertHoistable(binding, ctx);
-      addHoistedDeclaration(binding, ctx);
-      if (!binding.isRoot && binding.declarator?.id.type === 'Identifier') {
-        identifierReplacements.set(name, getHoistedBindingName(binding, ctx));
+      if (!isProcessorManagedLocal) {
+        assertHoistable(binding, ctx);
+        addHoistedDeclaration(binding, ctx);
+        if (!binding.isRoot && binding.declarator?.id.type === 'Identifier') {
+          identifierReplacements.set(name, getHoistedBindingName(binding, ctx));
+        }
       }
     }
   );
