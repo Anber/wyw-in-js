@@ -1,6 +1,6 @@
 {
   "name": "@wyw-in-js/esbuild",
-  "version": "2.0.0-alpha.2",
+  "version": "2.0.0",
   "type": "module",
   "dependencies": {
     "@wyw-in-js/shared": "workspace:*",

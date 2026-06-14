@@ -1,6 +1,6 @@
 {
   "name": "@wyw-in-js/processor-utils",
-  "version": "2.0.0-alpha.1",
+  "version": "2.0.0",
   "type": "module",
   "dependencies": {
     "@wyw-in-js/shared": "workspace:*"

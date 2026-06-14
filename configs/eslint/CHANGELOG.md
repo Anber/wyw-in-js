@@ -1,5 +1,7 @@
 # @wyw-in-js/eslint-config
 
+## 2.0.0
+
 ## 2.0.0-alpha.0
 
 ### Major Changes
