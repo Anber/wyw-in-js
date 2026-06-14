@@ -86,6 +86,102 @@ const getObjectMember = (
   return (objectValue as Record<string | number, unknown>)[property];
 };
 
+const staticObjectPropertyKey = (
+  property: Node & { computed?: boolean; key?: Node },
+  ctx: ExtractionContext,
+  env: EvalEnv,
+  stack: string[]
+): string | number | null => {
+  if (!property.key) {
+    return null;
+  }
+
+  let key: unknown;
+  if (property.computed) {
+    key = evaluateStatic(property.key as Expression, ctx, env, stack);
+  } else if (property.key.type === 'Identifier') {
+    key = property.key.name;
+  } else if (property.key.type === 'Literal') {
+    key = property.key.value;
+  }
+
+  return typeof key === 'string' || typeof key === 'number' ? key : null;
+};
+
+const evaluateObjectExpressionMember = (
+  expression: Expression,
+  propertyKey: string | number,
+  ctx: ExtractionContext,
+  env: EvalEnv,
+  stack: string[]
+): unknown | undefined => {
+  if (expression.type !== 'ObjectExpression') {
+    return undefined;
+  }
+
+  for (let idx = expression.properties.length - 1; idx >= 0; idx -= 1) {
+    const property = expression.properties[idx]!;
+    if (property.type === 'SpreadElement') {
+      return undefined;
+    }
+
+    const key = staticObjectPropertyKey(property, ctx, env, stack);
+    if (key === null) {
+      return undefined;
+    }
+
+    if (key === propertyKey) {
+      return evaluateStatic(property.value, ctx, env, stack);
+    }
+  }
+
+  return undefined;
+};
+
+const evaluateKnownObjectMember = (
+  expression: Expression,
+  propertyKey: string | number,
+  ctx: ExtractionContext,
+  env: EvalEnv,
+  stack: string[]
+): unknown | undefined => {
+  const objectMember = evaluateObjectExpressionMember(
+    expression,
+    propertyKey,
+    ctx,
+    env,
+    stack
+  );
+  if (objectMember !== undefined) {
+    return objectMember;
+  }
+
+  if (expression.type !== 'Identifier' || env.has(expression.name)) {
+    return undefined;
+  }
+
+  const binding = resolveBindingAt(ctx, expression.name, expression.start);
+  if (
+    !binding ||
+    binding.kind === 'param' ||
+    binding.importedFrom ||
+    binding.isRoot ||
+    stack.includes(binding.name) ||
+    !binding.declarator?.init ||
+    binding.declarator.id.type !== 'Identifier'
+  ) {
+    return undefined;
+  }
+
+  return evaluateKnownObjectMember(
+    binding.declarator.init,
+    propertyKey,
+    ctx,
+    env,
+    [...stack, binding.name]
+  );
+};
+
 type EvalEnv = Map<string, unknown>;
 
 const oxcStaticCallableValue = Symbol('wyw.oxc.staticCallableValue');
@@ -765,6 +861,17 @@ export const evaluateStatic = (
       // happens to be set on the build machine; falling back to the
       // ?? / || branch (or a runtime read) is more predictable.
       return undefined;
+    }
+
+    const knownObjectMember = evaluateKnownObjectMember(
+      expression.object as Expression,
+      key,
+      ctx,
+      env,
+      stack
+    );
+    if (knownObjectMember !== undefined) {
+      return knownObjectMember;
     }
 
     const objectValue = evaluateStatic(expression.object, ctx, env, stack);

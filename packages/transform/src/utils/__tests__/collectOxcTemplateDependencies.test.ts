@@ -275,6 +275,30 @@ describe('collectOxcTemplateDependencies', () => {
     expect(result.code).not.toContain('let val =');
   });
 
+  it('statically evaluates object members with processor-managed siblings', () => {
+    const code = dedent`
+      import { css } from "test-package";
+
+      function Component() {
+        const classes = {
+          value: 0.2,
+          cell: css\`
+            opacity: 0;
+          \`,
+        };
+        const template = tag\`${'${classes.value}'}\`;
+      }
+    `;
+
+    const result = collectOxcTemplateDependencies(code, filename, true);
+
+    expect(result.code).toContain('const _exp = () => (0.2);');
+    expect(result.staticValues).toEqual(
+      expect.arrayContaining([{ name: '_exp', value: 0.2 }])
+    );
+    expect(result.staticValueCandidates).toEqual([]);
+  });
+
   it('statically evaluates simple local function calls', () => {
     const code = dedent`
       const size = () => 5;
