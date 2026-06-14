@@ -1,5 +1,86 @@
 # @wyw-in-js/transform
 
+## 2.0.0
+
+### Major Changes
+
+- 2524aa4: Release WyW-in-JS v2.
+
+  The v2 release moves the published packages to an ESM-only, Oxc-backed transform and evaluation pipeline and requires Node.js >= 22.0.0.
+
+  Breaking changes and migration notes from v1:
+
+  - CommonJS package entrypoints were removed. Migrate configs and tooling to ESM (`import()` / `.mjs`).
+  - The transform path now uses Oxc for parsing, analysis, pre-evaluation rewrites, shaking, collection, and code generation. `@wyw-in-js/babel-preset` remains available as a deprecated compatibility wrapper around the Oxc pipeline.
+  - Build-time evaluation now runs through the async ESM evaluator (`vm.SourceTextModule` + runner RPC).
+  - The default value resolver is `eval.strategy: "hybrid"`: WyW tries static-first resolution for provable values and falls back to evaluator execution for values that still need runtime module evaluation. Use `eval.strategy: "execute"` for evaluator-only compatibility, or `eval.strategy: "static"` to reject evaluator fallback.
+  - The previous top-level `evaluate` option is replaced by `eval.strategy`.
+  - Eval IPC and config handling are stricter: unsupported `__wywPreval`, `eval.globals`, and inline non-serializable preset/plugin options now fail with explicit migration errors instead of being silently coerced.
+  - `require()` inside eval follows the configured `eval.require` fallback behavior (`warn-and-run`, `error`, or `off`).
+  - CSS rule emission order can differ from v1 for equivalent extracted rule sets because the static-first/Oxc pipeline can process preserved imports and rules in a different order. Projects that rely on cascade ties between generated rules should make precedence explicit in selector specificity, composition, or source structure.
+
+  Migration guide: https://wyw-in-js.dev/migration/v2
+
+### Minor Changes
+
+- 2524aa4: Add native Oxc-backed import resolution for build-time evaluation.
+
+  Hybrid eval resolution now tries a custom resolver first, then native resolution, then the bundler resolver. Native resolution is powered by `oxc-resolver`, discovers `tsconfig.json` by default, and receives static string aliases from Vite, esbuild, webpack, and Next Turbopack integrations while preserving explicitly configured `oxcOptions.resolver.alias` entries.
+
+- 2524aa4: Expose the public Oxc configuration surface used by the v2 transform path.
+
+  This introduces `oxcOptions` and per-rule `EvalRule.oxcOptions` so projects and bundler integrations can configure parser, transform, and resolver behavior for the Oxc-backed pipeline.
+
+- 2524aa4: Add a supported processor diagnostics API that lets library-owned processors emit structured non-fatal warnings through WyW.
+
+  This adds:
+
+  - `BaseProcessor.addDiagnostic()` and typed diagnostics helpers in `@wyw-in-js/processor-utils`
+  - normalized `diagnostics` output from `@wyw-in-js/transform`
+  - diagnostics reporting in `@wyw-in-js/vite` and `@wyw-in-js/cli`
+
+  Existing hard failures and metadata sidecar behavior stay intact.
+
+- 2524aa4: Enable static-first value resolution by default with `eval.strategy: "hybrid"`.
+
+  WyW can now resolve many imported literals, fixed objects, compiled TypeScript enum objects, zero-argument helper returns, compound component aliases, processor metadata values, and static metadata helper chains without starting the evaluator or loading the full module graph.
+
+  The default `hybrid` mode keeps evaluator fallback for values that are not statically provable. Use `eval.strategy: "execute"` for evaluator-only compatibility and `eval.strategy: "static"` to reject fallback.
+
+  Add `staticBindings` config for declaring additional statically-known imported values and pure helper functions.
+
+- 2524aa4: Add an optional processor static evaluation contract. Processors can now describe statically known values as serializable values, class names, selector chains, runtime callbacks, opaque components, or unresolved values with reasons.
+
+  The transform static evaluator now consumes this contract before falling back to legacy eval-time replacement metadata, so processors can provide their own static semantics without relying on transform-specific metadata shapes.
+
+- 2524aa4: Add opt-in metadata manifest output across `@wyw-in-js/shared`, `@wyw-in-js/transform`, `@wyw-in-js/vite`, and `@wyw-in-js/cli`.
+
+  When `outputMetadata` is enabled:
+
+  - `@wyw-in-js/transform` now returns normalized, public metadata alongside the existing transform result.
+  - `@wyw-in-js/vite` emits `.wyw-in-js.json` sidecar assets during build.
+  - `@wyw-in-js/cli` writes matching `.wyw-in-js.json` sidecar files and supports an `--output-metadata` flag.
+
+  This keeps default JS/CSS output unchanged while exposing stable metadata artifacts for CLI, Vite, and transform consumers.
+
+### Patch Changes
+
+- 2524aa4: Add optional JSONL debug output for evaluator payloads and transform perf spans.
+
+  `eval-files.jsonl` records shipped evaluator code and serialized or stringified value details. `perf-spans.jsonl` records transform perf spans so evaluator and transform costs can be analyzed alongside action, dependency, and entrypoint logs.
+
+- 2524aa4: Improve evaluator diagnostics and recovery for transient missing imports.
+
+  Missing imports during evaluation now report the importing file, requested specifier, resolved path, and original error cause. The evaluator also evicts modules left in failed VM states and refreshes broker-side load tracking, so a subsequent evaluation can recover after the missing file is created instead of rethrowing stale module status errors.
+
+- 2524aa4: Stabilize the v2 Oxc-backed transform and evaluator path for v1-compatible output.
+
+  This covers import/order preservation, export shaking, CommonJS and live-binding emit, runtime source map composition, processor-added imports, hoisted template dependencies, React wrapper handling, Node 22 parse compatibility, dependency graph cache invalidation, and hot-path parse/cache performance.
+
+- Updated dependencies
+  - @wyw-in-js/processor-utils@2.0.0
+  - @wyw-in-js/shared@2.0.0
+
 ## 2.0.0-alpha.2
 
 ### Patch Changes
