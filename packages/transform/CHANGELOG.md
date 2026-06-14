@@ -1,5 +1,11 @@
 # @wyw-in-js/transform
 
+## 2.0.2
+
+### Patch Changes
+
+- 246006b: Fix static evaluation of object member interpolations when sibling object properties contain same-file processor templates.
+
 ## 2.0.1
 
 ### Patch Changes
