@@ -326,6 +326,38 @@ describe('applyOxcProcessors', () => {
     expect(result.code).toContain('return keep + cls;');
   });
 
+  it('does not create processors from hoisted same-file processor dependencies', () => {
+    const result = applyOxcProcessors(
+      `
+        import { css } from 'test-package';
+        function Component() {
+          const outer = css\`
+            color: red;
+          \`;
+          const inner = css\`
+            color: green;
+            .${'${outer}'} {
+              color: blue;
+            }
+          \`;
+          return outer + inner;
+        }
+      `,
+      fileContext,
+      {
+        ...options(processorPath),
+        eval: { strategy: 'hybrid' },
+      },
+      (processor) => processor.doEvaltimeReplacement(),
+      true
+    );
+
+    expect(result.processors.map((processor) => processor.displayName)).toEqual(
+      ['outer', 'inner']
+    );
+    expect(result.code).not.toContain('_outer');
+  });
+
   it('does not emit pure annotation for non-call replacements', () => {
     const result = applyOxcProcessors(
       `
