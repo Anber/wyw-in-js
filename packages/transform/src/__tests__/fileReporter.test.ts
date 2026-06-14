@@ -37,6 +37,18 @@ const readJsonl = (file: string) =>
     .filter(Boolean)
     .map((line) => JSON.parse(line));
 
+const hasJsonlLines = (file: string, length: number) => {
+  if (!existsSync(file)) {
+    return false;
+  }
+
+  const content = readFileSync(file, 'utf8');
+  return (
+    content.endsWith('\n') &&
+    content.split('\n').filter(Boolean).length >= length
+  );
+};
+
 describe('createFileReporter', () => {
   it('exposes a cheap enabled flag for debug-only work', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'wyw-file-reporter-'));
@@ -175,9 +187,7 @@ describe('createFileReporter', () => {
       expect(result).toBe(42);
 
       const perfTarget = join(dir, 'perf-spans.jsonl');
-      await waitFor(
-        () => existsSync(perfTarget) && readFileSync(perfTarget).length > 0
-      );
+      await waitFor(() => hasJsonlLines(perfTarget, 1));
 
       const perfEvents = readJsonl(perfTarget);
       expect(perfEvents).toHaveLength(1);
@@ -195,7 +205,10 @@ describe('createFileReporter', () => {
         perfEvents[0].startedAt
       );
 
-      const actionEvents = readJsonl(join(dir, 'actions.jsonl'));
+      const actionsTarget = join(dir, 'actions.jsonl');
+      await waitFor(() => hasJsonlLines(actionsTarget, 2));
+
+      const actionEvents = readJsonl(actionsTarget);
       expect(actionEvents).toEqual([
         expect.objectContaining({
           actionId: 0,
@@ -236,9 +249,7 @@ describe('createFileReporter', () => {
       reporter.onDone(dir);
 
       const perfTarget = join(dir, 'perf-spans.jsonl');
-      await waitFor(
-        () => existsSync(perfTarget) && readFileSync(perfTarget).length > 0
-      );
+      await waitFor(() => hasJsonlLines(perfTarget, 3));
 
       const perfEvents = readJsonl(perfTarget);
       expect(perfEvents).toHaveLength(3);
