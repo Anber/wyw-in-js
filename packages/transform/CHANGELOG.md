@@ -1,5 +1,11 @@
 # @wyw-in-js/transform
 
+## 2.0.1
+
+### Patch Changes
+
+- f186b4c: Avoid extracting duplicate CSS rules for same-file processor bindings that are referenced from another processor template inside a local scope.
+
 ## 2.0.0
 
 ### Major Changes
