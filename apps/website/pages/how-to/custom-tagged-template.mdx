@@ -135,6 +135,40 @@ diagnostic artifacts.
 
 This method should return a string that represents the source code of the tagged template.
 
+## Processor Options
+
+Processor packages can define their own typed option namespace by augmenting `WywInJsProcessorOptions` from
+`@wyw-in-js/shared`. WyW passes the `processors` option through to processor instances as `this.options.processors`.
+
+```typescript
+declare module '@wyw-in-js/shared' {
+  interface WywInJsProcessorOptions {
+    dxstyle?: {
+      minifyClassNames?: boolean;
+    };
+  }
+}
+```
+
+Applications can then configure the processor namespace in WyW options:
+
+```typescript
+export default {
+  processors: {
+    dxstyle: {
+      minifyClassNames: true,
+    },
+  },
+};
+```
+
+The processor can read the option from its instance options:
+
+```typescript
+const minifyClassNames =
+  this.options.processors?.dxstyle?.minifyClassNames ?? false;
+```
+
 ## Static Evaluation Contract
 
 In v2, processors can optionally describe their static semantics without relying on transform-specific metadata shapes.

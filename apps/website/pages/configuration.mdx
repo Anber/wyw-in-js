@@ -442,6 +442,12 @@ module.exports = {
   ];
   ```
 
+- `processors: Object`
+
+  Typed pass-through options for custom processor packages. Processor libraries can augment `WywInJsProcessorOptions`
+  from `@wyw-in-js/shared` and read their namespace from `this.options.processors`; see
+  [Creating Custom Tagged Template Processors](/how-to/custom-tagged-template#processor-options).
+
 - `tagResolver: (source, tag, meta) => string`
 
   A custom function to use when resolving template tags.

@@ -35,6 +35,47 @@ describe('loadWywOptions', () => {
     expect(options.rules[0].oxcOptions).toBe(oxcOptions);
   });
 
+  it('preserves processor options and lets inline processors replace config processors', () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'wyw-options-'));
+    const configFile = path.join(root, 'wyw-in-js.config.mjs');
+    const inlineProcessors = {
+      typedProcessorOptionsTest: {
+        minifyClassNames: true,
+      },
+    };
+
+    writeFileSync(
+      configFile,
+      [
+        'export default {',
+        '  processors: {',
+        '    typedProcessorOptionsTest: {',
+        '      configOnly: true,',
+        '      minifyClassNames: false,',
+        '    },',
+        '  },',
+        '};',
+        '',
+      ].join('\n')
+    );
+
+    try {
+      const options = loadWywOptions({
+        configFile,
+        processors: inlineProcessors,
+      });
+
+      expect(options.processors).toBe(inlineProcessors);
+      expect(options.processors).toEqual({
+        typedProcessorOptionsTest: {
+          minifyClassNames: true,
+        },
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('accepts native and hybrid resolver modes without changing the default', () => {
     const defaultOptions = loadWywOptions({ configFile: false });
     const nativeOptions = loadWywOptions({

@@ -53,6 +53,7 @@ export const applyOxcProcessors = (
     | 'displayName'
     | 'eval'
     | 'extensions'
+    | 'processors'
     | 'staticBindings'
     | 'tagResolver'
   > & {

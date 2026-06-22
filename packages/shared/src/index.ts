@@ -45,6 +45,7 @@ export type {
   EvaluatorConfig,
   FeatureFlags,
   VariableNameFn,
+  WywInJsProcessorOptions,
 } from './options/types';
 export type {
   Artifact,

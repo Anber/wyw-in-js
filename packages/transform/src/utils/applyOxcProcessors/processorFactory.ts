@@ -36,7 +36,11 @@ export const createProcessor = (
   fileContext: IFileContext,
   options: Pick<
     StrictOptions,
-    'classNameSlug' | 'displayName' | 'extensions' | 'tagResolver'
+    | 'classNameSlug'
+    | 'displayName'
+    | 'extensions'
+    | 'processors'
+    | 'tagResolver'
   >,
   code: string,
   loc: LocationLookup,
