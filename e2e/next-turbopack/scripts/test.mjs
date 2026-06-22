@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { once } from 'node:events';
 import fs from 'node:fs/promises';
 import { createRequire } from 'node:module';
@@ -12,6 +12,7 @@ const require = createRequire(import.meta.url);
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const PKG_DIR = path.resolve(__dirname, '..');
+const MIN_NEXT_VERSION = { major: 16, minor: 2 };
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -125,6 +126,56 @@ const stopDevServer = async (child) => {
   ]);
 };
 
+const getNextBin = () => {
+  const nextPackageJson = require.resolve('next/package.json', {
+    paths: [PKG_DIR],
+  });
+
+  return path.resolve(path.dirname(nextPackageJson), 'dist', 'bin', 'next');
+};
+
+const getNextVersion = () => {
+  const nextPackageJson = require.resolve('next/package.json', {
+    paths: [PKG_DIR],
+  });
+  const { version } = require(nextPackageJson);
+  const [majorPart, minorPart] = version.split('.');
+
+  return {
+    major: Number.parseInt(majorPart, 10),
+    minor: Number.parseInt(minorPart, 10),
+    version,
+  };
+};
+
+const assertSupportedNextVersion = () => {
+  const { major, minor, version } = getNextVersion();
+  const isSupported =
+    major > MIN_NEXT_VERSION.major ||
+    (major === MIN_NEXT_VERSION.major && minor >= MIN_NEXT_VERSION.minor);
+
+  if (!isSupported) {
+    throw new Error(
+      `Expected Next.js ${MIN_NEXT_VERSION.major}.${MIN_NEXT_VERSION.minor}.x or newer, got ${version}`
+    );
+  }
+};
+
+const runProductionBuild = async () => {
+  await fs.rm(path.resolve(PKG_DIR, '.next'), { recursive: true, force: true });
+  await cleanupGeneratedCss();
+
+  execFileSync(process.execPath, [getNextBin(), 'build'], {
+    cwd: PKG_DIR,
+    env: {
+      ...process.env,
+      NODE_ENV: 'production',
+      NEXT_TELEMETRY_DISABLED: '1',
+    },
+    stdio: 'inherit',
+  });
+};
+
 const fetchWithRetries = async (url, child, logs) => {
   let lastError = null;
 
@@ -173,21 +224,40 @@ const runDevSmoke = async () => {
 };
 
 const readCssOutput = async () => {
-  const cssFile = path.resolve(
-    PKG_DIR,
-    'app',
-    'styles.wyw-in-js.module.css'
-  );
+  const cssFiles = [];
 
-  try {
-    return await fs.readFile(cssFile, 'utf8');
-  } catch (error) {
-    if (error?.code === 'ENOENT') {
-      throw new Error(`No generated CSS file found at ${cssFile}`);
+  const walk = async (dir) => {
+    let entries = [];
+    try {
+      entries = await fs.readdir(dir, { withFileTypes: true });
+    } catch (error) {
+      if (error?.code === 'ENOENT') return;
+      throw error;
     }
 
-    throw error;
+    await Promise.all(
+      entries.map(async (entry) => {
+        const fullPath = path.resolve(dir, entry.name);
+        if (entry.isDirectory()) {
+          await walk(fullPath);
+        } else if (entry.isFile() && entry.name.endsWith('.css')) {
+          cssFiles.push(fullPath);
+        }
+      })
+    );
+  };
+
+  await walk(path.resolve(PKG_DIR, '.next'));
+
+  if (cssFiles.length === 0) {
+    throw new Error('No CSS assets emitted by Next build');
   }
+
+  const contents = await Promise.all(
+    cssFiles.map((file) => fs.readFile(file, 'utf8'))
+  );
+
+  return contents.join('\n');
 };
 
 const assertMatches = (css, pattern, label) => {
@@ -198,9 +268,10 @@ const assertMatches = (css, pattern, label) => {
 
 const main = async () => {
   console.log(colors.blue('Package directory:'), PKG_DIR);
+  assertSupportedNextVersion();
 
   try {
-    await runDevSmoke();
+    await runProductionBuild();
 
     const cssOutput = await readCssOutput();
 
@@ -213,6 +284,8 @@ const main = async () => {
     assertMatches(cssOutput, /width:\s*200px/i, 'width');
     assertMatches(cssOutput, /font-size:\s*18px/i, 'font-size');
     assertMatches(cssOutput, /color:\s*tomato/i, 'color');
+
+    await runDevSmoke();
   } finally {
     await cleanupGeneratedCss();
   }

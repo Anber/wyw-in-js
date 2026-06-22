@@ -10,6 +10,8 @@ import type { NextConfig } from 'next';
 import type { Configuration, RuleSetRule, RuleSetUseItem } from 'webpack';
 
 const DEFAULT_EXTENSION = '.wyw-in-js.module.css';
+const CSS_OUTPUT_QUERY = '__wyw_css';
+const CSS_OUTPUT_QUERY_RE = new RegExp(`^\\??${CSS_OUTPUT_QUERY}$`);
 
 const DEFAULT_TURBO_RULE_KEYS = ['*.js', '*.jsx', '*.ts', '*.tsx'];
 
@@ -29,6 +31,10 @@ export type WywNextPluginOptions = {
 
 type NextWebpackConfigFn = NonNullable<NextConfig['webpack']>;
 type NextWebpackOptions = Parameters<NextWebpackConfigFn>[1];
+type NextVersion = {
+  major: number;
+  minor: number;
+};
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
@@ -332,23 +338,48 @@ function injectWywLoader(
   ensureWywCssModuleRules(config, extension);
 }
 
-function shouldUseTurbopackConfig(nextConfig: NextConfig) {
-  const explicit = (nextConfig as unknown as Record<string, unknown>).turbopack;
-  if (typeof explicit !== 'undefined') {
-    return true;
-  }
-
+function getInstalledNextVersion(): NextVersion | null {
   try {
     const pkgPath = nodeRequire.resolve('next/package.json', {
       paths: [process.cwd()],
     });
     const pkg = nodeRequire(pkgPath) as { version?: unknown };
     const version = typeof pkg.version === 'string' ? pkg.version : '';
-    const major = Number.parseInt(version.split('.')[0] ?? '', 10);
-    return Number.isFinite(major) && major >= 16;
+    const [majorPart, minorPart] = version.split('.');
+    const major = Number.parseInt(majorPart ?? '', 10);
+    const minor = Number.parseInt(minorPart ?? '', 10);
+
+    if (!Number.isFinite(major) || !Number.isFinite(minor)) {
+      return null;
+    }
+
+    return { major, minor };
   } catch {
+    return null;
+  }
+}
+
+function shouldUseTurbopackConfig(
+  nextConfig: NextConfig,
+  nextVersion: NextVersion | null
+) {
+  const explicit = (nextConfig as unknown as Record<string, unknown>).turbopack;
+  if (typeof explicit !== 'undefined') {
+    return true;
+  }
+
+  return nextVersion !== null && nextVersion.major >= 16;
+}
+
+function supportsTurbopackQueryConditions(nextVersion: NextVersion | null) {
+  if (nextVersion === null) {
     return false;
   }
+
+  return (
+    nextVersion.major > 16 ||
+    (nextVersion.major === 16 && nextVersion.minor >= 2)
+  );
 }
 
 function injectWywTurbopackRules(
@@ -392,22 +423,58 @@ function injectWywTurbopackRules(
       : DEFAULT_REACT_IMPORT_OVERRIDES,
   };
 
-  const useTurbopackConfig = shouldUseTurbopackConfig(nextConfig);
+  const nextVersion = getInstalledNextVersion();
+  const useTurbopackConfig = shouldUseTurbopackConfig(nextConfig, nextVersion);
+  const useCssQueryOutput = supportsTurbopackQueryConditions(nextVersion);
+
+  const commonConditions = [
+    { not: 'foreign' },
+    { not: { path: /(?:^|[\\/])middleware\.[jt]sx?$/ } },
+  ];
+
+  const jsLoaderOptions = {
+    ...loaderOptions,
+    cssOutputMode: useCssQueryOutput ? 'query' : 'sidecar',
+  };
 
   const ruleValue = useTurbopackConfig
     ? {
-        loaders: [{ loader, options: loaderOptions }],
+        loaders: [{ loader, options: jsLoaderOptions }],
         condition: {
-          all: [
-            { not: 'foreign' },
-            { not: { path: /(?:^|[\\/])middleware\.[jt]sx?$/ } },
-          ],
+          all: commonConditions,
         },
       }
-    : [{ loader, options: loaderOptions }];
+    : [{ loader, options: jsLoaderOptions }];
+
+  const jsRuleValue = {
+    loaders: [{ loader, options: jsLoaderOptions }],
+    condition: {
+      all: [...commonConditions, { not: { query: CSS_OUTPUT_QUERY_RE } }],
+    },
+  };
+
+  const cssRuleValue = {
+    loaders: [
+      {
+        loader,
+        options: {
+          ...loaderOptions,
+          cssOutputMode: 'query',
+          outputCss: true,
+        },
+      },
+    ],
+    as: '*.module.css',
+    condition: {
+      all: [...commonConditions, { query: CSS_OUTPUT_QUERY_RE }],
+    },
+  };
 
   const wywRules = Object.fromEntries(
-    DEFAULT_TURBO_RULE_KEYS.map((key) => [key, ruleValue])
+    DEFAULT_TURBO_RULE_KEYS.map((key) => [
+      key,
+      useCssQueryOutput ? [cssRuleValue, jsRuleValue] : ruleValue,
+    ])
   );
 
   if (useTurbopackConfig) {

@@ -21,7 +21,7 @@ describe('turbopack-loader', () => {
     transformMock.mockReset();
   });
 
-  it('writes CSS next to the module and injects an import after directives', async () => {
+  it('writes CSS next to the module and injects an import after directives by default', async () => {
     const { default: turbopackLoader } = await import('../index');
 
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wyw-turbo-'));
@@ -68,5 +68,95 @@ describe('turbopack-loader', () => {
 
     expect(emitted.code).toContain("'use client'");
     expect(emitted.code).toContain('import "./entry.wyw-in-js.module.css";');
+  });
+
+  it('injects a CSS query import in query output mode without writing a sidecar file', async () => {
+    const { default: turbopackLoader } = await import('../index');
+
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wyw-turbo-'));
+    const resourcePath = path.join(tmpDir, 'entry.tsx');
+    fs.writeFileSync(resourcePath, "'use client'\\nexport const x = 1;\\n");
+
+    transformMock.mockImplementation(async (_services, code) => {
+      return {
+        code,
+        sourceMap: null,
+        cssText: '.a{color:red}',
+        dependencies: [],
+      };
+    });
+
+    const emitted: { code?: string } = {};
+
+    await new Promise<void>((resolve, reject) => {
+      turbopackLoader.call(
+        {
+          addDependency: jest.fn(),
+          async: jest.fn(),
+          callback: (err: Error | null, code?: string) => {
+            if (err) reject(err);
+            else {
+              emitted.code = code;
+              resolve();
+            }
+          },
+          emitWarning: jest.fn(),
+          getOptions: () => ({ cssOutputMode: 'query' }),
+          getResolve: () => async () => false,
+          resourcePath,
+        } as any,
+        fs.readFileSync(resourcePath, 'utf8'),
+        null
+      );
+    });
+
+    const cssFilePath = path.join(tmpDir, 'entry.wyw-in-js.module.css');
+    expect(fs.existsSync(cssFilePath)).toBe(false);
+
+    expect(emitted.code).toContain("'use client'");
+    expect(emitted.code).toContain('import "./entry.tsx?__wyw_css";');
+  });
+
+  it('returns CSS for the CSS query loader branch', async () => {
+    const { default: turbopackLoader } = await import('../index');
+
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wyw-turbo-'));
+    const resourcePath = path.join(tmpDir, 'entry.tsx');
+    fs.writeFileSync(resourcePath, 'export const x = 1;\n');
+
+    transformMock.mockImplementation(async (_services, code) => {
+      return {
+        code,
+        sourceMap: null,
+        cssText: '.a{color:red}',
+        dependencies: [],
+      };
+    });
+
+    const emitted: { code?: string } = {};
+
+    await new Promise<void>((resolve, reject) => {
+      turbopackLoader.call(
+        {
+          addDependency: jest.fn(),
+          async: jest.fn(),
+          callback: (err: Error | null, code?: string) => {
+            if (err) reject(err);
+            else {
+              emitted.code = code;
+              resolve();
+            }
+          },
+          emitWarning: jest.fn(),
+          getOptions: () => ({ outputCss: true }),
+          getResolve: () => async () => false,
+          resourcePath,
+        } as any,
+        fs.readFileSync(resourcePath, 'utf8'),
+        null
+      );
+    });
+
+    expect(emitted.code).toBe(':global(.a){color:red}');
   });
 });

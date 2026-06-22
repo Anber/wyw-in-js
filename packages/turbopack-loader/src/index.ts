@@ -13,6 +13,7 @@ import { writeFileIfChanged } from './file-utils';
 import { insertImportStatement } from './insert-import';
 
 const DEFAULT_EXTENSION = '.wyw-in-js.module.css';
+const CSS_OUTPUT_QUERY = '__wyw_css';
 
 const stripQueryAndHash = (request: string) => {
   const queryIdx = request.indexOf('?');
@@ -27,7 +28,9 @@ const stripQueryAndHash = (request: string) => {
 };
 
 export type LoaderOptions = {
+  cssOutputMode?: 'sidecar' | 'query';
   keepComments?: boolean;
+  outputCss?: boolean;
   prefixer?: boolean;
   sourceMap?: boolean;
 } & Partial<PluginOptions>;
@@ -100,8 +103,15 @@ const turbopackLoader: Loader = function turbopackLoader(
 
   logger('turbopack-loader %s', this.resourcePath);
 
-  const { sourceMap, keepComments, prefixer, configFile, ...rest } =
-    this.getOptions() || {};
+  const {
+    sourceMap,
+    keepComments,
+    outputCss,
+    cssOutputMode = 'sidecar',
+    prefixer,
+    configFile,
+    ...rest
+  } = this.getOptions() || {};
 
   if (configFile) {
     const configPath = path.isAbsolute(configFile)
@@ -176,16 +186,33 @@ const turbopackLoader: Loader = function turbopackLoader(
           )
         );
 
-        writeFileIfChanged(cssFilePath, cssText);
+        if (outputCss) {
+          callback(null, cssText);
+          return;
+        }
 
-        const importStatement = `import ${JSON.stringify(cssImportPath)};`;
+        let importPath = cssImportPath;
+        if (cssOutputMode === 'query') {
+          importPath = `./${path.basename(
+            this.resourcePath
+          )}?${CSS_OUTPUT_QUERY}`;
+        } else {
+          writeFileIfChanged(cssFilePath, cssText);
+        }
+
+        const importStatement = `import ${JSON.stringify(importPath)};`;
         const finalCode = insertImportStatement(result.code, importStatement);
 
         callback(null, finalCode, result.sourceMap ?? undefined);
         return;
       }
 
-      if (fs.existsSync(cssFilePath)) {
+      if (outputCss) {
+        callback(null, '');
+        return;
+      }
+
+      if (cssOutputMode !== 'query' && fs.existsSync(cssFilePath)) {
         writeFileIfChanged(cssFilePath, '');
       }
 
