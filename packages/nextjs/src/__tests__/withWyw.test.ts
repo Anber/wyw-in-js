@@ -1,22 +1,50 @@
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+
 import type { Configuration, RuleSetRule } from 'webpack';
 
 import { withWyw } from '../index';
 
 describe('withWyw', () => {
+  const withFakeNextVersion = <T>(version: string, callback: () => T): T => {
+    const previousCwd = process.cwd();
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wyw-next-'));
+    const nextPackageDir = path.join(tmpDir, 'node_modules', 'next');
+
+    fs.mkdirSync(nextPackageDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(nextPackageDir, 'package.json'),
+      JSON.stringify({ version })
+    );
+
+    process.chdir(tmpDir);
+    try {
+      return callback();
+    } finally {
+      process.chdir(previousCwd);
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  };
+
   const getTurbopackLoaderOptions = (nextConfig: any) => {
     const rules =
       nextConfig.turbopack?.rules ?? nextConfig.experimental?.turbo?.rules;
     const tsRule = rules['*.ts'];
 
     if (Array.isArray(tsRule)) {
-      return tsRule[0].options;
+      const jsRule = tsRule.find(
+        (item) => item.loaders?.[0]?.options?.outputCss !== true
+      );
+
+      return jsRule?.loaders?.[0]?.options ?? tsRule[0].options;
     }
 
     return tsRule.loaders[0].options;
   };
 
-  it('injects Turbopack rules (turbopack.rules or experimental.turbo.rules)', () => {
-    const nextConfig = withWyw();
+  it('injects Turbopack query CSS rules for Next 16.2+', () => {
+    const nextConfig = withFakeNextVersion('16.2.4', () => withWyw());
 
     const rules =
       (nextConfig as any).turbopack?.rules ??
@@ -27,19 +55,49 @@ describe('withWyw', () => {
 
     const tsRule = rules['*.ts'];
 
-    if (Array.isArray(tsRule)) {
-      expect(tsRule[0].loader).toContain('turbopack-loader');
-      expect(tsRule[0].options.importOverrides).toMatchObject({
-        react: { mock: 'react' },
-      });
-      expect(tsRule[0].options).not.toHaveProperty('babelOptions');
-    } else {
-      expect(tsRule.loaders[0].loader).toContain('turbopack-loader');
-      expect(tsRule.loaders[0].options.importOverrides).toMatchObject({
-        react: { mock: 'react' },
-      });
-      expect(tsRule.loaders[0].options).not.toHaveProperty('babelOptions');
-    }
+    expect(Array.isArray(tsRule)).toBe(true);
+    expect(tsRule).toHaveLength(2);
+
+    const [cssRule, jsRule] = tsRule;
+    expect(jsRule.loaders[0].loader).toContain('turbopack-loader');
+    expect(jsRule.loaders[0].options.cssOutputMode).toBe('query');
+    expect(jsRule.loaders[0].options.importOverrides).toMatchObject({
+      react: { mock: 'react' },
+    });
+    expect(jsRule.loaders[0].options).not.toHaveProperty('babelOptions');
+    expect(jsRule.condition.all).toEqual(
+      expect.arrayContaining([
+        { not: 'foreign' },
+        { not: { query: expect.any(RegExp) } },
+      ])
+    );
+
+    expect(cssRule.loaders[0].loader).toContain('turbopack-loader');
+    expect(cssRule.loaders[0].options.cssOutputMode).toBe('query');
+    expect(cssRule.loaders[0].options.outputCss).toBe(true);
+    expect(cssRule.condition.all).toEqual(
+      expect.arrayContaining([
+        { not: 'foreign' },
+        { query: expect.any(RegExp) },
+      ])
+    );
+    expect(cssRule.as).toBe('*.module.css');
+  });
+
+  it('keeps the sidecar Turbopack rule for Next versions without query conditions', () => {
+    const nextConfig = withFakeNextVersion('16.1.1', () => withWyw());
+
+    const rules =
+      (nextConfig as any).turbopack?.rules ??
+      (nextConfig as any).experimental?.turbo?.rules;
+    const tsRule = rules['*.ts'];
+
+    expect(Array.isArray(tsRule)).toBe(false);
+    expect(tsRule.loaders[0].loader).toContain('turbopack-loader');
+    expect(tsRule.loaders[0].options.cssOutputMode).toBe('sidecar');
+    expect(tsRule.condition.all).toEqual(
+      expect.arrayContaining([{ not: 'foreign' }])
+    );
   });
 
   it('lets user-defined Turbopack rule keys win', () => {
