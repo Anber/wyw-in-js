@@ -1,5 +1,18 @@
 # @wyw-in-js/cli
 
+## 2.1.0
+
+### Minor Changes
+
+- Bump versions
+
+### Patch Changes
+
+- 7fee698: Fix ESM CLI startup so TypeScript input files can be processed without requiring a Babel configuration.
+- Updated dependencies
+  - @wyw-in-js/shared@2.1.0
+  - @wyw-in-js/transform@2.1.0
+
 ## 2.0.2
 
 ### Patch Changes

@@ -1,5 +1,11 @@
 # @wyw-in-js/shared
 
+## 2.1.0
+
+### Minor Changes
+
+- cfe67d4: Add a typed `processors` option channel for processor package options.
+
 ## 2.0.0
 
 ### Major Changes

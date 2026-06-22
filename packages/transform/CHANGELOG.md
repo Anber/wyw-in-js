@@ -1,5 +1,23 @@
 # @wyw-in-js/transform
 
+## 2.1.0
+
+### Minor Changes
+
+- cfe67d4: Add a typed `processors` option channel for processor package options.
+
+### Patch Changes
+
+- 644183d: Fix Oxc parsing for `.js` files that contain JSX before downstream JSX transforms run.
+- 3f05651: Relax OXC dependency ranges to accept compatible versions newer than the tested minimum.
+- ca2d7e6: Allow bundler adapters to provide loaded dependency source during evaluation.
+
+  The Rollup adapter now loads resolved dependencies through Rollup before WyW falls back to reading source from disk. This keeps evaluation aligned with earlier Rollup plugins, including TypeScript transforms, when imported values are needed for CSS extraction.
+
+- Updated dependencies
+  - @wyw-in-js/processor-utils@2.1.0
+  - @wyw-in-js/shared@2.1.0
+
 ## 2.0.2
 
 ### Patch Changes

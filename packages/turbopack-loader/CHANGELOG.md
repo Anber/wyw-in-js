@@ -1,5 +1,18 @@
 # `@wyw-in-js/turbopack-loader`
 
+## 2.1.0
+
+### Minor Changes
+
+- Bump versions
+
+### Patch Changes
+
+- 792b6df: Fix Next.js Turbopack production builds by routing generated WyW CSS through a Turbopack query loader path on versions that support query conditions, while preserving sidecar output as the fallback for older Turbopack configs.
+- Updated dependencies
+  - @wyw-in-js/shared@2.1.0
+  - @wyw-in-js/transform@2.1.0
+
 ## 2.0.2
 
 ### Patch Changes
