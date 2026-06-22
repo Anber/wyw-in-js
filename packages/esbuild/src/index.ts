@@ -188,11 +188,23 @@ export default function wywInJS({
 
         if (!options) {
           options = {};
+          if ('jsx' in build.initialOptions) {
+            options.jsx = build.initialOptions.jsx;
+          }
           if ('jsxFactory' in build.initialOptions) {
             options.jsxFactory = build.initialOptions.jsxFactory;
           }
           if ('jsxFragment' in build.initialOptions) {
             options.jsxFragment = build.initialOptions.jsxFragment;
+          }
+          if ('jsxImportSource' in build.initialOptions) {
+            options.jsxImportSource = build.initialOptions.jsxImportSource;
+          }
+          if ('jsxDev' in build.initialOptions) {
+            options.jsxDev = build.initialOptions.jsxDev;
+          }
+          if ('jsxSideEffects' in build.initialOptions) {
+            options.jsxSideEffects = build.initialOptions.jsxSideEffects;
           }
         }
 
