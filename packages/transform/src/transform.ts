@@ -84,7 +84,8 @@ const getEvalCacheKey = (
     what: string,
     importer: string,
     stack: string[]
-  ) => Promise<string | null>
+  ) => Promise<string | null>,
+  loadDependencyCode: Services['loadDependencyCode'] | undefined
 ) => {
   const evalOptions = pluginOptions.eval ?? {};
   const payload = JSON.stringify({
@@ -100,6 +101,7 @@ const getEvalCacheKey = (
     // them to provide a stable scope key so cache/broker reuse tracks resolver
     // semantics instead of closure identity.
     bundlerResolver: asyncResolveKey ?? getResolverId(asyncResolve),
+    bundlerLoader: getResolverId(loadDependencyCode),
     overrideContext: getResolverId(pluginOptions.overrideContext),
     importOverrides: pluginOptions.importOverrides ?? null,
     extensions: pluginOptions.extensions,
@@ -154,7 +156,8 @@ export async function transform(
   const evalCacheKey = getEvalCacheKey(
     pluginOptions,
     services.asyncResolveKey,
-    asyncResolve
+    asyncResolve,
+    services.loadDependencyCode
   );
   services.cache.setKeySalt(evalCacheKey);
   services.asyncResolve = asyncResolve;

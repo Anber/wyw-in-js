@@ -24,6 +24,7 @@ export interface IIgnoredEntrypoint {
 }
 
 export interface IEntrypointDependency {
+  loadedCode?: string;
   only: string[];
   resolved: string | null;
   source: string;

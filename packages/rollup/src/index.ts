@@ -45,6 +45,7 @@ export default function wywInJS({
   const cssLookup: { [key: string]: string } = {};
   const cache = new TransformCacheCollection();
   const emptyConfig = {};
+  const dependencyLoadDepth = new Map<string, number>();
   let transformQueue = Promise.resolve();
 
   type ResolveFn = PluginContext['resolve'];
@@ -64,6 +65,30 @@ export default function wywInJS({
     boundResolveCache.set(ctx, { sourceResolve: ctx.resolve, boundResolve });
     return boundResolve;
   };
+
+  const normalizeId = (id: string) => id.split('?')[0].split('#')[0];
+
+  const beginDependencyLoad = (id: string): void => {
+    const normalized = normalizeId(id);
+    dependencyLoadDepth.set(
+      normalized,
+      (dependencyLoadDepth.get(normalized) ?? 0) + 1
+    );
+  };
+
+  const endDependencyLoad = (id: string): void => {
+    const normalized = normalizeId(id);
+    const depth = dependencyLoadDepth.get(normalized) ?? 0;
+    if (depth <= 1) {
+      dependencyLoadDepth.delete(normalized);
+      return;
+    }
+
+    dependencyLoadDepth.set(normalized, depth - 1);
+  };
+
+  const isDependencyLoad = (id: string): boolean =>
+    dependencyLoadDepth.has(normalizeId(id));
 
   const runSerialized = async <T>(fn: () => Promise<T>): Promise<T> => {
     if (!serializeTransform) {
@@ -127,7 +152,7 @@ export default function wywInJS({
       code: string,
       id: string
     ): Promise<{ code: string; map: Result['sourceMap'] } | undefined> {
-      return runSerialized(async () => {
+      const run = async () => {
         // Do not transform ignored and generated files
         if (!filter(id) || id in cssLookup) return;
 
@@ -146,6 +171,24 @@ export default function wywInJS({
           },
           cache,
           emitWarning: (message: string) => this.warn(message),
+          loadDependencyCode: async (resolved: string) => {
+            beginDependencyLoad(resolved);
+            try {
+              const loaded = await this.load({ id: resolved });
+              const cached = cache.get('entrypoints', resolved);
+              if (
+                cached &&
+                'initialCode' in cached &&
+                typeof cached.initialCode === 'string'
+              ) {
+                return undefined;
+              }
+
+              return typeof loaded?.code === 'string' ? loaded.code : undefined;
+            } finally {
+              endDependencyLoad(resolved);
+            }
+          },
         };
 
         const result = await transform(
@@ -173,7 +216,13 @@ export default function wywInJS({
 
         /* eslint-disable-next-line consistent-return */
         return { code: result.code, map: result.sourceMap };
-      });
+      };
+
+      if (isDependencyLoad(id)) {
+        return run();
+      }
+
+      return runSerialized(run);
     },
   };
 

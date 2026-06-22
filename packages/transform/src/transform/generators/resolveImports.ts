@@ -171,6 +171,49 @@ function filterUnresolved(
   });
 }
 
+async function loadDependencyCodes(
+  services: Services,
+  entrypoint: Entrypoint,
+  dependencies: IEntrypointDependency[]
+): Promise<IEntrypointDependency[]> {
+  if (!services.loadDependencyCode) {
+    return dependencies;
+  }
+
+  const { loadDependencyCode } = services;
+
+  return Promise.all(
+    dependencies.map(async (dependency) => {
+      if (!dependency.resolved) {
+        return dependency;
+      }
+
+      try {
+        const loadedCode = await loadDependencyCode(
+          dependency.resolved,
+          entrypoint.name,
+          dependency.source
+        );
+
+        return loadedCode === undefined
+          ? dependency
+          : {
+              ...dependency,
+              loadedCode,
+            };
+      } catch (err) {
+        entrypoint.log(
+          '[load] ❌ cannot load %s in %s: %O',
+          dependency.source,
+          entrypoint.name,
+          err
+        );
+        return dependency;
+      }
+    })
+  );
+}
+
 function getPreResolvedImports(
   preResolved: IResolveImportsAction['data']['preResolved']
 ): Map<string, IEntrypointDependency> {
@@ -372,6 +415,11 @@ export async function* asyncResolveImports(
     resolvedImports
   );
   const filteredImports = filterUnresolved(entrypoint, overriddenImports);
-  emitDependency(eventEmitter, entrypoint, filteredImports, this.data.phase);
-  return filteredImports;
+  const loadedImports = await loadDependencyCodes(
+    this.services,
+    entrypoint,
+    filteredImports
+  );
+  emitDependency(eventEmitter, entrypoint, loadedImports, this.data.phase);
+  return loadedImports;
 }
