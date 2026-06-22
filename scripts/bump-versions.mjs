@@ -7,7 +7,7 @@ import semver from 'semver';
 import { getWorkspaces } from './helpers/getWorkspaces.mjs';
 
 const { releases } = await getReleasePlan.default(cwd(), undefined, {});
-const workspaces = getWorkspaces(cwd());
+const workspaces = getWorkspaces(cwd(), { includePrivate: false });
 
 const shouldAlignAll = releases.some(
   (release) => release.type === 'major' || release.type === 'minor'
