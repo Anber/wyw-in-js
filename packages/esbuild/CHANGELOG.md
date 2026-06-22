@@ -1,5 +1,19 @@
 # @wyw-in-js/esbuild
 
+## 2.1.0
+
+### Minor Changes
+
+- Bump versions
+
+### Patch Changes
+
+- ef66c9c: Preserve esbuild JSX runtime options when transforming TSX before WyW extraction, so automatic JSX runtime builds do not emit bare `React.createElement` calls.
+- 3f05651: Relax OXC dependency ranges to accept compatible versions newer than the tested minimum.
+- Updated dependencies
+  - @wyw-in-js/shared@2.1.0
+  - @wyw-in-js/transform@2.1.0
+
 ## 2.0.2
 
 ### Patch Changes

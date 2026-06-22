@@ -1,5 +1,22 @@
 # @wyw-in-js/rollup
 
+## 2.1.0
+
+### Minor Changes
+
+- Bump versions
+
+### Patch Changes
+
+- a7979c4: Add a `cssFilename` option to customize generated virtual CSS filenames in Rollup builds. This lets watch-mode setups use stable CSS ids with CSS bundler plugins that cache transformed CSS by filename.
+- ca2d7e6: Allow bundler adapters to provide loaded dependency source during evaluation.
+
+  The Rollup adapter now loads resolved dependencies through Rollup before WyW falls back to reading source from disk. This keeps evaluation aligned with earlier Rollup plugins, including TypeScript transforms, when imported values are needed for CSS extraction.
+
+- Updated dependencies
+  - @wyw-in-js/shared@2.1.0
+  - @wyw-in-js/transform@2.1.0
+
 ## 2.0.2
 
 ### Patch Changes
