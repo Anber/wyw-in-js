@@ -4,7 +4,8 @@ import { globSync } from 'glob';
 
 import { getJSON } from './getJSON.mjs';
 
-export function getWorkspaces(cwd) {
+export function getWorkspaces(cwd, options = {}) {
+  const { includePrivate = true } = options;
   const pkgJson = getJSON(join(cwd, 'package.json'));
   const globs = getWorkspacePatterns(pkgJson);
 
@@ -13,12 +14,17 @@ export function getWorkspaces(cwd) {
       const pkgJson = getJSON(pkg);
       return {
         name: pkgJson.name,
+        private: Boolean(pkgJson.private),
         version: pkgJson.version,
       };
     })
   );
 
   return packages.reduce((acc, pkg) => {
+    if (!includePrivate && pkg.private) {
+      return acc;
+    }
+
     acc[pkg.name] = pkg.version;
     return acc;
   }, {});
