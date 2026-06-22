@@ -142,7 +142,14 @@ export function* processImports(
       continue;
     }
 
-    const nextEntrypoint = this.entrypoint.createChild(resolved, requiredOnly);
+    const nextEntrypoint =
+      dependency.loadedCode === undefined
+        ? this.entrypoint.createChild(resolved, requiredOnly)
+        : this.entrypoint.createChild(
+            resolved,
+            requiredOnly,
+            dependency.loadedCode
+          );
     if (nextEntrypoint === 'loop' || nextEntrypoint.ignored) {
       continue;
     }

@@ -17,10 +17,17 @@ import type {
 } from './actions/types';
 import type { EvalBroker } from '../eval/broker';
 
+export type LoadDependencyCodeFn = (
+  resolved: string,
+  importer: string,
+  source: string
+) => Promise<string | undefined>;
+
 export type Services = {
   cache: TransformCacheCollection;
   emitWarning?: (message: string) => void;
   eventEmitter: EventEmitter;
+  loadDependencyCode?: LoadDependencyCodeFn;
   loadAndParseFn: LoadAndParseFn;
   log: Debugger;
   options: Options & {

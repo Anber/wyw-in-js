@@ -11,6 +11,7 @@ import { dirname, join, resolve } from 'path';
 import dedent from 'dedent';
 
 import { TransformCacheCollection } from '../cache';
+import { disposeEvalBroker } from '../eval/broker';
 import { transform } from '../transform';
 import type { PluginOptions } from '../types';
 import { EventEmitter } from '../utils/EventEmitter';
@@ -671,6 +672,70 @@ describe('transform static import value inlining', () => {
       expect(result.dependencies).toContain('./unsafe.js');
       expect(perf.counts.get('transform:evalFile') ?? 0).toBeGreaterThan(0);
     } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('uses bundler-loaded dependency code before falling back to filesystem', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-bundler-loaded-'));
+    const entryFile = join(root, 'entry.js');
+    const depFile = join(root, 'unsafe.js');
+    const cache = new TransformCacheCollection();
+
+    writeFileSync(
+      depFile,
+      dedent`
+        const color = (() => {
+          throw new Error('raw dependency from fs was evaluated');
+        })();
+        export { color };
+      `
+    );
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { css } from 'test-css-processor';
+        import { color } from './unsafe.js';
+
+        export const className = css\`
+          color: ${'${color}'};
+        \`;
+      `
+    );
+
+    try {
+      const result = await transform(
+        {
+          cache,
+          loadDependencyCode: async (resolved: string) => {
+            if (resolved === depFile) {
+              return "export const color = 'red';";
+            }
+
+            return undefined;
+          },
+          options: {
+            filename: entryFile,
+            root,
+            pluginOptions: {
+              configFile: false,
+              tagResolver: (source, tag) => {
+                if (source === 'test-css-processor' && tag === 'css') {
+                  return processorFile;
+                }
+
+                return null;
+              },
+            },
+          },
+        } as Parameters<typeof transform>[0],
+        readFileSync(entryFile, 'utf8'),
+        createResolver(processorFile)
+      );
+
+      expect(result.cssText).toContain('color:red');
+    } finally {
+      disposeEvalBroker(cache);
       rmSync(root, { recursive: true, force: true });
     }
   });
