@@ -21,6 +21,12 @@ const parseCache = new Map<string, ParsedOxc>();
 const getAstType = (filename: string): 'js' | 'ts' =>
   filename.endsWith('.ts') || filename.endsWith('.tsx') ? 'ts' : 'js';
 
+const getJsxFallbackFilename = (filename: string): string | null => {
+  if (filename.endsWith('.js')) return `${filename}x`;
+
+  return null;
+};
+
 const makeCacheKey = (
   filename: string,
   code: string,
@@ -50,12 +56,23 @@ export const parseOxcCached = (
     return cached;
   }
 
-  const parsed = parseSync(filename, code, {
+  let parsed = parseSync(filename, code, {
     astType: getAstType(filename),
     range: true,
     sourceType,
   });
-  const fatalError = parsed.errors.find((error) => error.severity === 'Error');
+  let fatalError = parsed.errors.find((error) => error.severity === 'Error');
+  const jsxFallbackFilename = getJsxFallbackFilename(filename);
+  if (fatalError?.message.includes('JSX') && jsxFallbackFilename) {
+    // Some bundlers pass .js files with JSX to WyW before a later JSX transform.
+    parsed = parseSync(jsxFallbackFilename, code, {
+      astType: getAstType(jsxFallbackFilename),
+      range: true,
+      sourceType,
+    });
+    fatalError = parsed.errors.find((error) => error.severity === 'Error');
+  }
+
   if (fatalError) {
     throw new Error(fatalError.message);
   }

@@ -132,6 +132,84 @@ describe('explicit Oxc workflow', () => {
     expect(result.sourceMap?.sourcesContent?.[0]).toContain('css`');
   });
 
+  it('handles JSX syntax in .js files before downstream JSX transforms run', async () => {
+    const filename = join(__dirname, 'source-with-jsx.js');
+    const result = await transformFile(
+      {
+        options: {
+          filename,
+          preprocessor: 'none',
+          root: __dirname,
+          pluginOptions: createPluginOptions(),
+        },
+      },
+      dedent`
+        import { css } from 'test-css-processor';
+
+        const color = 'red';
+        export const className = css\`
+          color: ${'${color}'};
+        \`;
+        export const element = <div className={className} />;
+      `,
+      async () => null
+    );
+
+    expect(result.code).not.toContain('css`');
+    expect(result.code).toContain('<div className={className} />');
+    expect(result.cssText).toContain('color: red');
+  });
+
+  it('keeps JSX parsing restricted to .js compatibility fallback', async () => {
+    const filename = join(__dirname, 'source-with-jsx.mjs');
+    await expect(
+      transformFile(
+        {
+          options: {
+            filename,
+            preprocessor: 'none',
+            root: __dirname,
+            pluginOptions: createPluginOptions(),
+          },
+        },
+        dedent`
+          import { css } from 'test-css-processor';
+
+          export const className = css\`
+            color: red;
+          \`;
+          export const element = <div className={className} />;
+        `,
+        async () => null
+      )
+    ).rejects.toThrow('Unexpected JSX expression');
+  });
+
+  it('keeps non-JSX syntax errors fatal in .js files', async () => {
+    const filename = join(__dirname, 'invalid-source.js');
+    await expect(
+      transformFile(
+        {
+          options: {
+            filename,
+            preprocessor: 'none',
+            root: __dirname,
+            pluginOptions: createPluginOptions(),
+          },
+        },
+        dedent`
+          import { css } from 'test-css-processor';
+
+          export const className = css\`
+            color: red;
+          \`;
+          export const broken = ;
+        `,
+        async () => null
+      )
+    ).rejects.toThrow();
+  });
+
   it('does not resolve imports for __wywPreval-only modules without metadata', async () => {
     const filename = join(__dirname, 'no-metadata-source.js');
     const source = dedent`
