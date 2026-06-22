@@ -157,6 +157,47 @@ it('creates module for JS files', async () => {
   expect(mod.filename).toBe(filename);
 });
 
+it('keeps a strong entrypoint reference when WeakRef eval mode is disabled', async () => {
+  const realWeakRef = globalThis.WeakRef;
+  let weakRefConstructed = false;
+
+  class EmptyWeakRef<T extends object> {
+    private target: T;
+
+    constructor(target: T) {
+      this.target = target;
+      weakRefConstructed = true;
+    }
+
+    deref(): T | undefined {
+      expect(this.target).toBeDefined();
+      return undefined;
+    }
+  }
+
+  try {
+    (globalThis as typeof globalThis & { WeakRef: typeof WeakRef }).WeakRef =
+      EmptyWeakRef as typeof WeakRef;
+
+    const code = dedent`
+      module.exports = () => 42;
+    `;
+    const cache = new TransformCacheCollection();
+    const services = createServices({ cache });
+    services.options.pluginOptions.features.useWeakRefInEval = false;
+    const entrypoint = createEntrypoint(services, filename, ['*'], code);
+    const mod = new Module(services, entrypoint);
+
+    await safeEvaluate(mod);
+
+    expect((mod.exports as any)()).toBe(42);
+    expect(weakRefConstructed).toBe(false);
+  } finally {
+    (globalThis as typeof globalThis & { WeakRef: typeof WeakRef }).WeakRef =
+      realWeakRef;
+  }
+});
+
 it('requires .js files', async () => {
   const { mod } = create`
     const answer = require('./sample-script');
