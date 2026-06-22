@@ -8,8 +8,12 @@ import { getWorkspaces } from './helpers/getWorkspaces.mjs';
 
 const { releases } = await getReleasePlan.default(cwd(), undefined, {});
 const workspaces = getWorkspaces(cwd(), { includePrivate: false });
+const publishableWorkspaceNames = new Set(Object.keys(workspaces));
+const publishableReleases = releases.filter((release) =>
+  publishableWorkspaceNames.has(release.name)
+);
 
-const shouldAlignAll = releases.some(
+const shouldAlignAll = publishableReleases.some(
   (release) => release.type === 'major' || release.type === 'minor'
 );
 
@@ -18,7 +22,7 @@ if (!shouldAlignAll) {
   process.exit(0);
 }
 
-const maxVersion = releases.reduce((acc, release) => {
+const maxVersion = publishableReleases.reduce((acc, release) => {
   workspaces[release.name] = release.newVersion;
 
   if (!acc) {

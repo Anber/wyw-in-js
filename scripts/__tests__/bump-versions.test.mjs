@@ -80,6 +80,9 @@ test('bump-versions aligns only publishable workspaces', () => {
       version: '1.0.5',
     });
     writePackage(root, 'examples/demo', {
+      dependencies: {
+        '@fixture/core': 'workspace:*',
+      },
       name: '@fixture/demo',
       private: true,
       version: '0.1.0',
