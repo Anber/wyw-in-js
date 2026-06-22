@@ -15,7 +15,8 @@ import {
 import { globSync } from 'glob';
 import mkdirp from 'mkdirp';
 import normalize from 'normalize-path';
-import yargs from 'yargs';
+import yargs from 'yargs/yargs';
+import { hideBin } from 'yargs/helpers';
 
 import { reportTransformDiagnostics } from './diagnostics';
 import { createMetadataFile } from './metadata';
@@ -28,7 +29,7 @@ const modulesOptions = [
   'native',
 ] as const;
 
-const argv = yargs
+const argv = yargs(hideBin(process.argv))
   .usage('Usage: $0 [options] <files ...>')
   .option('config', {
     alias: 'c',
