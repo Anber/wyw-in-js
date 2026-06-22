@@ -1,8 +1,8 @@
 /* eslint-disable no-restricted-syntax */
 
-import { parseSync } from 'oxc-parser';
 import type { Node, Program } from 'oxc-parser';
 
+import { parseOxcProgramCached } from '../parseOxc';
 import type { RuntimeReplacement } from './types';
 
 type AnyNode = Node & Record<string, unknown>;
@@ -15,18 +15,7 @@ type AnyProperty = AnyNode & {
 };
 
 const parseOxc = (code: string, filename: string): Program => {
-  const parsed = parseSync(filename, code, {
-    astType:
-      filename.endsWith('.ts') || filename.endsWith('.tsx') ? 'ts' : 'js',
-    range: true,
-    sourceType: 'module',
-  });
-  const fatalError = parsed.errors.find((error) => error.severity === 'Error');
-  if (fatalError) {
-    throw new Error(fatalError.message);
-  }
-
-  return parsed.program as Program;
+  return parseOxcProgramCached(filename, code, 'module');
 };
 
 const applyReplacements = (

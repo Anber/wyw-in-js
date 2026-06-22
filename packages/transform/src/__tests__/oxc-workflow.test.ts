@@ -132,6 +132,34 @@ describe('explicit Oxc workflow', () => {
     expect(result.sourceMap?.sourcesContent?.[0]).toContain('css`');
   });
 
+  it('handles JSX syntax in .js files before downstream JSX transforms run', async () => {
+    const filename = join(__dirname, 'source-with-jsx.js');
+    const result = await transformFile(
+      {
+        options: {
+          filename,
+          preprocessor: 'none',
+          root: __dirname,
+          pluginOptions: createPluginOptions(),
+        },
+      },
+      dedent`
+        import { css } from 'test-css-processor';
+
+        const color = 'red';
+        export const className = css\`
+          color: ${'${color}'};
+        \`;
+        export const element = <div className={className} />;
+      `,
+      async () => null
+    );
+
+    expect(result.code).not.toContain('css`');
+    expect(result.code).toContain('<div className={className} />');
+    expect(result.cssText).toContain('color: red');
+  });
+
   it('does not resolve imports for __wywPreval-only modules without metadata', async () => {
     const filename = join(__dirname, 'no-metadata-source.js');
     const source = dedent`
