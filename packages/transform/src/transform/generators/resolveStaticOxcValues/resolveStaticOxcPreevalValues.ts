@@ -15,6 +15,7 @@ import {
   getStaticStrategyFailure,
   parseProgram,
 } from './environment';
+import type { UnresolvedValueDetail } from './environment';
 import {
   collectWYWMetaExtendsHelperNames,
   createSameFileStaticWYWMetaHelperResolver,
@@ -47,6 +48,25 @@ export function* resolveStaticOxcPreevalValues(
     return false;
   }
   const staticOnly = evalStrategy === 'static';
+
+  const buildUnresolvedDetails = (
+    names: Iterable<string>
+  ): Map<string, UnresolvedValueDetail> => {
+    const wanted = new Set(names);
+    const details = new Map<string, UnresolvedValueDetail>();
+    for (const candidate of candidates) {
+      if (!wanted.has(candidate.name) || details.has(candidate.name)) {
+        continue;
+      }
+
+      details.set(candidate.name, {
+        source: candidate.source,
+        importedFrom: candidate.imports[0]?.source,
+      });
+    }
+
+    return details;
+  };
 
   const staticValueCache =
     preevalResult.staticValueCache ?? new Map<string, unknown>();
@@ -223,7 +243,11 @@ export function* resolveStaticOxcPreevalValues(
     (!hasKnownStaticCandidate || preevalResult.staticValuesApplied)
   ) {
     if (staticOnly && evalDependencyNames.size > 0) {
-      throw getStaticStrategyFailure(filename, evalDependencyNames);
+      throw getStaticStrategyFailure(
+        filename,
+        evalDependencyNames,
+        buildUnresolvedDetails(evalDependencyNames)
+      );
     }
     return false;
   }
@@ -233,7 +257,11 @@ export function* resolveStaticOxcPreevalValues(
       !staticValueCache.has(name) && !runtimeOnlyCandidateNames.has(name)
   );
   if (staticOnly && dependencyNames.length > 0) {
-    throw getStaticStrategyFailure(filename, dependencyNames);
+    throw getStaticStrategyFailure(
+      filename,
+      dependencyNames,
+      buildUnresolvedDetails(dependencyNames)
+    );
   }
   preevalResult.dependencyNames = dependencyNames;
   preevalResult.staticValueCache = staticValueCache;
