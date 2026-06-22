@@ -1,5 +1,6 @@
 const transformMock = jest.fn();
 const cacheGetMock = jest.fn();
+const slugifyMock = jest.fn();
 
 let activeTransforms = 0;
 let maxActiveTransforms = 0;
@@ -20,7 +21,7 @@ jest.mock('@wyw-in-js/shared', () => ({
         (resolved) => onResolve(resolved, what, importer, stack)
       ),
   logger: createLogger(),
-  slugify: () => 'slug',
+  slugify: (...args: unknown[]) => slugifyMock(...args),
   syncResolve: () => null,
 }));
 
@@ -45,7 +46,9 @@ describe('@wyw-in-js/rollup serializeTransform', () => {
   beforeEach(() => {
     transformMock.mockReset();
     cacheGetMock.mockReset();
+    slugifyMock.mockReset();
     cacheGetMock.mockReturnValue(undefined);
+    slugifyMock.mockReturnValue('slug');
     activeTransforms = 0;
     maxActiveTransforms = 0;
 
@@ -317,5 +320,32 @@ describe('@wyw-in-js/rollup serializeTransform', () => {
     await plugin.transform!.call(ctx, 'console.log("test")', '/abs/entry.ts');
 
     expect(calls).toEqual(['entry:start', 'dependency', 'entry:end']);
+  });
+
+  it('supports stable CSS filenames for CSS bundlers with watch caches', async () => {
+    const { default: wywInJS } = await import('../index');
+    const plugin = wywInJS({
+      cssFilename: ({ id }) => `${id.replace(/\.[jt]sx?$/, '')}.css`,
+    });
+    const ctx = createContext();
+
+    transformMock
+      .mockResolvedValueOnce({
+        code: 'export const x = 1;',
+        cssText: '.a{color:red}',
+        sourceMap: null,
+      })
+      .mockResolvedValueOnce({
+        code: 'export const x = 1;',
+        cssText: '.a{color:blue}',
+        sourceMap: null,
+      });
+
+    const first = await plugin.transform!.call(ctx, 'export {}', '/abs/a.ts');
+    const second = await plugin.transform!.call(ctx, 'export {}', '/abs/a.ts');
+
+    expect(first?.code).toContain('import "/abs/a.css";');
+    expect(second?.code).toContain('import "/abs/a.css";');
+    expect(plugin.load?.call(ctx, '/abs/a.css')).toBe('.a{color:blue}');
   });
 });

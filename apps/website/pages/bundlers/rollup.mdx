@@ -67,6 +67,18 @@ wyw({
 });
 ```
 
+### Stable CSS filenames in watch mode
+
+By default, the Rollup plugin includes a slug based on the generated CSS content in the virtual CSS filename. Some CSS
+bundler plugins cache transformed CSS by filename during watch mode and work better with a stable id. You can override
+the generated CSS filename with `cssFilename`:
+
+```js
+wyw({
+  cssFilename: ({ id }) => `${id.replace(/\.[jt]sx?$/, '')}.css`,
+});
+```
+
 ### Disabling vendor prefixing
 
 Stylis adds vendor-prefixed CSS by default. To disable it (and reduce CSS size), pass `prefixer: false`:

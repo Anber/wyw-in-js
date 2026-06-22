@@ -21,7 +21,15 @@ import {
   TransformCacheCollection,
 } from '@wyw-in-js/transform';
 
+type RollupCssFilenameContext = {
+  cssText: string;
+  defaultFilename: string;
+  id: string;
+  slug: string;
+};
+
 type RollupPluginOptions = {
+  cssFilename?: (context: RollupCssFilenameContext) => string;
   exclude?: string | string[];
   include?: string | string[];
   keepComments?: boolean | RegExp;
@@ -32,6 +40,7 @@ type RollupPluginOptions = {
 } & Partial<PluginOptions>;
 
 export default function wywInJS({
+  cssFilename,
   exclude,
   include,
   keepComments,
@@ -203,7 +212,10 @@ export default function wywInJS({
         let { cssText } = result;
 
         const slug = slugify(cssText);
-        const filename = `${id.replace(/\.[jt]sx?$/, '')}_${slug}.css`;
+        const defaultFilename = `${id.replace(/\.[jt]sx?$/, '')}_${slug}.css`;
+        const filename =
+          cssFilename?.({ cssText, defaultFilename, id, slug }) ??
+          defaultFilename;
 
         if (sourceMap && result.cssSourceMapText) {
           const map = Buffer.from(result.cssSourceMapText).toString('base64');
