@@ -740,6 +740,64 @@ describe('transform static import value inlining', () => {
     }
   });
 
+  it('falls back to filesystem dependency code when bundler loading fails', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-bundler-loaded-'));
+    const entryFile = join(root, 'entry.js');
+    const depFile = join(root, 'unsafe.js');
+    const cache = new TransformCacheCollection();
+
+    writeFileSync(
+      depFile,
+      dedent`
+        const color = String('red');
+        export { color };
+      `
+    );
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { css } from 'test-css-processor';
+        import { color } from './unsafe.js';
+
+        export const className = css\`
+          color: ${'${color}'};
+        \`;
+      `
+    );
+
+    try {
+      const result = await transform(
+        {
+          cache,
+          loadDependencyCode: async () => {
+            throw new Error('bundler load failed');
+          },
+          options: {
+            filename: entryFile,
+            root,
+            pluginOptions: {
+              configFile: false,
+              tagResolver: (source, tag) => {
+                if (source === 'test-css-processor' && tag === 'css') {
+                  return processorFile;
+                }
+
+                return null;
+              },
+            },
+          },
+        } as Parameters<typeof transform>[0],
+        readFileSync(entryFile, 'utf8'),
+        createResolver(processorFile)
+      );
+
+      expect(result.cssText).toContain('color:red');
+    } finally {
+      disposeEvalBroker(cache);
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('rejects unsafe dependency modules when eval.strategy is static', async () => {
     const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
     const entryFile = join(root, 'entry.js');

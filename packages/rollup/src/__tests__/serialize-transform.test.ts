@@ -1,4 +1,5 @@
 const transformMock = jest.fn();
+const cacheGetMock = jest.fn();
 
 let activeTransforms = 0;
 let maxActiveTransforms = 0;
@@ -28,7 +29,7 @@ jest.mock('@wyw-in-js/transform', () => ({
   getFileIdx: () => 'file',
   TransformCacheCollection: function TransformCacheCollection() {
     return {
-      get: () => undefined,
+      get: (...args: unknown[]) => cacheGetMock(...args),
     };
   },
   transform: (...args: unknown[]) => transformMock(...args),
@@ -43,6 +44,8 @@ const sleep = (ms: number) =>
 describe('@wyw-in-js/rollup serializeTransform', () => {
   beforeEach(() => {
     transformMock.mockReset();
+    cacheGetMock.mockReset();
+    cacheGetMock.mockReturnValue(undefined);
     activeTransforms = 0;
     maxActiveTransforms = 0;
 
@@ -175,6 +178,96 @@ describe('@wyw-in-js/rollup serializeTransform', () => {
 
     expect(loadMock).toHaveBeenCalledWith({ id: '/abs/dep.ts' });
     expect(loadedByService).toBe('export const color = "red";');
+  });
+
+  it('does not reuse Rollup-loaded dependency code after WyW cached the dependency transform', async () => {
+    const { default: wywInJS } = await import('../index');
+    const plugin = wywInJS({ serializeTransform: false });
+
+    cacheGetMock.mockReturnValueOnce({
+      initialCode: 'export const color = "red";',
+    });
+
+    let loadedByService: unknown = 'not-called';
+    transformMock.mockImplementationOnce(
+      async (services, _code, asyncResolve) => {
+        const resolved = await asyncResolve('./dep', '/abs/entry.ts', []);
+        loadedByService = await services.loadDependencyCode?.(
+          resolved,
+          '/abs/entry.ts',
+          './dep'
+        );
+
+        return {
+          code: _code,
+          cssText: '',
+          sourceMap: null,
+        };
+      }
+    );
+
+    const loadMock = jest.fn(async ({ id }: { id: string }) => ({
+      id,
+      code: 'export const color = "blue";',
+    }));
+
+    await plugin.transform!.call(
+      {
+        resolve: jest.fn(async () => ({
+          id: '/abs/dep.ts',
+          external: false,
+        })),
+        load: loadMock,
+        warn: jest.fn(),
+      } as any,
+      'console.log("test")',
+      '/abs/entry.ts'
+    );
+
+    expect(loadMock).toHaveBeenCalledWith({ id: '/abs/dep.ts' });
+    expect(cacheGetMock).toHaveBeenCalledWith('entrypoints', '/abs/dep.ts');
+    expect(loadedByService).toBeUndefined();
+  });
+
+  it('returns undefined when Rollup load does not provide dependency code', async () => {
+    const { default: wywInJS } = await import('../index');
+    const plugin = wywInJS({ serializeTransform: false });
+
+    let loadedByService: unknown = 'not-called';
+    transformMock.mockImplementationOnce(
+      async (services, _code, asyncResolve) => {
+        const resolved = await asyncResolve('./dep', '/abs/entry.ts', []);
+        loadedByService = await services.loadDependencyCode?.(
+          resolved,
+          '/abs/entry.ts',
+          './dep'
+        );
+
+        return {
+          code: _code,
+          cssText: '',
+          sourceMap: null,
+        };
+      }
+    );
+
+    const loadMock = jest.fn(async ({ id }: { id: string }) => ({ id }));
+
+    await plugin.transform!.call(
+      {
+        resolve: jest.fn(async () => ({
+          id: '/abs/dep.ts',
+          external: false,
+        })),
+        load: loadMock,
+        warn: jest.fn(),
+      } as any,
+      'console.log("test")',
+      '/abs/entry.ts'
+    );
+
+    expect(loadMock).toHaveBeenCalledWith({ id: '/abs/dep.ts' });
+    expect(loadedByService).toBeUndefined();
   });
 
   it('bypasses serialization for Rollup dependency loads triggered by the parent transform', async () => {
