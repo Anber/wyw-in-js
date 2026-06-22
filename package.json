@@ -46,7 +46,7 @@
     "eslint-plugin-prettier": "5.0.0",
     "glob": "^10.3.10",
     "idea-exclude": "^1.2.1",
-    "oxc-transform": "0.127.0",
+    "oxc-transform": "^0.127.0",
     "package-json": "^8.1.1",
     "picocolors": "^1.1.1",
     "prettier": "3.0.3",
