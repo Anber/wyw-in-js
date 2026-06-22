@@ -23,8 +23,6 @@ const getAstType = (filename: string): 'js' | 'ts' =>
 
 const getJsxFallbackFilename = (filename: string): string | null => {
   if (filename.endsWith('.js')) return `${filename}x`;
-  if (filename.endsWith('.mjs')) return filename.replace(/\.mjs$/, '.jsx');
-  if (filename.endsWith('.cjs')) return filename.replace(/\.cjs$/, '.jsx');
 
   return null;
 };
