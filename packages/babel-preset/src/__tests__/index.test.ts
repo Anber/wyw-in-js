@@ -179,4 +179,41 @@ describe('@wyw-in-js/babel-preset Oxc compatibility wrapper', () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it('parses TypeScript from sibling Babel presets without Babel config discovery', () => {
+    const emitWarningSpy = jest
+      .spyOn(process, 'emitWarning')
+      .mockImplementation(() => {});
+    const code = 'const a: number = 1;\n';
+    const filename = '/tmp/wyw-babel-preset-typescript.ts';
+    const cases = [
+      {
+        pluginOptions: { configFile: false },
+      },
+      {
+        pluginOptions: {
+          configFile: false,
+          features: { useBabelConfigs: false },
+        },
+      },
+    ];
+
+    try {
+      cases.forEach(({ pluginOptions }) => {
+        const result = babel.transformSync(code, {
+          babelrc: false,
+          configFile: false,
+          filename,
+          presets: ['@babel/preset-typescript', [wywInJS, pluginOptions]],
+          sourceType: 'module',
+        });
+
+        expect(result?.code).toContain('const a = 1;');
+        expect(result?.code).not.toContain(': number');
+        expect(result?.metadata?.wywInJS).toBeUndefined();
+      });
+    } finally {
+      emitWarningSpy.mockRestore();
+    }
+  });
 });
