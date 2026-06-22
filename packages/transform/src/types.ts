@@ -5,6 +5,7 @@ import type {
   Replacement,
   Rules,
   StrictOptions,
+  WywInJsProcessorOptions,
 } from '@wyw-in-js/shared';
 
 import type {
@@ -13,10 +14,12 @@ import type {
 } from './utils/TransformMetadata';
 import type { WYWTransformDiagnostic } from './utils/TransformDiagnostics';
 
-export type PluginOptions = StrictOptions & {
+export type { WywInJsProcessorOptions };
+
+export interface PluginOptions extends StrictOptions {
   configFile?: string | false;
   stage?: Stage;
-};
+}
 
 export type ParentEntrypoint = {
   evaluated: boolean;

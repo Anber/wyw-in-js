@@ -12,6 +12,7 @@ export type OxcPreevalOptions = Pick<
   | 'eval'
   | 'extensions'
   | 'features'
+  | 'processors'
   | 'staticBindings'
   | 'tagResolver'
 > & { eventEmitter?: EventEmitter };

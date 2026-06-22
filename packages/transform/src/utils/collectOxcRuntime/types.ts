@@ -9,6 +9,7 @@ export type OxcCollectOptions = Pick<
   | 'displayName'
   | 'eval'
   | 'extensions'
+  | 'processors'
   | 'tagResolver'
   | 'variableNameConfig'
 > & {

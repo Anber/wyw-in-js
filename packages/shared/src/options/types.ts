@@ -230,6 +230,8 @@ export type OxcOptions = {
   transform?: Record<string, unknown>;
 };
 
+export interface WywInJsProcessorOptions {}
+
 export type StrictOptions = {
   classNameSlug?: string | ClassNameFn;
   codeRemover?: CodeRemoverOptions;
@@ -242,6 +244,7 @@ export type StrictOptions = {
   ignore?: RegExp;
   importLoaders?: ImportLoaders;
   importOverrides?: ImportOverrides;
+  processors?: WywInJsProcessorOptions;
   /**
    * Per-source map of imported names to statically-known values. Used by
    * the static evaluator when resolving imports from the listed sources.

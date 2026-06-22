@@ -39,6 +39,7 @@ export type {
   Result,
   Serializable,
   Stage,
+  WywInJsProcessorOptions,
 } from './types';
 export { EvaluatedEntrypoint } from './transform/EvaluatedEntrypoint';
 export type { IEvaluatedEntrypoint } from './transform/EvaluatedEntrypoint';

@@ -36,6 +36,11 @@ const pureCallProcessorPath = path.resolve(
   '__fixtures__',
   'test-pure-annotation-call-processor.js'
 );
+const processorOptionsProcessorPath = path.resolve(
+  __dirname,
+  '__fixtures__',
+  'test-processor-options-processor.js'
+);
 const linariaStyledProcessorPath = path.resolve(
   __dirname,
   '__fixtures__',
@@ -164,6 +169,33 @@ describe('applyOxcProcessors', () => {
     });
     expect(starts[0]).toEqual({ column: 18, line: 3 });
     expect(cssText.join('\n')).toContain('color: red');
+  });
+
+  it('passes processor options to processor instances', () => {
+    const source = `
+      import { css } from 'test-package';
+      export const a = css\`
+        color: red;
+      \`;
+    `;
+
+    const result = applyOxcProcessors(
+      source,
+      fileContext,
+      {
+        ...options(processorOptionsProcessorPath),
+        processors: {
+          processorOptionsTest: {
+            runtimeClassName: 'processor-options-class',
+          },
+        },
+      },
+      (processor) => {
+        processor.doRuntimeReplacement();
+      }
+    );
+
+    expect(result.code).toContain('"processor-options-class"');
   });
 
   it('derives displayName from object properties and JSX elements', () => {
