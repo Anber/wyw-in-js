@@ -10,7 +10,11 @@ import {
 } from '../../../utils/collectOxcTemplateDependencies';
 import type { ITransformAction, SyncScenarioFor } from '../../types';
 import { resolveDependency } from './dependencies';
-import { debugStaticResolve, getStaticBindings } from './environment';
+import {
+  debugStaticResolve,
+  getStaticBindings,
+  type StaticRejectionReason,
+} from './environment';
 import { resolveImportValue } from './exportResolver';
 import { resolveImportAsOpaqueRuntime } from './opaqueRuntime';
 import {
@@ -24,8 +28,13 @@ export function* resolveCandidateValue(
   action: ITransformAction,
   candidate: OxcStaticValueCandidate,
   filename: string,
-  memo: Map<string, StaticExportResult | null>
+  memo: Map<string, StaticExportResult | null>,
+  reasons?: Map<string, StaticRejectionReason>
 ): SyncScenarioFor<StaticExportResult | null> {
+  const reject = (reason: StaticRejectionReason): null => {
+    reasons?.set(candidate.name, reason);
+    return null;
+  };
   const env = new Map<string, unknown>();
   const dependencies = new Set<string>();
   const sideEffectDependencies = new Set<string>();
@@ -93,7 +102,7 @@ export function* resolveCandidateValue(
         source: item.source,
         status: 'rejected',
       });
-      return null;
+      return reject('candidate-import-unresolved');
     }
 
     if (resolved.callable === 'zero-arg' && candidateExpression === undefined) {
@@ -124,7 +133,7 @@ export function* resolveCandidateValue(
         source: item.source,
         status: 'rejected',
       });
-      return null;
+      return reject('candidate-callable-usage-unsupported');
     }
 
     if (!expressionForBinding) {
@@ -185,7 +194,7 @@ export function* resolveCandidateValue(
       reason: 'candidate-expression-non-serializable',
       status: 'rejected',
     });
-    return null;
+    return reject('candidate-expression-non-serializable');
   }
 
   debugStaticResolve(action, {

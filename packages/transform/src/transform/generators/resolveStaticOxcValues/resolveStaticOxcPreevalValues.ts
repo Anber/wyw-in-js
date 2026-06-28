@@ -15,7 +15,10 @@ import {
   getStaticStrategyFailure,
   parseProgram,
 } from './environment';
-import type { UnresolvedValueDetail } from './environment';
+import type {
+  StaticRejectionReason,
+  UnresolvedValueDetail,
+} from './environment';
 import {
   collectWYWMetaExtendsHelperNames,
   createSameFileStaticWYWMetaHelperResolver,
@@ -49,6 +52,9 @@ export function* resolveStaticOxcPreevalValues(
   }
   const staticOnly = evalStrategy === 'static';
 
+  // candidate name -> why it was rejected, populated by the resolvers below.
+  const rejectionReasons = new Map<string, StaticRejectionReason>();
+
   const buildUnresolvedDetails = (
     names: Iterable<string>
   ): Map<string, UnresolvedValueDetail> => {
@@ -62,6 +68,7 @@ export function* resolveStaticOxcPreevalValues(
       details.set(candidate.name, {
         source: candidate.source,
         importedFrom: candidate.imports[0]?.source,
+        reason: rejectionReasons.get(candidate.name),
       });
     }
 
@@ -149,6 +156,7 @@ export function* resolveStaticOxcPreevalValues(
       !isOpaqueRuntimeBaseHelper &&
       !staticValueCache.has(candidate.name)
     ) {
+      rejectionReasons.set(candidate.name, 'not-eval-dependency');
       debugStaticResolve(this, {
         candidate: candidate.name,
         filename,
@@ -194,11 +202,18 @@ export function* resolveStaticOxcPreevalValues(
           this,
           candidate,
           filename,
-          memo
+          memo,
+          rejectionReasons
         );
       }
     } else {
-      resolved = yield* resolveCandidateValue(this, candidate, filename, memo);
+      resolved = yield* resolveCandidateValue(
+        this,
+        candidate,
+        filename,
+        memo,
+        rejectionReasons
+      );
     }
     if (!resolved) {
       continue;

@@ -82,7 +82,12 @@ describe('eval.strategy "static" failure diagnostics', () => {
       expect(message).toContain('eval.strategy: "static"');
       // The actionable bits: the source expression and where it came from.
       expect(message).toContain('warm.light');
-      expect(message).toContain('imported from ./theme.js');
+      expect(message).toContain('from ./theme.js');
+      // Source expression leads; the _exp placeholder is not shown when known.
+      expect(message).not.toMatch(/-\s+_exp/);
+      // A specific reason replaces the generic catch-all sentence.
+      expect(message).toContain("isn't statically analyzable");
+      expect(message).not.toContain('They reference runtime-only values');
       // The unresolvable neutral.light DID resolve, so must not be listed.
       expect(message).not.toContain('neutral.light');
       // Hint to the escape hatch.
@@ -114,6 +119,10 @@ describe('eval.strategy "static" failure diagnostics', () => {
       const { message } = error as Error;
       expect(message).toContain('eval.strategy: "static"');
       expect(message).toContain('could not be resolved at build time');
+      // No source expression is available here, so the _exp placeholder is the
+      // fallback and the generic catch-all sentence is retained.
+      expect(message).toMatch(/-\s+_exp/);
+      expect(message).toContain('They reference runtime-only values');
       expect(message).toContain('hybrid');
     } finally {
       rmSync(root, { recursive: true, force: true });
