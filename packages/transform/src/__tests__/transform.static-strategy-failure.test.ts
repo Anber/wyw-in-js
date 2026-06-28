@@ -161,4 +161,48 @@ describe('eval.strategy "static" failure diagnostics', () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it('dedupes repeated values and groups one shared cause', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-static-fail-'));
+    const genFile = join(root, 'theme.js');
+    const entryFile = join(root, 'entry.js');
+
+    writeFileSync(genFile, `export const themeVars = {};\n`);
+    writeFileSync(
+      entryFile,
+      [
+        `import { css } from 'test-css-processor';`,
+        `import { themeVars } from './theme.js';`,
+        'export const a = css`',
+        '  color: ${themeVars.textColor};',
+        '  outline-color: ${themeVars.textColor};', // duplicate of above
+        '  background: ${themeVars.panelBg};',
+        '`;',
+        'export const b = css`',
+        '  ${{',
+        '    color: themeVars.textColor,',
+        '    backgroundColor: themeVars.panelBg,',
+        '  }}',
+        '`;',
+      ].join('\n')
+    );
+
+    try {
+      await runStatic(root, entryFile);
+      throw new Error('expected static strategy to fail');
+    } catch (error) {
+      const { message } = error as Error;
+      // One shared-cause header, not repeated on every line.
+      expect(message).toContain(
+        'resolved to undefined (export missing or not exported) from ./theme.js:'
+      );
+      expect(message.match(/export missing or not exported/g)?.length).toBe(1);
+      // The repeated themeVars.textColor collapses to a single counted line.
+      expect(message).toContain('- themeVars.textColor (×2)');
+      // Inline objects are kept verbatim (no lossy truncation).
+      expect(message).toContain('backgroundColor: themeVars.panelBg');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
