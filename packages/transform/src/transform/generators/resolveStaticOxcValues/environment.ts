@@ -46,6 +46,7 @@ export type StaticRejectionReason =
   | 'candidate-import-unresolved'
   | 'candidate-callable-usage-unsupported'
   | 'candidate-expression-non-serializable'
+  | 'candidate-expression-undefined'
   | 'runtime-callback'
   | 'not-eval-dependency';
 
@@ -54,6 +55,8 @@ const reasonExplanations: Record<StaticRejectionReason, string> = {
   'candidate-callable-usage-unsupported': 'depends on a runtime function call',
   'candidate-expression-non-serializable':
     'value is non-serializable at build time',
+  'candidate-expression-undefined':
+    'resolved to undefined (export missing or not exported)',
   'runtime-callback': 'depends on a runtime function call',
   'not-eval-dependency': "imported value isn't statically analyzable",
 };

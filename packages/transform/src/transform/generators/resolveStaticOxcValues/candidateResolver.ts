@@ -187,14 +187,21 @@ export function* resolveCandidateValue(
   }
 
   if (!isOxcStaticSerializableValue(value)) {
+    // A bare `undefined` here means the import resolved but the export is
+    // missing/empty (e.g. an emptied module) — distinct from a value that is
+    // genuinely non-serializable (functions are already handled above).
+    const reason =
+      value === undefined
+        ? 'candidate-expression-undefined'
+        : 'candidate-expression-non-serializable';
     debugStaticResolve(action, {
       candidate: candidate.name,
       filename,
       phase: 'candidate',
-      reason: 'candidate-expression-non-serializable',
+      reason,
       status: 'rejected',
     });
-    return reject('candidate-expression-non-serializable');
+    return reject(reason);
   }
 
   debugStaticResolve(action, {

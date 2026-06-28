@@ -128,4 +128,37 @@ describe('eval.strategy "static" failure diagnostics', () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it('distinguishes a missing export (undefined) from a genuinely non-serializable value', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-static-fail-'));
+    const genFile = join(root, 'theme.js');
+    const entryFile = join(root, 'entry.js');
+
+    // themeVars is exported but emptied, so member access yields undefined —
+    // the "emptied module" shape, not a non-serializable value.
+    writeFileSync(genFile, `export const themeVars = {};\n`);
+    writeFileSync(
+      entryFile,
+      [
+        `import { css } from 'test-css-processor';`,
+        `import { themeVars } from './theme.js';`,
+        'export const className = css`',
+        '  color: ${themeVars.accentTextColor};',
+        '`;',
+      ].join('\n')
+    );
+
+    try {
+      await runStatic(root, entryFile);
+      throw new Error('expected static strategy to fail');
+    } catch (error) {
+      const { message } = error as Error;
+      expect(message).toContain('themeVars.accentTextColor');
+      expect(message).toContain('resolved to undefined');
+      // Must NOT mislabel an emptied export as non-serializable.
+      expect(message).not.toContain('non-serializable');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
