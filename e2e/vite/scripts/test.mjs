@@ -161,6 +161,70 @@ export const className = css\`
   }
 }
 
+async function runExternalCssSideEffectCase() {
+  const fixtureDir = await fs.mkdtemp(
+    path.join(PKG_DIR, 'external-css-fixture-')
+  );
+  const srcDir = path.join(fixtureDir, 'src');
+  const outDir = path.join(fixtureDir, 'dist');
+  const fakePackageDir = path.join(
+    fixtureDir,
+    'node_modules',
+    'external-css-package'
+  );
+
+  try {
+    await fs.mkdir(srcDir, { recursive: true });
+    await fs.mkdir(fakePackageDir, { recursive: true });
+    await fs.writeFile(
+      path.join(srcDir, 'index.ts'),
+      [
+        "import { css } from '@wyw-in-js/template-tag-syntax';",
+        "import { externalColor } from 'external-css-package';",
+        '',
+        'export const className = css`',
+        '  color: ${externalColor};',
+        '`;',
+        '',
+      ].join('\n'),
+      'utf8'
+    );
+    await fs.writeFile(
+      path.join(fakePackageDir, 'package.json'),
+      `${JSON.stringify(
+        {
+          name: 'external-css-package',
+          version: '1.0.0',
+          type: 'module',
+          exports: './index.js',
+        },
+        null,
+        2
+      )}\n`,
+      'utf8'
+    );
+    await fs.writeFile(
+      path.join(fakePackageDir, 'index.js'),
+      [
+        "import './styles.css';",
+        '',
+        "export const externalColor = globalThis.__externalColor || 'red';",
+        '',
+      ].join('\n'),
+      'utf8'
+    );
+    await fs.writeFile(
+      path.join(fakePackageDir, 'styles.css'),
+      '.external-css-package { color: red; }\n',
+      'utf8'
+    );
+
+    await buildArtefactWithPlugin(fixtureDir, outDir, wyw());
+  } finally {
+    await fs.rm(fixtureDir, { recursive: true, force: true });
+  }
+}
+
 async function assertFileMatches(filePath, pattern) {
   const contents = normalizeLineEndings(await fs.readFile(filePath, 'utf-8'));
 
@@ -318,6 +382,9 @@ const main = async () => {
 
   console.log(colors.blue('Running case:'), 'rebuildOutputMetadata');
   await runReusedPluginMetadataRebuildCase();
+
+  console.log(colors.blue('Running case:'), 'externalCssSideEffect');
+  await runExternalCssSideEffectCase();
 
   const preserveModulesCases = [
     {
