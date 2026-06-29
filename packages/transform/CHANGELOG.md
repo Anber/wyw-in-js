@@ -1,5 +1,11 @@
 # @wyw-in-js/transform
 
+## 2.1.2
+
+### Patch Changes
+
+- 987207c: Fix eval runner crashes when external ESM packages import CSS or other assets from node_modules.
+
 ## 2.1.1
 
 ### Patch Changes

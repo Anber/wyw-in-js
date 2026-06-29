@@ -1,5 +1,12 @@
 # @wyw-in-js/esbuild
 
+## 2.1.2
+
+### Patch Changes
+
+- Updated dependencies
+  - @wyw-in-js/transform@2.1.2
+
 ## 2.1.1
 
 ### Patch Changes
