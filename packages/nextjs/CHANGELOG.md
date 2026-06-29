@@ -1,5 +1,13 @@
 # @wyw-in-js/nextjs
 
+## 2.1.2
+
+### Patch Changes
+
+- Updated dependencies
+  - @wyw-in-js/turbopack-loader@2.1.2
+  - @wyw-in-js/webpack-loader@2.1.2
+
 ## 2.1.1
 
 ### Patch Changes
