@@ -1606,6 +1606,40 @@ const loadExternalModule = async (resolvedId, importer, specifier) => {
   }
 };
 
+const shouldLoadNodeModulesWithBroker = (resolvedId) => {
+  if (!isNodeModulesId(resolvedId)) return false;
+
+  const resolvedFile = stripQueryAndHash(resolvedId);
+  if (!path.isAbsolute(resolvedFile)) return false;
+
+  const extension = path.extname(resolvedFile);
+  if (extension === '.cjs' || extension === '.json' || extension === '.node') {
+    return false;
+  }
+
+  if (extension === '.js') {
+    return shouldPreferImport(resolvedFile);
+  }
+
+  return Boolean(extension);
+};
+
+const shouldLoadAsExternalModule = (
+  specifier,
+  resolvedId,
+  explicitExternal
+) => {
+  if (explicitExternal || isBuiltinSpecifier(specifier)) {
+    return true;
+  }
+
+  if (!isNodeModulesId(resolvedId)) {
+    return false;
+  }
+
+  return !shouldLoadNodeModulesWithBroker(resolvedId);
+};
+
 let resolveModule;
 let loadModule;
 
@@ -1697,18 +1731,19 @@ resolveModule = async (specifier, importer, kind) => {
       );
     }
 
-    const treatExternal =
-      cached.external ||
-      isBuiltinSpecifier(specifier) ||
-      isNodeModulesId(cached.resolvedId);
+    const normalized = normalizeResolvedId(
+      cached.resolvedId,
+      specifier,
+      importerId,
+      state.evalOptions.extensions
+    );
+    const treatExternal = shouldLoadAsExternalModule(
+      specifier,
+      normalized,
+      cached.external
+    );
 
     if (treatExternal) {
-      const normalized = normalizeResolvedId(
-        cached.resolvedId,
-        specifier,
-        importerId,
-        state.evalOptions.extensions
-      );
       const externalModule = await loadExternalModule(
         normalized,
         importerId,
@@ -1717,12 +1752,6 @@ resolveModule = async (specifier, importer, kind) => {
       return externalModule;
     }
 
-    const normalized = normalizeResolvedId(
-      cached.resolvedId,
-      specifier,
-      importerId,
-      state.evalOptions.extensions
-    );
     return loadModule(normalized, importerId, specifier);
   }
 
@@ -1779,10 +1808,11 @@ resolveModule = async (specifier, importer, kind) => {
       );
     }
 
-    const treatExternal =
-      resolved.external ||
-      isBuiltinSpecifier(specifier) ||
-      isNodeModulesId(normalized);
+    const treatExternal = shouldLoadAsExternalModule(
+      specifier,
+      normalized,
+      resolved.external
+    );
 
     if (treatExternal) {
       return loadExternalModule(normalized, importerId, specifier);
