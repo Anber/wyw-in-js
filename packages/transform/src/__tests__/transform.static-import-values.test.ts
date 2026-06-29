@@ -2285,6 +2285,56 @@ describe('transform static import value inlining', () => {
     }
   });
 
+  it('handles styled runtime wrappers that attach symbol-keyed component references', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
+    const entryFile = join(root, 'entry.js');
+    const baseFile = join(root, 'BaseImage.js');
+    const hocFile = join(root, 'hocWithSymbol.js');
+    const cache = new TransformCacheCollection();
+
+    writeFileSync(
+      baseFile,
+      dedent`
+        export const BaseImage = (props) => null;
+      `
+    );
+    writeFileSync(
+      hocFile,
+      dedent`
+        export const hocSymbol = Symbol('hocSymbol');
+
+        export function wrapWithSymbol(Component) {
+          const descriptor = { render: Component };
+          descriptor[hocSymbol] = Component;
+          return descriptor;
+        }
+      `
+    );
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { styled } from 'test-styled-processor';
+        import { BaseImage } from './BaseImage.js';
+        import { wrapWithSymbol } from './hocWithSymbol.js';
+
+        export const A = styled(wrapWithSymbol(BaseImage))\`
+          border-radius: 8px;
+        \`;
+      `
+    );
+
+    try {
+      const result = await runTransform(root, entryFile, cache);
+
+      expect(result.cssText).toContain('border-radius:8px');
+      expect(result.dependencies).toEqual(
+        expect.arrayContaining(['./BaseImage.js', './hocWithSymbol.js'])
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('inlines nested styled metadata object values with runtime bases without eval', async () => {
     const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
     const entryFile = join(root, 'entry.js');
