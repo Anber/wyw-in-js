@@ -1534,6 +1534,22 @@ const toSyntheticExports = (value) => {
   return { default: value };
 };
 
+let resolveModule;
+let loadModule;
+
+const isUnknownFileExtensionError = (error) => {
+  const seen = new Set();
+  let current = error;
+  while (current && typeof current === 'object' && !seen.has(current)) {
+    if (current.code === 'ERR_UNKNOWN_FILE_EXTENSION') {
+      return true;
+    }
+    seen.add(current);
+    current = current.cause;
+  }
+  return false;
+};
+
 const loadExternalModule = async (resolvedId, importer, specifier) => {
   const cacheId = resolvedId ?? specifier;
   const cached = moduleCache.get(cacheId);
@@ -1631,19 +1647,6 @@ const loadExternalModule = async (resolvedId, importer, specifier) => {
   }
 };
 
-const isUnknownFileExtensionError = (error) => {
-  const seen = new Set();
-  let current = error;
-  while (current && typeof current === 'object' && !seen.has(current)) {
-    if (current.code === 'ERR_UNKNOWN_FILE_EXTENSION') {
-      return true;
-    }
-    seen.add(current);
-    current = current.cause;
-  }
-  return false;
-};
-
 const shouldLoadNodeModulesAssetWithBroker = (resolvedId) => {
   if (!isNodeModulesId(resolvedId)) return false;
 
@@ -1671,9 +1674,6 @@ const shouldLoadAsExternalModule = (
 
   return isNodeModulesId(resolvedId);
 };
-
-let resolveModule;
-let loadModule;
 
 const linkModule = async (module) => {
   const cached = linkPromises.get(module);
