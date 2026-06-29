@@ -359,7 +359,8 @@ const serializeValueAtPath = (
   pathSegments,
   seen,
   allowFunctions,
-  allowSymbols
+  allowSymbols,
+  ignoreSymbolKeys
 ) => {
   if (value === null) {
     return { kind: 'null' };
@@ -434,7 +435,7 @@ const serializeValueAtPath = (
 
   if (Array.isArray(value)) {
     const symbolKeys = getEnumerableSymbolKeys(value);
-    if (symbolKeys.length > 0) {
+    if (symbolKeys.length > 0 && !ignoreSymbolKeys) {
       throwUnsupportedIpcValue(
         rootLabel,
         [...pathSegments, symbolKeys[0]],
@@ -464,7 +465,8 @@ const serializeValueAtPath = (
             [...pathSegments, index],
             seen,
             allowFunctions,
-            allowSymbols
+            allowSymbols,
+            ignoreSymbolKeys
           )
         ),
       };
@@ -482,7 +484,7 @@ const serializeValueAtPath = (
   }
 
   const symbolKeys = getEnumerableSymbolKeys(value);
-  if (symbolKeys.length > 0) {
+  if (symbolKeys.length > 0 && !ignoreSymbolKeys) {
     throwUnsupportedIpcValue(
       rootLabel,
       [...pathSegments, symbolKeys[0]],
@@ -503,7 +505,8 @@ const serializeValueAtPath = (
             [...pathSegments, key],
             seen,
             allowFunctions,
-            allowSymbols
+            allowSymbols,
+            ignoreSymbolKeys
           ),
         ])
       ),
@@ -526,7 +529,8 @@ const serializeValue = (value, options = {}) =>
     options.path ?? [],
     new WeakMap(),
     options.allowFunctions ?? false,
-    options.allowSymbols ?? false
+    options.allowSymbols ?? false,
+    options.ignoreSymbolKeys ?? false
   );
 
 const deserializeValue = (value) => {
@@ -2274,6 +2278,7 @@ async function evaluateEntrypoint(id) {
     values[key] = serializeValue(value, {
       allowFunctions: true,
       allowSymbols: true,
+      ignoreSymbolKeys: true,
       rootLabel: '__wywPreval',
       path: [key],
     });

@@ -55,6 +55,7 @@ type PathSegment = string | number | symbol;
 type SerializeValueOptions = {
   allowFunctions?: boolean;
   allowSymbols?: boolean;
+  ignoreSymbolKeys?: boolean;
   path?: PathSegment[];
   rootLabel?: string;
 };
@@ -169,7 +170,8 @@ const serializeValueAtPath = (
   path: PathSegment[],
   seen: WeakMap<object, string>,
   allowFunctions: boolean,
-  allowSymbols: boolean
+  allowSymbols: boolean,
+  ignoreSymbolKeys: boolean
 ): SerializedValue => {
   if (value === null) {
     return { kind: 'null' };
@@ -264,7 +266,7 @@ const serializeValueAtPath = (
 
   if (Array.isArray(value)) {
     const symbolKeys = getEnumerableSymbolKeys(value);
-    if (symbolKeys.length > 0) {
+    if (symbolKeys.length > 0 && !ignoreSymbolKeys) {
       throwUnsupportedIpcValue(
         rootLabel,
         [...path, symbolKeys[0]],
@@ -294,7 +296,8 @@ const serializeValueAtPath = (
             [...path, index],
             seen,
             allowFunctions,
-            allowSymbols
+            allowSymbols,
+            ignoreSymbolKeys
           )
         ),
       };
@@ -312,7 +315,7 @@ const serializeValueAtPath = (
   }
 
   const symbolKeys = getEnumerableSymbolKeys(value);
-  if (symbolKeys.length > 0) {
+  if (symbolKeys.length > 0 && !ignoreSymbolKeys) {
     throwUnsupportedIpcValue(
       rootLabel,
       [...path, symbolKeys[0]],
@@ -333,7 +336,8 @@ const serializeValueAtPath = (
             [...path, key],
             seen,
             allowFunctions,
-            allowSymbols
+            allowSymbols,
+            ignoreSymbolKeys
           ),
         ])
       ),
@@ -353,7 +357,8 @@ export const serializeValue = (
     options.path ?? [],
     new WeakMap<object, string>(),
     options.allowFunctions ?? false,
-    options.allowSymbols ?? false
+    options.allowSymbols ?? false,
+    options.ignoreSymbolKeys ?? false
   );
 
 export const deserializeValue = (value: SerializedValue): unknown => {
@@ -415,6 +420,7 @@ export const serializePreval = (
       serializeValue(value, {
         allowFunctions: true,
         allowSymbols: true,
+        ignoreSymbolKeys: true,
         rootLabel: '__wywPreval',
         path: [key],
       }),

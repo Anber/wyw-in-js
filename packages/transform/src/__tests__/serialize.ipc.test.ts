@@ -85,6 +85,27 @@ describe('eval IPC serialization', () => {
     expect(roundTripped.nested.marker).toBe(Symbol.for('react.forward_ref'));
   });
 
+  it('drops symbol-keyed properties only when serializing __wywPreval values', () => {
+    const marker = Symbol('runtimeMetadata');
+    const input = {
+      label: 'button',
+      [marker]: 'metadata',
+    };
+
+    const roundTripped = deserializeValue(serializePreval({ input }).input) as {
+      label: string;
+    };
+
+    expect(roundTripped).toEqual({ label: 'button' });
+    expect(Object.getOwnPropertySymbols(roundTripped)).toHaveLength(0);
+    expect(() =>
+      serializeValue(input, {
+        allowSymbols: true,
+        rootLabel: 'value',
+      })
+    ).toThrow('unsupported symbol-keyed property');
+  });
+
   it('unwraps boxed primitives to their primitive payloads', () => {
     const roundTripped = deserializeValue(
       serializeValue({
