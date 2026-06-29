@@ -1,5 +1,12 @@
 # @wyw-in-js/parcel-transformer
 
+## 2.1.3
+
+### Patch Changes
+
+- Updated dependencies
+  - @wyw-in-js/transform@2.1.3
+
 ## 2.1.2
 
 ### Patch Changes

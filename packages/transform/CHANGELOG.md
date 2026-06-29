@@ -1,5 +1,11 @@
 # @wyw-in-js/transform
 
+## 2.1.3
+
+### Patch Changes
+
+- 4c30180: Fix build-time evaluation for styled runtime wrappers that attach symbol-keyed metadata.
+
 ## 2.1.2
 
 ### Patch Changes
