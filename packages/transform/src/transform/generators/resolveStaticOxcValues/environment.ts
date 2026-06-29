@@ -41,14 +41,115 @@ export const isEnvDisabled = (value: string): boolean =>
 export const getEvalStrategy = (action: ITransformAction) =>
   action.services.options.pluginOptions.eval?.strategy ?? 'execute';
 
+/** Reason codes emitted by the static resolver when a candidate is rejected. */
+export type StaticRejectionReason =
+  | 'candidate-import-unresolved'
+  | 'candidate-callable-usage-unsupported'
+  | 'candidate-expression-non-serializable'
+  | 'candidate-expression-undefined'
+  | 'runtime-callback'
+  | 'not-eval-dependency';
+
+const reasonExplanations: Record<StaticRejectionReason, string> = {
+  'candidate-import-unresolved': "imported value isn't statically analyzable",
+  'candidate-callable-usage-unsupported': 'depends on a runtime function call',
+  'candidate-expression-non-serializable':
+    'value is non-serializable at build time',
+  'candidate-expression-undefined':
+    'resolved to undefined (export missing or not exported)',
+  'runtime-callback': 'depends on a runtime function call',
+  'not-eval-dependency': "imported value isn't statically analyzable",
+};
+
+export type UnresolvedValueDetail = {
+  /** Original source text of the interpolation, e.g. `theme.warm.light`. */
+  source?: string;
+  /** Module the value was imported from, when it originates from an import. */
+  importedFrom?: string;
+  /** Why the value could not be resolved, when the resolver determined it. */
+  reason?: StaticRejectionReason;
+};
+
+const leadFor = (
+  name: string,
+  detail: UnresolvedValueDetail | undefined
+): string => {
+  // Lead with the source expression the developer wrote; fall back to the
+  // `_exp` placeholder only when no source is available.
+  return detail?.source && detail.source !== name ? detail.source : name;
+};
+
+type Grouped = {
+  importedFrom?: string;
+  reason?: StaticRejectionReason;
+  /** lead text -> occurrence count, deduped within the file */
+  leads: Map<string, number>;
+};
+
 export const getStaticStrategyFailure = (
   filename: string,
-  dependencyNames: Iterable<string>
-): Error =>
-  new Error(
-    `[wyw-in-js] eval.strategy: "static" cannot fall back to the build-time evaluator for ${filename}. ` +
-      `Unresolved values: ${[...dependencyNames].join(', ')}.`
+  dependencyNames: Iterable<string>,
+  details?: ReadonlyMap<string, UnresolvedValueDetail>
+): Error => {
+  const names = [...dependencyNames];
+
+  // Group by (module, reason): an emptied module produces one group covering
+  // every value, so the shared cause is stated once and the leads listed bare.
+  const groups: Grouped[] = [];
+  for (const name of names) {
+    const detail = details?.get(name);
+    const lead = leadFor(name, detail);
+    let group = groups.find(
+      (g) =>
+        g.importedFrom === detail?.importedFrom && g.reason === detail?.reason
+    );
+    if (!group) {
+      group = {
+        importedFrom: detail?.importedFrom,
+        reason: detail?.reason,
+        leads: new Map(),
+      };
+      groups.push(group);
+    }
+    group.leads.set(lead, (group.leads.get(lead) ?? 0) + 1);
+  }
+
+  const renderLead = (lead: string, count: number): string =>
+    count > 1 ? `  - ${lead} (×${count})` : `  - ${lead}`;
+
+  const renderGroup = (group: Grouped): string => {
+    const leadLines = [...group.leads]
+      .map(([lead, count]) => renderLead(lead, count))
+      .join('\n');
+    const explanation = group.reason
+      ? reasonExplanations[group.reason]
+      : undefined;
+    const origin = group.importedFrom ? ` from ${group.importedFrom}` : '';
+    // A single shared cause becomes a header; otherwise leave leads bare.
+    if (explanation || origin) {
+      return `${
+        explanation ?? 'could not be resolved'
+      }${origin}:\n${leadLines}`;
+    }
+    return leadLines;
+  };
+
+  const body = groups.map(renderGroup).join('\n\n');
+
+  // The generic catch-all is only useful when no value carries a specific
+  // reason; otherwise the per-group explanations already say why.
+  const anyReason = groups.some((group) => group.reason);
+  const generic = anyReason
+    ? ''
+    : `\nThey reference runtime-only values (function calls, mutated objects, ` +
+      `non-serializable data, or modules the static evaluator skips).\n`;
+
+  return new Error(
+    `[wyw-in-js] eval.strategy: "static" cannot fall back to the build-time evaluator for ${filename}.\n` +
+      `These interpolated values could not be resolved at build time:\n${body}\n${generic}\n` +
+      `Either make them statically analyzable, or relax eval.strategy from "static" to "hybrid".`
   );
+};
 
 export const debugStaticResolve = (
   action: ITransformAction,

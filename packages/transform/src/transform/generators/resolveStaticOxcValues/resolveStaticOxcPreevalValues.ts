@@ -15,6 +15,10 @@ import {
   getStaticStrategyFailure,
   parseProgram,
 } from './environment';
+import type {
+  StaticRejectionReason,
+  UnresolvedValueDetail,
+} from './environment';
 import {
   collectWYWMetaExtendsHelperNames,
   createSameFileStaticWYWMetaHelperResolver,
@@ -47,6 +51,29 @@ export function* resolveStaticOxcPreevalValues(
     return false;
   }
   const staticOnly = evalStrategy === 'static';
+
+  // candidate name -> why it was rejected, populated by the resolvers below.
+  const rejectionReasons = new Map<string, StaticRejectionReason>();
+
+  const buildUnresolvedDetails = (
+    names: Iterable<string>
+  ): Map<string, UnresolvedValueDetail> => {
+    const wanted = new Set(names);
+    const details = new Map<string, UnresolvedValueDetail>();
+    for (const candidate of candidates) {
+      if (!wanted.has(candidate.name) || details.has(candidate.name)) {
+        continue;
+      }
+
+      details.set(candidate.name, {
+        source: candidate.source,
+        importedFrom: candidate.imports[0]?.source,
+        reason: rejectionReasons.get(candidate.name),
+      });
+    }
+
+    return details;
+  };
 
   const staticValueCache =
     preevalResult.staticValueCache ?? new Map<string, unknown>();
@@ -129,6 +156,7 @@ export function* resolveStaticOxcPreevalValues(
       !isOpaqueRuntimeBaseHelper &&
       !staticValueCache.has(candidate.name)
     ) {
+      rejectionReasons.set(candidate.name, 'not-eval-dependency');
       debugStaticResolve(this, {
         candidate: candidate.name,
         filename,
@@ -174,11 +202,18 @@ export function* resolveStaticOxcPreevalValues(
           this,
           candidate,
           filename,
-          memo
+          memo,
+          rejectionReasons
         );
       }
     } else {
-      resolved = yield* resolveCandidateValue(this, candidate, filename, memo);
+      resolved = yield* resolveCandidateValue(
+        this,
+        candidate,
+        filename,
+        memo,
+        rejectionReasons
+      );
     }
     if (!resolved) {
       continue;
@@ -223,7 +258,11 @@ export function* resolveStaticOxcPreevalValues(
     (!hasKnownStaticCandidate || preevalResult.staticValuesApplied)
   ) {
     if (staticOnly && evalDependencyNames.size > 0) {
-      throw getStaticStrategyFailure(filename, evalDependencyNames);
+      throw getStaticStrategyFailure(
+        filename,
+        evalDependencyNames,
+        buildUnresolvedDetails(evalDependencyNames)
+      );
     }
     return false;
   }
@@ -233,7 +272,11 @@ export function* resolveStaticOxcPreevalValues(
       !staticValueCache.has(name) && !runtimeOnlyCandidateNames.has(name)
   );
   if (staticOnly && dependencyNames.length > 0) {
-    throw getStaticStrategyFailure(filename, dependencyNames);
+    throw getStaticStrategyFailure(
+      filename,
+      dependencyNames,
+      buildUnresolvedDetails(dependencyNames)
+    );
   }
   preevalResult.dependencyNames = dependencyNames;
   preevalResult.staticValueCache = staticValueCache;
