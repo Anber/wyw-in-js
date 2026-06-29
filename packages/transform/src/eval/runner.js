@@ -1546,47 +1546,72 @@ const loadExternalModule = async (resolvedId, importer, specifier) => {
     const start = Date.now();
     debug('external:start', { specifier, resolvedId, importer });
     const requireFn = createRequireFn(importer);
-    let value;
-    let hasValue = false;
     const resolvedFile = resolvedId ? stripQueryAndHash(resolvedId) : null;
     const importTarget =
       resolvedFile && path.isAbsolute(resolvedFile)
         ? pathToFileURL(resolvedFile).href
         : specifier;
 
-    if (shouldPreferImport(resolvedFile)) {
-      value = await import(importTarget);
-      hasValue = true;
-    }
-    if (!hasValue) {
-      try {
-        value = requireFn(specifier, resolvedId ?? null);
-        hasValue = true;
-      } catch (error) {
-        if (!isErrRequireEsm(error)) {
-          throw error;
-        }
+    const loadWithNode = async () => {
+      let value;
+      let hasValue = false;
 
-        const isFileSpecifier =
-          specifier.startsWith('.') || path.isAbsolute(specifier);
-        const isPackageSpecifier =
-          !isFileSpecifier && !isBuiltinSpecifier(specifier);
-        if (resolvedId && isPackageSpecifier) {
-          try {
-            value = requireFn(specifier, null);
-            hasValue = true;
-          } catch (retryError) {
-            if (!isErrRequireEsm(retryError)) {
-              throw retryError;
+      if (shouldPreferImport(resolvedFile)) {
+        value = await import(importTarget);
+        hasValue = true;
+      }
+      if (!hasValue) {
+        try {
+          value = requireFn(specifier, resolvedId ?? null);
+          hasValue = true;
+        } catch (error) {
+          if (!isErrRequireEsm(error)) {
+            throw error;
+          }
+
+          const isFileSpecifier =
+            specifier.startsWith('.') || path.isAbsolute(specifier);
+          const isPackageSpecifier =
+            !isFileSpecifier && !isBuiltinSpecifier(specifier);
+          if (resolvedId && isPackageSpecifier) {
+            try {
+              value = requireFn(specifier, null);
+              hasValue = true;
+            } catch (retryError) {
+              if (!isErrRequireEsm(retryError)) {
+                throw retryError;
+              }
             }
           }
-        }
 
-        if (!hasValue) {
-          value = await import(importTarget);
-          hasValue = true;
+          if (!hasValue) {
+            value = await import(importTarget);
+            hasValue = true;
+          }
         }
       }
+
+      return value;
+    };
+
+    let value;
+    try {
+      value = await loadWithNode();
+    } catch (error) {
+      if (
+        resolvedFile &&
+        isNodeModulesId(resolvedFile) &&
+        isUnknownFileExtensionError(error)
+      ) {
+        debug('external:fallback-broker', {
+          specifier,
+          resolvedId,
+          importer,
+          errorCode: error?.code,
+        });
+        return loadModule(resolvedFile, importer, specifier);
+      }
+      throw error;
     }
 
     const module = createSyntheticModule(cacheId, toSyntheticExports(value));
@@ -1606,22 +1631,29 @@ const loadExternalModule = async (resolvedId, importer, specifier) => {
   }
 };
 
-const shouldLoadNodeModulesWithBroker = (resolvedId) => {
+const isUnknownFileExtensionError = (error) => {
+  const seen = new Set();
+  let current = error;
+  while (current && typeof current === 'object' && !seen.has(current)) {
+    if (current.code === 'ERR_UNKNOWN_FILE_EXTENSION') {
+      return true;
+    }
+    seen.add(current);
+    current = current.cause;
+  }
+  return false;
+};
+
+const shouldLoadNodeModulesAssetWithBroker = (resolvedId) => {
   if (!isNodeModulesId(resolvedId)) return false;
 
   const resolvedFile = stripQueryAndHash(resolvedId);
   if (!path.isAbsolute(resolvedFile)) return false;
 
   const extension = path.extname(resolvedFile);
-  if (extension === '.cjs' || extension === '.json' || extension === '.node') {
-    return false;
-  }
-
-  if (extension === '.js') {
-    return shouldPreferImport(resolvedFile);
-  }
-
-  return Boolean(extension);
+  if (!extension) return false;
+  if (extension === '.json' || extension === '.node') return false;
+  return !state.evalOptions.extensions?.includes(extension);
 };
 
 const shouldLoadAsExternalModule = (
@@ -1629,15 +1661,15 @@ const shouldLoadAsExternalModule = (
   resolvedId,
   explicitExternal
 ) => {
+  if (shouldLoadNodeModulesAssetWithBroker(resolvedId)) {
+    return false;
+  }
+
   if (explicitExternal || isBuiltinSpecifier(specifier)) {
     return true;
   }
 
-  if (!isNodeModulesId(resolvedId)) {
-    return false;
-  }
-
-  return !shouldLoadNodeModulesWithBroker(resolvedId);
+  return isNodeModulesId(resolvedId);
 };
 
 let resolveModule;
