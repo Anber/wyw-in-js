@@ -27,6 +27,49 @@ const stripQueryAndHash = (request: string) => {
   return request.slice(0, Math.min(queryIdx, hashIdx));
 };
 
+const getPackageNameForSubpath = (request: string) => {
+  const fileRequest = stripQueryAndHash(request);
+  if (
+    fileRequest.startsWith('.') ||
+    path.isAbsolute(fileRequest) ||
+    path.win32.isAbsolute(fileRequest)
+  ) {
+    return null;
+  }
+
+  const parts = fileRequest.split('/');
+
+  if (fileRequest.startsWith('@')) {
+    const [scope, name] = parts;
+    if (parts.length <= 2 || scope.length <= 1 || !name) {
+      return null;
+    }
+
+    return `${scope}/${name}`;
+  }
+
+  if (fileRequest.startsWith('#') || parts.length <= 1 || !parts[0]) {
+    return null;
+  }
+
+  return parts[0];
+};
+
+const isTurbopackPackageSubpathResolveError = (
+  request: string,
+  error: unknown
+) => {
+  const packageName = getPackageNameForSubpath(request);
+
+  return (
+    packageName !== null &&
+    error instanceof Error &&
+    error.message.includes(
+      `Unable to resolve module '${packageName}' with subpath`
+    )
+  );
+};
+
 export type LoaderOptions = {
   cssOutputMode?: 'sidecar' | 'query';
   keepComments?: boolean;
@@ -148,6 +191,16 @@ const turbopackLoader: Loader = function turbopackLoader(
     return result;
   };
 
+  const addResolvedDependency = async (dependency: string) => {
+    try {
+      await asyncResolve(dependency, this.resourcePath);
+    } catch (error) {
+      if (!isTurbopackPackageSubpathResolveError(dependency, error)) {
+        throw error;
+      }
+    }
+  };
+
   const transformServices = {
     options: {
       filename: this.resourcePath,
@@ -181,9 +234,7 @@ const turbopackLoader: Loader = function turbopackLoader(
         }
 
         await Promise.all(
-          (result.dependencies ?? []).map((dep) =>
-            asyncResolve(dep, this.resourcePath)
-          )
+          (result.dependencies ?? []).map((dep) => addResolvedDependency(dep))
         );
 
         if (outputCss) {
