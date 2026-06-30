@@ -1,5 +1,11 @@
 # `@wyw-in-js/turbopack-loader`
 
+## 2.1.4
+
+### Patch Changes
+
+- 66bb131: Fix Turbopack builds when extracted CSS dependencies include package subpath imports such as `motion/react`.
+
 ## 2.1.3
 
 ### Patch Changes
