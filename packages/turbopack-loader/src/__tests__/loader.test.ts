@@ -159,4 +159,67 @@ describe('turbopack-loader', () => {
 
     expect(emitted.code).toBe(':global(.a){color:red}');
   });
+
+  it('keeps CSS output when Turbopack cannot post-resolve a package dependency', async () => {
+    const { default: turbopackLoader } = await import('../index');
+
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wyw-turbo-'));
+    const resourcePath = path.join(tmpDir, 'entry.tsx');
+    const depPath = path.join(tmpDir, 'dep.tsx');
+    fs.writeFileSync(resourcePath, 'export const x = 1;\n');
+    fs.writeFileSync(depPath, 'export const y = 1;\n');
+
+    transformMock.mockImplementation(async (_services, code) => {
+      return {
+        code,
+        sourceMap: null,
+        cssText: '.a{color:red}',
+        dependencies: ['motion/react', './dep'],
+      };
+    });
+
+    const addDependency = jest.fn();
+    const resolveRequests: string[] = [];
+    const emitted: { code?: string } = {};
+
+    await new Promise<void>((resolve, reject) => {
+      turbopackLoader.call(
+        {
+          addDependency,
+          async: jest.fn(),
+          callback: (err: Error | null, code?: string) => {
+            if (err) reject(err);
+            else {
+              emitted.code = code;
+              resolve();
+            }
+          },
+          emitWarning: jest.fn(),
+          getOptions: () => ({}),
+          getResolve: () => async (_context: string, request: string) => {
+            resolveRequests.push(request);
+
+            if (request === 'motion/react') {
+              throw new Error(
+                "Unable to resolve module 'motion' with subpath '/react'"
+              );
+            }
+
+            if (request === './dep') {
+              return `${depPath}?compiled`;
+            }
+
+            return false;
+          },
+          resourcePath,
+        } as any,
+        fs.readFileSync(resourcePath, 'utf8'),
+        null
+      );
+    });
+
+    expect(resolveRequests).toEqual(['motion/react', './dep']);
+    expect(addDependency).toHaveBeenCalledWith(depPath);
+    expect(emitted.code).toContain('import "./entry.wyw-in-js.module.css";');
+  });
 });
