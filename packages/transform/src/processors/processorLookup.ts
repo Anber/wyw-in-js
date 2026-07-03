@@ -7,6 +7,8 @@ import type { TagSource } from '@wyw-in-js/processor-utils';
 import { findPackageJSON, syncResolve } from '@wyw-in-js/shared';
 import type { StrictOptions, TagResolverMeta } from '@wyw-in-js/shared';
 
+import { resolveProcessorReference } from './manifest';
+
 const nodeRequire = createRequire(import.meta.url);
 
 export type ProcessorClass = new (
@@ -133,6 +135,16 @@ const getDefinedTagsFromPackage = (
 const isValidProcessorClass = (module: unknown): module is ProcessorClass =>
   module instanceof BaseProcessor.constructor;
 
+const getProcessorFromFile = (processorPath: string): ProcessorClass | null => {
+  const { implementationPath } = resolveProcessorReference(processorPath);
+  const Processor = nodeRequire(implementationPath).default;
+  if (!isValidProcessorClass(Processor)) {
+    return null;
+  }
+
+  return Processor;
+};
+
 const getProcessorFromPackage = (
   packageName: string,
   tagName: string,
@@ -144,21 +156,7 @@ const getProcessorFromPackage = (
     return null;
   }
 
-  const Processor = nodeRequire(processorPath).default;
-  if (!isValidProcessorClass(Processor)) {
-    return null;
-  }
-
-  return Processor;
-};
-
-const getProcessorFromFile = (processorPath: string): ProcessorClass | null => {
-  const Processor = nodeRequire(processorPath).default;
-  if (!isValidProcessorClass(Processor)) {
-    return null;
-  }
-
-  return Processor;
+  return getProcessorFromFile(processorPath);
 };
 
 export const getProcessorForImport = (
