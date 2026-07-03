@@ -1,2 +1,1 @@
-export * from '../../../utils/processorLookup';
-
+export * from '../../../processors/processorLookup';

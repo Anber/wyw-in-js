@@ -5,7 +5,7 @@ import path from 'path';
 
 import * as shared from '@wyw-in-js/shared';
 
-import { getProcessorForImport } from '../utils/processorLookup';
+import { getProcessorForImport } from '../processors/processorLookup';
 
 const processorFixturePath = path.resolve(
   __dirname,

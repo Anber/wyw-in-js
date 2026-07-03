@@ -13,7 +13,7 @@ import type {
 import type { OxcAstService } from '../oxcAstService';
 import type { OxcValueReplacement } from '../oxc/replacements';
 import type { OxcLocationLookup } from '../oxc/sourceLocations';
-import type { ProcessorClass } from '../processorLookup';
+import type { ProcessorClass } from '../../processors/processorLookup';
 
 export type DefinedProcessor = [
   ProcessorClass,

@@ -8,8 +8,6 @@
  * - returns transformed code (without WYW template literals), generated CSS, source maps and transform metadata.
  */
 
-import { createHash } from 'crypto';
-
 import { isFeatureEnabled } from '@wyw-in-js/shared';
 
 import type { PartialOptions } from './transform/helpers/loadWywOptions';
@@ -22,17 +20,10 @@ import {
 import { Entrypoint } from './transform/Entrypoint';
 import { asyncActionRunner } from './transform/actions/actionRunner';
 import { baseHandlers } from './transform/generators';
-import { asyncResolveImports } from './transform/generators/resolveImports';
 import { withDefaultServices } from './transform/helpers/withDefaultServices';
-import type {
-  Handler,
-  Handlers,
-  IResolveImportsAction,
-  Services,
-} from './transform/types';
+import type { Handlers, Services } from './transform/types';
+import { configureEvalSession } from './transform/evalSession';
 import type { Result } from './types';
-import { getEvalBroker } from './eval/broker';
-import { encodeGlobals } from './eval/serialize';
 
 type PartialServices = Partial<Omit<Services, 'options'>> & {
   options: Omit<Services['options'], 'pluginOptions'> & {
@@ -41,79 +32,6 @@ type PartialServices = Partial<Omit<Services, 'options'>> & {
 };
 
 type AllHandlers<TMode extends 'async' | 'sync'> = Handlers<TMode>;
-
-const memoizedAsyncResolve = new WeakMap<
-  (what: string, importer: string, stack: string[]) => Promise<string | null>,
-  Handler<'async' | 'sync', IResolveImportsAction>
->();
-
-type ResolverFn = (...args: unknown[]) => unknown;
-
-const resolverIds = new WeakMap<ResolverFn, number>();
-let resolverId = 0;
-
-const getResolverId = (fn: unknown) => {
-  if (typeof fn !== 'function') return null;
-  const resolver = fn as ResolverFn;
-  const cached = resolverIds.get(resolver);
-  if (cached) return cached;
-  resolverId += 1;
-  resolverIds.set(resolver, resolverId);
-  return resolverId;
-};
-
-const isPlainObject = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
-
-const canonicalizeForHash = (value: unknown): unknown => {
-  if (Array.isArray(value)) {
-    return value.map((item) => canonicalizeForHash(item));
-  }
-
-  if (isPlainObject(value)) {
-    return Object.fromEntries(
-      Object.keys(value)
-        .sort()
-        .map((key) => [key, canonicalizeForHash(value[key])])
-    );
-  }
-
-  return value;
-};
-
-const getEvalCacheKey = (
-  pluginOptions: ReturnType<typeof loadWywOptions>,
-  asyncResolveKey: string | undefined,
-  asyncResolve: (
-    what: string,
-    importer: string,
-    stack: string[]
-  ) => Promise<string | null>,
-  loadDependencyCode: Services['loadDependencyCode'] | undefined
-) => {
-  const evalOptions = pluginOptions.eval ?? {};
-  const payload = JSON.stringify({
-    errors: evalOptions.errors,
-    resolver: evalOptions.resolver,
-    require: evalOptions.require,
-    runtime: evalOptions.runtime,
-    strategy: evalOptions.strategy,
-    globals: canonicalizeForHash(encodeGlobals(evalOptions.globals ?? {})),
-    customResolver: getResolverId(evalOptions.customResolver),
-    customLoader: getResolverId(evalOptions.customLoader),
-    // Bundlers like webpack can recreate transport resolvers per file. Allow
-    // them to provide a stable scope key so cache/broker reuse tracks resolver
-    // semantics instead of closure identity.
-    bundlerResolver: asyncResolveKey ?? getResolverId(asyncResolve),
-    bundlerLoader: getResolverId(loadDependencyCode),
-    overrideContext: getResolverId(pluginOptions.overrideContext),
-    importOverrides: pluginOptions.importOverrides ?? null,
-    extensions: pluginOptions.extensions,
-    features: pluginOptions.features,
-  });
-
-  return createHash('sha256').update(payload).digest('hex');
-};
 
 export function transformSync(
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -157,15 +75,11 @@ export async function transform(
     services.cache = new TransformCacheCollection();
   }
 
-  const evalCacheKey = getEvalCacheKey(
+  const resolveImports = configureEvalSession(
+    services,
     pluginOptions,
-    services.asyncResolveKey,
-    asyncResolve,
-    services.loadDependencyCode
+    asyncResolve
   );
-  services.cache.setKeySalt(evalCacheKey);
-  services.asyncResolve = asyncResolve;
-  services.evalBroker = getEvalBroker(services, asyncResolve, evalCacheKey);
 
   /*
    * This method can be run simultaneously for multiple files.
@@ -201,20 +115,10 @@ export async function transform(
       actionContext
     );
 
-    if (!memoizedAsyncResolve.has(asyncResolve)) {
-      const resolveImports = function resolveImports(
-        this: IResolveImportsAction
-      ) {
-        return asyncResolveImports.call(this, asyncResolve);
-      };
-
-      memoizedAsyncResolve.set(asyncResolve, resolveImports);
-    }
-
     const result = await asyncActionRunner(workflowAction, {
       ...baseHandlers,
       ...customHandlers,
-      resolveImports: memoizedAsyncResolve.get(asyncResolve)!,
+      resolveImports,
     });
 
     entrypoint.log('%s is ready', entrypoint.name);
