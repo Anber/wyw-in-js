@@ -73,7 +73,7 @@ const cache = new TransformCacheCollection();
 
 // eslint-disable-next-line require-yield
 function* collect(this: ICollectAction): SyncScenarioForAction<ICollectAction> {
-  capturedValues = this.data.valueCache;
+  capturedValues = this.data.prevalPayload.values;
   const { loadedAndParsed } = this.entrypoint;
 
   return {

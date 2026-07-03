@@ -1,4 +1,3 @@
-import type { ValueCache } from '@wyw-in-js/processor-utils';
 import type { Debugger, Artifact, StrictOptions } from '@wyw-in-js/shared';
 import type { RawSourceMap } from 'source-map';
 
@@ -9,6 +8,7 @@ import type { WYWTransformMetadata } from '../utils/TransformMetadata';
 
 import type { Entrypoint } from './Entrypoint';
 import type { LoadAndParseFn, IEntrypointDependency } from './Entrypoint.types';
+import type { PrevalPayload } from './prevalPayload';
 import type { BaseAction } from './actions/BaseAction';
 import type {
   IExtracted,
@@ -158,13 +158,13 @@ export interface ICollectAction
   extends IBaseAction<
     ICollectAction,
     ICollectActionResult,
-    { valueCache: ValueCache }
+    { prevalPayload: PrevalPayload }
   > {
   type: 'collect';
 }
 
 export interface IEvalAction
-  extends IBaseAction<IEvalAction, [ValueCache, string[]] | null, undefined> {
+  extends IBaseAction<IEvalAction, PrevalPayload | null, undefined> {
   type: 'evalFile';
 }
 

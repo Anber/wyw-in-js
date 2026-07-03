@@ -3,6 +3,7 @@ import {
   createServices,
 } from '../../__tests__/entrypoint-helpers';
 import type { Services } from '../../types';
+import { createPrevalPayload } from '../../prevalPayload';
 import { workflow } from '../workflow';
 
 import {
@@ -11,6 +12,11 @@ import {
 } from './helpers';
 
 const code = 'export const value = 1;';
+const evalPayload = createPrevalPayload({
+  evalDependencies: ['/dep.ts'],
+  evalValues: new Map(),
+  filename: '/src/entry.tsx',
+});
 
 describe('workflow metadata output', () => {
   let services: Services;
@@ -47,9 +53,12 @@ describe('workflow metadata output', () => {
     expectIteratorYieldResult(result);
     expect(result.value[0]).toBe('evalFile');
 
-    result = gen.next([new Map(), ['/dep.ts']]);
+    result = gen.next(evalPayload);
     expectIteratorYieldResult(result);
     expect(result.value[0]).toBe('collect');
+    expect(result.value[2]).toEqual({
+      prevalPayload: evalPayload,
+    });
 
     result = gen.next({
       code,
@@ -114,7 +123,7 @@ describe('workflow metadata output', () => {
 
     expectIteratorYieldResult(gen.next());
     expectIteratorYieldResult(gen.next(undefined));
-    expectIteratorYieldResult(gen.next([new Map(), ['/dep.ts']]));
+    expectIteratorYieldResult(gen.next(evalPayload));
     expectIteratorYieldResult(
       gen.next({
         code,

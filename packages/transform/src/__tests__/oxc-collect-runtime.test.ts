@@ -11,6 +11,7 @@ import { syncActionRunner } from '../transform/actions/actionRunner';
 import { collect } from '../transform/generators/collect';
 import { loadWywOptions } from '../transform/helpers/loadWywOptions';
 import { withDefaultServices } from '../transform/helpers/withDefaultServices';
+import { createPrevalPayload } from '../transform/prevalPayload';
 import type {
   ActionQueueItem,
   Handlers,
@@ -403,7 +404,10 @@ export const whiteColor = '#fff';`);
       entrypoint.createAction(
         'collect',
         {
-          valueCache: new Map([['_exp', 'red']]),
+          prevalPayload: createPrevalPayload({
+            evalValues: new Map([['_exp', 'red']]),
+            filename,
+          }),
         },
         null
       ),
@@ -484,7 +488,10 @@ export const whiteColor = '#fff';`);
       entrypoint.createAction(
         'collect',
         {
-          valueCache: new Map([['_exp', 'red']]),
+          prevalPayload: createPrevalPayload({
+            evalValues: new Map([['_exp', 'red']]),
+            filename,
+          }),
         },
         null
       ),

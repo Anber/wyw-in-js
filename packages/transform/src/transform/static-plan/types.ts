@@ -3,13 +3,9 @@ import type {
   ProcessorStaticValue,
 } from '@wyw-in-js/processor-utils';
 
-export type PrevalPayloadSource = 'eval' | 'static';
+import type { PrevalPayload } from '../prevalPayload';
 
-export type PrevalPayload = {
-  dependencies: string[];
-  sources: Map<string, PrevalPayloadSource>;
-  values: Map<string, unknown>;
-};
+export type { PrevalPayload, PrevalPayloadSource } from '../prevalPayload';
 
 export type StaticEnv = {
   dependencies: Set<string>;

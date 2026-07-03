@@ -1,7 +1,6 @@
-import type { ValueCache } from '@wyw-in-js/processor-utils';
-
 import evaluate, { type IEvaluateResult } from '../../evaluators';
 import { isUnprocessedEntrypointError } from '../actions/UnprocessedEntrypointError';
+import { createPrevalPayload } from '../prevalPayload';
 import type { AsyncScenarioForAction, IEvalAction } from '../types';
 
 /**
@@ -15,17 +14,21 @@ export async function* evalFile(
   const { entrypoint } = this;
   const { log } = entrypoint;
   const preevalResult = entrypoint.getPreevalResult();
+  const filename =
+    entrypoint.loadedAndParsed.evaluator === 'ignored'
+      ? entrypoint.name
+      : entrypoint.loadedAndParsed.evalConfig.filename ?? entrypoint.name;
 
   if (preevalResult && (preevalResult.dependencyNames?.length ?? 0) === 0) {
-    const valueCache: ValueCache = new Map();
-    preevalResult.staticValueCache?.forEach((value, key) => {
-      valueCache.set(key, value);
+    const prevalPayload = createPrevalPayload({
+      emitWarning: this.services.emitWarning,
+      filename,
+      staticDependencies: preevalResult.staticDependencies,
+      staticValues: preevalResult.staticValueCache,
     });
+    log(`<< skipped evaluate __wywPreval %O`, prevalPayload.values);
 
-    const dependencies = [...new Set(preevalResult.staticDependencies ?? [])];
-    log(`<< skipped evaluate __wywPreval %O`, valueCache);
-
-    return [valueCache, dependencies];
+    return prevalPayload;
   }
 
   log(`>> evaluate __wywPreval`);
@@ -55,18 +58,16 @@ export async function* evalFile(
     return null;
   }
 
-  const valueCache: ValueCache = evaluated.values;
-  preevalResult?.staticValueCache?.forEach((value, key) => {
-    valueCache.set(key, value);
+  const prevalPayload = createPrevalPayload({
+    emitWarning: this.services.emitWarning,
+    evalDependencies: evaluated.dependencies,
+    evalValues: evaluated.values,
+    filename,
+    staticDependencies: preevalResult?.staticDependencies,
+    staticValues: preevalResult?.staticValueCache,
   });
-  const dependencies = [
-    ...new Set([
-      ...evaluated.dependencies,
-      ...(preevalResult?.staticDependencies ?? []),
-    ]),
-  ];
 
-  log(`<< evaluated __wywPreval %O`, valueCache);
+  log(`<< evaluated __wywPreval %O`, prevalPayload.values);
 
-  return [valueCache, dependencies];
+  return prevalPayload;
 }
