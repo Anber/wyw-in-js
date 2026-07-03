@@ -121,6 +121,45 @@ describe('createFileReporter', () => {
     }
   });
 
+  it('writes staticPlan single events to static-plan.jsonl', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'wyw-file-reporter-'));
+    const reporter = createFileReporter({ dir });
+
+    try {
+      reporter.emitter.single({
+        filename: join(dir, 'foo.ts'),
+        needCount: 1,
+        runtimeDependencyCount: 2,
+        staticValueCount: 3,
+        type: 'staticPlan',
+        unresolvedCount: 4,
+        usageCount: 5,
+      });
+
+      reporter.onDone(dir);
+      const target = join(dir, 'static-plan.jsonl');
+      await waitFor(
+        () => existsSync(target) && readFileSync(target).length > 0
+      );
+
+      const events = readJsonl(target);
+      expect(events).toHaveLength(1);
+      expect(events[0]).toEqual(
+        expect.objectContaining({
+          needCount: 1,
+          runtimeDependencyCount: 2,
+          staticValueCount: 3,
+          type: 'staticPlan',
+          unresolvedCount: 4,
+          usageCount: 5,
+        })
+      );
+      expect(events[0].filename).toContain('foo.ts');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('writes eval file payloads to eval-files.jsonl', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'wyw-file-reporter-'));
     const reporter = createFileReporter({ dir });

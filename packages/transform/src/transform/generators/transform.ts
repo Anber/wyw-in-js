@@ -16,6 +16,10 @@ import type {
   SyncScenarioForAction,
 } from '../types';
 
+import {
+  buildStaticPlan,
+  emitStaticPlanDebug,
+} from '../static-plan/buildStaticPlan';
 import { rewriteOptimizedOxcBarrelImports } from './rewriteOxcBarrelImports';
 import { resolveStaticOxcPreevalValues } from './resolveStaticOxcValues';
 
@@ -60,6 +64,37 @@ const hasWywPrevalExport = (code: string, filename: string): boolean =>
     collectOxcExportsAndImports(code, filename).exports,
     '__wywPreval'
   );
+
+const emitCurrentStaticPlanDebug = (
+  action: ITransformAction,
+  imports: Map<string, string[]> | null
+): void => {
+  if (!action.services.eventEmitter.enabled) {
+    return;
+  }
+
+  const { loadedAndParsed } = action.entrypoint;
+  if (loadedAndParsed.evaluator === 'ignored') {
+    return;
+  }
+
+  const preevalResult = action.entrypoint.getPreevalResult();
+  if (!preevalResult) {
+    return;
+  }
+
+  const filename =
+    loadedAndParsed.evalConfig.filename ?? action.entrypoint.name;
+  const plan = buildStaticPlan({
+    code: loadedAndParsed.code,
+    filename,
+    options: action.services.options.pluginOptions,
+    preparedImports: imports,
+    preevalResult,
+  });
+
+  emitStaticPlanDebug(action.services.eventEmitter, plan);
+};
 
 type PrepareCodeOptions = {
   emitCommonJS?: boolean;
@@ -393,6 +428,8 @@ export function* internalTransform(
         imports
       );
     }
+
+    emitCurrentStaticPlanDebug(this, imports);
 
     finalPreparedCode = this.services.eventEmitter.perf(
       'transform:emitCommonJS',
