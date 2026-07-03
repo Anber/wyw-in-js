@@ -11,7 +11,7 @@ import {
   buildOxcCodeFrameError,
   createOxcLocationLookup,
 } from '../oxc/sourceLocations';
-import { getProcessorForImport } from '../processorLookup';
+import { getProcessorForImport } from '../../processors/processorLookup';
 import { resolveProcessorStaticClassName } from '../processorStaticSemantics';
 import { collectUsedNames } from './cleanupBindings';
 import {

@@ -5,7 +5,7 @@ import type { Expression, Node, Program } from 'oxc-parser';
 
 import { collectOxcProcessorImportsFromProgram } from '../../../utils/collectOxcExportsAndImports';
 import { getOxcNodeChildren } from '../../../utils/oxc/ast';
-import { getProcessorForImport } from '../../../utils/processorLookup';
+import { getProcessorForImport } from '../../../processors/processorLookup';
 import { resolveProcessorStaticClassName } from '../../../utils/processorStaticSemantics';
 import type { ITransformAction } from '../../types';
 import { parseProgram } from './environment';
