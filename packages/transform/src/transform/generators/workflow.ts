@@ -95,7 +95,8 @@ export function* workflow(
       };
     }
 
-    const [valueCache, dependencies] = evalStageResult;
+    const prevalPayload = evalStageResult;
+    const { dependencies } = prevalPayload;
 
     // *** 3rd stage ***
 
@@ -103,7 +104,7 @@ export function* workflow(
       'collect',
       entrypoint,
       {
-        valueCache,
+        prevalPayload,
       },
       null
     );

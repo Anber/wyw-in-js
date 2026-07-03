@@ -11,7 +11,7 @@ export function* collect(
   this: ICollectAction
 ): SyncScenarioForAction<ICollectAction> {
   const { options } = this.services;
-  const { valueCache } = this.data;
+  const { prevalPayload } = this.data;
   const { entrypoint } = this;
   const { loadedAndParsed, name } = entrypoint;
   const preevalResult = entrypoint.getPreevalResult();
@@ -39,7 +39,7 @@ export function* collect(
         preevalResult?.staticSideEffectImportLocals ?? []
       ),
     },
-    valueCache,
+    prevalPayload.values,
     options.inputSourceMap
   );
 
