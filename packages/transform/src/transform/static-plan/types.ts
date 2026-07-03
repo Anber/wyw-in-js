@@ -40,6 +40,14 @@ export type StaticNeed =
       source: string;
     };
 
+export type StaticNeedRequest = {
+  importer: string;
+  kind: 'dependency' | 'eval';
+  only: string[];
+  reasons: string[];
+  source: string;
+};
+
 export type ProcessorUsagePlan = {
   displayName: string | null;
   imported: string;
@@ -51,6 +59,7 @@ export type ProcessorUsagePlan = {
 
 export type StaticPlanAttribution = {
   needCount: number;
+  needRequestCount: number;
   runtimeDependencyCount: number;
   staticValueCount: number;
   unresolvedCount: number;
@@ -63,5 +72,6 @@ export type StaticPlan = {
   evalPayload: PrevalPayload | null;
   filename: string;
   needs: StaticNeed[];
+  needRequests: StaticNeedRequest[];
   processorUsages: ProcessorUsagePlan[];
 };
