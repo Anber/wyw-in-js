@@ -28,6 +28,10 @@ import type {
   StaticNeed,
   StaticPlan,
 } from './types';
+import {
+  planStaticNeedRequests,
+  resolveUnmetStaticNeeds,
+} from './resolveStaticNeeds';
 
 export type StaticPlanProcessorImport = {
   imported: string;
@@ -45,7 +49,10 @@ export type BuildStaticPlanInput = {
   preparedImports?: Map<string, string[]> | null;
   preevalResult?: Pick<
     IPreevalResult,
-    'runtimeOnlyStaticValueNames' | 'staticDependencies'
+    | 'dependencyNames'
+    | 'runtimeOnlyStaticValueNames'
+    | 'staticDependencies'
+    | 'staticValueCache'
   >;
   processorImports?: StaticPlanProcessorImport[];
   staticBindings?: StaticBindings;
@@ -261,11 +268,19 @@ export const buildStaticPlan = ({
   const processorUsages = usages.map((usage, idx) =>
     toProcessorUsagePlan(usage, idx, code, filename, staticValueNames)
   );
-  const dedupedNeeds = dedupeNeeds(needs);
+  const evalNeeds = resolveUnmetStaticNeeds({
+    filename,
+    resolvedNames: new Set(preevalResult?.staticValueCache?.keys() ?? []),
+    runtimeOnlyNames: new Set(preevalResult?.runtimeOnlyStaticValueNames ?? []),
+    unresolvedNames: preevalResult?.dependencyNames ?? [],
+  });
+  const dedupedNeeds = dedupeNeeds([...needs, ...evalNeeds]);
+  const needRequests = planStaticNeedRequests(dedupedNeeds);
 
   return {
     attribution: {
       needCount: dedupedNeeds.length,
+      needRequestCount: needRequests.length,
       runtimeDependencyCount: env.dependencies.size,
       staticValueCount: env.values.size,
       unresolvedCount: env.unresolved.size,
@@ -275,6 +290,7 @@ export const buildStaticPlan = ({
     evalPayload: null,
     filename,
     needs: dedupedNeeds,
+    needRequests,
     processorUsages,
   };
 };
@@ -290,6 +306,7 @@ export const emitStaticPlanDebug = (
   eventEmitter.single({
     filename: plan.filename,
     needCount: plan.attribution.needCount,
+    needRequestCount: plan.attribution.needRequestCount,
     runtimeDependencyCount: plan.attribution.runtimeDependencyCount,
     staticValueCount: plan.attribution.staticValueCount,
     type: 'staticPlan',
