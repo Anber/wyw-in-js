@@ -158,6 +158,10 @@ export const createFileReporter = (
     path.join(options.dir, 'static-resolve.jsonl')
   );
 
+  const staticPlanStream = createWriteStream(
+    path.join(options.dir, 'static-plan.jsonl')
+  );
+
   const perfSpanStream = createWriteStream(
     path.join(options.dir, 'perf-spans.jsonl')
   );
@@ -201,6 +205,10 @@ export const createFileReporter = (
 
     if (meta.type === 'staticResolve') {
       writeJSONl(staticResolveStream, meta);
+    }
+
+    if (meta.type === 'staticPlan') {
+      writeJSONl(staticPlanStream, meta);
     }
 
     if (meta.type === 'eval-file') {
@@ -295,6 +303,7 @@ export const createFileReporter = (
       dependenciesStream.end();
       entrypointStream.end();
       staticResolveStream.end();
+      staticPlanStream.end();
       perfSpanStream.end();
       evalFilesStream.end();
       timings.clear();
