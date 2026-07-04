@@ -13,6 +13,16 @@ const processorImports = [
     source: 'test-css-processor',
   },
 ];
+const cssTemplateSemantics = {
+  kind: 'css-template' as const,
+  outputs: ['class-name' as const, 'css-text' as const],
+  runtimeDependencies: 'explicit' as const,
+  staticInterpolations: [
+    'serializable' as const,
+    'class-name' as const,
+    'selector-chain' as const,
+  ],
+};
 
 describe('buildStaticPlan', () => {
   it('records local serializable static values using ProcessorStaticValue', () => {
@@ -120,6 +130,34 @@ describe('buildStaticPlan', () => {
         usageCount: 1,
       })
     );
+  });
+
+  it('records declarative processor semantics on usage plans', () => {
+    const plan = buildStaticPlan({
+      code: `
+        import { css } from 'test-css-processor';
+        export const className = css\`color: red;\`;
+      `,
+      filename,
+      processorImports: [
+        {
+          imported: 'css',
+          local: 'css',
+          semantics: cssTemplateSemantics,
+          source: 'test-css-processor',
+        },
+      ],
+    });
+
+    expect(plan.processorUsages).toEqual([
+      expect.objectContaining({
+        declarativeSemantics: cssTemplateSemantics,
+        imported: 'css',
+        kind: 'template',
+        local: 'css',
+        source: 'test-css-processor',
+      }),
+    ]);
   });
 
   it('emits plan-size attribution as a debug event', () => {

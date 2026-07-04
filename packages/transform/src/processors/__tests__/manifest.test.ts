@@ -51,6 +51,12 @@ describe('processor manifest loader', () => {
       version: 1,
       name: packageName,
       implementation: './css-processor.js',
+      semantics: {
+        kind: 'css-template',
+        outputs: ['class-name', 'css-text'],
+        runtimeDependencies: 'explicit',
+        staticInterpolations: ['serializable', 'class-name', 'selector-chain'],
+      },
     });
     writeFileSync(
       path.join(distDir, 'css-processor.js'),
@@ -171,7 +177,7 @@ describe('processor manifest loader', () => {
   it('resolves package tag manifests relative to the package root and implementation relative to the manifest', () => {
     const { packageName, root } = createManifestPackage();
 
-    const [processor] = getProcessorForImport(
+    const [processor, tagSource, manifest] = getProcessorForImport(
       {
         imported: 'css',
         source: packageName,
@@ -181,5 +187,55 @@ describe('processor manifest loader', () => {
     );
 
     expect(processor?.name).toBe('CssProcessor');
+    expect(tagSource).toEqual({
+      imported: 'css',
+      source: packageName,
+    });
+    expect(manifest).toEqual(
+      expect.objectContaining({
+        name: packageName,
+        semantics: {
+          kind: 'css-template',
+          outputs: ['class-name', 'css-text'],
+          runtimeDependencies: 'explicit',
+          staticInterpolations: [
+            'serializable',
+            'class-name',
+            'selector-chain',
+          ],
+        },
+      })
+    );
+  });
+
+  it('loads styled-target semantics as manifest metadata', () => {
+    const root = createTempRoot();
+    const manifestPath = path.join(root, 'styled.processor.json');
+    const implementationPath = path.join(root, 'styled-processor.js');
+
+    writeJson(manifestPath, {
+      version: 1,
+      name: '@wyw-in-js/test-styled',
+      implementation: './styled-processor.js',
+      tags: ['styled'],
+      semantics: {
+        kind: 'styled-target',
+        targets: ['class-name', 'selector-chain', 'opaque-component'],
+      },
+    });
+
+    expect(loadProcessorManifest(manifestPath)).toEqual({
+      implementationPath,
+      manifest: {
+        version: 1,
+        name: '@wyw-in-js/test-styled',
+        implementation: './styled-processor.js',
+        tags: ['styled'],
+        semantics: {
+          kind: 'styled-target',
+          targets: ['class-name', 'selector-chain', 'opaque-component'],
+        },
+      },
+    });
   });
 });

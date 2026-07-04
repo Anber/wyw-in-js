@@ -9,6 +9,7 @@ import type { Expression, Node } from 'oxc-parser';
 
 import { createOxcAstService } from '../oxcAstService';
 import { buildOxcCodeFrameError } from '../oxc/sourceLocations';
+import { applyDeclarativeProcessorSemantics } from '../../processors/declarativeSemantics';
 import { getDisplayName } from './displayName';
 import { getRootIdentifier } from './processorUsages';
 import { getSourceLocation } from './shared';
@@ -104,20 +105,26 @@ export const createProcessor = (
       throw error;
     }
 
+    const processor = new Processor(
+      params,
+      tagSource,
+      astService,
+      getSourceLocation(target.start, target.end, loc, fileContext.filename),
+      replacer,
+      displayName,
+      isReferenced,
+      idx,
+      options,
+      fileContext
+    );
+    applyDeclarativeProcessorSemantics(
+      processor,
+      definedProcessor[2]?.declarativeSemantics
+    );
+
     return {
       astService,
-      processor: new Processor(
-        params,
-        tagSource,
-        astService,
-        getSourceLocation(target.start, target.end, loc, fileContext.filename),
-        replacer,
-        displayName,
-        isReferenced,
-        idx,
-        options,
-        fileContext
-      ),
+      processor,
     };
   } catch (e) {
     if (e === BaseProcessor.SKIP) {

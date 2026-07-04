@@ -12,6 +12,7 @@ import {
   createOxcLocationLookup,
 } from '../oxc/sourceLocations';
 import { getProcessorForImport } from '../../processors/processorLookup';
+import { normalizeDeclarativeProcessorSemantics } from '../../processors/declarativeSemantics';
 import { resolveProcessorStaticClassName } from '../processorStaticSemantics';
 import { collectUsedNames } from './cleanupBindings';
 import {
@@ -89,7 +90,7 @@ export const applyOxcProcessors = (
             return;
           }
 
-          const [processor, tagSource] = getProcessorForImport(
+          const [processor, tagSource, manifest] = getProcessorForImport(
             {
               imported: item.imported,
               source: item.source,
@@ -99,7 +100,15 @@ export const applyOxcProcessors = (
           );
 
           if (processor) {
-            definedProcessors.set(localName, [processor, tagSource]);
+            definedProcessors.set(localName, [
+              processor,
+              tagSource,
+              {
+                declarativeSemantics: normalizeDeclarativeProcessorSemantics(
+                  manifest?.semantics
+                ),
+              },
+            ]);
             removableImportLocals.add(localName);
             const rootLocalName = localName.split('.')[0];
             if (rootLocalName) {

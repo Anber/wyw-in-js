@@ -7,6 +7,7 @@ import type { TagSource } from '@wyw-in-js/processor-utils';
 import { findPackageJSON, syncResolve } from '@wyw-in-js/shared';
 import type { StrictOptions, TagResolverMeta } from '@wyw-in-js/shared';
 
+import type { ProcessorManifest } from './manifest';
 import { resolveProcessorReference } from './manifest';
 
 const nodeRequire = createRequire(import.meta.url);
@@ -17,10 +18,14 @@ export type ProcessorClass = new (
 
 const definedTagsCache = new Map<string, Record<string, string> | undefined>();
 const resolvedTagResolverSourceCache = new Map<string, string | undefined>();
-const packageProcessorLookupCache = new Map<string, ProcessorClass | null>();
+type ProcessorLookupValue = {
+  manifest: ProcessorManifest | null;
+  processor: ProcessorClass | null;
+};
+const packageProcessorLookupCache = new Map<string, ProcessorLookupValue>();
 const tagResolverProcessorLookupCache = new WeakMap<
   NonNullable<StrictOptions['tagResolver']>,
-  Map<string, ProcessorClass | null>
+  Map<string, ProcessorLookupValue>
 >();
 
 const createTagResolverLookupCacheKey = (
@@ -63,13 +68,13 @@ const isPackageLookupCandidate = (source: string): boolean => {
 
 const getTagResolverLookupCache = (
   tagResolver: NonNullable<StrictOptions['tagResolver']>
-): Map<string, ProcessorClass | null> => {
+): Map<string, ProcessorLookupValue> => {
   const existing = tagResolverProcessorLookupCache.get(tagResolver);
   if (existing) {
     return existing;
   }
 
-  const created = new Map<string, ProcessorClass | null>();
+  const created = new Map<string, ProcessorLookupValue>();
   tagResolverProcessorLookupCache.set(tagResolver, created);
   return created;
 };
@@ -135,25 +140,35 @@ const getDefinedTagsFromPackage = (
 const isValidProcessorClass = (module: unknown): module is ProcessorClass =>
   module instanceof BaseProcessor.constructor;
 
-const getProcessorFromFile = (processorPath: string): ProcessorClass | null => {
-  const { implementationPath } = resolveProcessorReference(processorPath);
+const getProcessorFromFile = (processorPath: string): ProcessorLookupValue => {
+  const { implementationPath, manifest } =
+    resolveProcessorReference(processorPath);
   const Processor = nodeRequire(implementationPath).default;
   if (!isValidProcessorClass(Processor)) {
-    return null;
+    return {
+      manifest: null,
+      processor: null,
+    };
   }
 
-  return Processor;
+  return {
+    manifest,
+    processor: Processor,
+  };
 };
 
 const getProcessorFromPackage = (
   packageName: string,
   tagName: string,
   filename: string | null | undefined
-): ProcessorClass | null => {
+): ProcessorLookupValue => {
   const definedTags = getDefinedTagsFromPackage(packageName, filename);
   const processorPath = definedTags?.[tagName];
   if (!processorPath) {
-    return null;
+    return {
+      manifest: null,
+      processor: null,
+    };
   }
 
   return getProcessorFromFile(processorPath);
@@ -163,12 +178,12 @@ export const getProcessorForImport = (
   { imported, source }: { imported: string; source: string },
   filename: string | null | undefined,
   options: Pick<StrictOptions, 'tagResolver'>
-): [ProcessorClass | null, TagSource] => {
+): [ProcessorClass | null, TagSource, ProcessorManifest | null] => {
   const { tagResolver } = options;
   const packageLookupCandidate = isPackageLookupCandidate(source);
 
   if (!tagResolver && !packageLookupCandidate) {
-    return [null, { imported, source }];
+    return [null, { imported, source }, null];
   }
 
   const cacheKey = tagResolver
@@ -179,7 +194,12 @@ export const getProcessorForImport = (
     : packageProcessorLookupCache;
 
   if (lookupCache.has(cacheKey)) {
-    return [lookupCache.get(cacheKey) ?? null, { imported, source }];
+    const cached = lookupCache.get(cacheKey);
+    return [
+      cached?.processor ?? null,
+      { imported, source },
+      cached?.manifest ?? null,
+    ];
   }
 
   let customFile: string | null = null;
@@ -191,13 +211,16 @@ export const getProcessorForImport = (
 
     customFile = tagResolver(source, imported, tagResolverMeta);
   }
-  let processor: ProcessorClass | null = null;
+  let lookupValue: ProcessorLookupValue = {
+    manifest: null,
+    processor: null,
+  };
   if (customFile) {
-    processor = getProcessorFromFile(customFile);
+    lookupValue = getProcessorFromFile(customFile);
   } else if (packageLookupCandidate) {
-    processor = getProcessorFromPackage(source, imported, filename);
+    lookupValue = getProcessorFromPackage(source, imported, filename);
   }
 
-  lookupCache.set(cacheKey, processor);
-  return [processor, { imported, source }];
+  lookupCache.set(cacheKey, lookupValue);
+  return [lookupValue.processor, { imported, source }, lookupValue.manifest];
 };

@@ -1,4 +1,5 @@
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -131,6 +132,183 @@ const runTransform = async (
     },
     asyncResolve
   );
+
+const createPackageResolver =
+  (root: string) => async (what: string, importer: string) => {
+    if (what.startsWith('.')) {
+      return resolve(dirname(importer), what);
+    }
+
+    const packageMain = join(root, 'node_modules', what, 'index.js');
+    if (existsSync(packageMain)) {
+      return packageMain;
+    }
+
+    return null;
+  };
+
+const runTransformWithPackageLookup = async (
+  root: string,
+  entryFile: string,
+  cache: TransformCacheCollection,
+  eventEmitter?: EventEmitter,
+  pluginOptions: Partial<PluginOptions> = {}
+) =>
+  transform(
+    {
+      cache,
+      eventEmitter,
+      options: {
+        filename: entryFile,
+        root,
+        pluginOptions: {
+          configFile: false,
+          ...pluginOptions,
+          eval: {
+            strategy: 'hybrid',
+            ...pluginOptions.eval,
+          },
+          features: pluginOptions.features,
+        },
+      },
+    },
+    readFileSync(entryFile, 'utf8'),
+    createPackageResolver(root)
+  );
+
+const writeJson = (filename: string, value: unknown): void => {
+  writeFileSync(filename, JSON.stringify(value, null, 2));
+};
+
+const writeProcessorPackage = (
+  root: string,
+  {
+    implementationSource,
+    packageName,
+    semantics,
+    tagName,
+  }: {
+    implementationSource: string;
+    packageName: string;
+    semantics?: unknown;
+    tagName: string;
+  }
+): void => {
+  const packageRoot = join(root, 'node_modules', packageName);
+  const distRoot = join(packageRoot, 'dist');
+  const processorFileName = `${tagName}-processor.js`;
+  const manifestFileName = `${tagName}.processor.json`;
+
+  mkdirSync(distRoot, { recursive: true });
+  writeJson(join(packageRoot, 'package.json'), {
+    name: packageName,
+    main: './index.js',
+    'wyw-in-js': {
+      tags: {
+        [tagName]:
+          semantics === undefined
+            ? `./dist/${processorFileName}`
+            : `./dist/${manifestFileName}`,
+      },
+    },
+  });
+  writeFileSync(join(packageRoot, 'index.js'), 'module.exports = {};\n');
+  writeFileSync(join(distRoot, processorFileName), implementationSource);
+
+  if (semantics !== undefined) {
+    writeJson(join(distRoot, manifestFileName), {
+      version: 1,
+      name: packageName,
+      implementation: `./${processorFileName}`,
+      tags: [tagName],
+      semantics,
+    });
+  }
+};
+
+const createFixtureProcessorPackage = (
+  root: string,
+  options: {
+    packageName: string;
+    processorPath: string;
+    semantics?: unknown;
+    tagName: string;
+  }
+): void =>
+  writeProcessorPackage(root, {
+    implementationSource: `module.exports = require(${JSON.stringify(
+      options.processorPath
+    )});\n`,
+    packageName: options.packageName,
+    semantics: options.semantics,
+    tagName: options.tagName,
+  });
+
+const manifestOnlyCssProcessorSource = dedent`
+  const { createRequire } = require('module');
+  const workspaceRequire = createRequire(${JSON.stringify(processorFile)});
+  const { TaggedTemplateProcessor } = workspaceRequire('@wyw-in-js/processor-utils');
+
+  class ManifestOnlyCssProcessor extends TaggedTemplateProcessor {
+    get asSelector() {
+      return this.className;
+    }
+
+    get value() {
+      return this.astService.callExpression(
+        this.astService.identifier('__manifestOnlyClassName'),
+        []
+      );
+    }
+
+    addInterpolation(_node, _precedingCss, source) {
+      throw new Error(
+        \`css tag cannot handle '\${source}' as an interpolated value\`
+      );
+    }
+
+    doEvaltimeReplacement() {
+      this.replacer(this.astService.stringLiteral(this.className), false);
+    }
+
+    doRuntimeReplacement() {
+      this.replacer(this.astService.stringLiteral(this.className), false);
+    }
+
+    extractRules(_valueCache, cssText, loc) {
+      const selector = \`.\${this.className}\`;
+
+      return {
+        [selector]: {
+          cssText,
+          className: this.className,
+          displayName: this.displayName,
+          start: loc?.start ?? null,
+        },
+      };
+    }
+  }
+
+  module.exports = { default: ManifestOnlyCssProcessor };
+`;
+
+const cssTemplateSemantics = {
+  kind: 'css-template',
+  outputs: ['class-name', 'css-text'],
+  runtimeDependencies: 'explicit',
+  staticInterpolations: ['serializable', 'class-name', 'selector-chain'],
+};
+
+const styledTargetSemantics = {
+  kind: 'styled-target',
+  targets: ['class-name', 'selector-chain', 'opaque-component'],
+};
+
+let processorPackageId = 0;
+const nextProcessorPackageName = (prefix: string): string => {
+  processorPackageId += 1;
+  return `${prefix}-${process.pid}-${processorPackageId}`;
+};
 
 const createPerfEventRecorder = () => {
   const counts = new Map<string, number>();
@@ -1163,6 +1341,224 @@ describe('transform static import value inlining', () => {
 
       expect(result.cssText).toContain('color:red');
       expect(perf.counts.get('transform:evalFile') ?? 0).toBe(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('uses css-template manifest semantics for same-file class-name inputs before eval', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
+    const entryFile = join(root, 'entry.js');
+    const packageName = nextProcessorPackageName('manifest-only-css');
+    const cache = new TransformCacheCollection();
+    const perf = createPerfEventRecorder();
+
+    writeProcessorPackage(root, {
+      implementationSource: manifestOnlyCssProcessorSource,
+      packageName,
+      semantics: cssTemplateSemantics,
+      tagName: 'css',
+    });
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { css } from '${packageName}';
+
+        const marker = css\`\`;
+
+        export const className = css\`
+          .${'${marker}'} {
+            color: red;
+          }
+        \`;
+      `
+    );
+
+    try {
+      const result = await runTransformWithPackageLookup(
+        root,
+        entryFile,
+        cache,
+        perf.eventEmitter
+      );
+
+      expect(result.cssText).toContain('color:red');
+      expect(perf.counts.get('transform:evalFile') ?? 0).toBe(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps manifest-supported fixtures output-identical to direct JS processor paths', async () => {
+    const cases = [
+      {
+        code: (packageName: string) => dedent`
+          import { css } from '${packageName}';
+
+          export const className = css\`
+            color: red;
+          \`;
+        `,
+        processorPath: processorFile,
+        semantics: cssTemplateSemantics,
+        tagName: 'css',
+      },
+      {
+        code: (packageName: string) => dedent`
+          import { styled } from '${packageName}';
+
+          export const Box = styled.div\`
+            color: red;
+          \`;
+        `,
+        processorPath: styledProcessorFile,
+        semantics: styledTargetSemantics,
+        tagName: 'styled',
+      },
+    ];
+
+    await Promise.all(
+      cases.map(async (item) => {
+        const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
+        const directEntryFile = join(root, `direct-${item.tagName}.js`);
+        const manifestEntryFile = join(root, `manifest-${item.tagName}.js`);
+        const directPackageName = nextProcessorPackageName(
+          `direct-${item.tagName}`
+        );
+        const manifestPackageName = nextProcessorPackageName(
+          `manifest-${item.tagName}`
+        );
+
+        createFixtureProcessorPackage(root, {
+          packageName: directPackageName,
+          processorPath: item.processorPath,
+          tagName: item.tagName,
+        });
+        createFixtureProcessorPackage(root, {
+          packageName: manifestPackageName,
+          processorPath: item.processorPath,
+          semantics: item.semantics,
+          tagName: item.tagName,
+        });
+        writeFileSync(directEntryFile, item.code(directPackageName));
+        writeFileSync(manifestEntryFile, item.code(manifestPackageName));
+
+        try {
+          const directResult = await runTransformWithPackageLookup(
+            root,
+            directEntryFile,
+            new TransformCacheCollection(),
+            undefined,
+            {
+              classNameSlug: '[title]-[index]',
+            }
+          );
+          const manifestResult = await runTransformWithPackageLookup(
+            root,
+            manifestEntryFile,
+            new TransformCacheCollection(),
+            undefined,
+            {
+              classNameSlug: '[title]-[index]',
+            }
+          );
+          const normalizeCode = (code: string, packageName: string) =>
+            code.replaceAll(packageName, '<processor-package>');
+
+          expect(manifestResult.cssText).toBe(directResult.cssText);
+          expect(
+            normalizeCode(manifestResult.code, manifestPackageName)
+          ).toEqual(normalizeCode(directResult.code, directPackageName));
+        } finally {
+          rmSync(root, { recursive: true, force: true });
+        }
+      })
+    );
+  });
+
+  it('falls back to the JS processor implementation for unsupported manifest semantics', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
+    const directEntryFile = join(root, 'direct.js');
+    const manifestEntryFile = join(root, 'manifest.js');
+    const directPackageName = nextProcessorPackageName(
+      'unsupported-direct-css'
+    );
+    const manifestPackageName = nextProcessorPackageName(
+      'unsupported-manifest-css'
+    );
+    const directPerf = createPerfEventRecorder();
+    const manifestPerf = createPerfEventRecorder();
+
+    writeProcessorPackage(root, {
+      implementationSource: manifestOnlyCssProcessorSource,
+      packageName: directPackageName,
+      tagName: 'css',
+    });
+    writeProcessorPackage(root, {
+      implementationSource: manifestOnlyCssProcessorSource,
+      packageName: manifestPackageName,
+      semantics: {
+        kind: 'future-css-template',
+      },
+      tagName: 'css',
+    });
+    writeFileSync(
+      directEntryFile,
+      dedent`
+        import { css } from '${directPackageName}';
+
+        const marker = css\`\`;
+
+        export const className = css\`
+          .${'${marker}'} {
+            color: red;
+          }
+        \`;
+      `
+    );
+    writeFileSync(
+      manifestEntryFile,
+      readFileSync(directEntryFile, 'utf8').replaceAll(
+        directPackageName,
+        manifestPackageName
+      )
+    );
+
+    try {
+      const directResult = await runTransformWithPackageLookup(
+        root,
+        directEntryFile,
+        new TransformCacheCollection(),
+        directPerf.eventEmitter,
+        {
+          classNameSlug: '[title]-[index]',
+        }
+      );
+      const manifestResult = await runTransformWithPackageLookup(
+        root,
+        manifestEntryFile,
+        new TransformCacheCollection(),
+        manifestPerf.eventEmitter,
+        {
+          classNameSlug: '[title]-[index]',
+        }
+      );
+
+      expect(manifestResult.cssText).toBe(directResult.cssText);
+      expect(
+        manifestResult.code.replaceAll(
+          manifestPackageName,
+          '<processor-package>'
+        )
+      ).toEqual(
+        directResult.code.replaceAll(directPackageName, '<processor-package>')
+      );
+      expect(directPerf.counts.get('transform:evalFile') ?? 0).toBeGreaterThan(
+        0
+      );
+      expect(
+        manifestPerf.counts.get('transform:evalFile') ?? 0
+      ).toBeGreaterThan(0);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
