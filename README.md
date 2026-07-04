@@ -9,14 +9,16 @@ wyw-in-js, short for "Whatever-you-want-in-JS," is the world's first toolkit for
 
 ### Origins
 
-This library evolved from the CSS-in-JS library [Linaria][1], with the aim of decoupling from a specific implementation and providing developers with a comprehensive toolkit for crafting their own solutions with custom syntax and features.
+WyW-in-JS grew out of the CSS-in-JS library [Linaria][1], where the core extraction model proved that styles can be authored in JavaScript and emitted ahead of time. The project separates that machinery from any one styling API, so libraries can define their own syntax, evaluation rules, and artifacts. That foundation continues to serve Linaria, can model processor APIs such as [Griffel][2] `makeStyles`, and is used end-to-end by [dx-styles][3] for compiler-backed CSS-in-TS in design systems.
 
 ### Key Features
 
-- Provides an API for creating custom processors (e.g., `css` and `styled` in [Linaria][1] or `makeStyles` in [Griffel][2]).
+- Provides an API for creating custom processors (e.g., `css` and `styled` in [Linaria][1], `makeStyles` in [Griffel][2], or `css`, `recipe`, and `slotRecipe` in [dx-styles][3]).
 - Supports a wide range of syntaxes, including tagged templates, function calls, and object literals.
 - Computes any unprepared JavaScript during the build phase, generating a set of artifacts that processors can transform into styles (or other outputs, depending on the processor).
 - Allows for arbitrary JavaScript in style definitions, including imports, conditionals, and loops.
+- Powers design-system primitives such as deterministic style-object classes, variant recipes, multipart slot recipes, token contracts, themes, and runtime CSS variable assignment.
+- Supports compile-time styling workflows such as generated CSS artifacts, class-name composition, nested selectors, at-rules, and opt-in RTL overrides.
 - Offers loaders and plugins for popular bundlers (including Webpack, Vite, esbuild) and frameworks (Next.js), ensuring compatibility with various build systems.
 
 ## Documentation
@@ -63,3 +65,4 @@ See https://wyw-in-js.dev/cli for all options, migration notes from `@linaria/cl
 
 [1]: https://github.com/callstack/linaria
 [2]: https://github.com/microsoft/griffel
+[3]: https://dx-styles.dev
