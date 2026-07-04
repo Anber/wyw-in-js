@@ -147,6 +147,10 @@ export const applyOxcProcessors = (
   const targetExpressionSpans = processorUsages.flatMap(
     collectUsageExpressionSpans
   );
+  const processorManagedExpressionSpans = processorUsages.map((usage) => ({
+    end: usage.target.end,
+    start: usage.target.start,
+  }));
 
   const extracted =
     targetExpressionSpans.length > 0
@@ -156,7 +160,8 @@ export const applyOxcProcessors = (
             filename,
             collectStaticExpressionValues,
             targetExpressionSpans,
-            options.staticBindings
+            options.staticBindings,
+            processorManagedExpressionSpans
           )
         )
       : {
@@ -295,13 +300,15 @@ export const applyOxcProcessors = (
   const sameFileProcessorStaticValuesByLocal =
     collectSameFileProcessorStaticValuesByLocal(
       sameFileProcessorsByLocal,
-      extracted.expressionValues
+      extracted.expressionValues,
+      extracted.staticValues
     );
   const sameFileProcessorObjectStaticValuesByLocal =
     collectSameFileProcessorObjectStaticValuesByLocal(
       sameFileProcessorObjectsByLocal,
       sameFileProcessorsByLocal,
-      extracted.expressionValues
+      extracted.expressionValues,
+      extracted.staticValues
     );
   sameFileProcessorObjectStaticValuesByLocal.forEach((value, local) => {
     sameFileProcessorStaticValuesByLocal.set(local, value);

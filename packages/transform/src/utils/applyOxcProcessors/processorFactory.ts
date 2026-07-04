@@ -119,7 +119,8 @@ export const createProcessor = (
     );
     applyDeclarativeProcessorSemantics(
       processor,
-      definedProcessor[2]?.declarativeSemantics
+      definedProcessor[2]?.declarativeSemantics,
+      params
     );
 
     return {

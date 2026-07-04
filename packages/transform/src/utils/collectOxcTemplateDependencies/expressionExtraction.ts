@@ -4,6 +4,7 @@ import type { ExpressionValue } from '@wyw-in-js/shared';
 import { ValueType } from '@wyw-in-js/shared';
 import type { Expression, Program } from 'oxc-parser';
 
+import { getOxcNodeChildren } from '../oxc/ast';
 import { applyOxcReplacements } from '../oxc/replacements';
 import { createOxcLocationLookup } from '../oxc/sourceLocations';
 import {
@@ -205,6 +206,19 @@ const collectStaticLocalExpression = (
         : ctx.code.slice(expression.start, expression.end),
   };
 };
+
+const expressionSpanKey = (
+  node: Pick<ExpressionSpan, 'end' | 'start'>
+): string => `${node.start}:${node.end}`;
+
+const containsProcessorManagedExpression = (
+  node: Expression,
+  ctx: ExtractionContext
+): boolean =>
+  ctx.processorManagedExpressionSpans.has(expressionSpanKey(node)) ||
+  getOxcNodeChildren(node).some((child) =>
+    containsProcessorManagedExpression(child as Expression, ctx)
+  );
 
 const declarationInitCode = (
   init: Expression,
@@ -474,7 +488,10 @@ const extractExpression = (
       // processors run. Leave the identifier free in the candidate source so
       // the resolver can supply it via inlineConstants at evaluation time.
       const isProcessorManagedLocal =
-        !!evaluate && !!init && containsTaggedTemplateExpression(init);
+        !!evaluate &&
+        !!init &&
+        (containsTaggedTemplateExpression(init) ||
+          containsProcessorManagedExpression(init, ctx));
       const staticLocalExpression =
         evaluate && init && !isProcessorManagedLocal
           ? collectStaticLocalExpression(init, ctx, [
@@ -598,7 +615,8 @@ const extractExpressions = (
     'bindingsByName' | 'rootMutationsByBinding' | 'usedNames'
   >,
   expressions: Expression[],
-  staticBindings?: StaticBindings
+  staticBindings?: StaticBindings,
+  processorManagedExpressionSpans: ExpressionSpan[] = []
 ): TemplateExtractionResult => {
   if (expressions.length === 0) {
     return {
@@ -624,6 +642,9 @@ const extractExpressions = (
     hoistedDeclarations: new Map(),
     hoistedDeclarationsByInsertionPoint: new Map(),
     loc: createOxcLocationLookup(code),
+    processorManagedExpressionSpans: new Set(
+      processorManagedExpressionSpans.map(expressionSpanKey)
+    ),
     referencesByNode: new WeakMap(),
     replacements: [],
     rootMutationsByBinding: analysis.rootMutationsByBinding,
@@ -753,6 +774,7 @@ export const evaluateOxcStaticExpressionAt = (
     hoistedDeclarations: new Map(),
     hoistedDeclarationsByInsertionPoint: new Map(),
     loc: createOxcLocationLookup(code),
+    processorManagedExpressionSpans: new Set(),
     referencesByNode: new WeakMap(),
     replacements: [],
     rootMutationsByBinding: analysis.rootMutationsByBinding,
@@ -801,7 +823,8 @@ export const collectOxcExpressionDependencies = (
   filename: string,
   evaluate = false,
   targetExpressionSpans?: ExpressionSpan[],
-  staticBindings?: StaticBindings
+  staticBindings?: StaticBindings,
+  processorManagedExpressionSpans: ExpressionSpan[] = []
 ): TemplateExtractionResult => {
   const program = parseOxc(code, filename);
   const analysis = analyzeProgram(program, {
@@ -816,7 +839,8 @@ export const collectOxcExpressionDependencies = (
     program,
     analysis,
     analysis.targetExpressions,
-    staticBindings
+    staticBindings,
+    processorManagedExpressionSpans
   );
 };
 
