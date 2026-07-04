@@ -1,6 +1,8 @@
 import type { ProcessorStaticValue } from '@wyw-in-js/processor-utils';
 import type { StrictOptions } from '@wyw-in-js/shared';
 
+import type { DeclarativeProcessorSemantics } from '../../processors/declarativeSemantics';
+import { normalizeDeclarativeProcessorSemantics } from '../../processors/declarativeSemantics';
 import { getProcessorForImport } from '../../processors/processorLookup';
 import { collectOxcProcessorImportsFromProgram } from '../../utils/collectOxcExportsAndImports';
 import {
@@ -36,6 +38,7 @@ import {
 export type StaticPlanProcessorImport = {
   imported: string;
   local: string;
+  semantics?: DeclarativeProcessorSemantics | null;
   source: string;
 };
 
@@ -84,7 +87,7 @@ const discoverProcessorImports = ({
       return;
     }
 
-    const [, tagSource] = getProcessorForImport(
+    const [, tagSource, manifest] = getProcessorForImport(
       {
         imported: item.imported,
         source: item.source,
@@ -100,6 +103,7 @@ const discoverProcessorImports = ({
     processorImports.push({
       imported: tagSource.imported,
       local,
+      semantics: normalizeDeclarativeProcessorSemantics(manifest?.semantics),
       source: tagSource.source,
     });
   });
@@ -135,6 +139,9 @@ const createDefinedProcessors = (
         imported: item.imported,
         source: item.source,
       },
+      {
+        declarativeSemantics: item.semantics ?? null,
+      },
     ]);
   });
 
@@ -161,6 +168,8 @@ const toProcessorUsagePlan = (
   }
 
   return {
+    declarativeSemantics:
+      usage.definedProcessor[2]?.declarativeSemantics ?? null,
     displayName,
     imported: usage.definedProcessor[1].imported,
     kind: usage.kind,

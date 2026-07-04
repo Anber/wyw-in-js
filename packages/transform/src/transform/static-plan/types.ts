@@ -2,6 +2,7 @@ import type {
   ProcessorStaticUnresolvedValue,
   ProcessorStaticValue,
 } from '@wyw-in-js/processor-utils';
+import type { DeclarativeProcessorSemantics } from '../../processors/declarativeSemantics';
 
 import type { PrevalPayload } from '../prevalPayload';
 
@@ -45,6 +46,7 @@ export type StaticNeedRequest = {
 };
 
 export type ProcessorUsagePlan = {
+  declarativeSemantics: DeclarativeProcessorSemantics | null;
   displayName: string | null;
   imported: string;
   kind: 'call' | 'template';
