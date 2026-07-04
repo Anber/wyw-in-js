@@ -132,6 +132,7 @@ export type ExtractionContext = {
   hoistedDeclarations: Map<string, string>;
   hoistedDeclarationsByInsertionPoint: Map<number, string[]>;
   loc: LocationLookup;
+  processorManagedExpressionSpans: Set<string>;
   referencesByNode: WeakMap<Node, ReferenceIdentifier[]>;
   replacements: Replacement[];
   rootMutationsByBinding: Map<

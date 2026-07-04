@@ -304,6 +304,207 @@ const styledTargetSemantics = {
   targets: ['class-name', 'selector-chain', 'opaque-component'],
 };
 
+const dxStyleObjectCallSemantics = {
+  kind: 'style-object-call',
+};
+
+const dxCssVarCallSemantics = {
+  kind: 'css-var-call',
+};
+
+const dxTokenContractCallSemantics = {
+  kind: 'token-contract-call',
+};
+
+const dxClassNameCallSemantics = {
+  kind: 'class-name-call',
+};
+
+const manifestOnlyStyleCallProcessorSource = dedent`
+  const { createRequire } = require('module');
+  const workspaceRequire = createRequire(${JSON.stringify(processorFile)});
+  const { BaseProcessor } = workspaceRequire('@wyw-in-js/processor-utils');
+
+  const descriptorKey = '__dxStyles';
+
+  const getCallExpressions = (params) => {
+    const callParam = params.find((param) => param[0] === 'call');
+    return callParam ? callParam.slice(1) : [];
+  };
+
+  const valueFromCache = (expression, values) => {
+    if (expression.kind === 2) {
+      return expression.value;
+    }
+    return values.get(expression.ex.name);
+  };
+
+  const classNameFromStyleHandle = (value) => {
+    const descriptor = value && typeof value === 'object' ? value[descriptorKey] : null;
+    return descriptor &&
+      descriptor.kind === 'styleHandle' &&
+      typeof descriptor.className === 'string'
+      ? descriptor.className
+      : null;
+  };
+
+  const hasStyleEntries = (style) =>
+    style && typeof style === 'object' && !Array.isArray(style) && Object.keys(style).length > 0;
+
+  class ManifestOnlyStyleCallProcessor extends BaseProcessor {
+    constructor(params, ...args) {
+      super([params[0]], ...args);
+      this.expressions = getCallExpressions(params);
+      this.dependencies.push(
+        ...this.expressions.filter((expression) => expression.ex.type === 'Identifier')
+      );
+      this.runtimeClassName = this.className;
+    }
+
+    get asSelector() {
+      return \`.\${this.runtimeClassName}\`;
+    }
+
+    get value() {
+      return this.astService.callExpression(
+        this.astService.identifier('__manifestOnlyStyleCall'),
+        this.expressions.map((expression) => expression.ex)
+      );
+    }
+
+    build(values) {
+      const parts = this.expressions.map((expression) => valueFromCache(expression, values));
+      const styleHandleClassNames = parts
+        .map(classNameFromStyleHandle)
+        .filter((className) => className !== null);
+      const hasLocalStyle = parts.some((part) => hasStyleEntries(part));
+      this.runtimeClassName = [
+        ...styleHandleClassNames,
+        hasLocalStyle || styleHandleClassNames.length === 0 ? this.className : undefined,
+      ].filter(Boolean).join(' ');
+    }
+
+    doEvaltimeReplacement() {
+      this.replacer(this.astService.stringLiteral(this.className), false);
+    }
+
+    doRuntimeReplacement() {
+      this.replacer(this.astService.stringLiteral(this.runtimeClassName), false);
+    }
+  }
+
+  module.exports = { default: ManifestOnlyStyleCallProcessor };
+`;
+
+const manifestOnlyCreateVarProcessorSource = dedent`
+  const { createRequire } = require('module');
+  const workspaceRequire = createRequire(${JSON.stringify(processorFile)});
+  const { BaseProcessor } = workspaceRequire('@wyw-in-js/processor-utils');
+
+  class ManifestOnlyCreateVarProcessor extends BaseProcessor {
+    constructor(params, ...args) {
+      super([params[0]], ...args);
+    }
+
+    get asSelector() {
+      return this.toValueForm();
+    }
+
+    get value() {
+      return this.astService.callExpression(
+        this.astService.identifier('__manifestOnlyCreateVar'),
+        []
+      );
+    }
+
+    build() {}
+
+    doEvaltimeReplacement() {
+      this.replacer(this.astService.stringLiteral(this.toValueForm()), false);
+    }
+
+    doRuntimeReplacement() {
+      this.replacer(this.astService.stringLiteral(this.toValueForm()), false);
+    }
+
+    toValueForm() {
+      return \`var(--\${this.className})\`;
+    }
+  }
+
+  module.exports = { default: ManifestOnlyCreateVarProcessor };
+`;
+
+const manifestOnlyTokenContractProcessorSource = dedent`
+  const { createRequire } = require('module');
+  const workspaceRequire = createRequire(${JSON.stringify(processorFile)});
+  const { BaseProcessor } = workspaceRequire('@wyw-in-js/processor-utils');
+
+  class ManifestOnlyTokenContractProcessor extends BaseProcessor {
+    constructor(params, ...args) {
+      super([params[0]], ...args);
+    }
+
+    get asSelector() {
+      return \`.\${this.className}\`;
+    }
+
+    get value() {
+      return this.astService.callExpression(
+        this.astService.identifier('__manifestOnlyTokenContract'),
+        []
+      );
+    }
+
+    build() {}
+
+    doEvaltimeReplacement() {
+      this.replacer(() => this.value, false);
+    }
+
+    doRuntimeReplacement() {
+      this.replacer(() => this.value, false);
+    }
+  }
+
+  module.exports = { default: ManifestOnlyTokenContractProcessor };
+`;
+
+const manifestOnlyClassNameCallProcessorSource = dedent`
+  const { createRequire } = require('module');
+  const workspaceRequire = createRequire(${JSON.stringify(processorFile)});
+  const { BaseProcessor } = workspaceRequire('@wyw-in-js/processor-utils');
+
+  class ManifestOnlyClassNameCallProcessor extends BaseProcessor {
+    constructor(params, ...args) {
+      super([params[0]], ...args);
+    }
+
+    get asSelector() {
+      return \`.\${this.className}\`;
+    }
+
+    get value() {
+      return this.astService.callExpression(
+        this.astService.identifier('__manifestOnlyClassNameCall'),
+        []
+      );
+    }
+
+    build() {}
+
+    doEvaltimeReplacement() {
+      this.replacer(this.astService.stringLiteral(this.className), false);
+    }
+
+    doRuntimeReplacement() {
+      this.replacer(this.astService.stringLiteral(this.className), false);
+    }
+  }
+
+  module.exports = { default: ManifestOnlyClassNameCallProcessor };
+`;
+
 let processorPackageId = 0;
 const nextProcessorPackageName = (prefix: string): string => {
   processorPackageId += 1;
@@ -1553,6 +1754,191 @@ describe('transform static import value inlining', () => {
       ).toEqual(
         directResult.code.replaceAll(directPackageName, '<processor-package>')
       );
+      expect(directPerf.counts.get('transform:evalFile') ?? 0).toBeGreaterThan(
+        0
+      );
+      expect(
+        manifestPerf.counts.get('transform:evalFile') ?? 0
+      ).toBeGreaterThan(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('uses dx-styles call manifest semantics for static call inputs before eval', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
+    const entryFile = join(root, 'entry.js');
+    const stylePackageName = nextProcessorPackageName('manifest-style-call');
+    const createVarPackageName = nextProcessorPackageName(
+      'manifest-create-var-call'
+    );
+    const tokenPackageName = nextProcessorPackageName(
+      'manifest-token-contract-call'
+    );
+    const classNamePackageName = nextProcessorPackageName(
+      'manifest-class-name-call'
+    );
+    const cssPackageName = nextProcessorPackageName('manifest-css-template');
+    const cache = new TransformCacheCollection();
+    const perf = createPerfEventRecorder();
+
+    writeProcessorPackage(root, {
+      implementationSource: manifestOnlyStyleCallProcessorSource,
+      packageName: stylePackageName,
+      semantics: dxStyleObjectCallSemantics,
+      tagName: 'style',
+    });
+    writeProcessorPackage(root, {
+      implementationSource: manifestOnlyCreateVarProcessorSource,
+      packageName: createVarPackageName,
+      semantics: dxCssVarCallSemantics,
+      tagName: 'createVar',
+    });
+    writeProcessorPackage(root, {
+      implementationSource: manifestOnlyTokenContractProcessorSource,
+      packageName: tokenPackageName,
+      semantics: dxTokenContractCallSemantics,
+      tagName: 'createTokenContract',
+    });
+    writeProcessorPackage(root, {
+      implementationSource: manifestOnlyClassNameCallProcessorSource,
+      packageName: classNamePackageName,
+      semantics: dxClassNameCallSemantics,
+      tagName: 'createTheme',
+    });
+    createFixtureProcessorPackage(root, {
+      packageName: cssPackageName,
+      processorPath: processorFile,
+      semantics: cssTemplateSemantics,
+      tagName: 'css',
+    });
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { style } from '${stylePackageName}';
+        import { createVar } from '${createVarPackageName}';
+        import { createTokenContract } from '${tokenPackageName}';
+        import { createTheme } from '${classNamePackageName}';
+        import { css } from '${cssPackageName}';
+
+        const handle = { __dxStyles: { kind: 'styleHandle', className: 'dx-handle' } };
+        const onlyHandle = style(handle);
+        const localStyle = style({ color: 'red' });
+        const localVar = createVar();
+        const tokens = createTokenContract(
+          { color: null, nested: { gap: 'space' } },
+          { prefix: 'dx' }
+        );
+        const theme = createTheme(tokens, { color: 'blue', nested: { gap: '4px' } });
+
+        export const className = css\`
+          .${'${onlyHandle}'} {
+            color: ${'${tokens.color}'};
+          }
+          .${'${localStyle}'} {
+            background: ${'${localVar}'};
+          }
+          .${'${theme}'} {
+            margin: ${'${tokens.nested.gap}'};
+          }
+        \`;
+      `
+    );
+
+    try {
+      const result = await runTransformWithPackageLookup(
+        root,
+        entryFile,
+        cache,
+        perf.eventEmitter,
+        {
+          classNameSlug: '[title]-[index]',
+        }
+      );
+
+      expect(result.cssText).toContain('.dx-handle');
+      expect(result.cssText).toContain('var(--dx-color)');
+      expect(result.cssText).toContain('var(--dx-space)');
+      expect(result.cssText).toContain('var(--localVar-2)');
+      expect(perf.counts.get('transform:evalFile') ?? 0).toBe(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('falls back to JS eval for dx-styles call manifest semantics with non-static args', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
+    const directEntryFile = join(root, 'direct.js');
+    const manifestEntryFile = join(root, 'manifest.js');
+    const directStylePackageName =
+      nextProcessorPackageName('direct-style-call');
+    const manifestStylePackageName = nextProcessorPackageName(
+      'manifest-style-call'
+    );
+    const cssPackageName = nextProcessorPackageName('manifest-css-template');
+    const directPerf = createPerfEventRecorder();
+    const manifestPerf = createPerfEventRecorder();
+
+    writeProcessorPackage(root, {
+      implementationSource: manifestOnlyStyleCallProcessorSource,
+      packageName: directStylePackageName,
+      tagName: 'style',
+    });
+    writeProcessorPackage(root, {
+      implementationSource: manifestOnlyStyleCallProcessorSource,
+      packageName: manifestStylePackageName,
+      semantics: dxStyleObjectCallSemantics,
+      tagName: 'style',
+    });
+    createFixtureProcessorPackage(root, {
+      packageName: cssPackageName,
+      processorPath: processorFile,
+      semantics: cssTemplateSemantics,
+      tagName: 'css',
+    });
+
+    const source = (stylePackageName: string) => dedent`
+      import { style } from '${stylePackageName}';
+      import { css } from '${cssPackageName}';
+
+      const dynamicStyle = { color: Date.now() > 0 ? 'red' : 'blue' };
+      const localStyle = style(dynamicStyle);
+
+      export const className = css\`
+        .${'${localStyle}'} {
+          color: blue;
+        }
+      \`;
+    `;
+    writeFileSync(directEntryFile, source(directStylePackageName));
+    writeFileSync(manifestEntryFile, source(manifestStylePackageName));
+
+    try {
+      const directResult = await runTransformWithPackageLookup(
+        root,
+        directEntryFile,
+        new TransformCacheCollection(),
+        directPerf.eventEmitter,
+        {
+          classNameSlug: '[title]-[index]',
+        }
+      );
+      const manifestResult = await runTransformWithPackageLookup(
+        root,
+        manifestEntryFile,
+        new TransformCacheCollection(),
+        manifestPerf.eventEmitter,
+        {
+          classNameSlug: '[title]-[index]',
+        }
+      );
+      const normalizeCode = (code: string, stylePackageName: string) =>
+        code.replaceAll(stylePackageName, '<style-package>');
+
+      expect(manifestResult.cssText).toBe(directResult.cssText);
+      expect(
+        normalizeCode(manifestResult.code, manifestStylePackageName)
+      ).toEqual(normalizeCode(directResult.code, directStylePackageName));
       expect(directPerf.counts.get('transform:evalFile') ?? 0).toBeGreaterThan(
         0
       );

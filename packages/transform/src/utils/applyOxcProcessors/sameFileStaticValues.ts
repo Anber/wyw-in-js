@@ -4,11 +4,13 @@ import type { BaseProcessor } from '@wyw-in-js/processor-utils';
 import type { ExpressionValue } from '@wyw-in-js/shared';
 import type { Node } from 'oxc-parser';
 
+import { resolveDeclarativeProcessorStaticValue } from '../../processors/declarativeSemantics';
 import type { OxcStaticValueCandidate } from '../collectOxcTemplateDependencies';
 import { isOxcNode } from '../oxc/ast';
 import {
   processorExpressionToStaticValue,
   resolveProcessorStaticRuntimeValue,
+  processorStaticValueToRuntimeValue,
   type UnknownProcessorStaticValue,
   unknownProcessorStaticValue,
 } from '../processorStaticSemantics';
@@ -151,7 +153,8 @@ export const getSameFileProcessorObjectProperty = (
 
 export const createSameFileProcessorStaticValueResolver = (
   processorsByLocal: Map<string, BaseProcessor>,
-  expressionValues: Omit<ExpressionValue, 'buildCodeFrameError'>[]
+  expressionValues: Omit<ExpressionValue, 'buildCodeFrameError'>[],
+  staticValues: { name: string; value: unknown }[] = []
 ): {
   resolveLocal: (local: string) => unknown | UnknownProcessorStaticValue;
   resolveProcessor: (
@@ -159,16 +162,67 @@ export const createSameFileProcessorStaticValueResolver = (
   ) => unknown | UnknownProcessorStaticValue;
 } => {
   const expressionSourceByName = new Map<string, string>();
+  const staticValueByName = new Map<string, unknown>();
   expressionValues.forEach((value) => {
     if (value.ex.type === 'Identifier') {
       expressionSourceByName.set(value.ex.name, value.source);
     }
   });
+  staticValues.forEach((value) => {
+    staticValueByName.set(value.name, value.value);
+  });
 
   const memo = new Map<string, unknown | UnknownProcessorStaticValue>();
   const resolving = new Set<string>();
+  let resolveLocal: (
+    local: string
+  ) => unknown | UnknownProcessorStaticValue = () =>
+    unknownProcessorStaticValue;
 
-  function resolveLocal(local: string): unknown | UnknownProcessorStaticValue {
+  function resolveExpressionValue(
+    expression: Omit<ExpressionValue, 'buildCodeFrameError'>
+  ): unknown | UnknownProcessorStaticValue {
+    if ('value' in expression) {
+      return expression.value;
+    }
+
+    if (expression.ex.type === 'Identifier') {
+      const staticValue = staticValueByName.get(expression.ex.name);
+      if (staticValueByName.has(expression.ex.name)) {
+        return staticValue;
+      }
+
+      const source = expressionSourceByName.get(expression.ex.name);
+      return source ? resolveLocal(source) : unknownProcessorStaticValue;
+    }
+
+    return unknownProcessorStaticValue;
+  }
+
+  function resolveDeclarativeProcessorRuntimeValue(
+    processor: BaseProcessor,
+    resolveInput: (
+      expression: Omit<ExpressionValue, 'buildCodeFrameError'>
+    ) => unknown | UnknownProcessorStaticValue
+  ): unknown | null {
+    const staticValue = resolveDeclarativeProcessorStaticValue(
+      processor,
+      (expression) => {
+        const value = resolveInput(expression);
+        return value === unknownProcessorStaticValue
+          ? { resolved: false }
+          : { resolved: true, value };
+      }
+    );
+    if (!staticValue) {
+      return null;
+    }
+
+    const runtimeValue = processorStaticValueToRuntimeValue(staticValue);
+    return runtimeValue === unknownProcessorStaticValue ? null : runtimeValue;
+  }
+
+  resolveLocal = (local: string): unknown | UnknownProcessorStaticValue => {
     if (memo.has(local)) {
       return memo.get(local)!;
     }
@@ -183,14 +237,18 @@ export const createSameFileProcessorStaticValueResolver = (
     const value =
       contractValue !== unknownProcessorStaticValue
         ? contractValue
-        : processorExpressionToStaticValue(processor.value, (helperName) => {
+        : resolveDeclarativeProcessorRuntimeValue(
+            processor,
+            resolveExpressionValue
+          ) ??
+          processorExpressionToStaticValue(processor.value, (helperName) => {
             const source = expressionSourceByName.get(helperName);
             return source ? resolveLocal(source) : unknownProcessorStaticValue;
           });
     resolving.delete(local);
     memo.set(local, value);
     return value;
-  }
+  };
 
   function resolveProcessor(
     processor: BaseProcessor
@@ -198,6 +256,14 @@ export const createSameFileProcessorStaticValueResolver = (
     const contractValue = resolveProcessorStaticRuntimeValue(processor);
     if (contractValue !== unknownProcessorStaticValue) {
       return contractValue;
+    }
+
+    const declarativeValue = resolveDeclarativeProcessorRuntimeValue(
+      processor,
+      resolveExpressionValue
+    );
+    if (declarativeValue !== null) {
+      return declarativeValue;
     }
 
     return processorExpressionToStaticValue(processor.value, (helperName) => {
@@ -211,11 +277,13 @@ export const createSameFileProcessorStaticValueResolver = (
 
 export const collectSameFileProcessorStaticValuesByLocal = (
   processorsByLocal: Map<string, BaseProcessor>,
-  expressionValues: Omit<ExpressionValue, 'buildCodeFrameError'>[]
+  expressionValues: Omit<ExpressionValue, 'buildCodeFrameError'>[],
+  staticValues: { name: string; value: unknown }[] = []
 ): Map<string, unknown> => {
   const { resolveLocal } = createSameFileProcessorStaticValueResolver(
     processorsByLocal,
-    expressionValues
+    expressionValues,
+    staticValues
   );
 
   const result = new Map<string, unknown>();
@@ -232,11 +300,13 @@ export const collectSameFileProcessorStaticValuesByLocal = (
 export const collectSameFileProcessorObjectStaticValuesByLocal = (
   processorObjectsByLocal: Map<string, SameFileProcessorObject>,
   processorsByLocal: Map<string, BaseProcessor>,
-  expressionValues: Omit<ExpressionValue, 'buildCodeFrameError'>[]
+  expressionValues: Omit<ExpressionValue, 'buildCodeFrameError'>[],
+  staticValues: { name: string; value: unknown }[] = []
 ): Map<string, unknown> => {
   const { resolveProcessor } = createSameFileProcessorStaticValueResolver(
     processorsByLocal,
-    expressionValues
+    expressionValues,
+    staticValues
   );
 
   const result = new Map<string, unknown>();
