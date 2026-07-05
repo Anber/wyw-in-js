@@ -21,6 +21,9 @@ export type OxcPreevalResult = {
   baseCode: string;
   code: string;
   dependencyNames: string[];
+  finalizeEvaltimeReplacements?: (
+    staticValueCache?: Map<string, unknown>
+  ) => void;
   metadata: WYWTransformMetadata | null;
   processorClassNames: Record<string, string>;
   staticDependencies: string[];

@@ -3,6 +3,7 @@ import type { ExpressionValue, StrictOptions } from '@wyw-in-js/shared';
 
 import { collectOxcProcessorImportsFromProgram } from '../collectOxcExportsAndImports';
 import { collectOxcExpressionDependencies } from '../collectOxcTemplateDependencies';
+import type { OxcStaticValue } from '../collectOxcTemplateDependencies';
 import { EventEmitter } from '../EventEmitter';
 import type { AddedImport } from '../oxcAstService';
 import { isOxcNode } from '../oxc/ast';
@@ -40,6 +41,7 @@ import { removeUnusedAfterReplacement } from './cleanupRemovals';
 import { insertAddedImports, parseOxc } from './shared';
 import type {
   ApplyOxcProcessorsResult,
+  CreatedProcessor,
   DefinedProcessor,
   Replacement,
   SameFileProcessorObject,
@@ -63,7 +65,8 @@ export const applyOxcProcessors = (
     preserveSideEffectImportLocals?: Set<string>;
   },
   callback: (processor: BaseProcessor) => void,
-  cleanupUnused = false
+  cleanupUnused = false,
+  deferProcessorCallbacks = false
 ): ApplyOxcProcessorsResult => {
   const filename = fileContext.filename ?? 'unknown.js';
   const eventEmitter = options.eventEmitter ?? EventEmitter.dummy;
@@ -199,6 +202,7 @@ export const applyOxcProcessors = (
   );
   const addedImports: AddedImport[] = [];
   const replacements: Replacement[] = [];
+  const createdProcessors: CreatedProcessor[] = [];
   const processors: BaseProcessor[] = [];
   const processorClassNamesByLocal = new Map<string, string>();
   const sameFileProcessorsByLocal = new Map<string, BaseProcessor>();
@@ -293,26 +297,57 @@ export const applyOxcProcessors = (
       }
 
       processors.push(processor);
-      callback(processor);
-      addedImports.push(...astService.getAddedImports());
+      createdProcessors.push(created);
+      if (!deferProcessorCallbacks) {
+        callback(processor);
+        addedImports.push(...astService.getAddedImports());
+      }
     });
   });
-  const sameFileProcessorStaticValuesByLocal =
-    collectSameFileProcessorStaticValuesByLocal(
+  const collectAvailableStaticValues = (
+    staticValueCache?: Map<string, unknown>
+  ): OxcStaticValue[] => {
+    const values = [...extracted.staticValues];
+    staticValueCache?.forEach((value, name) => {
+      values.push({ name, value });
+    });
+
+    return values;
+  };
+  const collectCurrentSameFileProcessorStaticValues = (
+    staticValueCache?: Map<string, unknown>
+  ): {
+    byLocal: Map<string, unknown>;
+    values: OxcStaticValue[];
+  } => {
+    const availableStaticValues =
+      collectAvailableStaticValues(staticValueCache);
+    const byLocal = collectSameFileProcessorStaticValuesByLocal(
       sameFileProcessorsByLocal,
       extracted.expressionValues,
-      extracted.staticValues
+      availableStaticValues
     );
-  const sameFileProcessorObjectStaticValuesByLocal =
-    collectSameFileProcessorObjectStaticValuesByLocal(
-      sameFileProcessorObjectsByLocal,
-      sameFileProcessorsByLocal,
-      extracted.expressionValues,
-      extracted.staticValues
-    );
-  sameFileProcessorObjectStaticValuesByLocal.forEach((value, local) => {
-    sameFileProcessorStaticValuesByLocal.set(local, value);
-  });
+    const objectStaticValuesByLocal =
+      collectSameFileProcessorObjectStaticValuesByLocal(
+        sameFileProcessorObjectsByLocal,
+        sameFileProcessorsByLocal,
+        extracted.expressionValues,
+        availableStaticValues
+      );
+    objectStaticValuesByLocal.forEach((value, local) => {
+      byLocal.set(local, value);
+    });
+
+    return {
+      byLocal,
+      values: collectSameFileProcessorStaticValues(
+        extracted.expressionValues,
+        byLocal
+      ),
+    };
+  };
+  const currentSameFileProcessorStaticValues =
+    collectCurrentSameFileProcessorStaticValues();
 
   const replacedCode = applyOxcReplacements(workingCode, replacements);
   const metadataExtendsHelperNames =
@@ -322,18 +357,17 @@ export const applyOxcProcessors = (
       candidate.imports.length > 0 ||
       !metadataExtendsHelperNames.has(candidate.name)
   );
-  const sameFileProcessorStaticValues = collectSameFileProcessorStaticValues(
-    extracted.expressionValues,
-    sameFileProcessorStaticValuesByLocal
-  );
-  const codeWithAddedImports = insertAddedImports(
-    replacedCode,
-    program,
-    addedImports
-  );
+  let callbacksApplied = !deferProcessorCallbacks;
 
-  return {
-    code: cleanupUnused
+  const buildCode = (): string => {
+    const nextReplacedCode = applyOxcReplacements(workingCode, replacements);
+    const codeWithAddedImports = insertAddedImports(
+      nextReplacedCode,
+      program,
+      addedImports
+    );
+
+    return cleanupUnused
       ? eventEmitter.perf('transform:preeval:processTemplate:cleanup', () =>
           removeUnusedAfterReplacement(
             codeWithAddedImports,
@@ -346,13 +380,59 @@ export const applyOxcProcessors = (
               new Set()
           )
         )
-      : codeWithAddedImports,
+      : codeWithAddedImports;
+  };
+
+  const result: ApplyOxcProcessorsResult = {
+    code: buildCode(),
     processorClassNamesByLocal,
     processors,
     staticValueCandidates: addCandidateInlineConstants(
       staticValueCandidates,
-      sameFileProcessorStaticValuesByLocal
+      currentSameFileProcessorStaticValues.byLocal
     ),
-    staticValues: [...extracted.staticValues, ...sameFileProcessorStaticValues],
+    staticValues: [
+      ...extracted.staticValues,
+      ...currentSameFileProcessorStaticValues.values,
+    ],
   };
+  const applyProcessorCallbacks = (
+    staticValueCache?: Map<string, unknown>
+  ): void => {
+    if (callbacksApplied) {
+      return;
+    }
+
+    const staticValues =
+      collectCurrentSameFileProcessorStaticValues(staticValueCache);
+    staticValues.byLocal.forEach((value, name) => {
+      staticValueCache?.set(name, value);
+    });
+    staticValues.values.forEach(({ name, value }) => {
+      staticValueCache?.set(name, value);
+    });
+    result.staticValueCandidates = addCandidateInlineConstants(
+      staticValueCandidates,
+      staticValues.byLocal
+    );
+    result.staticValues = [...extracted.staticValues, ...staticValues.values];
+    createdProcessors.forEach(({ astService, processor }) => {
+      callback(processor);
+      addedImports.push(...astService.getAddedImports());
+    });
+    callbacksApplied = true;
+  };
+
+  if (deferProcessorCallbacks) {
+    result.finalizeProcessorCallbacks = (
+      staticValueCache?: Map<string, unknown>
+    ) => {
+      applyProcessorCallbacks(staticValueCache);
+      result.code = buildCode();
+
+      return result;
+    };
+  }
+
+  return result;
 };
