@@ -36,6 +36,9 @@ export interface IPreevalResult {
   code: string;
   dependencyNames?: string[];
   evalCode?: string;
+  finalizeEvaltimeReplacements?: (
+    staticValueCache?: Map<string, unknown>
+  ) => void;
   metadata: WYWTransformMetadata | null;
   processorClassNames?: Record<string, string>;
   staticImportLocals?: string[];

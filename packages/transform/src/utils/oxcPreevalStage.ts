@@ -30,12 +30,9 @@ export const runOxcPreevalStage = (
     dependencyNames,
     options
   );
-  const baseCode = prepareOxcPreevalCode(
-    processed.code,
-    filename,
-    options,
-    eventEmitter
-  );
+  const prepareBaseCode = () =>
+    prepareOxcPreevalCode(processed.code, filename, options, eventEmitter);
+  const baseCode = prepareBaseCode();
 
   if (processed.processors.length === 0) {
     return {
@@ -50,7 +47,7 @@ export const runOxcPreevalStage = (
     };
   }
 
-  return {
+  const result: OxcPreevalResult = {
     baseCode,
     code: appendOxcWywPreval(
       baseCode,
@@ -71,4 +68,28 @@ export const runOxcPreevalStage = (
     staticValueCache: staticOverlay.staticValueCache,
     staticValueCandidates: staticOverlay.staticValueCandidates,
   };
+
+  if (processed.finalizeProcessorCallbacks) {
+    let evaltimeReplacementsFinalized = false;
+    result.finalizeEvaltimeReplacements = (
+      staticValueCache?: Map<string, unknown>
+    ) => {
+      if (evaltimeReplacementsFinalized) {
+        return;
+      }
+
+      processed.finalizeProcessorCallbacks?.(staticValueCache);
+      result.baseCode = prepareBaseCode();
+      result.code = appendOxcWywPreval(
+        result.baseCode,
+        filename,
+        result.dependencyNames
+      );
+      result.staticValueCache = staticValueCache ?? result.staticValueCache;
+      result.staticValueCandidates = processed.staticValueCandidates;
+      evaltimeReplacementsFinalized = true;
+    };
+  }
+
+  return result;
 };

@@ -3,6 +3,7 @@
 import type { Program } from 'oxc-parser';
 
 import {
+  evaluateOxcStaticExpression,
   evaluateOxcStaticExpressionAt,
   isOxcStaticSerializableValue,
 } from '../../../utils/collectOxcTemplateDependencies';
@@ -35,6 +36,104 @@ import {
 } from './processorStaticModel';
 import { bindStaticResolvedValue } from './staticExpression';
 import type { StaticExportResolverContext, StaticExportResult } from './types';
+
+type StaticMetadataPreevalResult = NonNullable<
+  ReturnType<typeof getStaticMetadataPreevalResult>
+>;
+
+type StaticCandidateResolution = {
+  dependencies: Set<string>;
+  sideEffectDependencies: Set<string>;
+};
+
+const isProcessorArtifactValue = (
+  value: unknown,
+  processors: StaticProcessorInstance[],
+  processorClassNames: ReadonlySet<string>
+): boolean => {
+  const isStaticMeta = isStaticWYWMetaValue(value);
+  const isStaticMetaTree = !isStaticMeta && isStaticWYWMetaTreeValue(value);
+  const isSelectorOnly =
+    !isStaticMeta &&
+    !isStaticMetaTree &&
+    isSelectorOnlyProcessorValue(value, processors, new Map());
+  const isSideEffectClassValue =
+    !isStaticMeta &&
+    !isStaticMetaTree &&
+    !isSelectorOnly &&
+    (isProcessorClassValue(value, processors, new Map()) ||
+      isKnownProcessorClassValue(value, processorClassNames));
+
+  return (
+    isStaticMeta || isStaticMetaTree || isSelectorOnly || isSideEffectClassValue
+  );
+};
+
+function* resolvePreevalStaticValueCandidates(
+  action: ITransformAction,
+  filename: string,
+  preevalResult: StaticMetadataPreevalResult,
+  stack: Set<string>,
+  memo: Map<string, StaticExportResult | null>,
+  resolvers: StaticExportResolverContext
+): SyncScenarioFor<StaticCandidateResolution> {
+  const dependencies = new Set<string>();
+  const sideEffectDependencies = new Set<string>();
+  const staticValueCache =
+    preevalResult.staticValueCache ?? new Map<string, unknown>();
+
+  for (const candidate of preevalResult.staticValueCandidates ?? []) {
+    if (staticValueCache.has(candidate.name)) {
+      continue;
+    }
+
+    const env = new Map<string, unknown>();
+    if (candidate.inlineConstants) {
+      for (const [name, value] of Object.entries(candidate.inlineConstants)) {
+        env.set(name, value);
+      }
+    }
+
+    let resolvedAll = true;
+    for (const binding of candidate.imports) {
+      const resolved = yield* resolvers.resolveImportValue(
+        action,
+        filename,
+        binding,
+        stack,
+        memo
+      );
+      if (!resolved) {
+        resolvedAll = false;
+        break;
+      }
+
+      env.set(binding.local, resolved.value);
+      resolved.dependencies.forEach((dependency) =>
+        dependencies.add(dependency)
+      );
+      resolved.sideEffectDependencies?.forEach((dependency) =>
+        sideEffectDependencies.add(dependency)
+      );
+    }
+
+    if (!resolvedAll) {
+      continue;
+    }
+
+    const value = evaluateOxcStaticExpression(
+      candidate.source,
+      filename,
+      env,
+      getStaticBindings(action)
+    );
+    if (isOxcStaticSerializableValue(value)) {
+      staticValueCache.set(candidate.name, value);
+    }
+  }
+
+  return { dependencies, sideEffectDependencies };
+}
 
 export function* resolveProcessorStaticExport(
   action: ITransformAction,
@@ -89,6 +188,19 @@ export function* resolveProcessorStaticExport(
     return null;
   }
 
+  const sourceTarget = findExportTarget(program, exportedName);
+  const exportedLocalName =
+    sourceTarget?.kind === 'expression' ? sourceTarget.localName : undefined;
+  const staticCandidateResolution = yield* resolvePreevalStaticValueCandidates(
+    action,
+    filename,
+    preevalResult,
+    stack,
+    memo,
+    resolvers
+  );
+  preevalResult.finalizeEvaltimeReplacements?.(preevalResult.staticValueCache);
+
   if (!preevalResult.metadata) {
     debugStaticResolve(action, {
       exported: exportedName,
@@ -98,6 +210,37 @@ export function* resolveProcessorStaticExport(
       status: 'rejected',
     });
     return null;
+  }
+
+  const processors = preevalResult.metadata
+    .processors as unknown as StaticProcessorInstance[];
+  const processorClassNames = new Set(
+    processors.map((processor) => processorClassNameRuntimeValue(processor))
+  );
+  if (
+    exportedLocalName &&
+    preevalResult.staticValueCache?.has(exportedLocalName)
+  ) {
+    const cachedValue = preevalResult.staticValueCache.get(exportedLocalName);
+    if (
+      !isProcessorArtifactValue(cachedValue, processors, processorClassNames)
+    ) {
+      debugStaticResolve(action, {
+        exported: exportedName,
+        filename,
+        phase: 'processor-metadata',
+        reason: 'static-value-cache',
+        status: 'resolved',
+      });
+
+      return {
+        dependencies: [filename, ...staticCandidateResolution.dependencies],
+        sideEffectDependencies: [
+          ...staticCandidateResolution.sideEffectDependencies,
+        ],
+        value: cachedValue,
+      };
+    }
   }
 
   const preevalCode = preevalResult.baseCode;
@@ -264,11 +407,6 @@ export function* resolveProcessorStaticExport(
   const isStaticMeta = isStaticWYWMetaValue(resolvedValue);
   const isStaticMetaTree =
     !isStaticMeta && isStaticWYWMetaTreeValue(resolvedValue);
-  const processors = preevalResult.metadata
-    .processors as unknown as StaticProcessorInstance[];
-  const processorClassNames = new Set(
-    processors.map((processor) => processorClassNameRuntimeValue(processor))
-  );
   const isSelectorOnly =
     !isStaticMeta &&
     !isStaticMetaTree &&

@@ -180,6 +180,7 @@ describe('runOxcPreevalStage', () => {
       fileContext,
       options
     );
+    result.finalizeEvaltimeReplacements?.(result.staticValueCache);
 
     expect(result.metadata?.processors).toHaveLength(1);
     expect(result.code).toContain('__wyw_import_meta_env.DEV');

@@ -16,17 +16,22 @@ export const collectPreevalProcessors = (
   options: OxcPreevalOptions,
   eventEmitter: EventEmitter
 ): PreevalProcessorCollection => {
-  const dependencyNames: string[] = [];
   const processed = eventEmitter.perf('transform:preeval:processTemplate', () =>
-    applyOxcProcessors(code, fileContext, options, (processor) => {
-      processor.dependencies.forEach((dependency) => {
-        if (dependency.ex.type === 'Identifier') {
-          dependencyNames.push(dependency.ex.name);
-        }
-      });
-
-      processor.doEvaltimeReplacement();
-    })
+    applyOxcProcessors(
+      code,
+      fileContext,
+      options,
+      (processor) => {
+        processor.doEvaltimeReplacement();
+      },
+      false,
+      true
+    )
+  );
+  const dependencyNames = processed.processors.flatMap((processor) =>
+    processor.dependencies.flatMap((dependency) =>
+      dependency.ex.type === 'Identifier' ? [dependency.ex.name] : []
+    )
   );
 
   return {

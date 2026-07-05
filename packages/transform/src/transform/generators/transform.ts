@@ -142,7 +142,7 @@ const ensureOxcPreevalResult = (
       }
     );
 
-    return {
+    const preevalResult: IPreevalResult = {
       ast: originalAst,
       baseCode: result.baseCode,
       code: result.code,
@@ -157,6 +157,32 @@ const ensureOxcPreevalResult = (
       staticValueCache: result.staticValueCache,
       staticValueCandidates: result.staticValueCandidates,
     };
+
+    if (result.finalizeEvaltimeReplacements) {
+      let evaltimeReplacementsFinalized = false;
+      preevalResult.finalizeEvaltimeReplacements = (
+        staticValueCache?: Map<string, unknown>
+      ) => {
+        if (evaltimeReplacementsFinalized) {
+          return;
+        }
+
+        result.dependencyNames =
+          preevalResult.dependencyNames ?? result.dependencyNames;
+        result.finalizeEvaltimeReplacements?.(
+          staticValueCache ?? preevalResult.staticValueCache
+        );
+        preevalResult.baseCode = result.baseCode;
+        preevalResult.code = result.code;
+        preevalResult.evalCode = result.code;
+        preevalResult.metadata = result.metadata;
+        preevalResult.staticValueCache = result.staticValueCache;
+        preevalResult.staticValueCandidates = result.staticValueCandidates;
+        evaltimeReplacementsFinalized = true;
+      };
+    }
+
+    return preevalResult;
   });
 
   item.setPreevalResult(preevalStageResult);
@@ -184,6 +210,9 @@ const prepareOxcCodeImpl = (
     services,
     item,
     originalAst
+  );
+  preevalStageResult.finalizeEvaltimeReplacements?.(
+    preevalStageResult.staticValueCache
   );
 
   const transformMetadata = preevalStageResult.metadata;

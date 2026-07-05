@@ -443,6 +443,10 @@ const manifestOnlyTokenContractProcessorSource = dedent`
   class ManifestOnlyTokenContractProcessor extends BaseProcessor {
     constructor(params, ...args) {
       super([params[0]], ...args);
+      this.expressions = params.find((param) => param[0] === 'call')?.slice(1) ?? [];
+      this.dependencies.push(
+        ...this.expressions.filter((expression) => expression.ex.type === 'Identifier')
+      );
     }
 
     get asSelector() {
@@ -468,6 +472,140 @@ const manifestOnlyTokenContractProcessorSource = dedent`
   }
 
   module.exports = { default: ManifestOnlyTokenContractProcessor };
+`;
+
+const dxLikeTokenContractProcessorSource = dedent`
+  const { createRequire } = require('module');
+  const workspaceRequire = createRequire(${JSON.stringify(processorFile)});
+  const { BaseProcessor } = workspaceRequire('@wyw-in-js/processor-utils');
+
+  const getCallExpressions = (params) => {
+    const callParam = params.find((param) => param[0] === 'call');
+    return callParam ? callParam.slice(1) : [];
+  };
+
+  const valueFromCache = (expression, values) => {
+    if (expression.kind === 2) {
+      return expression.value;
+    }
+    return values.get(expression.ex.name);
+  };
+
+  const isRecord = (value) =>
+    value !== null && typeof value === 'object' && !Array.isArray(value);
+
+  const buildContractLeafName = (prefix, path, explicitName) => {
+    const leafName =
+      explicitName !== null && explicitName.length > 0
+        ? explicitName
+        : path.join('-');
+    return leafName.startsWith('--') ? leafName : '--' + prefix + '-' + leafName;
+  };
+
+  const buildTokenContractObject = (shape, prefix, path) => {
+    const result = {};
+    Object.keys(shape).forEach((key) => {
+      const value = shape[key];
+      const nextPath = [...path, key];
+      result[key] = isRecord(value)
+        ? buildTokenContractObject(value, prefix, nextPath)
+        : 'var(' + buildContractLeafName(
+            prefix,
+            nextPath,
+            typeof value === 'string' ? value : null
+          ) + ')';
+    });
+    return result;
+  };
+
+  const buildTokenContract = (shape, options) => {
+    const prefix =
+      options && typeof options.prefix === 'string' ? options.prefix.trim() : '';
+    if (prefix.length === 0) {
+      throw new Error('dx-like createTokenContract() requires a non-empty prefix.');
+    }
+    if (!isRecord(shape)) {
+      throw new Error(
+        'dx-like createTokenContract() requires a statically analyzable shape object.'
+      );
+    }
+    return buildTokenContractObject(shape, prefix, []);
+  };
+
+  const createValueNode = (astService, value) => {
+    if (value === null) {
+      return astService.nullLiteral();
+    }
+    if (typeof value === 'string') {
+      return astService.stringLiteral(value);
+    }
+    if (typeof value === 'number') {
+      return astService.numericLiteral(value);
+    }
+    if (typeof value === 'boolean') {
+      return astService.booleanLiteral(value);
+    }
+    if (Array.isArray(value)) {
+      return astService.arrayExpression(
+        value.map((item) => createValueNode(astService, item))
+      );
+    }
+    if (isRecord(value)) {
+      return astService.objectExpression(
+        Object.keys(value).map((key) =>
+          astService.objectProperty(
+            astService.stringLiteral(key),
+            createValueNode(astService, value[key])
+          )
+        )
+      );
+    }
+    throw new Error('unsupported token contract value');
+  };
+
+  class DxLikeTokenContractProcessor extends BaseProcessor {
+    constructor(params, ...args) {
+      super([params[0]], ...args);
+      this.expressions = getCallExpressions(params);
+      this.dependencies.push(
+        ...this.expressions.filter((expression) => expression.ex.type === 'Identifier')
+      );
+      this.contract = null;
+    }
+
+    get asSelector() {
+      return \`.\${this.className}\`;
+    }
+
+    get value() {
+      return this.astService.callExpression(
+        this.astService.identifier('__dxLikePreevalCreateTokenContract'),
+        this.expressions.map((expression) => expression.ex)
+      );
+    }
+
+    build(values) {
+      const shape = valueFromCache(this.expressions[0], values);
+      const options =
+        this.expressions.length < 2
+          ? undefined
+          : valueFromCache(this.expressions[1], values);
+      this.contract = buildTokenContract(shape, options);
+    }
+
+    doEvaltimeReplacement() {
+      this.replacer(() => this.value, false);
+    }
+
+    doRuntimeReplacement() {
+      if (this.contract === null) {
+        throw new Error('dx-like createTokenContract() contract is not available.');
+      }
+      this.replacer(() => createValueNode(this.astService, this.contract), false);
+    }
+  }
+
+  module.exports = { default: DxLikeTokenContractProcessor };
 `;
 
 const manifestOnlyClassNameCallProcessorSource = dedent`
@@ -503,6 +641,50 @@ const manifestOnlyClassNameCallProcessorSource = dedent`
   }
 
   module.exports = { default: ManifestOnlyClassNameCallProcessor };
+`;
+
+const evaltimeStaticObjectProcessorSource = dedent`
+  const { createRequire } = require('module');
+  const workspaceRequire = createRequire(${JSON.stringify(processorFile)});
+  const { BaseProcessor } = workspaceRequire('@wyw-in-js/processor-utils');
+
+  const getCallExpressions = (params) => {
+    const callParam = params.find((param) => param[0] === 'call');
+    return callParam ? callParam.slice(1) : [];
+  };
+
+  class EvaltimeStaticObjectProcessor extends BaseProcessor {
+    constructor(params, ...args) {
+      super([params[0]], ...args);
+      this.expressions = getCallExpressions(params);
+      this.dependencies.push(
+        ...this.expressions.filter((expression) => expression.ex.type === 'Identifier')
+      );
+    }
+
+    get value() {
+      return this.astService.stringLiteral('evaltime-static-object');
+    }
+
+    build() {}
+
+    doEvaltimeReplacement() {
+      const [tokens] = this.expressions;
+      if (tokens?.kind === 2 && typeof tokens.value === 'object' && tokens.value !== null) {
+        throw new Error(
+          'cross-file object values must not be coerced to ValueType.CONST'
+        );
+      }
+
+      this.replacer(this.astService.stringLiteral('evaltime-object-input-ok'), false);
+    }
+
+    doRuntimeReplacement() {
+      this.replacer(this.astService.stringLiteral('evaltime-static-object'), false);
+    }
+  }
+
+  module.exports = { default: EvaltimeStaticObjectProcessor };
 `;
 
 let processorPackageId = 0;
@@ -1861,6 +2043,220 @@ describe('transform static import value inlining', () => {
       expect(result.cssText).toContain('var(--dx-space)');
       expect(result.cssText).toContain('var(--localVar-2)');
       expect(perf.counts.get('transform:evalFile') ?? 0).toBe(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('uses dx-styles token contract manifest semantics with cross-file static shape before eval', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
+    const entryFile = join(root, 'entry.js');
+    const tokensFile = join(root, 'tokens.js');
+    const tokenPackageName = nextProcessorPackageName(
+      'manifest-token-contract-call'
+    );
+    const cssPackageName = nextProcessorPackageName('manifest-css-template');
+    const cache = new TransformCacheCollection();
+    const perf = createPerfEventRecorder();
+
+    writeProcessorPackage(root, {
+      implementationSource: manifestOnlyTokenContractProcessorSource,
+      packageName: tokenPackageName,
+      semantics: dxTokenContractCallSemantics,
+      tagName: 'createTokenContract',
+    });
+    createFixtureProcessorPackage(root, {
+      packageName: cssPackageName,
+      processorPath: processorFile,
+      semantics: cssTemplateSemantics,
+      tagName: 'css',
+    });
+    writeFileSync(
+      tokensFile,
+      dedent`
+        export const tokenShape = {
+          color: null,
+        };
+      `
+    );
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { createTokenContract } from '${tokenPackageName}';
+        import { css } from '${cssPackageName}';
+        import { tokenShape } from './tokens.js';
+
+        const tokens = createTokenContract(tokenShape, { prefix: 'dx' });
+
+        export const className = css\`
+          color: ${'${tokens.color}'};
+        \`;
+      `
+    );
+
+    try {
+      const result = await runTransformWithPackageLookup(
+        root,
+        entryFile,
+        cache,
+        perf.eventEmitter,
+        {
+          classNameSlug: '[title]-[index]',
+          eval: {
+            strategy: 'static',
+          },
+        }
+      );
+
+      expect(result.cssText).toContain('var(--dx-color)');
+      expect(perf.counts.get('transform:evalFile') ?? 0).toBe(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('resolves a dx-like token contract through another file before consumer processor eval', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
+    const entryFile = join(root, 'entry.js');
+    const contractFile = join(root, 'contract.js');
+    const tokenOptionsFile = join(root, 'token-options.js');
+    const tokenShapeFile = join(root, 'token-shape.js');
+    const tokenPackageName = nextProcessorPackageName(
+      'dx-like-token-contract-call'
+    );
+    const cssPackageName = nextProcessorPackageName('manifest-css-template');
+    const cache = new TransformCacheCollection();
+    const perf = createPerfEventRecorder();
+
+    writeProcessorPackage(root, {
+      implementationSource: dxLikeTokenContractProcessorSource,
+      packageName: tokenPackageName,
+      semantics: dxTokenContractCallSemantics,
+      tagName: 'createTokenContract',
+    });
+    createFixtureProcessorPackage(root, {
+      packageName: cssPackageName,
+      processorPath: processorFile,
+      semantics: cssTemplateSemantics,
+      tagName: 'css',
+    });
+    writeFileSync(
+      tokenShapeFile,
+      dedent`
+        export const colorTokens = {
+          accent: null,
+        };
+
+        export const spacingTokens = {
+          md: 'space-md',
+        };
+
+        export const tokenShape = {
+          color: colorTokens,
+          spacing: spacingTokens,
+        };
+      `
+    );
+    writeFileSync(
+      tokenOptionsFile,
+      dedent`
+        export const tokenPrefix = 'dx';
+
+        export const tokenOptions = {
+          prefix: tokenPrefix,
+        };
+      `
+    );
+    writeFileSync(
+      contractFile,
+      dedent`
+        import { createTokenContract } from '${tokenPackageName}';
+        import { tokenOptions } from './token-options.js';
+        import { tokenShape } from './token-shape.js';
+
+        export const tokens = createTokenContract(tokenShape, tokenOptions);
+      `
+    );
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { css } from '${cssPackageName}';
+        import { tokens } from './contract.js';
+
+        export const className = css\`
+          color: ${'${tokens.color.accent}'};
+          margin: ${'${tokens.spacing.md}'};
+        \`;
+      `
+    );
+
+    try {
+      const result = await runTransformWithPackageLookup(
+        root,
+        entryFile,
+        cache,
+        perf.eventEmitter,
+        {
+          classNameSlug: '[title]-[index]',
+          eval: {
+            strategy: 'static',
+          },
+        }
+      );
+
+      expect(result.cssText).toContain('var(--dx-color-accent)');
+      expect(result.cssText).toContain('var(--dx-space-md)');
+      expect(result.code).not.toContain('__dxLikePreevalCreateTokenContract');
+      expect(perf.counts.get('transform:evalFile') ?? 0).toBe(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('does not coerce cross-file object processor inputs to const expression values', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
+    const entryFile = join(root, 'entry.js');
+    const tokensFile = join(root, 'tokens.js');
+    const packageName = nextProcessorPackageName('evaltime-static-object');
+    const cache = new TransformCacheCollection();
+
+    writeProcessorPackage(root, {
+      implementationSource: evaltimeStaticObjectProcessorSource,
+      packageName,
+      tagName: 'createTokenContract',
+    });
+    writeFileSync(
+      tokensFile,
+      dedent`
+        export const rawTokens = {
+          palette: {
+            primary: 'tomato',
+          },
+        };
+      `
+    );
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { createTokenContract } from '${packageName}';
+        import { rawTokens } from './tokens.js';
+
+        export const tokens = createTokenContract(rawTokens);
+      `
+    );
+
+    try {
+      const result = await runTransformWithPackageLookup(
+        root,
+        entryFile,
+        cache,
+        undefined,
+        {
+          classNameSlug: '[title]-[index]',
+        }
+      );
+
+      expect(result.code).toContain('"evaltime-static-object"');
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

@@ -35,9 +35,16 @@ export function* resolveStaticOxcPreevalValues(
     return false;
   }
 
-  const candidates = preevalResult.staticValueCandidates ?? [];
+  let candidates = preevalResult.staticValueCandidates ?? [];
   const evalDependencyNames = new Set(preevalResult.dependencyNames ?? []);
+  const staticValueCache =
+    preevalResult.staticValueCache ?? new Map<string, unknown>();
+  const finalizeEvaltimeReplacements = (): void => {
+    preevalResult.finalizeEvaltimeReplacements?.(staticValueCache);
+  };
+
   if (candidates.length === 0 && evalDependencyNames.size === 0) {
+    finalizeEvaltimeReplacements();
     return false;
   }
 
@@ -48,6 +55,7 @@ export function* resolveStaticOxcPreevalValues(
         this.entrypoint.name;
   const evalStrategy = getEvalStrategy(this);
   if (evalStrategy === 'execute') {
+    finalizeEvaltimeReplacements();
     return false;
   }
   const staticOnly = evalStrategy === 'static';
@@ -75,8 +83,6 @@ export function* resolveStaticOxcPreevalValues(
     return details;
   };
 
-  const staticValueCache =
-    preevalResult.staticValueCache ?? new Map<string, unknown>();
   const staticDependencies = new Set(preevalResult.staticDependencies ?? []);
   const staticImportLocals = new Set<string>(
     preevalResult.staticImportLocals ?? []
@@ -86,9 +92,20 @@ export function* resolveStaticOxcPreevalValues(
     preevalResult.staticNullWYWMetaExtendsHelpers ?? []
   );
   const memo = new Map<string, StaticExportResult | null>();
-  const opaqueRuntimeBaseHelpers = collectWYWMetaExtendsHelperNames(
-    parseProgram(preevalResult.baseCode ?? preevalResult.code, filename)
-  );
+  let opaqueRuntimeBaseHelpers = new Set<string>();
+  let resolveSameFileStaticWYWMetaHelpers: ReturnType<
+    typeof createSameFileStaticWYWMetaHelperResolver
+  >;
+  const refreshStaticMetadataHelpers = (): void => {
+    const currentBaseCode = preevalResult.baseCode ?? preevalResult.code;
+    opaqueRuntimeBaseHelpers = collectWYWMetaExtendsHelperNames(
+      parseProgram(currentBaseCode, filename)
+    );
+    resolveSameFileStaticWYWMetaHelpers =
+      createSameFileStaticWYWMetaHelperResolver(currentBaseCode, filename);
+  };
+
+  refreshStaticMetadataHelpers();
   // Names of candidates resolved to runtime callbacks (function values).
   // They keep the file out of evalFile but their helper declarations must
   // not be pruned — the runtime call site relies on them.
@@ -97,24 +114,19 @@ export function* resolveStaticOxcPreevalValues(
   );
   let changed = false;
   let hasKnownStaticCandidate = false;
-  const resolveSameFileStaticWYWMetaHelpers =
-    createSameFileStaticWYWMetaHelperResolver(
-      preevalResult.baseCode ?? preevalResult.code,
-      filename
-    );
   const applySameFileStaticWYWMetaHelpers = (): boolean => {
     let appliedAny = false;
 
     for (;;) {
       let applied = false;
       const values = resolveSameFileStaticWYWMetaHelpers(staticValueCache);
-      values.forEach((value, name) => {
+      for (const [name, value] of values) {
         if (
           staticValueCache.has(name) ||
           (!evalDependencyNames.has(name) &&
             !opaqueRuntimeBaseHelpers.has(name))
         ) {
-          return;
+          continue;
         }
 
         staticValueCache.set(name, value);
@@ -126,7 +138,7 @@ export function* resolveStaticOxcPreevalValues(
           status: 'resolved',
         });
         applied = true;
-      });
+      }
 
       if (!applied) {
         break;
@@ -143,134 +155,157 @@ export function* resolveStaticOxcPreevalValues(
     return appliedAny;
   };
 
-  applySameFileStaticWYWMetaHelpers();
-
-  for (const candidate of candidates) {
+  function* resolveCandidatePass(
+    action: ITransformAction
+  ): SyncScenarioFor<void> {
     applySameFileStaticWYWMetaHelpers();
 
-    const isOpaqueRuntimeBaseHelper = opaqueRuntimeBaseHelpers.has(
-      candidate.name
-    );
-    if (
-      !evalDependencyNames.has(candidate.name) &&
-      !isOpaqueRuntimeBaseHelper &&
-      !staticValueCache.has(candidate.name)
-    ) {
-      rejectionReasons.set(candidate.name, 'not-eval-dependency');
-      debugStaticResolve(this, {
-        candidate: candidate.name,
-        filename,
-        phase: 'candidate',
-        reason: 'not-eval-dependency',
-        status: 'skipped',
-      });
-      continue;
-    }
+    for (const candidate of candidates) {
+      applySameFileStaticWYWMetaHelpers();
 
-    if (staticValueCache.has(candidate.name)) {
-      hasKnownStaticCandidate = true;
-      candidate.imports.forEach((item) =>
-        staticImportLocals.add(item.importLocal ?? item.local)
+      const isOpaqueRuntimeBaseHelper = opaqueRuntimeBaseHelpers.has(
+        candidate.name
       );
       if (
-        isOpaqueRuntimeBaseHelper &&
-        staticValueCache.get(candidate.name) === null
+        !evalDependencyNames.has(candidate.name) &&
+        !isOpaqueRuntimeBaseHelper &&
+        !staticValueCache.has(candidate.name)
       ) {
-        staticNullWYWMetaExtendsHelpers.add(candidate.name);
+        rejectionReasons.set(candidate.name, 'not-eval-dependency');
+        debugStaticResolve(action, {
+          candidate: candidate.name,
+          filename,
+          phase: 'candidate',
+          reason: 'not-eval-dependency',
+          status: 'skipped',
+        });
+        continue;
       }
-      debugStaticResolve(this, {
-        candidate: candidate.name,
-        filename,
-        phase: 'candidate',
-        reason: 'already-static',
-        status: 'skipped',
-      });
-      continue;
-    }
 
-    let resolved: StaticExportResult | null;
-    let resolvedOpaqueRuntimeBase = false;
-    if (isOpaqueRuntimeBaseHelper) {
-      resolved = yield* resolveOpaqueRuntimeCandidateValue(
-        this,
-        candidate,
-        filename
-      );
-      resolvedOpaqueRuntimeBase = !!resolved;
-      if (!resolved) {
+      if (staticValueCache.has(candidate.name)) {
+        hasKnownStaticCandidate = true;
+        candidate.imports.forEach((item) =>
+          staticImportLocals.add(item.importLocal ?? item.local)
+        );
+        if (
+          isOpaqueRuntimeBaseHelper &&
+          staticValueCache.get(candidate.name) === null
+        ) {
+          staticNullWYWMetaExtendsHelpers.add(candidate.name);
+        }
+        debugStaticResolve(action, {
+          candidate: candidate.name,
+          filename,
+          phase: 'candidate',
+          reason: 'already-static',
+          status: 'skipped',
+        });
+        continue;
+      }
+
+      let resolved: StaticExportResult | null;
+      let resolvedOpaqueRuntimeBase = false;
+      if (isOpaqueRuntimeBaseHelper) {
+        resolved = yield* resolveOpaqueRuntimeCandidateValue(
+          action,
+          candidate,
+          filename
+        );
+        resolvedOpaqueRuntimeBase = !!resolved;
+        if (!resolved) {
+          resolved = yield* resolveCandidateValue(
+            action,
+            candidate,
+            filename,
+            memo,
+            rejectionReasons
+          );
+        }
+      } else {
         resolved = yield* resolveCandidateValue(
-          this,
+          action,
           candidate,
           filename,
           memo,
           rejectionReasons
         );
       }
-    } else {
-      resolved = yield* resolveCandidateValue(
-        this,
-        candidate,
-        filename,
-        memo,
-        rejectionReasons
+      if (!resolved) {
+        continue;
+      }
+
+      if (resolvedOpaqueRuntimeBase) {
+        debugStaticResolve(action, {
+          candidate: candidate.name,
+          filename,
+          phase: 'candidate',
+          reason: 'opaque-runtime-component',
+          status: 'resolved',
+        });
+        staticNullWYWMetaExtendsHelpers.add(candidate.name);
+      }
+
+      if (resolved.runtimeOnly) {
+        // Runtime callback — seed a callable placeholder for collect() but
+        // track it separately so the `_exp = () => target` helper survives
+        // pruning. The runtime call site relies on that helper declaration.
+        runtimeOnlyCandidateNames.add(candidate.name);
+        staticValueCache.set(candidate.name, runtimeCallbackPlaceholder);
+      } else {
+        staticValueCache.set(candidate.name, resolved.value);
+      }
+      hasKnownStaticCandidate = true;
+      candidate.imports.forEach((item) =>
+        staticImportLocals.add(item.importLocal ?? item.local)
       );
+      resolved.dependencies.forEach((dependency) =>
+        staticDependencies.add(dependency)
+      );
+      resolved.sideEffectImportLocals?.forEach((local) =>
+        sideEffectImportLocals.add(local)
+      );
+      changed = true;
+      applySameFileStaticWYWMetaHelpers();
     }
-    if (!resolved) {
-      continue;
-    }
-
-    if (resolvedOpaqueRuntimeBase) {
-      debugStaticResolve(this, {
-        candidate: candidate.name,
-        filename,
-        phase: 'candidate',
-        reason: 'opaque-runtime-component',
-        status: 'resolved',
-      });
-      staticNullWYWMetaExtendsHelpers.add(candidate.name);
-    }
-
-    if (resolved.runtimeOnly) {
-      // Runtime callback — seed a callable placeholder for collect() but
-      // track it separately so the `_exp = () => target` helper survives
-      // pruning. The runtime call site relies on that helper declaration.
-      runtimeOnlyCandidateNames.add(candidate.name);
-      staticValueCache.set(candidate.name, runtimeCallbackPlaceholder);
-    } else {
-      staticValueCache.set(candidate.name, resolved.value);
-    }
-    hasKnownStaticCandidate = true;
-    candidate.imports.forEach((item) =>
-      staticImportLocals.add(item.importLocal ?? item.local)
-    );
-    resolved.dependencies.forEach((dependency) =>
-      staticDependencies.add(dependency)
-    );
-    resolved.sideEffectImportLocals?.forEach((local) =>
-      sideEffectImportLocals.add(local)
-    );
-    changed = true;
-    applySameFileStaticWYWMetaHelpers();
   }
 
+  const resolvedDependencyNames = (): string[] =>
+    (preevalResult.dependencyNames ?? []).filter(
+      (name) =>
+        !staticValueCache.has(name) && !runtimeOnlyCandidateNames.has(name)
+    );
+  const syncStaticState = (): void => {
+    preevalResult.dependencyNames = resolvedDependencyNames();
+    preevalResult.staticValueCache = staticValueCache;
+    preevalResult.staticDependencies = [...staticDependencies];
+    preevalResult.staticNullWYWMetaExtendsHelpers = [
+      ...staticNullWYWMetaExtendsHelpers,
+    ];
+    preevalResult.runtimeOnlyStaticValueNames = [...runtimeOnlyCandidateNames];
+  };
+
+  yield* resolveCandidatePass(this);
+  syncStaticState();
+  finalizeEvaltimeReplacements();
+  candidates = preevalResult.staticValueCandidates ?? candidates;
+  refreshStaticMetadataHelpers();
+  yield* resolveCandidatePass(this);
+
+  const dependencyNames = resolvedDependencyNames();
   if (
     !changed &&
     (!hasKnownStaticCandidate || preevalResult.staticValuesApplied)
   ) {
-    if (staticOnly && evalDependencyNames.size > 0) {
+    if (staticOnly && dependencyNames.length > 0) {
       throw getStaticStrategyFailure(
         filename,
-        evalDependencyNames,
-        buildUnresolvedDetails(evalDependencyNames)
+        dependencyNames,
+        buildUnresolvedDetails(dependencyNames)
       );
     }
     return false;
   }
 
-  const dependencyNames = (preevalResult.dependencyNames ?? []).filter(
-    (name) =>
-      !staticValueCache.has(name) && !runtimeOnlyCandidateNames.has(name)
-  );
   if (staticOnly && dependencyNames.length > 0) {
     throw getStaticStrategyFailure(
       filename,
@@ -286,6 +321,7 @@ export function* resolveStaticOxcPreevalValues(
   ];
   preevalResult.runtimeOnlyStaticValueNames = [...runtimeOnlyCandidateNames];
   preevalResult.staticValuesApplied = true;
+
   const originalBaseCode = preevalResult.baseCode ?? preevalResult.code;
   const prunableStaticValueNames = new Set(
     [...staticValueCache.keys()].filter(
