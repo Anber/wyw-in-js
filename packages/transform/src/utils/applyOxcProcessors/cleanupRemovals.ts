@@ -61,6 +61,11 @@ export const collectScopedBindingInfos = (
     kind: ScopedBindingKind,
     declaration: Node
   ): string => {
+    const existingId = scope.bindings.get(name);
+    if (existingId) {
+      return existingId;
+    }
+
     const id = `${kind}:${name}:${declaration.start}:${sequence}`;
     sequence += 1;
 
@@ -85,6 +90,90 @@ export const collectScopedBindingInfos = (
   ): void => {
     collectDeclaredNames(pattern).forEach((name) => {
       addBinding(scope, name, kind, declaration);
+    });
+  };
+
+  const predeclareScopedBindings = (
+    scope: ScopedCleanupScope,
+    node: Node
+  ): void => {
+    if (node.type === 'ImportDeclaration') {
+      const { specifiers } = node as AnyNode;
+      if (Array.isArray(specifiers)) {
+        specifiers.forEach((specifier) => {
+          const { local } = specifier as AnyNode;
+          if (
+            isOxcNode(local) &&
+            local.type === 'Identifier' &&
+            typeof local.name === 'string'
+          ) {
+            addBinding(scope, local.name, 'import', node);
+          }
+        });
+      }
+      return;
+    }
+
+    if (node.type === 'ExportNamedDeclaration' && node.declaration) {
+      predeclareScopedBindings(scope, node.declaration);
+      return;
+    }
+
+    if (node.type === 'ExportDefaultDeclaration') {
+      const { declaration } = node as AnyNode;
+      if (
+        isOxcNode(declaration) &&
+        (declaration.type === 'FunctionDeclaration' ||
+          declaration.type === 'ClassDeclaration') &&
+        declaration.id
+      ) {
+        addBinding(
+          scope,
+          declaration.id.name,
+          declaration.type === 'FunctionDeclaration' ? 'function' : 'variable',
+          declaration
+        );
+      }
+      return;
+    }
+
+    if (node.type === 'VariableDeclaration') {
+      const { declarations } = node as AnyNode;
+      if (!Array.isArray(declarations)) {
+        return;
+      }
+
+      declarations.forEach((declarator) => {
+        const { id } = declarator as AnyNode;
+        if (isOxcNode(id)) {
+          addPatternBindings(scope, id, 'variable', node);
+        }
+      });
+      return;
+    }
+
+    if (node.type === 'FunctionDeclaration' && node.id) {
+      addBinding(scope, node.id.name, 'function', node);
+      return;
+    }
+
+    if (
+      (node.type === 'ClassDeclaration' || node.type === 'TSEnumDeclaration') &&
+      'id' in node
+    ) {
+      const { id } = node as AnyNode;
+      if (isOxcNode(id) && id.type === 'Identifier') {
+        addBinding(scope, id.name, 'variable', node);
+      }
+    }
+  };
+
+  const predeclareScopedStatementBindings = (
+    scope: ScopedCleanupScope,
+    statements: Node[]
+  ): void => {
+    statements.forEach((statement) => {
+      predeclareScopedBindings(scope, statement);
     });
   };
 
@@ -185,6 +274,12 @@ export const collectScopedBindingInfos = (
     parent: Node | null = null,
     ownerBindingId: string | null = null
   ): void => {
+    if (node.type === 'Program') {
+      predeclareScopedStatementBindings(scope, node.body);
+      node.body.forEach((child) => walk(child, scope, node, ownerBindingId));
+      return;
+    }
+
     if (node.type === 'ImportDeclaration') {
       const { specifiers } = node as AnyNode;
       if (Array.isArray(specifiers)) {
@@ -295,6 +390,7 @@ export const collectScopedBindingInfos = (
 
     if (node.type === 'BlockStatement') {
       const blockScope = createScopedCleanupScope(scope);
+      predeclareScopedStatementBindings(blockScope, node.body);
       getOxcNodeChildren(node).forEach((child) =>
         walk(child, blockScope, node, ownerBindingId)
       );

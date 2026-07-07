@@ -46,6 +46,11 @@ const linariaStyledProcessorPath = path.resolve(
   '__fixtures__',
   'test-styled-processor.js'
 );
+const runtimeStyledProcessorPath = path.resolve(
+  __dirname,
+  '__fixtures__',
+  'test-runtime-styled-processor.js'
+);
 
 const fileContext = {
   filename: path.join(__dirname, 'source.js'),
@@ -751,6 +756,78 @@ describe('applyOxcProcessors', () => {
     expect(result.code).toContain(
       'formatOptionLabel = formatOptionLabelDefault'
     );
+  });
+
+  it('keeps forward runtime references to styled selector dependencies', () => {
+    const result = applyOxcProcessors(
+      `
+        import { styled } from 'test-runtime-styled-processor';
+
+        export const View = () => <AdL />;
+
+        const AdL = styled.div\`
+          width: 100%;
+        \`;
+
+        const ContainerAds = styled.div\`
+          ${'${AdL}'} {
+            display: none;
+          }
+        \`;
+      `,
+      {
+        ...fileContext,
+        filename: path.join(__dirname, 'forward-styled-ref.tsx'),
+      },
+      {
+        displayName: false,
+        extensions: ['.js', '.ts', '.tsx'],
+        tagResolver: (source, imported) => {
+          if (
+            source === 'test-runtime-styled-processor' &&
+            imported === 'styled'
+          ) {
+            return runtimeStyledProcessorPath;
+          }
+
+          return null;
+        },
+      },
+      (processor) => processor.doRuntimeReplacement(),
+      true
+    );
+
+    expect(result.code).toContain('export const View = () => <AdL />;');
+    expect(result.code).toContain('const AdL =');
+  });
+
+  it('keeps forward runtime references to extracted interpolation dependencies', () => {
+    const result = applyOxcProcessors(
+      `
+        import { makeStyles } from 'test-package';
+
+        export const View = () => (
+          <div style={{ "--h": \`${'${THUMB_SIZE}'}px\` }} />
+        );
+
+        const THUMB_SIZE = 36;
+
+        const styles = makeStyles(THUMB_SIZE / 2);
+      `,
+      {
+        ...fileContext,
+        filename: path.join(__dirname, 'forward-const-ref.tsx'),
+      },
+      {
+        ...options(runtimeDependencyCallProcessorPath, 'makeStyles'),
+        extensions: ['.js', '.ts', '.tsx'],
+      },
+      (processor) => processor.doRuntimeReplacement(),
+      true
+    );
+
+    expect(result.code).toContain('`${THUMB_SIZE}px`');
+    expect(result.code).toContain('const THUMB_SIZE = 36;');
   });
 
   it('inserts imports requested by processors into the transformed module', () => {
