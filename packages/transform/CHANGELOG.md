@@ -1,5 +1,11 @@
 # @wyw-in-js/transform
 
+## 2.1.4
+
+### Patch Changes
+
+- 32be9b7: Preserve module-level bindings that are referenced before their declaration when runtime cleanup removes CSS-only dependencies.
+
 ## 2.1.3
 
 ### Patch Changes
