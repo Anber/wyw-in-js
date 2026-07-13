@@ -21,6 +21,18 @@ import { stripQueryAndHash } from '../utils/parseRequest';
 
 const EMPTY_FILE = '=== empty file ===';
 const DEFAULT_ACTION_CONTEXT = Symbol('defaultActionContext');
+const MANAGED_ACTION_CONTEXT = Symbol('managedActionContext');
+
+type ManagedActionContext = {
+  [MANAGED_ACTION_CONTEXT]: Set<Entrypoint>;
+};
+
+const isManagedActionContext = (
+  value: unknown
+): value is ManagedActionContext =>
+  typeof value === 'object' &&
+  value !== null &&
+  MANAGED_ACTION_CONTEXT in value;
 
 type CreateEntrypointOptions = {
   mergeCachedOnly?: boolean;
@@ -194,6 +206,19 @@ export class Entrypoint extends BaseEntrypoint {
     invariant(created !== 'loop', 'loop detected');
 
     return created;
+  }
+
+  public static createActionContext(): object {
+    return { [MANAGED_ACTION_CONTEXT]: new Set<Entrypoint>() };
+  }
+
+  public static disposeActionContext(actionContext: object): void {
+    if (!isManagedActionContext(actionContext)) return;
+
+    actionContext[MANAGED_ACTION_CONTEXT].forEach((entrypoint) => {
+      entrypoint.clearActions(actionContext);
+    });
+    actionContext[MANAGED_ACTION_CONTEXT].clear();
   }
 
   protected static create(
@@ -489,6 +514,10 @@ export class Entrypoint extends BaseEntrypoint {
     abortSignal: AbortSignal | null = null,
     actionContext: unknown = DEFAULT_ACTION_CONTEXT
   ): BaseAction<TAction> {
+    if (isManagedActionContext(actionContext)) {
+      actionContext[MANAGED_ACTION_CONTEXT].add(this);
+    }
+
     if (!this.actionsCache.has(actionType)) {
       this.actionsCache.set(actionType, new Map());
     }
@@ -522,6 +551,15 @@ export class Entrypoint extends BaseEntrypoint {
     });
 
     return newAction;
+  }
+
+  private clearActions(actionContext: unknown): void {
+    this.actionsCache.forEach((contexts, actionType) => {
+      contexts.delete(actionContext);
+      if (contexts.size === 0) {
+        this.actionsCache.delete(actionType);
+      }
+    });
   }
 
   public createChild(

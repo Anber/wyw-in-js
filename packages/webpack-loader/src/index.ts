@@ -65,6 +65,8 @@ type Resolver = (
   stack?: string[]
 ) => Promise<string>;
 
+type WarningEmitter = (message: string) => void;
+
 type DoneHook = {
   tap: (name: string, handler: (stats: Stats) => void) => void;
 };
@@ -96,8 +98,13 @@ type ResolverScope = {
   asyncResolve: Resolver;
   cache: TransformCacheCollection;
   dispose: () => void;
+  emitWarning: (resourcePath: string, message: string) => void;
   key: string;
   replaceResolver: (resourcePath: string, resolver: Resolver) => void;
+  replaceWarningEmitter: (
+    resourcePath: string,
+    emitWarning: WarningEmitter
+  ) => void;
 };
 
 type CompilerState = ResolverScope & {
@@ -116,6 +123,7 @@ const getResolverKey = (importer: string, stack: string[]): string => {
 
 const createResolverScope = (): ResolverScope => {
   const resolvers = new Map<string, Resolver>();
+  const warningEmitters = new Map<string, WarningEmitter>();
   compilerScopeId += 1;
   const key = `webpack:${compilerScopeId}`;
 
@@ -154,10 +162,20 @@ const createResolverScope = (): ResolverScope => {
     cache: new TransformCacheCollection(),
     dispose: () => {
       resolvers.clear();
+      warningEmitters.clear();
+    },
+    emitWarning: (resourcePath: string, message: string) => {
+      warningEmitters.get(stripQueryAndHash(resourcePath))?.(message);
     },
     key,
     replaceResolver: (resourcePath: string, resolver: Resolver) => {
       resolvers.set(stripQueryAndHash(resourcePath), resolver);
+    },
+    replaceWarningEmitter: (
+      resourcePath: string,
+      emitWarning: WarningEmitter
+    ) => {
+      warningEmitters.set(stripQueryAndHash(resourcePath), emitWarning);
     },
   };
 };
@@ -218,6 +236,11 @@ const createInvocationScope = (): ResolverScope => {
     },
   };
 };
+
+const createWarningDispatcher =
+  (scope: ResolverScope, resourcePath: string): WarningEmitter =>
+  (message: string) =>
+    scope.emitWarning(resourcePath, message);
 
 const webpack5Loader: Loader = function webpack5LoaderPlugin(
   content,
@@ -288,12 +311,16 @@ const webpack5Loader: Loader = function webpack5LoaderPlugin(
       }
     });
 
+  const { resourcePath } = this;
   const { _compiler: compiler } = this as LoaderContextWithCompiler;
   const compilerState = compiler
     ? getCompilerState(compiler)
     : createInvocationScope();
 
-  compilerState.replaceResolver(this.resourcePath, (what, importer) => {
+  // Do not let cached transform services capture the webpack loader context.
+  // The per-resource callbacks below are short-lived and cleared with the
+  // resolver scope when the compilation finishes.
+  compilerState.replaceResolver(resourcePath, (what, importer) => {
     const importerPath = stripQueryAndHash(importer);
     const context = path.isAbsolute(importerPath)
       ? path.dirname(importerPath)
@@ -307,6 +334,14 @@ const webpack5Loader: Loader = function webpack5LoaderPlugin(
 
       return result;
     });
+  });
+  compilerState.replaceWarningEmitter(resourcePath, (message: string) => {
+    const warning = new Error(message);
+    // Remove the stack so webpack's ModuleWarning doesn't copy it into
+    // `details`, which causes the message to render twice (once from
+    // .message, once from .details containing "Error: <same message>").
+    delete warning.stack;
+    this.emitWarning(warning);
   });
   const {
     asyncResolve,
@@ -334,8 +369,8 @@ const webpack5Loader: Loader = function webpack5LoaderPlugin(
 
   const transformServices = {
     options: {
-      filename: this.resourcePath,
-      inputSourceMap: convertSourceMap(inputSourceMap, this.resourcePath),
+      filename: resourcePath,
+      inputSourceMap: convertSourceMap(inputSourceMap, resourcePath),
       pluginOptions: {
         ...rest,
         oxcOptions: mergeOxcResolverAlias(rest.oxcOptions, nativeResolverAlias),
@@ -347,14 +382,7 @@ const webpack5Loader: Loader = function webpack5LoaderPlugin(
     },
     asyncResolveKey,
     cache: transformCache,
-    emitWarning: (message: string) => {
-      const warning = new Error(message);
-      // Remove the stack so webpack's ModuleWarning doesn't copy it into
-      // `details`, which causes the message to render twice (once from
-      // .message, once from .details containing "Error: <same message>").
-      delete warning.stack;
-      this.emitWarning(warning);
-    },
+    emitWarning: createWarningDispatcher(compilerState, resourcePath),
     eventEmitter: sharedState.emitter,
   };
 
@@ -373,7 +401,7 @@ const webpack5Loader: Loader = function webpack5LoaderPlugin(
 
             await Promise.all(
               result.dependencies?.map((dep) =>
-                asyncResolve(dep, this.resourcePath)
+                asyncResolve(dep, resourcePath)
               ) ?? []
             );
 

@@ -187,11 +187,12 @@ export async function transform(
 
   // Separate top-level runs must not share action state, even for the same
   // entrypoint, otherwise concurrent transforms can collide in BaseAction.run.
+  const actionContext = Entrypoint.createActionContext();
   const workflowAction = entrypoint.createAction(
     'workflow',
     undefined,
     null,
-    {}
+    actionContext
   );
 
   if (!memoizedAsyncResolve.has(asyncResolve)) {
@@ -230,5 +231,7 @@ export async function transform(
     }
 
     throw err;
+  } finally {
+    Entrypoint.disposeActionContext(actionContext);
   }
 }
