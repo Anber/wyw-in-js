@@ -1,4 +1,5 @@
 import type { Services } from '../types';
+import { Entrypoint } from '../Entrypoint';
 
 import { createEntrypoint, createServices } from './entrypoint-helpers';
 
@@ -22,6 +23,33 @@ describe('createEntrypoint', () => {
     const entrypoint1 = createEntrypoint(services, '/foo/bar.js', ['default']);
     const entrypoint2 = createEntrypoint(services, '/foo/bar.js', ['default']);
     expect(entrypoint1).toBe(entrypoint2);
+  });
+
+  it('disposes actions created for a completed transform context', () => {
+    const entrypoint1 = createEntrypoint(services, '/foo/bar.js', ['default']);
+    const entrypoint2 = createEntrypoint(services, '/foo/baz.js', ['default']);
+    const actionContext = Entrypoint.createActionContext();
+    const action1 = entrypoint1.createAction(
+      'workflow',
+      undefined,
+      null,
+      actionContext
+    );
+    const action2 = entrypoint2.createAction(
+      'workflow',
+      undefined,
+      null,
+      actionContext
+    );
+
+    Entrypoint.disposeActionContext(actionContext);
+
+    expect(
+      entrypoint1.createAction('workflow', undefined, null, actionContext)
+    ).not.toBe(action1);
+    expect(
+      entrypoint2.createAction('workflow', undefined, null, actionContext)
+    ).not.toBe(action2);
   });
 
   it('should invalidate cache if source code was changed', () => {
