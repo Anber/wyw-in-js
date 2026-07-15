@@ -15,6 +15,10 @@ import { isFeatureEnabled } from '@wyw-in-js/shared';
 import type { PartialOptions } from './transform/helpers/loadWywOptions';
 import { loadWywOptions } from './transform/helpers/loadWywOptions';
 import { TransformCacheCollection } from './cache';
+import {
+  createActionContext,
+  disposeActionContext,
+} from './transform/ActionContext';
 import { Entrypoint } from './transform/Entrypoint';
 import { asyncActionRunner } from './transform/actions/actionRunner';
 import { baseHandlers } from './transform/generators';
@@ -187,25 +191,26 @@ export async function transform(
 
   // Separate top-level runs must not share action state, even for the same
   // entrypoint, otherwise concurrent transforms can collide in BaseAction.run.
-  const actionContext = Entrypoint.createActionContext();
-  const workflowAction = entrypoint.createAction(
-    'workflow',
-    undefined,
-    null,
-    actionContext
-  );
-
-  if (!memoizedAsyncResolve.has(asyncResolve)) {
-    const resolveImports = function resolveImports(
-      this: IResolveImportsAction
-    ) {
-      return asyncResolveImports.call(this, asyncResolve);
-    };
-
-    memoizedAsyncResolve.set(asyncResolve, resolveImports);
-  }
+  const actionContext = createActionContext();
 
   try {
+    const workflowAction = entrypoint.createAction(
+      'workflow',
+      undefined,
+      null,
+      actionContext
+    );
+
+    if (!memoizedAsyncResolve.has(asyncResolve)) {
+      const resolveImports = function resolveImports(
+        this: IResolveImportsAction
+      ) {
+        return asyncResolveImports.call(this, asyncResolve);
+      };
+
+      memoizedAsyncResolve.set(asyncResolve, resolveImports);
+    }
+
     const result = await asyncActionRunner(workflowAction, {
       ...baseHandlers,
       ...customHandlers,
@@ -232,6 +237,6 @@ export async function transform(
 
     throw err;
   } finally {
-    Entrypoint.disposeActionContext(actionContext);
+    disposeActionContext(actionContext);
   }
 }

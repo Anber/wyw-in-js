@@ -1,5 +1,5 @@
 import type { Services } from '../types';
-import { Entrypoint } from '../Entrypoint';
+import { createActionContext, disposeActionContext } from '../ActionContext';
 
 import { createEntrypoint, createServices } from './entrypoint-helpers';
 
@@ -28,7 +28,7 @@ describe('createEntrypoint', () => {
   it('disposes actions created for a completed transform context', () => {
     const entrypoint1 = createEntrypoint(services, '/foo/bar.js', ['default']);
     const entrypoint2 = createEntrypoint(services, '/foo/baz.js', ['default']);
-    const actionContext = Entrypoint.createActionContext();
+    const actionContext = createActionContext();
     const action1 = entrypoint1.createAction(
       'workflow',
       undefined,
@@ -42,7 +42,7 @@ describe('createEntrypoint', () => {
       actionContext
     );
 
-    Entrypoint.disposeActionContext(actionContext);
+    disposeActionContext(actionContext);
 
     expect(
       entrypoint1.createAction('workflow', undefined, null, actionContext)
