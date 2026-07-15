@@ -1,5 +1,13 @@
 # @wyw-in-js/webpack-loader
 
+## 2.1.5
+
+### Patch Changes
+
+- ff60699: Fix memory retention in webpack watch mode by clearing completed transform action graphs and avoiding cached loader context references.
+- Updated dependencies
+  - @wyw-in-js/transform@2.1.5
+
 ## 2.1.4
 
 ### Patch Changes

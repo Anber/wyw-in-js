@@ -1,5 +1,13 @@
 # @wyw-in-js/cli
 
+## 2.1.5
+
+### Patch Changes
+
+- e49837c: Dispose the eval runner after CLI processing so the process can exit normally.
+- Updated dependencies
+  - @wyw-in-js/transform@2.1.5
+
 ## 2.1.4
 
 ### Patch Changes

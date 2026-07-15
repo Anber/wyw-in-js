@@ -1,5 +1,12 @@
 # @wyw-in-js/rollup
 
+## 2.1.5
+
+### Patch Changes
+
+- Updated dependencies
+  - @wyw-in-js/transform@2.1.5
+
 ## 2.1.4
 
 ### Patch Changes
