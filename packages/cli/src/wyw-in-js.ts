@@ -9,6 +9,7 @@ import path from 'path';
 import { asyncResolveFallback } from '@wyw-in-js/shared';
 import {
   createFileReporter,
+  disposeEvalBroker,
   TransformCacheCollection,
   transform,
 } from '@wyw-in-js/transform';
@@ -286,34 +287,37 @@ async function processFiles(files: (number | string)[], options: Options) {
     );
   }
 
-  if (options.parallel) {
-    const res = await Promise.all(tasks.map((task) => task()));
-    console.log(
-      `Successfully extracted ${res.filter((i) => i).length} CSS files.`
-    );
-  } else {
-    let count = 0;
-    for (const task of tasks) {
-      // eslint-disable-next-line no-await-in-loop
-      const res = await task();
-      if (res) {
-        count += 1;
+  try {
+    if (options.parallel) {
+      const res = await Promise.all(tasks.map((task) => task()));
+      console.log(
+        `Successfully extracted ${res.filter((i) => i).length} CSS files.`
+      );
+    } else {
+      let count = 0;
+      for (const task of tasks) {
+        // eslint-disable-next-line no-await-in-loop
+        const res = await task();
+        if (res) {
+          count += 1;
+        }
       }
+
+      console.log(`Successfully extracted ${count} CSS files.`);
     }
 
-    console.log(`Successfully extracted ${count} CSS files.`);
+    modifiedFiles.forEach(({ name, content }) => {
+      fs.writeFileSync(name, content);
+    });
+
+    onDone(options.sourceRoot ?? process.cwd());
+  } finally {
+    disposeEvalBroker(cache);
+    cache.clear('all');
+    modifiedFiles.length = 0;
+    resolvedFiles.length = 0;
+    tasks.length = 0;
   }
-
-  modifiedFiles.forEach(({ name, content }) => {
-    fs.writeFileSync(name, content);
-  });
-
-  cache.clear('all');
-  modifiedFiles.length = 0;
-  resolvedFiles.length = 0;
-  tasks.length = 0;
-
-  onDone(options.sourceRoot ?? process.cwd());
 }
 
 processFiles(argv._, {
