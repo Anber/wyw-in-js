@@ -780,5 +780,53 @@ describe('oxc preeval transforms', () => {
       expect(code).not.toContain('window.location');
       expect(() => stripTypesAndJsxWithOxc(code, filename)).not.toThrow();
     });
+
+    it('preserves a default-exported alias whose source transitively references a forbidden global', () => {
+      const code = removeDangerousCodeWithOxc(
+        [
+          'const Button_Button = (props) => {',
+          '  window.setTimeout(() => {}, 100);',
+          '  return props ?? null;',
+          '};',
+          'const Core_Button = Button_Button;',
+          'export default Core_Button;',
+        ].join('\n'),
+        filename
+      );
+
+      expect(code).toContain('const Core_Button = undefined;');
+      expect(code).toContain('export default Core_Button;');
+      expect(() => stripTypesAndJsxWithOxc(code, filename)).not.toThrow();
+    });
+
+    it.each([
+      ['detached named export', 'const Alias = Source;', 'export { Alias };'],
+      [
+        'detached default export',
+        'const Alias = Source;',
+        'export { Alias as default };',
+      ],
+      ['direct named export', 'export const Alias = Source;', ''],
+    ])(
+      'preserves an alias binding used by a %s',
+      (_, declaration, exportStatement) => {
+        const code = removeDangerousCodeWithOxc(
+          [
+            'const Source = window.location;',
+            declaration,
+            exportStatement,
+          ].join('\n'),
+          filename
+        );
+
+        expect(code).toContain('const Alias = undefined;');
+        if (exportStatement) {
+          expect(code).toContain(exportStatement);
+        } else {
+          expect(code).toContain('export const Alias = undefined;');
+        }
+        expect(() => stripTypesAndJsxWithOxc(code, filename)).not.toThrow();
+      }
+    );
   });
 });

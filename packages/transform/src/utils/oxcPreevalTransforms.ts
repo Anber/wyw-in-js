@@ -962,9 +962,17 @@ type ExportedBindingProtection = {
   value: string;
 };
 
-const collectReExportedLocalNames = (program: Program): Set<string> => {
+const collectExportedLocalNames = (program: Program): Set<string> => {
   const names = new Set<string>();
   for (const stmt of program.body) {
+    if (
+      stmt.type === 'ExportDefaultDeclaration' &&
+      stmt.declaration.type === 'Identifier'
+    ) {
+      names.add(stmt.declaration.name);
+      continue;
+    }
+
     if (
       stmt.type !== 'ExportNamedDeclaration' ||
       stmt.declaration ||
@@ -989,7 +997,7 @@ const collectReExportedLocalNames = (program: Program): Set<string> => {
 const findExportedBindingProtection = (
   node: Node,
   ancestors: Node[],
-  reExportedLocalNames: Set<string>
+  exportedLocalNames: Set<string>
 ): ExportedBindingProtection | null => {
   for (let idx = ancestors.length - 1; idx >= 0; idx -= 1) {
     const ancestor = ancestors[idx];
@@ -1006,11 +1014,7 @@ const findExportedBindingProtection = (
       continue;
     }
 
-    if (
-      ancestor.id.type !== 'Identifier' ||
-      !ancestor.init ||
-      ancestor.init === node
-    ) {
+    if (ancestor.id.type !== 'Identifier' || !ancestor.init) {
       return null;
     }
 
@@ -1026,10 +1030,10 @@ const findExportedBindingProtection = (
       wrapper.declaration === varDecl;
     const isTopLevelDeclaration =
       wrapper === null || wrapper?.type === 'Program';
-    const isReExported =
-      isTopLevelDeclaration && reExportedLocalNames.has(ancestor.id.name);
+    const isDetachedExport =
+      isTopLevelDeclaration && exportedLocalNames.has(ancestor.id.name);
 
-    if (!isDirectExport && !isReExported) {
+    if (!isDirectExport && !isDetachedExport) {
       return null;
     }
 
@@ -1576,7 +1580,7 @@ export const removeDangerousCodeWithOxc = (
   const windowScopedNames = windowTokenRe.test(code)
     ? collectWindowScopedNames(program)
     : new Set<string>();
-  const reExportedLocalNames = collectReExportedLocalNames(program);
+  const exportedLocalNames = collectExportedLocalNames(program);
 
   const derivedBindingDiscovery = { found: true };
   while (derivedBindingDiscovery.found) {
@@ -1784,7 +1788,7 @@ export const removeDangerousCodeWithOxc = (
       const exportProtection = findExportedBindingProtection(
         node,
         ancestors,
-        reExportedLocalNames
+        exportedLocalNames
       );
       if (exportProtection) {
         replacements.push(exportProtection);
