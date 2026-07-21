@@ -1,5 +1,11 @@
 # @wyw-in-js/transform
 
+## 2.1.6
+
+### Patch Changes
+
+- 3932f6c: Preserve aliased export bindings during preevaluation when their source depends on browser-only globals.
+
 ## 2.1.5
 
 ### Patch Changes
