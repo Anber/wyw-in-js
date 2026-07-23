@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 
@@ -309,6 +309,51 @@ describe('createFileReporter', () => {
         true
       );
     } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('warns once and keeps other streams alive when a stream fails to open', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'wyw-file-reporter-'));
+    // A directory at the target path makes the async open fail
+    // deterministically (EISDIR), like the flaky EINVAL seen in the wild.
+    mkdirSync(join(dir, 'eval-files.jsonl'));
+
+    const warnings: unknown[][] = [];
+    // eslint-disable-next-line no-console
+    const originalWarn = console.warn;
+    // eslint-disable-next-line no-console
+    console.warn = (...args: unknown[]) => {
+      warnings.push(args);
+    };
+
+    try {
+      const reporter = createFileReporter({ dir });
+
+      await waitFor(() => warnings.length > 0);
+
+      reporter.emitter.single({ evalSeq: 1, type: 'eval-file' });
+      reporter.emitter.single({ evalSeq: 2, type: 'eval-file' });
+
+      reporter.emitter.single({
+        filename: join(dir, 'foo.ts'),
+        phase: 'export',
+        reason: 'unsupported-expression',
+        status: 'rejected',
+        type: 'staticResolve',
+      });
+
+      reporter.onDone(dir);
+
+      const target = join(dir, 'static-resolve.jsonl');
+      await waitFor(() => hasJsonlLines(target, 1));
+
+      expect(readJsonl(target)).toHaveLength(1);
+      expect(warnings).toHaveLength(1);
+      expect(String(warnings[0][0])).toContain('eval-files.jsonl');
+    } finally {
+      // eslint-disable-next-line no-console
+      console.warn = originalWarn;
       rmSync(dir, { recursive: true, force: true });
     }
   });
