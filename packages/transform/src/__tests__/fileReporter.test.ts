@@ -94,9 +94,7 @@ describe('createFileReporter', () => {
 
       reporter.onDone(dir);
       const target = join(dir, 'static-resolve.jsonl');
-      await waitFor(
-        () => existsSync(target) && readFileSync(target).length > 0
-      );
+      await waitFor(() => hasJsonlLines(target, 2));
 
       const events = readJsonl(target);
       expect(events).toHaveLength(2);
@@ -153,9 +151,7 @@ describe('createFileReporter', () => {
       reporter.onDone(dir);
 
       const target = join(dir, 'eval-files.jsonl');
-      await waitFor(
-        () => existsSync(target) && readFileSync(target).length > 0
-      );
+      await waitFor(() => hasJsonlLines(target, 1));
 
       const events = readJsonl(target);
       expect(events).toHaveLength(1);
