@@ -90,7 +90,34 @@ function printTimings(timings: Timings, startedAt: number, sourceRoot: string) {
 }
 
 const writeJSONl = (stream: NodeJS.WritableStream, data: unknown) => {
+  if (!stream.writable) {
+    return;
+  }
+
   stream.write(`${JSON.stringify(data, replacer)}\n`);
+};
+
+const createReportStream = (dir: string, filename: string) => {
+  const stream = createWriteStream(path.join(dir, filename));
+
+  // Without an 'error' listener a failed async open (or any later write
+  // error) is an unhandled 'error' event that crashes the process. Reporting
+  // is best-effort debug output: warn once, then drop records for this
+  // stream — it is destroyed on error, so the `writable` guards skip writes.
+  let errorReported = false;
+  stream.on('error', (err) => {
+    if (errorReported) {
+      return;
+    }
+
+    errorReported = true;
+    console.warn(
+      `[wyw-in-js] fileReporter: failed to write ${filename}; further records for this stream will be dropped.`,
+      err.message
+    );
+  });
+
+  return stream;
 };
 
 const isPerfFinishEvent = (event: unknown): event is PerfFinishEvent => {
@@ -142,33 +169,25 @@ export const createFileReporter = (
     throw new Error(`Could not create directory ${options.dir}`);
   }
 
-  const actionStream = createWriteStream(
-    path.join(options.dir, 'actions.jsonl')
+  const actionStream = createReportStream(options.dir, 'actions.jsonl');
+
+  const dependenciesStream = createReportStream(
+    options.dir,
+    'dependencies.jsonl'
   );
 
-  const dependenciesStream = createWriteStream(
-    path.join(options.dir, 'dependencies.jsonl')
+  const entrypointStream = createReportStream(options.dir, 'entrypoints.jsonl');
+
+  const staticResolveStream = createReportStream(
+    options.dir,
+    'static-resolve.jsonl'
   );
 
-  const entrypointStream = createWriteStream(
-    path.join(options.dir, 'entrypoints.jsonl')
-  );
+  const staticPlanStream = createReportStream(options.dir, 'static-plan.jsonl');
 
-  const staticResolveStream = createWriteStream(
-    path.join(options.dir, 'static-resolve.jsonl')
-  );
+  const perfSpanStream = createReportStream(options.dir, 'perf-spans.jsonl');
 
-  const staticPlanStream = createWriteStream(
-    path.join(options.dir, 'static-plan.jsonl')
-  );
-
-  const perfSpanStream = createWriteStream(
-    path.join(options.dir, 'perf-spans.jsonl')
-  );
-
-  const evalFilesStream = createWriteStream(
-    path.join(options.dir, 'eval-files.jsonl')
-  );
+  const evalFilesStream = createReportStream(options.dir, 'eval-files.jsonl');
 
   const startedAt = performance.now();
   const timings: Timings = new Map();
@@ -283,6 +302,10 @@ export const createFileReporter = (
     timestamp,
     event
   ) => {
+    if (!entrypointStream.writable) {
+      return;
+    }
+
     entrypointStream.write(
       `${JSON.stringify([emitterId, timestamp, event])}\n`
     );
@@ -299,13 +322,19 @@ export const createFileReporter = (
         console.log('\nMemory usage:', process.memoryUsage());
       }
 
-      actionStream.end();
-      dependenciesStream.end();
-      entrypointStream.end();
-      staticResolveStream.end();
-      staticPlanStream.end();
-      perfSpanStream.end();
-      evalFilesStream.end();
+      [
+        actionStream,
+        dependenciesStream,
+        entrypointStream,
+        staticResolveStream,
+        staticPlanStream,
+        perfSpanStream,
+        evalFilesStream,
+      ].forEach((stream) => {
+        if (stream.writable) {
+          stream.end();
+        }
+      });
       timings.clear();
     },
   };
