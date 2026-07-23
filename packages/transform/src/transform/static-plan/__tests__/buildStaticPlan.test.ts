@@ -25,6 +25,67 @@ const cssTemplateSemantics = {
 };
 
 describe('buildStaticPlan', () => {
+  it('ignores imports that do not resolve to a processor implementation', () => {
+    // Helper modules (e.g. a preeval runtime) import plain functions and call
+    // them with values derived from function parameters. Those imports must
+    // not be treated as processor locals, or planning their call arguments
+    // would raise template-only hoisting diagnostics.
+    const plan = buildStaticPlan({
+      code: `
+        import { normalizeParts, cloneStyle } from './support.js';
+
+        export function makeStyle(...parts) {
+          const style = normalizeParts(parts);
+          return cloneStyle(style);
+        }
+      `,
+      filename,
+      options: {},
+    });
+
+    expect(plan.processorUsages).toEqual([]);
+    expect(plan.attribution).toEqual(
+      expect.objectContaining({
+        usageCount: 0,
+      })
+    );
+  });
+
+  it('degrades to the eval path when call arguments reference function parameters', () => {
+    // A real manifest-backed call processor used inside a function is not
+    // statically resolvable. The plan must fall back instead of throwing.
+    const plan = buildStaticPlan({
+      code: `
+        import { createTokenContract } from 'dx-tokens';
+
+        export const makeContract = (shape) => {
+          const normalized = { ...shape };
+          return createTokenContract(normalized, { prefix: 'dyn' });
+        };
+
+        export const tokens = createTokenContract(
+          { color: null },
+          { prefix: 'dx' }
+        );
+      `,
+      filename,
+      processorImports: [
+        {
+          imported: 'createTokenContract',
+          local: 'createTokenContract',
+          semantics: {
+            kind: 'token-contract-call' as const,
+            prefixOption: 'prefix',
+          },
+          source: 'dx-tokens',
+        },
+      ],
+    });
+
+    expect(plan.attribution.usageCount).toBe(2);
+    expect(plan.env.values.size).toBe(0);
+  });
+
   it('records local serializable static values using ProcessorStaticValue', () => {
     const plan = buildStaticPlan({
       code: `

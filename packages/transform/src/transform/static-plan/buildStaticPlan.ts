@@ -87,7 +87,7 @@ const discoverProcessorImports = ({
       return;
     }
 
-    const [, tagSource, manifest] = getProcessorForImport(
+    const [processor, tagSource, manifest] = getProcessorForImport(
       {
         imported: item.imported,
         source: item.source,
@@ -96,7 +96,11 @@ const discoverProcessorImports = ({
       options ?? {}
     );
 
-    if (!tagSource) {
+    // Only imports that resolve to an actual processor implementation (or a
+    // processor manifest) may contribute plan usages. `tagSource` is returned
+    // for every lookup, so checking it would turn every import of every
+    // module into a phantom processor local.
+    if (!processor && !manifest) {
       return;
     }
 
@@ -211,22 +215,32 @@ export const buildStaticPlan = ({
     createDefinedProcessors(processorImports)
   );
   const targetExpressionSpans = usages.flatMap(collectUsageExpressionSpans);
+  const emptyExtraction = {
+    code,
+    dependencyNames: [],
+    expressionValues: [],
+    staticValueCandidates: [],
+    staticValues: [],
+  };
+  const extractPlannedSpans = () => {
+    try {
+      return collectOxcExpressionDependencies(
+        code,
+        filename,
+        true,
+        targetExpressionSpans,
+        staticBindings
+      );
+    } catch {
+      // The plan is a speculative optimization: expressions it cannot model
+      // (e.g. processor call arguments that reference function parameters)
+      // must degrade to the eval path, not fail the build. Genuine template
+      // diagnostics are still raised by the authoritative transform path.
+      return emptyExtraction;
+    }
+  };
   const extracted =
-    targetExpressionSpans.length > 0
-      ? collectOxcExpressionDependencies(
-          code,
-          filename,
-          true,
-          targetExpressionSpans,
-          staticBindings
-        )
-      : {
-          code,
-          dependencyNames: [],
-          expressionValues: [],
-          staticValueCandidates: [],
-          staticValues: [],
-        };
+    targetExpressionSpans.length > 0 ? extractPlannedSpans() : emptyExtraction;
   const env: StaticEnv = {
     dependencies: collectRuntimeDependencies(preparedImports, preevalResult),
     unresolved: new Map(),
