@@ -1,6 +1,6 @@
 {
   "name": "@wyw-in-js/bun",
-  "version": "2.1.6",
+  "version": "2.2.0",
   "type": "module",
   "dependencies": {
     "@rollup/pluginutils": "^5.1.4",

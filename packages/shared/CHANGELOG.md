@@ -1,5 +1,11 @@
 # @wyw-in-js/shared
 
+## 2.2.0
+
+### Minor Changes
+
+- Bump versions
+
 ## 2.1.0
 
 ### Minor Changes
