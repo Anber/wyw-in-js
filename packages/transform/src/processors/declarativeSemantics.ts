@@ -1,3 +1,6 @@
+import { createRequire } from 'module';
+import { isAbsolute, resolve as resolvePath } from 'path';
+
 import type {
   BaseProcessor,
   CallParam,
@@ -7,6 +10,8 @@ import type {
   ProcessorStaticValue,
 } from '@wyw-in-js/processor-utils';
 import type { ExpressionValue } from '@wyw-in-js/shared';
+
+const nodeRequire = createRequire(import.meta.url);
 
 type CssTemplateOutput = 'class-name' | 'css-text';
 type RuntimeDependencyMode = 'explicit';
@@ -45,9 +50,16 @@ export type ClassNameCallSemantics = {
   kind: 'class-name-call';
 };
 
+export type PreevalCallSemantics = {
+  exportName: string;
+  kind: 'preeval-call';
+  modulePath: string;
+};
+
 export type DeclarativeProcessorCallSemantics =
   | ClassNameCallSemantics
   | CssVarCallSemantics
+  | PreevalCallSemantics
   | StyleObjectCallSemantics
   | TokenContractCallSemantics;
 
@@ -130,10 +142,50 @@ const readString = (value: unknown, fallback: string): string | null => {
 };
 
 export const normalizeDeclarativeProcessorSemantics = (
-  semantics: unknown
+  semantics: unknown,
+  manifestDir?: string | null
 ): DeclarativeProcessorSemantics | null => {
   if (!isRecord(semantics)) {
     return null;
+  }
+
+  if (semantics.kind === 'preeval-call') {
+    // Normalization must be idempotent: the processor factory re-normalizes
+    // the already-normalized shape stored on the defined processor.
+    if (
+      typeof semantics.modulePath === 'string' &&
+      isAbsolute(semantics.modulePath) &&
+      typeof semantics.exportName === 'string' &&
+      semantics.exportName.length > 0
+    ) {
+      return {
+        exportName: semantics.exportName,
+        kind: 'preeval-call',
+        modulePath: semantics.modulePath,
+      };
+    }
+
+    const moduleSpecifier =
+      typeof semantics.module === 'string' && semantics.module.length > 0
+        ? semantics.module
+        : null;
+    const exportName =
+      typeof semantics.export === 'string' && semantics.export.length > 0
+        ? semantics.export
+        : null;
+
+    // The module is resolved against the manifest location; without a known
+    // manifest directory the semantics cannot be anchored and the processor
+    // stays on its JS implementation path.
+    if (!moduleSpecifier || !exportName || !manifestDir) {
+      return null;
+    }
+
+    return {
+      exportName,
+      kind: 'preeval-call',
+      modulePath: resolvePath(manifestDir, moduleSpecifier),
+    };
   }
 
   if (semantics.kind === 'css-template') {
@@ -478,6 +530,96 @@ const resolveTokenContractCall = (
   };
 };
 
+const preevalModuleCache = new Map<string, Record<string, unknown> | null>();
+
+const loadPreevalCallTarget = (
+  semantics: PreevalCallSemantics
+): ((...args: unknown[]) => unknown) | null => {
+  let preevalModule = preevalModuleCache.get(semantics.modulePath);
+  if (preevalModule === undefined) {
+    try {
+      preevalModule = nodeRequire(semantics.modulePath) as Record<
+        string,
+        unknown
+      >;
+    } catch {
+      preevalModule = null;
+    }
+    preevalModuleCache.set(semantics.modulePath, preevalModule);
+  }
+
+  const target = preevalModule?.[semantics.exportName];
+  return typeof target === 'function'
+    ? (target as (...args: unknown[]) => unknown)
+    : null;
+};
+
+const isSerializablePreevalValue = (value: unknown): boolean => {
+  if (
+    value === null ||
+    value === undefined ||
+    typeof value === 'string' ||
+    typeof value === 'number' ||
+    typeof value === 'boolean'
+  ) {
+    return true;
+  }
+
+  if (Array.isArray(value)) {
+    return value.every(isSerializablePreevalValue);
+  }
+
+  if (typeof value === 'object') {
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) {
+      return false;
+    }
+
+    return Object.values(value).every(isSerializablePreevalValue);
+  }
+
+  return false;
+};
+
+// Values produced by a manifest's preeval module are the processor's
+// authoritative eval-domain values. Downstream caches may serve them even
+// when they structurally resemble processor artifacts (e.g. carry
+// `__wyw_meta`), so their provenance is tracked here.
+const preevalCallValues = new WeakSet<object>();
+
+export const isDeclarativePreevalValue = (value: unknown): boolean =>
+  typeof value === 'object' && value !== null && preevalCallValues.has(value);
+
+const resolvePreevalCall = (
+  semantics: PreevalCallSemantics,
+  args: unknown[]
+): ProcessorStaticValue | null => {
+  const target = loadPreevalCallTarget(semantics);
+  if (!target) {
+    return null;
+  }
+
+  let value: unknown;
+  try {
+    value = target(...args);
+  } catch {
+    // The eval path calls the same function through the real module graph and
+    // surfaces its diagnostics with full context; the static shortcut simply
+    // steps aside.
+    return null;
+  }
+
+  if (!isSerializablePreevalValue(value)) {
+    return null;
+  }
+
+  if (typeof value === 'object' && value !== null) {
+    preevalCallValues.add(value);
+  }
+
+  return { kind: 'serializable', value };
+};
+
 export const resolveDeclarativeProcessorStaticValue = (
   processor: BaseProcessor,
   resolveInput: (expression: ExpressionValue) => DeclarativeCallInputResolution
@@ -502,6 +644,10 @@ export const resolveDeclarativeProcessorStaticValue = (
 
   if (state.semantics.kind === 'token-contract-call') {
     return resolveTokenContractCall(state.semantics, args);
+  }
+
+  if (state.semantics.kind === 'preeval-call') {
+    return resolvePreevalCall(state.semantics, args);
   }
 
   return null;

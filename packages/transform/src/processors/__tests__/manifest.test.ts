@@ -110,6 +110,7 @@ describe('processor manifest loader', () => {
         version: 1,
         name: '@wyw-in-js/test-css',
         implementation: './throws-if-required.js',
+        dir: distDir,
         tags: ['css'],
         semantics: {
           kind: 'css-template',
@@ -230,6 +231,7 @@ describe('processor manifest loader', () => {
         version: 1,
         name: '@wyw-in-js/test-styled',
         implementation: './styled-processor.js',
+        dir: root,
         tags: ['styled'],
         semantics: {
           kind: 'styled-target',
