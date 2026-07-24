@@ -14,6 +14,8 @@ export type ProcessorManifest = {
   version: 1;
   name: string;
   implementation: string;
+  /** Directory of the manifest file; anchors relative module references. */
+  dir: string;
   tags?: string[];
   semantics?: unknown;
 };
@@ -159,6 +161,7 @@ export const loadProcessorManifest = (
     version,
     name,
     implementation,
+    dir: dirname(manifestPath),
   };
 
   if (tags) {

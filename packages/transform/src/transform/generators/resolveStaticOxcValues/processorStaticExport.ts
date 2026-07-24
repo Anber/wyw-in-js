@@ -7,6 +7,7 @@ import {
   evaluateOxcStaticExpressionAt,
   isOxcStaticSerializableValue,
 } from '../../../utils/collectOxcTemplateDependencies';
+import { isDeclarativePreevalValue } from '../../../processors/declarativeSemantics';
 import type { ITransformAction, SyncScenarioFor } from '../../types';
 import { getStaticMetadataPreevalResult } from './cache';
 import {
@@ -223,6 +224,7 @@ export function* resolveProcessorStaticExport(
   ) {
     const cachedValue = preevalResult.staticValueCache.get(exportedLocalName);
     if (
+      isDeclarativePreevalValue(cachedValue) ||
       !isProcessorArtifactValue(cachedValue, processors, processorClassNames)
     ) {
       debugStaticResolve(action, {

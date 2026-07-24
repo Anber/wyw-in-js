@@ -108,7 +108,8 @@ export const applyOxcProcessors = (
               tagSource,
               {
                 declarativeSemantics: normalizeDeclarativeProcessorSemantics(
-                  manifest?.semantics
+                  manifest?.semantics,
+                  manifest?.dir
                 ),
               },
             ]);

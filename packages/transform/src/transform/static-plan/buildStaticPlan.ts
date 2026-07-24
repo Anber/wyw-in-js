@@ -107,7 +107,10 @@ const discoverProcessorImports = ({
     processorImports.push({
       imported: tagSource.imported,
       local,
-      semantics: normalizeDeclarativeProcessorSemantics(manifest?.semantics),
+      semantics: normalizeDeclarativeProcessorSemantics(
+        manifest?.semantics,
+        manifest?.dir
+      ),
       source: tagSource.source,
     });
   });
