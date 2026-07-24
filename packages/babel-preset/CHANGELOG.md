@@ -1,5 +1,17 @@
 # @wyw-in-js/babel-preset
 
+## 2.2.0
+
+### Minor Changes
+
+- Bump versions
+
+### Patch Changes
+
+- Updated dependencies
+  - @wyw-in-js/shared@2.2.0
+  - @wyw-in-js/transform@2.2.0
+
 ## 2.1.6
 
 ### Patch Changes
