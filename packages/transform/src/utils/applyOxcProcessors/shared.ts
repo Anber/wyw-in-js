@@ -19,13 +19,14 @@ export const parseOxc = (code: string, filename: string): Program => {
 
 export const insertAddedImports = (
   code: string,
-  program: Program,
+  filename: string,
   addedImports: AddedImport[]
 ): string => {
   if (addedImports.length === 0) {
     return code;
   }
 
+  const program = parseOxc(code, filename);
   const uniqueImports = [
     ...new Map(
       addedImports.map((item) => [

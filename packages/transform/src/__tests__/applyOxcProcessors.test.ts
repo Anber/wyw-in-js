@@ -847,6 +847,37 @@ describe('applyOxcProcessors', () => {
     );
   });
 
+  it('inserts deferred processor imports using offsets from the replaced code', () => {
+    const result = applyOxcProcessors(
+      `
+        import { makeStyles } from 'test-package';
+        export const useStyles = makeStyles({});
+        import * as RefreshRuntime from "/@react-refresh";
+        export function Foo() {
+          return null;
+        }
+      `,
+      {
+        ...fileContext,
+        filename: path.join(__dirname, 'react-refresh.tsx'),
+      },
+      options(addedImportCallProcessorPath, 'makeStyles'),
+      (processor) => processor.doRuntimeReplacement(),
+      false,
+      true
+    );
+
+    result.finalizeProcessorCallbacks?.();
+
+    expect(result.code).toContain(
+      'import * as RefreshRuntime from "/@react-refresh";'
+    );
+    expect(result.code).toContain('import { __styles } from "@griffel/react";');
+    expect(result.code).toContain(
+      "export const useStyles = /*#__PURE__*/__styles('x');"
+    );
+  });
+
   it('throws when it cannot derive a display name from ownership or filename', () => {
     expect(() =>
       applyOxcProcessors(
