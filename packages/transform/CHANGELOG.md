@@ -1,5 +1,11 @@
 # @wyw-in-js/transform
 
+## 2.3.1
+
+### Patch Changes
+
+- b222196: Preserve valid Vite React Fast Refresh modules when processor replacements add build-time imports.
+
 ## 2.3.0
 
 ### Minor Changes
