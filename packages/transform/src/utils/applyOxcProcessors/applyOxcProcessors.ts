@@ -364,7 +364,7 @@ export const applyOxcProcessors = (
     const nextReplacedCode = applyOxcReplacements(workingCode, replacements);
     const codeWithAddedImports = insertAddedImports(
       nextReplacedCode,
-      program,
+      filename,
       addedImports
     );
 
