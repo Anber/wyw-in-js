@@ -5,6 +5,7 @@
 - State: in progress
 - Feature branch: `anber/fix-static-destructuring`
 - Behavioral baseline: `9baff607f6121fc0d33db9119e2ce014d408834b`
+- Current refactor checkpoint: `cfc96b02`
 - Target: preserve the full static destructuring support implemented for
   issue #366 while replacing duplicated semantic models with shared,
   typed analysis primitives.
@@ -92,6 +93,15 @@ decomposeOxcMemberPath(node, policy);
 Runtime-child classification must distinguish transparent TypeScript
 expression wrappers from type-only subtrees. An ancestor-wide
 `node.type.startsWith('TS')` check is insufficient.
+
+### Lexical scope traversal
+
+`utils/oxc/lexicalScopes.ts` owns the syntax-level scope boundaries, runtime
+reference classification, decorator routing, and TypeScript runtime/type-only
+traversal shared by scope analysis and the shaker. Consumers still own their
+binding records and policy. Both consumers collect declarations and deferred
+references in one AST pass; the shared layer does not build a `Node -> Scope`
+index.
 
 ### Pattern facts
 
@@ -241,8 +251,11 @@ generation belong to a separate emitter.
 - [x] Reuse canonical `isOxcNode` and `getOxcNodeChildren`.
 - [x] Add runtime-wrapper and function-like helpers.
 - [x] Add lazy cached raw binding-pattern facts.
-- [ ] Add assignment-target facts with their distinct reference-evaluation
-      order before compiling the shared `PatternProgram`.
+- [x] Add duplicate-preserving assignment-target leaf traversal shared by the
+      shaker, mutation analysis, snapshot replay, safety, and replacements.
+- [ ] Add the complete assignment-target evaluation schedule, including
+      computed-key/default and reference-evaluation order, before compiling the
+      shared `PatternProgram`.
 - [x] Add structured syntactic projection paths.
 - [x] Migrate duplicate collectors in scope analysis, static evaluation,
       expression extraction, and the shaker.
@@ -425,3 +438,38 @@ generation belong to a separate emitter.
 - Recorded peak RSS for each of the same 12 benchmark processes. Current
   versus baseline RSS differed by +0.99% in the mean and +0.15% in the median.
   Both time and memory results remain below the 5% investigation threshold.
+- Added the shared lexical traversal in `459dbba5`. It separates function
+  parameter and body environments, routes decorators and switch discriminants
+  through the correct scopes, and records exact reference scopes for binding
+  resolution. The same slice fixed initializer-free `var` redeclarations so
+  they no longer overwrite same-name parameters.
+- Replaced the shape-dependent OXC child-key cache with the parser's canonical
+  visitor keys. This removed an order-dependent JS-then-TS decorator failure.
+  Against `f3378291`, the 480-declaration `analyzeProgram` microbenchmark
+  improved from 212.6 ms to 149.0 ms in the aggregate mean (-29.9%).
+- Migrated shaker reference collection to the lexical kernel in `1b4c6c63`
+  without reintroducing a second AST pass or a `Node -> Scope` map.
+  `executableIndex.ts` dropped from 648 to 485 lines. Differential review over
+  37 programs, 576 subtree roots, and 356 repository TypeScript files found no
+  unexpected reference changes; only declaration-only destructuring names
+  stopped being reported as module references.
+- The paired large-profile gate for `1b4c6c63` versus `459dbba5` used 16
+  samples per side. Trimmed deltas were +0.52% wall, +0.33% evaluator, +1.01%
+  preevaluation, and +0.31% eval-file time, with identical CSS bytes, CSS file
+  counts, and evaluation counts.
+- Added the zero-callback assignment-target kernel in `72b17110` and migrated
+  five consumers. It preserves duplicates and source order while leaving
+  binding, member, unknown-alias, and safety policy with each consumer.
+  Production code in this slice decreased by 64 lines; the complete transform
+  suite passed 1,395 tests.
+- Added the zero-allocation syntactic property-key fast path in `cfc96b02`.
+  Five consumers now share scalar identifier/literal classification while
+  retaining dynamic evaluation and `Symbol.iterator` policy. Across 20 paired
+  large samples per side, trimmed deltas versus `72b17110` were -3.19% wall,
+  -4.01% evaluator, and -2.38% preevaluation; generated outputs and counts were
+  unchanged. The complete transform suite passed 1,396 tests.
+- Combined RSS for the assignment-target and property-key slices versus
+  `1b4c6c63` was -0.36% in the mean and +1.80% in the median across three
+  processes per side. From `f3378291` through `cfc96b02`, production
+  TypeScript decreased by 27 lines overall while the shared lexical and
+  assignment-target kernels replaced the duplicated implementations.
