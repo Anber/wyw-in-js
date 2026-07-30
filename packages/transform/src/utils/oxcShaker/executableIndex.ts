@@ -123,27 +123,24 @@ const collectScopedReferences = (
     functionScope: boolean;
     parent: ReferenceScope | null;
   };
+  type PendingReference = {
+    name: string;
+    scope: ReferenceScope;
+    start: number;
+  };
 
-  const rootScope: ReferenceScope = {
-    activeFrom: Number.NEGATIVE_INFINITY,
+  const createScope = (
+    parent: ReferenceScope | null,
+    functionScope = false,
+    activeFrom = Number.NEGATIVE_INFINITY
+  ): ReferenceScope => ({
+    activeFrom,
     bindings: new Set(),
-    functionScope: true,
-    parent: null,
-  };
-  const scopes = new Map<Node, ReferenceScope>();
-  const functionBodies = new WeakSet<Node>();
-  const decoratorScopes = new WeakMap<Node, ReferenceScope>();
-  const assignDecoratorScope = (
-    decoratedNode: Node,
-    scope: ReferenceScope
-  ): void => {
-    const { decorators } = decoratedNode as AnyNode;
-    if (Array.isArray(decorators)) {
-      decorators.forEach((decorator) =>
-        decoratorScopes.set(decorator as Node, scope)
-      );
-    }
-  };
+    functionScope,
+    parent,
+  });
+  const rootScope = createScope(null, true);
+  const pendingReferences: PendingReference[] = [];
   const addPattern = (
     scope: ReferenceScope,
     pattern: Node | null | undefined
@@ -159,19 +156,28 @@ const collectScopedReferences = (
     }
     return current;
   };
-
-  const assignScopes = (
+  const hasDecorator = (decoratedNode: Node, child: Node): boolean => {
+    const { decorators } = decoratedNode as AnyNode;
+    return Array.isArray(decorators) && decorators.includes(child);
+  };
+  const visit = (
     current: Node,
-    inheritedScope: ReferenceScope
+    inheritedScope: ReferenceScope,
+    parent: Node | null = null,
+    grandparent: Node | null = null,
+    decoratorScope: ReferenceScope | null = null,
+    isFunctionBody = false,
+    collectReferences = true
   ): void => {
-    const decoratorScope = decoratorScopes.get(current);
-    if (decoratorScope) {
-      scopes.set(current, decoratorScope);
-      getChildren(current).forEach((child) =>
-        assignScopes(child, decoratorScope)
-      );
-      return;
-    }
+    const runtimeExpression = isOxcTypescriptRuntimeWrapper(current)
+      ? ((current as AnyNode).expression as Node | undefined)
+      : undefined;
+    const collectCurrentReferences =
+      collectReferences &&
+      (!current.type.startsWith('TS') ||
+        current.type === 'TSEnumDeclaration' ||
+        current.type === 'TSParameterProperty' ||
+        runtimeExpression !== undefined);
 
     let currentScope = inheritedScope;
     const isFunction =
@@ -183,61 +189,32 @@ const collectScopedReferences = (
       if (current.type === 'FunctionDeclaration' && current.id) {
         addPattern(inheritedScope, current.id);
       }
-      currentScope = {
-        activeFrom: Number.NEGATIVE_INFINITY,
-        bindings: new Set(),
-        functionScope: true,
-        parent: inheritedScope,
-      };
+      currentScope = createScope(inheritedScope, true);
       if (current.type === 'FunctionExpression' && current.id) {
         addPattern(currentScope, current.id);
       }
-      current.params.forEach((parameter) => {
-        assignDecoratorScope(parameter, inheritedScope);
-        addPattern(currentScope, parameter);
-      });
-      if (current.body?.type === 'BlockStatement') {
-        functionBodies.add(current.body);
-      }
+      current.params.forEach((parameter) =>
+        addPattern(currentScope, parameter)
+      );
     } else if (current.type === 'ClassExpression') {
-      assignDecoratorScope(current, inheritedScope);
-      currentScope = {
-        activeFrom: Number.NEGATIVE_INFINITY,
-        bindings: new Set(),
-        functionScope: false,
-        parent: inheritedScope,
-      };
+      currentScope = createScope(inheritedScope);
       if (current.id) {
         addPattern(currentScope, current.id);
       }
     } else if (current.type === 'StaticBlock') {
-      currentScope = {
-        activeFrom: Number.NEGATIVE_INFINITY,
-        bindings: new Set(),
-        functionScope: true,
-        parent: inheritedScope,
-      };
-    } else if (
-      current.type === 'BlockStatement' &&
-      functionBodies.has(current)
-    ) {
+      currentScope = createScope(inheritedScope, true);
+    } else if (current.type === 'BlockStatement' && isFunctionBody) {
       // Functions with a non-simple parameter list evaluate defaults in a
       // parameter environment that cannot see body-level var declarations.
       // A separate body function scope is also valid for simple parameters
       // and keeps free-reference classification uniform.
-      currentScope = {
-        activeFrom: Number.NEGATIVE_INFINITY,
-        bindings: new Set(),
-        functionScope: true,
-        parent: inheritedScope,
-      };
+      currentScope = createScope(inheritedScope, true);
     } else if (current.type === 'SwitchStatement') {
-      currentScope = {
-        activeFrom: current.cases[0]?.start ?? current.end,
-        bindings: new Set(),
-        functionScope: false,
-        parent: inheritedScope,
-      };
+      currentScope = createScope(
+        inheritedScope,
+        false,
+        current.cases[0]?.start ?? current.end
+      );
     } else if (
       current.type === 'BlockStatement' ||
       current.type === 'CatchClause' ||
@@ -245,15 +222,8 @@ const collectScopedReferences = (
       current.type === 'ForInStatement' ||
       current.type === 'ForOfStatement'
     ) {
-      currentScope = {
-        activeFrom: Number.NEGATIVE_INFINITY,
-        bindings: new Set(),
-        functionScope: false,
-        parent: inheritedScope,
-      };
+      currentScope = createScope(inheritedScope);
     }
-
-    scopes.set(current, currentScope);
 
     if (current.type === 'VariableDeclaration') {
       const declarationScope =
@@ -277,51 +247,65 @@ const collectScopedReferences = (
       );
     }
 
-    getChildren(current).forEach((child) => assignScopes(child, currentScope));
+    if (
+      collectCurrentReferences &&
+      isIdentifierReference(current, parent, grandparent)
+    ) {
+      pendingReferences.push({
+        name: (current as AnyNode).name as string,
+        scope: currentScope,
+        start: current.start,
+      });
+    }
+
+    getChildren(current).forEach((child) => {
+      let childDecoratorScope: ReferenceScope | null = null;
+      let childScope = currentScope;
+
+      if (decoratorScope && hasDecorator(current, child)) {
+        childScope = decoratorScope;
+      } else if (
+        current.type === 'ClassExpression' &&
+        hasDecorator(current, child)
+      ) {
+        childScope = inheritedScope;
+      }
+
+      if (
+        isFunction &&
+        current.params.includes(child as (typeof current.params)[number])
+      ) {
+        childDecoratorScope = inheritedScope;
+      }
+
+      visit(
+        child,
+        childScope,
+        current,
+        parent,
+        childDecoratorScope,
+        isFunction &&
+          current.body?.type === 'BlockStatement' &&
+          current.body === child,
+        collectCurrentReferences &&
+          (runtimeExpression === undefined || runtimeExpression === child)
+      );
+    });
   };
 
-  assignScopes(node, rootScope);
+  visit(node, rootScope);
 
   const references = new Set<string>();
-  const visit = (
-    current: Node,
-    parent: Node | null = null,
-    grandparent: Node | null = null
-  ): void => {
-    if (isOxcTypescriptRuntimeWrapper(current)) {
-      const expression = (current as AnyNode).expression as Node | undefined;
-      if (expression) {
-        visit(expression, current, parent);
-      }
-      return;
+  pendingReferences.forEach(({ name, scope: referenceScope, start }) => {
+    let scope: ReferenceScope | null = referenceScope;
+    while (scope && (start < scope.activeFrom || !scope.bindings.has(name))) {
+      scope = scope.parent;
     }
-
-    if (
-      current.type.startsWith('TS') &&
-      current.type !== 'TSEnumDeclaration' &&
-      current.type !== 'TSParameterProperty'
-    ) {
-      return;
+    if (!scope || (rootBindingsAreExternal && scope === rootScope)) {
+      references.add(name);
     }
+  });
 
-    if (isIdentifierReference(current, parent, grandparent)) {
-      const name = (current as AnyNode).name as string;
-      let scope: ReferenceScope | null = scopes.get(current) ?? rootScope;
-      while (
-        scope &&
-        (current.start < scope.activeFrom || !scope.bindings.has(name))
-      ) {
-        scope = scope.parent;
-      }
-      if (!scope || (rootBindingsAreExternal && scope === rootScope)) {
-        references.add(name);
-      }
-    }
-
-    getChildren(current).forEach((child) => visit(child, current, parent));
-  };
-
-  visit(node);
   return references;
 };
 
