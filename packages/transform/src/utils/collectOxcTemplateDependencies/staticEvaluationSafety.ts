@@ -7,6 +7,10 @@ import type {
   VariableDeclarator,
 } from 'oxc-parser';
 
+import {
+  appendOxcAssignmentTargetLeaves,
+  type OxcAssignmentTargetLeaf,
+} from '../oxc/assignmentTargets';
 import { getOxcNodeChildren } from '../oxc/ast';
 import {
   collectOxcPatternBindingNames,
@@ -200,35 +204,17 @@ const assignmentTargetContainsBinding = (
   binding: Binding,
   ctx: ExtractionContext
 ): boolean => {
-  if (target.type === 'Identifier') {
-    return resolveBindingAt(ctx, target.name, target.start) === binding;
+  const targets: OxcAssignmentTargetLeaf[] = [];
+  appendOxcAssignmentTargetLeaves(target, targets);
+  for (let i = 0; i < targets.length; i += 1) {
+    const leaf = targets[i]!;
+    if (
+      leaf.type === 'Identifier' &&
+      resolveBindingAt(ctx, leaf.name, leaf.start) === binding
+    ) {
+      return true;
+    }
   }
-
-  if (target.type === 'AssignmentPattern') {
-    return assignmentTargetContainsBinding(target.left, binding, ctx);
-  }
-
-  if (target.type === 'RestElement') {
-    return assignmentTargetContainsBinding(target.argument, binding, ctx);
-  }
-
-  if (target.type === 'ArrayPattern') {
-    return target.elements.some(
-      (element) =>
-        !!element && assignmentTargetContainsBinding(element, binding, ctx)
-    );
-  }
-
-  if (target.type === 'ObjectPattern') {
-    return target.properties.some((property) =>
-      assignmentTargetContainsBinding(
-        property.type === 'RestElement' ? property.argument : property.value,
-        binding,
-        ctx
-      )
-    );
-  }
-
   return false;
 };
 

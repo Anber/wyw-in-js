@@ -9,6 +9,10 @@ import type {
   VariableDeclaration,
 } from 'oxc-parser';
 
+import {
+  appendOxcAssignmentTargetLeaves,
+  type OxcAssignmentTargetLeaf,
+} from '../oxc/assignmentTargets';
 import { getOxcNodeChildren } from '../oxc/ast';
 import { collectOxcPatternBindingNames } from '../oxc/patterns';
 import { resolveBindingInIndex } from './bindingResolution';
@@ -377,39 +381,24 @@ const collectRootMutationHazards = (
       binding.declaredAt === declarator.start);
 
   const collectAssignmentTargetKeys = (target: Node): string[] => {
-    if (target.type === 'Identifier') {
-      const binding = resolveReferenceBinding(target.name, target.start);
-      return [binding ? toMutationBindingKey(binding) : target.name];
+    const targets: OxcAssignmentTargetLeaf[] = [];
+    appendOxcAssignmentTargetLeaves(target, targets);
+    const keys: string[] = [];
+    for (let i = 0; i < targets.length; i += 1) {
+      const leaf = targets[i]!;
+      if (leaf.type === 'Identifier') {
+        const binding = resolveReferenceBinding(leaf.name, leaf.start);
+        keys.push(binding ? toMutationBindingKey(binding) : leaf.name);
+      } else {
+        const objectKeys = collectReferenceKeys(leaf.object);
+        if (objectKeys.length > 0) {
+          keys.push(...objectKeys);
+        } else {
+          keys.push(unknownAliasMutationBinding);
+        }
+      }
     }
-
-    if (target.type === 'MemberExpression') {
-      const objectKeys = collectReferenceKeys(target.object);
-      return objectKeys.length > 0 ? objectKeys : [unknownAliasMutationBinding];
-    }
-
-    if (target.type === 'AssignmentPattern') {
-      return collectAssignmentTargetKeys(target.left);
-    }
-
-    if (target.type === 'RestElement') {
-      return collectAssignmentTargetKeys(target.argument);
-    }
-
-    if (target.type === 'ObjectPattern') {
-      return target.properties.flatMap((property) =>
-        collectAssignmentTargetKeys(
-          property.type === 'RestElement' ? property.argument : property.value
-        )
-      );
-    }
-
-    if (target.type === 'ArrayPattern') {
-      return target.elements.flatMap((element) =>
-        element ? collectAssignmentTargetKeys(element) : []
-      );
-    }
-
-    return [];
+    return keys;
   };
 
   const addHazard = (

@@ -2,6 +2,11 @@
 
 import type { Node } from 'oxc-parser';
 
+import {
+  appendOxcAssignmentTargetLeaves,
+  getOxcAssignmentTargetRootIdentifier,
+  type OxcAssignmentTargetLeaf,
+} from '../oxc/assignmentTargets';
 import { getOxcNodeChildren } from '../oxc/ast';
 import { collectOxcPatternBindingNames } from '../oxc/patterns';
 import { isOxcFunctionLike } from '../oxc/runtimeSemantics';
@@ -228,42 +233,16 @@ const crossesDeferredFunctionBoundary = (
   return visit(owner, false) ?? true;
 };
 
-const collectMutationTargetRoots = (node: Node, roots: Node[] = []): Node[] => {
-  if (node.type === 'Identifier') {
-    roots.push(node);
-    return roots;
+const collectMutationTargetRoots = (node: Node): Node[] => {
+  const targets: OxcAssignmentTargetLeaf[] = [];
+  appendOxcAssignmentTargetLeaves(node, targets);
+  const roots: Node[] = [];
+  for (let i = 0; i < targets.length; i += 1) {
+    const root = getOxcAssignmentTargetRootIdentifier(targets[i]!);
+    if (root) {
+      roots.push(root);
+    }
   }
-
-  if (node.type === 'MemberExpression') {
-    return collectMutationTargetRoots(node.object, roots);
-  }
-
-  if (node.type === 'AssignmentPattern') {
-    return collectMutationTargetRoots(node.left, roots);
-  }
-
-  if (node.type === 'RestElement') {
-    return collectMutationTargetRoots(node.argument, roots);
-  }
-
-  if (node.type === 'ObjectPattern') {
-    node.properties.forEach((property) => {
-      collectMutationTargetRoots(
-        property.type === 'RestElement' ? property.argument : property.value,
-        roots
-      );
-    });
-    return roots;
-  }
-
-  if (node.type === 'ArrayPattern') {
-    node.elements.forEach((element) => {
-      if (element) {
-        collectMutationTargetRoots(element, roots);
-      }
-    });
-  }
-
   return roots;
 };
 

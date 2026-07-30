@@ -78,6 +78,7 @@ describe('identifier reference replacements', () => {
       '({ width = fallback, nested: object.value, ...rest } = source)',
       ['width', 'object', 'rest'],
     ],
+    ['({ nested: ((box as Box).inner!).leaf } = source)', ['box']],
     ['delete target[key]', ['target']],
   ])(
     'identifies mutation roots without classifying target reads in %s',

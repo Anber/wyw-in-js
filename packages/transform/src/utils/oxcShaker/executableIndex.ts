@@ -1,5 +1,9 @@
 import type { Node } from 'oxc-parser';
 
+import {
+  appendOxcAssignmentTargetLeaves,
+  type OxcAssignmentTargetLeaf,
+} from '../oxc/assignmentTargets';
 import { getOxcNodeChildren as getChildren } from '../oxc/ast';
 import {
   visitOxcLexicalScopes,
@@ -175,37 +179,6 @@ const getMutationPath = (
   return current.type === 'MemberExpression'
     ? getMutationPath(current.object, memberDepth + 1)
     : null;
-};
-
-const collectMutationTargets = (node: Node): Node[] => {
-  const current = unwrapAliasExpression(node);
-  if (current.type === 'Identifier' || current.type === 'MemberExpression') {
-    return [current];
-  }
-
-  if (current.type === 'AssignmentPattern') {
-    return collectMutationTargets(current.left);
-  }
-
-  if (current.type === 'RestElement') {
-    return collectMutationTargets(current.argument);
-  }
-
-  if (current.type === 'ObjectPattern') {
-    return current.properties.flatMap((property) =>
-      collectMutationTargets(
-        property.type === 'RestElement' ? property.argument : property.value
-      )
-    );
-  }
-
-  if (current.type === 'ArrayPattern') {
-    return current.elements.flatMap((element) =>
-      element ? collectMutationTargets(element) : []
-    );
-  }
-
-  return [];
 };
 
 const getMutationCallTargetNode = (node: Node): Node | null => {
@@ -398,31 +371,33 @@ export const hasModuleInvocationCandidate = (node: Node): boolean =>
 export const collectMutations = (node: Node): Set<string> => {
   const mutations = new Set<string>();
 
-  const addTargets = (targets: Node[]): void => {
-    targets.forEach((target) => {
-      const mutated = getMutatedBinding(target);
-      if (mutated) {
-        mutations.add(mutated);
+  const addTargets = (target: Node): void => {
+    const targets: OxcAssignmentTargetLeaf[] = [];
+    appendOxcAssignmentTargetLeaves(target, targets);
+    for (let i = 0; i < targets.length; i += 1) {
+      const mutation = getMutationPath(targets[i]!);
+      if (mutation) {
+        mutations.add(mutation.binding);
       }
-    });
+    }
   };
 
   forEachModuleExecutedNode(node, (current) => {
     if (current.type === 'AssignmentExpression') {
-      addTargets(collectMutationTargets(current.left));
+      addTargets(current.left);
     } else if (current.type === 'UpdateExpression') {
-      addTargets(collectMutationTargets(current.argument));
+      addTargets(current.argument);
     } else if (
       current.type === 'UnaryExpression' &&
       current.operator === 'delete'
     ) {
-      addTargets(collectMutationTargets(current.argument));
+      addTargets(current.argument);
     } else if (
       (current.type === 'ForInStatement' ||
         current.type === 'ForOfStatement') &&
       current.left.type !== 'VariableDeclaration'
     ) {
-      addTargets(collectMutationTargets(current.left));
+      addTargets(current.left);
     } else {
       const mutated = getMutationCallTarget(current);
       if (mutated) {
@@ -436,13 +411,15 @@ export const collectMutations = (node: Node): Set<string> => {
 export const collectNestedMutations = (node: Node): Set<string> => {
   const mutations = new Set<string>();
 
-  const addNestedTargets = (targets: Node[], minimumDepth: number): void => {
-    targets.forEach((target) => {
-      const mutation = getMutationPath(target);
+  const addNestedTargets = (target: Node, minimumDepth: number): void => {
+    const targets: OxcAssignmentTargetLeaf[] = [];
+    appendOxcAssignmentTargetLeaves(target, targets);
+    for (let i = 0; i < targets.length; i += 1) {
+      const mutation = getMutationPath(targets[i]!);
       if (mutation && mutation.memberDepth >= minimumDepth) {
         mutations.add(mutation.binding);
       }
-    });
+    }
   };
 
   forEachModuleExecutedNode(node, (current) => {
@@ -454,12 +431,12 @@ export const collectNestedMutations = (node: Node): Set<string> => {
         current.type === 'AssignmentExpression'
           ? current.left
           : current.argument;
-      addNestedTargets(collectMutationTargets(target), 2);
+      addNestedTargets(target, 2);
       return;
     }
 
     if (current.type === 'UnaryExpression' && current.operator === 'delete') {
-      addNestedTargets(collectMutationTargets(current.argument), 2);
+      addNestedTargets(current.argument, 2);
       return;
     }
 
@@ -468,7 +445,7 @@ export const collectNestedMutations = (node: Node): Set<string> => {
         current.type === 'ForOfStatement') &&
       current.left.type !== 'VariableDeclaration'
     ) {
-      addNestedTargets(collectMutationTargets(current.left), 2);
+      addNestedTargets(current.left, 2);
       return;
     }
 

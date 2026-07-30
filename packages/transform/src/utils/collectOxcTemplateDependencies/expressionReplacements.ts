@@ -2,7 +2,13 @@
 
 import type { Expression, MemberExpression, Node } from 'oxc-parser';
 
+import {
+  appendOxcAssignmentTargetLeaves,
+  getOxcAssignmentTargetRootIdentifier,
+  type OxcAssignmentTargetLeaf,
+} from '../oxc/assignmentTargets';
 import { getOxcNodeChildren } from '../oxc/ast';
+import { collectOxcPatternBindingNames } from '../oxc/patterns';
 import {
   isBindingPosition,
   isInTypeContext,
@@ -67,101 +73,19 @@ const createReplacementScope = (
   return scope;
 };
 
-const collectBindingNames = (node: Node, names: Set<string>): void => {
-  if (node.type === 'Identifier') {
-    names.add(node.name);
-    return;
-  }
-
-  if (node.type === 'AssignmentPattern') {
-    collectBindingNames(node.left, names);
-    return;
-  }
-
-  if (node.type === 'RestElement') {
-    collectBindingNames(node.argument, names);
-    return;
-  }
-
-  if (node.type === 'ObjectPattern') {
-    node.properties.forEach((property) => {
-      collectBindingNames(
-        property.type === 'RestElement' ? property.argument : property.value,
-        names
-      );
-    });
-    return;
-  }
-
-  if (node.type === 'ArrayPattern') {
-    node.elements.forEach((element) => {
-      if (element) {
-        collectBindingNames(element, names);
-      }
-    });
-    return;
-  }
-
-  if (node.type === 'TSParameterProperty') {
-    collectBindingNames(node.parameter, names);
-  }
-};
-
 type OxcIdentifier = Extract<Node, { type: 'Identifier' }>;
 
-const collectMutationTargetRoots = (
+const appendMutationTargetRoots = (
   node: Node,
   roots: OxcIdentifier[]
 ): void => {
-  if (node.type === 'Identifier') {
-    roots.push(node);
-    return;
-  }
-
-  if (node.type === 'MemberExpression') {
-    collectMutationTargetRoots(node.object, roots);
-    return;
-  }
-
-  if (
-    node.type === 'ParenthesizedExpression' ||
-    node.type === 'ChainExpression' ||
-    node.type === 'TSAsExpression' ||
-    node.type === 'TSSatisfiesExpression' ||
-    node.type === 'TSTypeAssertion' ||
-    node.type === 'TSNonNullExpression' ||
-    node.type === 'TSInstantiationExpression'
-  ) {
-    collectMutationTargetRoots(node.expression, roots);
-    return;
-  }
-
-  if (node.type === 'AssignmentPattern') {
-    collectMutationTargetRoots(node.left, roots);
-    return;
-  }
-
-  if (node.type === 'RestElement') {
-    collectMutationTargetRoots(node.argument, roots);
-    return;
-  }
-
-  if (node.type === 'ObjectPattern') {
-    node.properties.forEach((property) => {
-      collectMutationTargetRoots(
-        property.type === 'RestElement' ? property.argument : property.value,
-        roots
-      );
-    });
-    return;
-  }
-
-  if (node.type === 'ArrayPattern') {
-    node.elements.forEach((element) => {
-      if (element) {
-        collectMutationTargetRoots(element, roots);
-      }
-    });
+  const targets: OxcAssignmentTargetLeaf[] = [];
+  appendOxcAssignmentTargetLeaves(node, targets);
+  for (let i = 0; i < targets.length; i += 1) {
+    const root = getOxcAssignmentTargetRootIdentifier(targets[i]!);
+    if (root) {
+      roots.push(root);
+    }
   }
 };
 
@@ -238,16 +162,16 @@ const collectIdentifierMutationTargetsImpl = (
   const targets: OxcIdentifier[] = [];
   walkExpressionByExecution(expression, includeDeferred, (node) => {
     if (node.type === 'AssignmentExpression') {
-      collectMutationTargetRoots(node.left, targets);
+      appendMutationTargetRoots(node.left, targets);
     } else if (node.type === 'UpdateExpression') {
-      collectMutationTargetRoots(node.argument, targets);
+      appendMutationTargetRoots(node.argument, targets);
     } else if (node.type === 'UnaryExpression' && node.operator === 'delete') {
-      collectMutationTargetRoots(node.argument, targets);
+      appendMutationTargetRoots(node.argument, targets);
     } else if (
       (node.type === 'ForInStatement' || node.type === 'ForOfStatement') &&
       node.left.type !== 'VariableDeclaration'
     ) {
-      collectMutationTargetRoots(node.left, targets);
+      appendMutationTargetRoots(node.left, targets);
     }
   });
   return targets;
@@ -290,7 +214,9 @@ const createNestedReplacementScope = (
       functionScope.bindings.add(node.id.name);
     }
     node.params.forEach((param) =>
-      collectBindingNames(param, functionScope.bindings)
+      collectOxcPatternBindingNames(param).forEach((name) =>
+        functionScope.bindings.add(name)
+      )
     );
     return functionScope;
   }
@@ -310,7 +236,9 @@ const createNestedReplacementScope = (
   if (node.type === 'CatchClause') {
     const catchScope = createReplacementScope(scope);
     if (node.param) {
-      collectBindingNames(node.param, catchScope.bindings);
+      collectOxcPatternBindingNames(node.param).forEach((name) =>
+        catchScope.bindings.add(name)
+      );
     }
     return catchScope;
   }
@@ -366,7 +294,9 @@ const collectReplacementScopes = (
     const declarationScope =
       node.kind === 'var' ? currentScope.functionScope : currentScope;
     node.declarations.forEach((declarator) =>
-      collectBindingNames(declarator.id, declarationScope.bindings)
+      collectOxcPatternBindingNames(declarator.id).forEach((name) =>
+        declarationScope.bindings.add(name)
+      )
     );
   }
 

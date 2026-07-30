@@ -1,6 +1,11 @@
 /* eslint-env jest */
 import type { Node } from 'oxc-parser';
 
+import {
+  appendOxcAssignmentTargetLeaves,
+  getOxcAssignmentTargetRootIdentifier,
+  type OxcAssignmentTargetLeaf,
+} from '../assignmentTargets';
 import { getOxcNodeChildren, walkOxc } from '../ast';
 import {
   visitOxcLexicalScopes,
@@ -149,6 +154,50 @@ describe('shared OXC analysis primitives', () => {
     expect(
       getOxcBindingPatternFacts(restPattern).facts.map(({ kind }) => kind)
     ).toEqual(['binding', 'rest', 'binding']);
+  });
+
+  it('collects assignment leaves in source order through transparent wrappers', () => {
+    const code = `
+      ([target, , target, { nested: ((box as Box).inner!).leaf, ...rest }] = source);
+    `;
+    const statement = parseOxcProgram(code, filename).body[0];
+    if (statement?.type !== 'ExpressionStatement') {
+      throw new Error('Expected an expression statement');
+    }
+    const expression =
+      statement.expression.type === 'ParenthesizedExpression'
+        ? statement.expression.expression
+        : statement.expression;
+    if (expression?.type !== 'AssignmentExpression') {
+      throw new Error('Expected an assignment expression');
+    }
+
+    const leaves: OxcAssignmentTargetLeaf[] = [];
+    appendOxcAssignmentTargetLeaves(expression.left, leaves);
+
+    expect(leaves.map((leaf) => leaf.type)).toEqual([
+      'Identifier',
+      'Identifier',
+      'MemberExpression',
+      'Identifier',
+    ]);
+    expect(leaves.map((leaf) => code.slice(leaf.start, leaf.end))).toEqual([
+      'target',
+      'target',
+      '((box as Box).inner!).leaf',
+      'rest',
+    ]);
+    expect(getOxcAssignmentTargetRootIdentifier(leaves[2]!)).toMatchObject({
+      name: 'box',
+      type: 'Identifier',
+    });
+
+    const unsupported = firstDeclarator('const value = this;').init;
+    if (!unsupported) {
+      throw new Error('Expected an initializer');
+    }
+    appendOxcAssignmentTargetLeaves(unsupported, leaves);
+    expect(leaves).toHaveLength(4);
   });
 
   it('keeps literal dotted keys separate from nested paths', () => {
