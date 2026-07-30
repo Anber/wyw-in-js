@@ -5,6 +5,7 @@ import {
   evaluateOxcStaticExpressionAt,
 } from '../utils/collectOxcTemplateDependencies';
 import { evaluateStaticPropertyKey } from '../utils/collectOxcTemplateDependencies/staticEvaluationRuntime';
+import { copyEnumerableOwnDataProperties } from '../utils/collectOxcTemplateDependencies/staticValues';
 import type { ExtractionContext } from '../utils/collectOxcTemplateDependencies/types';
 
 const evaluateLastExpression = (
@@ -19,6 +20,160 @@ const evaluateLastExpression = (
 };
 
 describe('evaluateOxcStaticExpression', () => {
+  it('copies enumerable own data properties with exclusions', () => {
+    let accessorReads = 0;
+    const target = {};
+    const source = Object.defineProperties(
+      {},
+      {
+        excluded: {
+          enumerable: true,
+          get: () => {
+            accessorReads += 1;
+            return 'excluded';
+          },
+        },
+        hidden: {
+          enumerable: false,
+          get: () => {
+            accessorReads += 1;
+            return 'hidden';
+          },
+        },
+        included: {
+          enumerable: true,
+          value: 'included',
+        },
+      }
+    );
+
+    expect(
+      copyEnumerableOwnDataProperties(
+        target,
+        source,
+        new Set(['excluded']),
+        'reject'
+      )
+    ).toBe(true);
+    expect(target).toEqual({ included: 'included' });
+    expect(accessorReads).toBe(0);
+
+    Object.defineProperty(source, 'includedAccessor', {
+      enumerable: true,
+      get: () => {
+        accessorReads += 1;
+        return 'unsafe';
+      },
+    });
+    expect(
+      copyEnumerableOwnDataProperties(
+        {},
+        source,
+        new Set(['excluded']),
+        'reject'
+      )
+    ).toBe(false);
+    expect(accessorReads).toBe(0);
+  });
+
+  it('defines a copied __proto__ as an own data property', () => {
+    const target = {};
+    const prototypeValue = { unsafe: true };
+    const source = Object.defineProperty({}, '__proto__', {
+      enumerable: true,
+      value: prototypeValue,
+    });
+
+    expect(copyEnumerableOwnDataProperties(target, source)).toBe(true);
+    expect(Object.getPrototypeOf(target)).toBe(Object.prototype);
+    expect(Object.getOwnPropertyDescriptor(target, '__proto__')).toMatchObject({
+      enumerable: true,
+      value: prototypeValue,
+    });
+  });
+
+  it('copies enumerable symbols by default and ignores hidden symbols', () => {
+    const copied = Symbol('copied');
+    const hidden = Symbol('hidden');
+    const source = Object.defineProperties(
+      {},
+      {
+        [copied]: {
+          enumerable: true,
+          value: 304,
+        },
+        [hidden]: {
+          enumerable: false,
+          value: 400,
+        },
+      }
+    );
+    const target: Record<PropertyKey, unknown> = {};
+
+    expect(copyEnumerableOwnDataProperties(target, source)).toBe(true);
+    expect(target[copied]).toBe(304);
+    expect(Object.hasOwn(target, hidden)).toBe(false);
+  });
+
+  it('rejects only enumerable symbols when copying object rest', () => {
+    const enumerable = Symbol('enumerable');
+    const hidden = Symbol('hidden');
+    const hiddenOnly = Object.defineProperty({}, hidden, {
+      enumerable: false,
+      value: 304,
+    });
+    const withEnumerable = Object.defineProperty({}, enumerable, {
+      enumerable: true,
+      value: 400,
+    });
+
+    expect(
+      copyEnumerableOwnDataProperties({}, hiddenOnly, undefined, 'reject')
+    ).toBe(true);
+    expect(
+      copyEnumerableOwnDataProperties({}, withEnumerable, undefined, 'reject')
+    ).toBe(false);
+  });
+
+  it('applies the enumerable-symbol policy through static object rest', () => {
+    const symbol = Symbol('rest');
+    const source = { included: 304 };
+    Object.defineProperty(source, symbol, {
+      configurable: true,
+      enumerable: false,
+      get: () => {
+        throw new Error('non-enumerable symbols must be ignored');
+      },
+    });
+    const project = () =>
+      evaluateOxcStaticExpression(
+        '(({ ...rest }) => rest)(source)',
+        '/test.ts',
+        new Map([['source', source]])
+      );
+
+    expect(project()).toEqual({ included: 304 });
+
+    Object.defineProperty(source, symbol, { enumerable: true });
+    expect(project()).toBeUndefined();
+  });
+
+  it('preserves enumerable symbols through static object spread', () => {
+    const symbol = Symbol('spread');
+    const source = Object.defineProperty({}, symbol, {
+      enumerable: true,
+      value: 304,
+    });
+
+    const result = evaluateOxcStaticExpression(
+      '({ ...source })',
+      '/test.ts',
+      new Map([['source', source]])
+    ) as Record<PropertyKey, unknown>;
+
+    expect(result[symbol]).toBe(304);
+  });
+
   it('resolves static property keys without duplicate computed evaluation', () => {
     const evaluateStatic = jest.fn((): unknown => 'resolved');
     const ctx = {} as ExtractionContext;

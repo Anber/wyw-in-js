@@ -321,7 +321,9 @@ export const defineStaticDataProperty = (
 
 export const copyEnumerableOwnDataProperties = (
   target: object,
-  source: object
+  source: object,
+  excludedStringKeys?: ReadonlySet<string>,
+  enumerableSymbols: 'copy' | 'reject' = 'copy'
 ): boolean => {
   if (isStaticProxy(source)) {
     return false;
@@ -329,9 +331,17 @@ export const copyEnumerableOwnDataProperties = (
 
   try {
     for (const key of Reflect.ownKeys(source)) {
+      if (typeof key === 'string' && excludedStringKeys?.has(key)) {
+        continue;
+      }
+
       const descriptor = Object.getOwnPropertyDescriptor(source, key);
       if (!descriptor?.enumerable) {
         continue;
+      }
+
+      if (typeof key === 'symbol' && enumerableSymbols === 'reject') {
+        return false;
       }
 
       if (

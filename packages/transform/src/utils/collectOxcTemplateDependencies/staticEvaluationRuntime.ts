@@ -19,7 +19,7 @@ import {
 } from './staticEvaluationSafety';
 import {
   cloneStaticValue,
-  defineStaticDataProperty,
+  copyEnumerableOwnDataProperties,
   hasDefaultArrayIterator,
   hasExactPrototype,
   hasOnlyDataProperties,
@@ -306,8 +306,7 @@ export const assignPatternValue = (
       typeof value !== 'object' ||
       value === null ||
       isStaticProxy(value) ||
-      !hasExactPrototype(value, Object.prototype) ||
-      !hasOnlyDataProperties(value)
+      !hasExactPrototype(value, Object.prototype)
     ) {
       return false;
     }
@@ -316,29 +315,9 @@ export const assignPatternValue = (
     for (const property of pattern.properties) {
       if (property.type === 'RestElement') {
         const rest: Record<string, unknown> = {};
-        try {
-          if (
-            Object.getOwnPropertySymbols(value).some(
-              (symbol) =>
-                Object.getOwnPropertyDescriptor(value, symbol)?.enumerable
-            )
-          ) {
-            return false;
-          }
-
-          Object.keys(value).forEach((key) => {
-            if (!excludedKeys.has(key)) {
-              const propertyRead = readOwnDataProperty(value, key);
-              if (
-                !propertyRead.safe ||
-                !propertyRead.found ||
-                !defineStaticDataProperty(rest, key, propertyRead.value)
-              ) {
-                throw new Error('Unsafe static object rest property');
-              }
-            }
-          });
-        } catch {
+        if (
+          !copyEnumerableOwnDataProperties(rest, value, excludedKeys, 'reject')
+        ) {
           return false;
         }
         if (
