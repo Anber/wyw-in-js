@@ -557,6 +557,61 @@ describe('collectOxcTemplateDependencies local snapshot replay', () => {
     expect(result.staticValueCandidates).toEqual([]);
   });
 
+  it('preserves duplicate target writes in source order while replaying an assignment pattern', () => {
+    const code = dedent`
+      function Component() {
+        let width;
+        ({ first: width, second: width } = { first: 304, second: 400 });
+        const template = tag\`${'${width}'}\`;
+      }
+    `;
+    const result = collectOxcTemplateDependencies(code, filename, true);
+    const replay = result.code.slice(
+      0,
+      result.code.indexOf('function Component')
+    );
+    const values: unknown[] = [];
+
+    runInNewContext(`${result.code}\nComponent();`, {
+      tag: (_strings: TemplateStringsArray, value: unknown) => {
+        values.push(value);
+      },
+    });
+
+    expect(values).toEqual([400]);
+    expect(replay).toContain(
+      '({ first: width, second: width } = { first: 304, second: 400 })'
+    );
+  });
+
+  it.todo(
+    'preserves nested computed-key and default evaluation order in snapshot replay',
+    () => {
+      const code = dedent`
+      function Component() {
+        let order = 0;
+        const {
+          [(order = order * 10 + 1, 'outer')]: {
+            [(order = order * 10 + 3, 'inner')]: width =
+              (order = order * 10 + 4, order)
+          } = (order = order * 10 + 2, {})
+        } = {};
+        const template = tag\`${'${width}'}\`;
+      }
+    `;
+      const result = collectOxcTemplateDependencies(code, filename, true);
+      const values: unknown[] = [];
+
+      runInNewContext(`${result.code}\nComponent();`, {
+        tag: (_strings: TemplateStringsArray, value: unknown) => {
+          values.push(value);
+        },
+      });
+
+      expect(values).toEqual([1234]);
+    }
+  );
+
   it('fails closed when replay would observe mutable outer state too early', () => {
     const code = dedent`
       let seed = 304;

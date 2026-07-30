@@ -5,6 +5,12 @@ import { ValueType } from '@wyw-in-js/shared';
 import type { Expression, Node, Program } from 'oxc-parser';
 
 import { getOxcNodeChildren } from '../oxc/ast';
+import {
+  collectOxcPatternBindingIdentifiers,
+  collectOxcPatternBindingNames,
+  collectOxcPatternRuntimeExpressions,
+  collectOxcPatternShorthandProperties,
+} from '../oxc/patterns';
 import { applyOxcReplacements } from '../oxc/replacements';
 import { createOxcLocationLookup } from '../oxc/sourceLocations';
 import {
@@ -138,152 +144,11 @@ const replaceStaticLocalReferences = (
   );
 };
 
-const collectPatternBindingNames = (
-  pattern: Node,
-  names = new Map<string, number>()
-): Map<string, number> => {
-  if (pattern.type === 'Identifier') {
-    names.set(pattern.name, (names.get(pattern.name) ?? 0) + 1);
+const countPatternBindingNames = (pattern: Node): Map<string, number> =>
+  collectOxcPatternBindingNames(pattern).reduce((names, name) => {
+    names.set(name, (names.get(name) ?? 0) + 1);
     return names;
-  }
-
-  if (pattern.type === 'AssignmentPattern') {
-    return collectPatternBindingNames(pattern.left, names);
-  }
-
-  if (pattern.type === 'RestElement') {
-    return collectPatternBindingNames(pattern.argument, names);
-  }
-
-  if (pattern.type === 'ObjectPattern') {
-    pattern.properties.forEach((property) => {
-      collectPatternBindingNames(
-        property.type === 'RestElement' ? property.argument : property.value,
-        names
-      );
-    });
-    return names;
-  }
-
-  if (pattern.type === 'ArrayPattern') {
-    pattern.elements.forEach((element) => {
-      if (element) {
-        collectPatternBindingNames(element, names);
-      }
-    });
-  }
-
-  return names;
-};
-
-const collectPatternBindingIdentifiers = (
-  pattern: Node,
-  identifiers: Array<Extract<Node, { type: 'Identifier' }>> = []
-): Array<Extract<Node, { type: 'Identifier' }>> => {
-  if (pattern.type === 'Identifier') {
-    identifiers.push(pattern);
-    return identifiers;
-  }
-
-  if (pattern.type === 'AssignmentPattern') {
-    return collectPatternBindingIdentifiers(pattern.left, identifiers);
-  }
-
-  if (pattern.type === 'RestElement') {
-    return collectPatternBindingIdentifiers(pattern.argument, identifiers);
-  }
-
-  if (pattern.type === 'ObjectPattern') {
-    pattern.properties.forEach((property) => {
-      collectPatternBindingIdentifiers(
-        property.type === 'RestElement' ? property.argument : property.value,
-        identifiers
-      );
-    });
-    return identifiers;
-  }
-
-  if (pattern.type === 'ArrayPattern') {
-    pattern.elements.forEach((element) => {
-      if (element) {
-        collectPatternBindingIdentifiers(element, identifiers);
-      }
-    });
-  }
-
-  return identifiers;
-};
-
-const collectPatternShorthandProperties = (
-  pattern: Node,
-  properties: Array<Extract<Node, { type: 'Property' }>> = []
-): Array<Extract<Node, { type: 'Property' }>> => {
-  if (pattern.type === 'AssignmentPattern') {
-    collectPatternShorthandProperties(pattern.left, properties);
-  } else if (pattern.type === 'RestElement') {
-    collectPatternShorthandProperties(pattern.argument, properties);
-  } else if (pattern.type === 'ObjectPattern') {
-    pattern.properties.forEach((property) => {
-      if (property.type === 'RestElement') {
-        collectPatternShorthandProperties(property.argument, properties);
-        return;
-      }
-
-      if (property.shorthand) {
-        properties.push(property);
-      }
-      collectPatternShorthandProperties(property.value, properties);
-    });
-  } else if (pattern.type === 'ArrayPattern') {
-    pattern.elements.forEach((element) => {
-      if (element) {
-        collectPatternShorthandProperties(element, properties);
-      }
-    });
-  }
-
-  return properties;
-};
-
-const collectPatternRuntimeExpressions = (
-  pattern: Node,
-  expressions: Expression[] = []
-): Expression[] => {
-  if (pattern.type === 'AssignmentPattern') {
-    collectPatternRuntimeExpressions(pattern.left, expressions);
-    expressions.push(pattern.right);
-    return expressions;
-  }
-
-  if (pattern.type === 'RestElement') {
-    return collectPatternRuntimeExpressions(pattern.argument, expressions);
-  }
-
-  if (pattern.type === 'ObjectPattern') {
-    pattern.properties.forEach((property) => {
-      if (property.type === 'RestElement') {
-        collectPatternRuntimeExpressions(property.argument, expressions);
-        return;
-      }
-
-      if (property.computed) {
-        expressions.push(property.key as Expression);
-      }
-      collectPatternRuntimeExpressions(property.value, expressions);
-    });
-    return expressions;
-  }
-
-  if (pattern.type === 'ArrayPattern') {
-    pattern.elements.forEach((element) => {
-      if (element) {
-        collectPatternRuntimeExpressions(element, expressions);
-      }
-    });
-  }
-
-  return expressions;
-};
+  }, new Map<string, number>());
 
 const hasReferencedRootMutationBefore = (
   expression: Expression,
@@ -472,7 +337,7 @@ const nestedDestructuringHasCallTimeUncertainty = (
     const candidateExpressions = candidateDeclarator?.init
       ? [
           candidateDeclarator.init,
-          ...collectPatternRuntimeExpressions(candidateDeclarator.id),
+          ...collectOxcPatternRuntimeExpressions(candidateDeclarator.id),
         ]
       : [];
 
@@ -514,7 +379,7 @@ const nestedDestructuringHasCallTimeUncertainty = (
   };
 
   if (
-    collectPatternRuntimeExpressions(declarator.id).some(
+    collectOxcPatternRuntimeExpressions(declarator.id).some(
       hasFunctionContextSyntax
     )
   ) {
@@ -651,7 +516,7 @@ function collectStaticDestructuringProjection(
     return null;
   }
 
-  const bindingNames = collectPatternBindingNames(declarator.id);
+  const bindingNames = countPatternBindingNames(declarator.id);
   if (bindingNames.get(binding.name) !== 1) {
     return null;
   }
@@ -709,7 +574,7 @@ function collectStaticDestructuringProjection(
   const imports = [...initializer.imports];
   const patternReplacements: Replacement[] = [];
   const localBindingNames = new Set(bindingNames.keys());
-  for (const expression of collectPatternRuntimeExpressions(declarator.id)) {
+  for (const expression of collectOxcPatternRuntimeExpressions(declarator.id)) {
     if (
       hasReferencedRootMutationBefore(
         expression,
@@ -795,7 +660,7 @@ function collectStaticBindingExpression(
       declarator.init,
       referenceStart,
       ctx,
-      new Set(collectPatternBindingNames(declarator.id).keys()),
+      new Set(countPatternBindingNames(declarator.id).keys()),
       declarator
     )
   ) {
@@ -872,7 +737,7 @@ const declarationPatternCode = (
   }
 
   const replacements: Replacement[] = [];
-  collectPatternBindingIdentifiers(declarator.id).forEach((identifier) => {
+  collectOxcPatternBindingIdentifiers(declarator.id).forEach((identifier) => {
     const patternBinding = ctx.bindingsByName
       .get(identifier.name)
       ?.find((candidate) => candidate.declarator === declarator);
@@ -887,7 +752,7 @@ const declarationPatternCode = (
     });
   });
 
-  collectPatternRuntimeExpressions(declarator.id).forEach((expression) => {
+  collectOxcPatternRuntimeExpressions(declarator.id).forEach((expression) => {
     findReferences(expression, ctx.referencesByNode).forEach(
       ({ end, name, start }) => {
         const dependency = resolveBindingAt(ctx, name, start);
@@ -910,7 +775,9 @@ const declarationPatternCode = (
     );
   });
 
-  const shorthandProperties = collectPatternShorthandProperties(declarator.id);
+  const shorthandProperties = collectOxcPatternShorthandProperties(
+    declarator.id
+  );
   const isInsideShorthand = (
     replacement: Replacement,
     property: (typeof shorthandProperties)[number]
@@ -1071,7 +938,7 @@ const requiresSnapshotReplay = (
   }
 
   const localBindingNames = new Set(
-    collectPatternBindingNames(declarator.id).keys()
+    countPatternBindingNames(declarator.id).keys()
   );
   if (
     hasReferencedRootMutationBefore(
@@ -2341,7 +2208,7 @@ const snapshotReplayCode = (
   const bindingNames = [
     ...new Set(
       [...group.bindings].flatMap(({ declarator }) =>
-        declarator ? [...collectPatternBindingNames(declarator.id).keys()] : []
+        declarator ? [...countPatternBindingNames(declarator.id).keys()] : []
       )
     ),
   ];
@@ -2426,7 +2293,7 @@ const assertHoistable = (
 
   const hoistSources = [
     binding.declarator.init,
-    ...collectPatternRuntimeExpressions(binding.declarator.id),
+    ...collectOxcPatternRuntimeExpressions(binding.declarator.id),
   ];
   hoistSources.forEach((source) => {
     findReferences(source, ctx.referencesByNode).forEach(({ name, start }) => {
@@ -2464,7 +2331,7 @@ const addHoistedDeclaration = (
 
   const hoistSources = [
     ...(binding.declarator.init ? [binding.declarator.init] : []),
-    ...collectPatternRuntimeExpressions(binding.declarator.id),
+    ...collectOxcPatternRuntimeExpressions(binding.declarator.id),
   ];
   hoistSources.forEach((source) => {
     findReferences(source, ctx.referencesByNode).forEach(({ name, start }) => {

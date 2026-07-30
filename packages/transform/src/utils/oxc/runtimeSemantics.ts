@@ -1,0 +1,50 @@
+import type { Node } from 'oxc-parser';
+
+type AnyOxcNode = Node & { expression?: Node };
+
+const OXC_TYPESCRIPT_RUNTIME_WRAPPERS = new Set([
+  'TSAsExpression',
+  'TSInstantiationExpression',
+  'TSNonNullExpression',
+  'TSSatisfiesExpression',
+  'TSTypeAssertion',
+]);
+
+export const isOxcTypescriptRuntimeWrapper = (node: Node): boolean =>
+  OXC_TYPESCRIPT_RUNTIME_WRAPPERS.has(node.type);
+
+export const isOxcTransparentRuntimeExpression = (
+  node: Node,
+  includeChainExpression: boolean
+): boolean =>
+  node.type === 'ParenthesizedExpression' ||
+  (includeChainExpression && node.type === 'ChainExpression') ||
+  isOxcTypescriptRuntimeWrapper(node);
+
+export const unwrapOxcRuntimeExpression = (
+  node: Node,
+  {
+    includeChainExpression,
+  }: {
+    includeChainExpression: boolean;
+  }
+): Node => {
+  let current = node;
+  while (
+    isOxcTransparentRuntimeExpression(current, includeChainExpression) &&
+    (current as AnyOxcNode).expression
+  ) {
+    current = (current as AnyOxcNode).expression!;
+  }
+  return current;
+};
+
+export const isOxcFunctionLike = (
+  node: Node
+): node is Node & {
+  body: Node | null;
+  params: Node[];
+} =>
+  node.type === 'ArrowFunctionExpression' ||
+  node.type === 'FunctionDeclaration' ||
+  node.type === 'FunctionExpression';

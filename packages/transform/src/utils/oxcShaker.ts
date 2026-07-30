@@ -13,6 +13,28 @@ import type {
   OxcCollectedImport,
 } from './collectOxcExportsAndImports';
 import { getImportOverride, toImportKey } from './importOverrides';
+import {
+  getOxcNodeChildren as getChildren,
+  isOxcNode as isNode,
+} from './oxc/ast';
+import { collectOxcPatternIdentifierNames as collectPatternNames } from './oxc/patterns';
+import {
+  appendOxcRuntimePropertyPathKey,
+  appendOxcRuntimePropertyPath,
+  createOxcRuntimePropertyPath,
+  getOxcRuntimePropertyPathKeyRoot,
+  getOxcRuntimePropertyPath,
+  isOxcRuntimePropertyPathKeyEqualOrDescendant,
+  matchesOxcRuntimePropertyPath,
+  replaceOxcRuntimePropertyPathKeyRoot,
+  replaceOxcRuntimePropertyPathRoot,
+  type OxcRuntimePropertyPath,
+  type OxcRuntimePropertyPathKey,
+} from './oxc/projections';
+import {
+  isOxcTypescriptRuntimeWrapper,
+  unwrapOxcRuntimeExpression,
+} from './oxc/runtimeSemantics';
 import { parseOxcCached } from './parseOxc';
 import { stripQueryAndHash } from './parseRequest';
 
@@ -61,38 +83,8 @@ type RemoveUnusedImportSpecifiersResult = {
 
 const warnedDynamicImportFiles = new Set<string>();
 
-const isNode = (value: unknown): value is Node =>
-  !!value &&
-  typeof value === 'object' &&
-  'type' in value &&
-  typeof (value as { type?: unknown }).type === 'string';
-
-const getChildren = (node: Node): Node[] => {
-  const result: Node[] = [];
-  const record = node as AnyNode;
-
-  Object.keys(record).forEach((key) => {
-    if (key === 'type' || key === 'start' || key === 'end' || key === 'range') {
-      return;
-    }
-
-    const value = record[key];
-    if (isNode(value)) {
-      result.push(value);
-      return;
-    }
-
-    if (Array.isArray(value)) {
-      value.forEach((item) => {
-        if (isNode(item)) {
-          result.push(item);
-        }
-      });
-    }
-  });
-
-  return result;
-};
+const unwrapAliasExpression = (node: Node): Node =>
+  unwrapOxcRuntimeExpression(node, { includeChainExpression: true });
 
 const parseOxc = (
   code: string,
@@ -141,38 +133,6 @@ const applyReplacements = (
   return result;
 };
 
-const collectBindingNames = (node: Node | null | undefined): string[] => {
-  if (!node) {
-    return [];
-  }
-
-  if (node.type === 'Identifier') {
-    return [node.name];
-  }
-
-  if (node.type === 'RestElement') {
-    return collectBindingNames(node.argument);
-  }
-
-  if (node.type === 'AssignmentPattern') {
-    return collectBindingNames(node.left);
-  }
-
-  if (node.type === 'ObjectPattern') {
-    return node.properties.flatMap((property) =>
-      property.type === 'RestElement'
-        ? collectBindingNames(property.argument)
-        : collectBindingNames(property.value)
-    );
-  }
-
-  if (node.type === 'ArrayPattern') {
-    return node.elements.flatMap((element) => collectBindingNames(element));
-  }
-
-  return [];
-};
-
 const declarationBindings = (
   declaration: Node | null | undefined
 ): string[] => {
@@ -182,7 +142,7 @@ const declarationBindings = (
 
   if (declaration.type === 'VariableDeclaration') {
     return declaration.declarations.flatMap((item) =>
-      collectBindingNames(item.id)
+      collectPatternNames(item.id)
     );
   }
 
@@ -292,14 +252,6 @@ const isIdentifierReference = (
   return true;
 };
 
-const TS_EXPRESSION_WRAPPER_TYPES = new Set([
-  'TSAsExpression',
-  'TSSatisfiesExpression',
-  'TSTypeAssertion',
-  'TSNonNullExpression',
-  'TSInstantiationExpression',
-]);
-
 const collectReferences = (node: Node): Set<string> => {
   const references = new Set<string>();
 
@@ -308,7 +260,7 @@ const collectReferences = (node: Node): Set<string> => {
     parent: Node | null = null,
     grandparent: Node | null = null
   ): void => {
-    if (TS_EXPRESSION_WRAPPER_TYPES.has(current.type)) {
+    if (isOxcTypescriptRuntimeWrapper(current)) {
       const expression = (current as AnyNode).expression as Node | undefined;
       if (expression) {
         visit(expression, current, parent);
@@ -351,7 +303,7 @@ const collectExternalReferences = (node: Node): Set<string> => {
     scope: ReferenceScope,
     pattern: Node | null | undefined
   ): void => {
-    collectBindingNames(pattern).forEach((binding) =>
+    collectPatternNames(pattern).forEach((binding) =>
       scope.bindings.add(binding)
     );
   };
@@ -464,7 +416,7 @@ const collectExternalReferences = (node: Node): Set<string> => {
     parent: Node | null = null,
     grandparent: Node | null = null
   ): void => {
-    if (TS_EXPRESSION_WRAPPER_TYPES.has(current.type)) {
+    if (isOxcTypescriptRuntimeWrapper(current)) {
       const expression = (current as AnyNode).expression as Node | undefined;
       if (expression) {
         visit(expression, current, parent);
@@ -495,23 +447,6 @@ const collectExternalReferences = (node: Node): Set<string> => {
 
   visit(node);
   return references;
-};
-
-const unwrapAliasExpression = (node: Node): Node => {
-  let current = node;
-  while (
-    current.type === 'ParenthesizedExpression' ||
-    TS_EXPRESSION_WRAPPER_TYPES.has(current.type) ||
-    current.type === 'ChainExpression'
-  ) {
-    const { expression } = current as AnyNode;
-    if (!isNode(expression)) {
-      break;
-    }
-    current = expression;
-  }
-
-  return current;
 };
 
 const getMutatedBinding = (node: Node): string | null => {
@@ -855,30 +790,7 @@ const getCalleeBinding = (node: Node): string | null => {
     : null;
 };
 
-const getStaticMemberPath = (node: Node): string | null => {
-  const current = unwrapAliasExpression(node);
-  if (current.type === 'Identifier') {
-    return current.name;
-  }
-
-  if (current.type !== 'MemberExpression') {
-    return null;
-  }
-
-  const objectPath = getStaticMemberPath(current.object);
-  if (!objectPath) {
-    return null;
-  }
-
-  let propertyName: string | null = null;
-  if (!current.computed && current.property.type === 'Identifier') {
-    propertyName = current.property.name;
-  } else if (current.computed && current.property.type === 'Literal') {
-    propertyName = String(current.property.value);
-  }
-
-  return propertyName === null ? null : `${objectPath}.${propertyName}`;
-};
+const getStaticMemberPath = getOxcRuntimePropertyPath;
 
 const getDirectCallBinding = (node: Node): string | null => {
   const current = unwrapAliasExpression(node);
@@ -1064,14 +976,14 @@ const collectPatternAliases = (
       aliases,
       nestedAliases
     );
-    collectBindingNames(pattern.left).forEach((binding) => {
+    collectPatternNames(pattern.left).forEach((binding) => {
       defaultAliases.forEach((source) => addAlias(aliases, binding, source));
     });
     return;
   }
 
   if (pattern.type === 'RestElement') {
-    collectBindingNames(pattern.argument).forEach((binding) => {
+    collectPatternNames(pattern.argument).forEach((binding) => {
       valueAliases.forEach((source) =>
         addNestedAlias(nestedAliases, binding, source)
       );
@@ -1146,7 +1058,7 @@ const collectTopLevelAliases = (
       return;
     }
 
-    collectBindingNames(pattern).forEach((binding) => {
+    collectPatternNames(pattern).forEach((binding) => {
       valueAliases.forEach((source) =>
         addNestedAlias(nestedAliases, binding, source)
       );
@@ -1340,7 +1252,7 @@ const hasModuleExecutedImportedCall = (
 
 const collectObjectCallables = (
   object: Node,
-  objectPath: string,
+  objectPath: OxcRuntimePropertyPathKey,
   callables: Map<string, CallableNode>
 ): void => {
   const current = unwrapAliasExpression(object);
@@ -1363,7 +1275,10 @@ const collectObjectCallables = (
       return;
     }
 
-    const propertyPath = `${objectPath}.${propertyName}`;
+    const propertyPath = appendOxcRuntimePropertyPathKey(
+      objectPath,
+      propertyName
+    );
     const value = unwrapAliasExpression(property.value);
     if (
       value.type === 'FunctionExpression' ||
@@ -1378,7 +1293,7 @@ const collectObjectCallables = (
 
 const collectObjectAccessors = (
   object: Node,
-  objectPath: string,
+  objectPath: OxcRuntimePropertyPathKey,
   accessors: Map<string, CallableNode>
 ): void => {
   const current = unwrapAliasExpression(object);
@@ -1401,7 +1316,10 @@ const collectObjectAccessors = (
       return;
     }
 
-    const propertyPath = `${objectPath}.${propertyName}`;
+    const propertyPath = appendOxcRuntimePropertyPathKey(
+      objectPath,
+      propertyName
+    );
     const value = unwrapAliasExpression(property.value);
     if (property.kind === 'get' && value.type === 'FunctionExpression') {
       accessors.set(propertyPath, value as CallableNode);
@@ -1413,7 +1331,7 @@ const collectObjectAccessors = (
 
 const collectClassCallables = (
   classNode: Node,
-  classPath: string,
+  classPath: OxcRuntimePropertyPathKey,
   callables: Map<string, CallableNode>
 ): void => {
   const current = unwrapAliasExpression(classNode);
@@ -1450,10 +1368,12 @@ const collectClassCallables = (
       return;
     }
 
-    const propertyPath =
+    const propertyPath = appendOxcRuntimePropertyPathKey(
       element.static === true
-        ? `${classPath}.${propertyName}`
-        : `${classPath}.prototype.${propertyName}`;
+        ? classPath
+        : appendOxcRuntimePropertyPathKey(classPath, 'prototype'),
+      propertyName
+    );
     const value = unwrapAliasExpression(element.value);
     if (
       value.type === 'FunctionExpression' ||
@@ -1468,7 +1388,7 @@ const collectClassCallables = (
 
 const collectClassAccessors = (
   classNode: Node,
-  classPath: string,
+  classPath: OxcRuntimePropertyPathKey,
   accessors: Map<string, CallableNode>
 ): void => {
   const current = unwrapAliasExpression(classNode);
@@ -1497,7 +1417,7 @@ const collectClassAccessors = (
     }
     if (propertyName !== null) {
       accessors.set(
-        `${classPath}.${propertyName}`,
+        appendOxcRuntimePropertyPathKey(classPath, propertyName),
         element.value as CallableNode
       );
     }
@@ -1526,7 +1446,11 @@ const collectTopLevelCallables = (
     }
 
     if (declaration.type === 'ClassDeclaration' && declaration.id) {
-      collectClassCallables(declaration, declaration.id.name, callables);
+      collectClassCallables(
+        declaration,
+        createOxcRuntimePropertyPath(declaration.id.name).key,
+        callables
+      );
       return;
     }
 
@@ -1546,9 +1470,17 @@ const collectTopLevelCallables = (
       ) {
         callables.set(declarator.id.name, initializer as CallableNode);
       } else if (initializer.type === 'ClassExpression') {
-        collectClassCallables(initializer, declarator.id.name, callables);
+        collectClassCallables(
+          initializer,
+          createOxcRuntimePropertyPath(declarator.id.name).key,
+          callables
+        );
       } else if (initializer.type === 'ObjectExpression') {
-        collectObjectCallables(initializer, declarator.id.name, callables);
+        collectObjectCallables(
+          initializer,
+          createOxcRuntimePropertyPath(declarator.id.name).key,
+          callables
+        );
       }
     });
   });
@@ -1573,7 +1505,11 @@ const collectTopLevelAccessors = (
     }
 
     if (declaration.type === 'ClassDeclaration' && declaration.id) {
-      collectClassAccessors(declaration, declaration.id.name, accessors);
+      collectClassAccessors(
+        declaration,
+        createOxcRuntimePropertyPath(declaration.id.name).key,
+        accessors
+      );
       return;
     }
 
@@ -1588,9 +1524,17 @@ const collectTopLevelAccessors = (
 
       const initializer = unwrapAliasExpression(declarator.init);
       if (initializer.type === 'ClassExpression') {
-        collectClassAccessors(initializer, declarator.id.name, accessors);
+        collectClassAccessors(
+          initializer,
+          createOxcRuntimePropertyPath(declarator.id.name).key,
+          accessors
+        );
       } else if (initializer.type === 'ObjectExpression') {
-        collectObjectAccessors(initializer, declarator.id.name, accessors);
+        collectObjectAccessors(
+          initializer,
+          createOxcRuntimePropertyPath(declarator.id.name).key,
+          accessors
+        );
       }
     });
   });
@@ -1658,7 +1602,7 @@ const collectModuleInvocationEffects = (
   resolveAccessor: (binding: string) => CallableNode | undefined,
   resolveClass: (binding: string) => ClassNode | undefined,
   resolveCallableResultRoots: (
-    binding: string,
+    binding: OxcRuntimePropertyPathKey,
     includeDescendants?: boolean
   ) => ReadonlySet<string>,
   resolveCallableCaptureRoots: (binding: string) => ReadonlySet<string>,
@@ -1714,9 +1658,9 @@ const collectModuleInvocationEffects = (
         resolveCallableCaptureRoots(root).forEach((capture) =>
           roots.add(capture)
         );
-        resolveCallableResultRoots(root).forEach((capture) =>
-          roots.add(capture)
-        );
+        resolveCallableResultRoots(
+          createOxcRuntimePropertyPath(root).key
+        ).forEach((capture) => roots.add(capture));
       });
       return roots;
     }
@@ -1725,17 +1669,18 @@ const collectModuleInvocationEffects = (
       const roots = collectContextualRoots(current.object, aliases);
       const staticPath = getStaticMemberPath(current);
       if (staticPath) {
-        resolveCallableCaptureRoots(staticPath).forEach((capture) =>
+        resolveCallableCaptureRoots(staticPath.key).forEach((capture) =>
           roots.add(capture)
         );
-        resolveCallableResultRoots(staticPath).forEach((capture) =>
+        resolveCallableResultRoots(staticPath.key).forEach((capture) =>
           roots.add(capture)
         );
       } else {
         [...roots].forEach((root) => {
-          resolveCallableResultRoots(root, true).forEach((capture) =>
-            roots.add(capture)
-          );
+          resolveCallableResultRoots(
+            createOxcRuntimePropertyPath(root).key,
+            true
+          ).forEach((capture) => roots.add(capture));
         });
       }
       return roots;
@@ -2023,33 +1968,45 @@ const collectModuleInvocationEffects = (
     }
 
     if (
-      intrinsic === 'Object.keys' ||
-      intrinsic === 'Object.getOwnPropertyNames' ||
-      intrinsic === 'Object.getOwnPropertySymbols' ||
-      intrinsic === 'Object.getOwnPropertyDescriptors' ||
-      intrinsic === 'Reflect.ownKeys'
+      matchesOxcRuntimePropertyPath(intrinsic, 'Object', 'keys') ||
+      matchesOxcRuntimePropertyPath(
+        intrinsic,
+        'Object',
+        'getOwnPropertyNames'
+      ) ||
+      matchesOxcRuntimePropertyPath(
+        intrinsic,
+        'Object',
+        'getOwnPropertySymbols'
+      ) ||
+      matchesOxcRuntimePropertyPath(
+        intrinsic,
+        'Object',
+        'getOwnPropertyDescriptors'
+      ) ||
+      matchesOxcRuntimePropertyPath(intrinsic, 'Reflect', 'ownKeys')
     ) {
       addReceiverOperationEffects(
         { kind: 'ownKeys', receiver: firstArgument },
         aliases
       );
     } else if (
-      intrinsic === 'Object.values' ||
-      intrinsic === 'Object.entries'
+      matchesOxcRuntimePropertyPath(intrinsic, 'Object', 'values') ||
+      matchesOxcRuntimePropertyPath(intrinsic, 'Object', 'entries')
     ) {
       addReceiverOperationEffects(
         { kind: 'copy', receiver: firstArgument },
         aliases
       );
     } else if (
-      intrinsic === 'Object.fromEntries' ||
-      intrinsic === 'Array.from'
+      matchesOxcRuntimePropertyPath(intrinsic, 'Object', 'fromEntries') ||
+      matchesOxcRuntimePropertyPath(intrinsic, 'Array', 'from')
     ) {
       addReceiverOperationEffects(
         { kind: 'iterate', receiver: firstArgument },
         aliases
       );
-    } else if (intrinsic === 'Object.assign') {
+    } else if (matchesOxcRuntimePropertyPath(intrinsic, 'Object', 'assign')) {
       current.arguments.slice(1).forEach((argument) => {
         if (argument.type !== 'SpreadElement') {
           addReceiverOperationEffects(
@@ -2064,15 +2021,14 @@ const collectModuleInvocationEffects = (
   const addInvokedBinding = (
     binding: string,
     aliases: AliasEnvironment,
-    staticPath: string | null
+    staticPath: OxcRuntimePropertyPath | null
   ): void => {
-    const suffix =
-      staticPath && staticPath.startsWith(`${binding}.`)
-        ? staticPath.slice(binding.length)
-        : '';
     resolveAliasBinding(binding, aliases).forEach((root) => {
       bindings.add(root);
-      const resultBinding = `${root}${suffix}`;
+      const resultBinding =
+        staticPath?.root === binding
+          ? replaceOxcRuntimePropertyPathRoot(staticPath, root).key
+          : createOxcRuntimePropertyPath(root).key;
       resolveCallableResultRoots(resultBinding, staticPath === null).forEach(
         (resultRoot) => bindings.add(resultRoot)
       );
@@ -2140,7 +2096,11 @@ const collectModuleInvocationEffects = (
       }
 
       if (current.type === 'ClassDeclaration' && current.id) {
-        collectClassCallables(current, current.id.name, scoped);
+        collectClassCallables(
+          current,
+          createOxcRuntimePropertyPath(current.id.name).key,
+          scoped
+        );
         return;
       }
 
@@ -2159,9 +2119,17 @@ const collectModuleInvocationEffects = (
         ) {
           scoped.set(declarator.id.name, initializer as CallableNode);
         } else if (initializer.type === 'ClassExpression') {
-          collectClassCallables(initializer, declarator.id.name, scoped);
+          collectClassCallables(
+            initializer,
+            createOxcRuntimePropertyPath(declarator.id.name).key,
+            scoped
+          );
         } else if (initializer.type === 'ObjectExpression') {
-          collectObjectCallables(initializer, declarator.id.name, scoped);
+          collectObjectCallables(
+            initializer,
+            createOxcRuntimePropertyPath(declarator.id.name).key,
+            scoped
+          );
         }
       });
     });
@@ -2203,7 +2171,11 @@ const collectModuleInvocationEffects = (
     const scoped = new Map(inherited);
     forEachModuleExecutedNode(body, (current) => {
       if (current.type === 'ClassDeclaration' && current.id) {
-        collectClassAccessors(current, current.id.name, scoped);
+        collectClassAccessors(
+          current,
+          createOxcRuntimePropertyPath(current.id.name).key,
+          scoped
+        );
         return;
       }
 
@@ -2217,9 +2189,17 @@ const collectModuleInvocationEffects = (
 
         const initializer = unwrapAliasExpression(declarator.init);
         if (initializer.type === 'ClassExpression') {
-          collectClassAccessors(initializer, declarator.id.name, scoped);
+          collectClassAccessors(
+            initializer,
+            createOxcRuntimePropertyPath(declarator.id.name).key,
+            scoped
+          );
         } else if (initializer.type === 'ObjectExpression') {
-          collectObjectAccessors(initializer, declarator.id.name, scoped);
+          collectObjectAccessors(
+            initializer,
+            createOxcRuntimePropertyPath(declarator.id.name).key,
+            scoped
+          );
         }
       });
     });
@@ -2237,7 +2217,7 @@ const collectModuleInvocationEffects = (
       roots: ReadonlySet<string>
     ): boolean => {
       let changed = false;
-      collectBindingNames(pattern).forEach((binding) => {
+      collectPatternNames(pattern).forEach((binding) => {
         const previous = aliases.get(binding);
         if (!previous) {
           aliases.set(binding, new Set(roots));
@@ -2282,7 +2262,7 @@ const collectModuleInvocationEffects = (
       } else if (
         current.type === 'AssignmentExpression' &&
         current.operator === '=' &&
-        collectBindingNames(current.left).length > 0
+        collectPatternNames(current.left).length > 0
       ) {
         assignments.push({
           pattern: current.left,
@@ -2336,14 +2316,11 @@ const collectModuleInvocationEffects = (
 
     const staticPath = getStaticMemberPath(current);
     if (staticPath) {
-      const separator = staticPath.indexOf('.');
-      if (separator === -1) {
-        addBinding(staticPath);
+      if (staticPath.segments.length === 0) {
+        addBinding(staticPath.key);
       } else {
-        const root = staticPath.slice(0, separator);
-        const memberPath = staticPath.slice(separator);
-        resolveAliasBinding(root, aliases).forEach((alias) =>
-          addBinding(`${alias}${memberPath}`)
+        resolveAliasBinding(staticPath.root, aliases).forEach((alias) =>
+          addBinding(replaceOxcRuntimePropertyPathRoot(staticPath, alias).key)
         );
       }
       if (resolved.size > 0) {
@@ -2378,15 +2355,19 @@ const collectModuleInvocationEffects = (
       if (object.type === 'NewExpression' && propertyName !== null) {
         const constructorPath = getStaticMemberPath(object.callee);
         if (constructorPath) {
-          const separator = constructorPath.indexOf('.');
-          const root =
-            separator === -1
-              ? constructorPath
-              : constructorPath.slice(0, separator);
-          const memberPath =
-            separator === -1 ? '' : constructorPath.slice(separator);
-          resolveAliasBinding(root, aliases).forEach((alias) =>
-            addBinding(`${alias}${memberPath}.prototype.${propertyName}`)
+          resolveAliasBinding(constructorPath.root, aliases).forEach(
+            (alias) => {
+              const aliasedConstructor = replaceOxcRuntimePropertyPathRoot(
+                constructorPath,
+                alias
+              );
+              addBinding(
+                appendOxcRuntimePropertyPath(
+                  appendOxcRuntimePropertyPath(aliasedConstructor, 'prototype'),
+                  propertyName
+                ).key
+              );
+            }
           );
         }
       } else if (object.type === 'ArrayExpression') {
@@ -2456,7 +2437,7 @@ const collectModuleInvocationEffects = (
 
     const staticPath = getStaticMemberPath(current);
     if (staticPath) {
-      addBinding(staticPath);
+      addBinding(staticPath.key);
       if (resolved.size > 0) {
         return resolved;
       }
@@ -2493,11 +2474,11 @@ const collectModuleInvocationEffects = (
     }
 
     const resolved = new Set<CallableNode>();
-    const separator = staticPath.indexOf('.');
-    const root = separator === -1 ? staticPath : staticPath.slice(0, separator);
-    const memberPath = separator === -1 ? '' : staticPath.slice(separator);
-    resolveAliasBinding(root, aliases).forEach((alias) => {
-      const accessorPath = `${alias}${memberPath}`;
+    resolveAliasBinding(staticPath.root, aliases).forEach((alias) => {
+      const accessorPath = replaceOxcRuntimePropertyPathRoot(
+        staticPath,
+        alias
+      ).key;
       const accessor =
         scopedAccessors.get(accessorPath) ?? resolveAccessor(accessorPath);
       if (accessor) {
@@ -2543,7 +2524,7 @@ const collectModuleInvocationEffects = (
     );
     const scopedClasses = collectScopedClasses(callable.body, inheritedClasses);
     callable.params.forEach((parameter) => {
-      collectBindingNames(parameter).forEach((binding) => {
+      collectPatternNames(parameter).forEach((binding) => {
         resolveAliasBinding(binding, aliases).forEach((root) =>
           bindings.add(root)
         );
@@ -3936,7 +3917,7 @@ const splitExportedVariableDeclaration = (
 
   const declarators = node.declaration.declarations;
   const declaratorNames = declarators.map((declarator) =>
-    collectBindingNames(declarator.id)
+    collectPatternNames(declarator.id)
   );
   const requestedNames = declaratorNames
     .flat()
@@ -4143,12 +4124,15 @@ export const shakeOxcToESM = (
       return direct;
     }
 
-    const memberSeparator = binding.indexOf('.');
-    if (memberSeparator !== -1) {
-      const root = binding.slice(0, memberSeparator);
-      const memberPath = binding.slice(memberSeparator);
+    const bindingPath = binding as OxcRuntimePropertyPathKey;
+    const root = getOxcRuntimePropertyPathKeyRoot(bindingPath);
+    if (root !== binding) {
       const throughObjectAlias = [...(aliasComponents.get(root) ?? [])]
-        .map((alias) => callables.get(`${alias}${memberPath}`))
+        .map((alias) =>
+          callables.get(
+            replaceOxcRuntimePropertyPathKeyRoot(bindingPath, alias)
+          )
+        )
         .find((callable) => callable !== undefined);
       if (throughObjectAlias) {
         return throughObjectAlias;
@@ -4165,12 +4149,15 @@ export const shakeOxcToESM = (
       return direct;
     }
 
-    const memberSeparator = binding.indexOf('.');
-    if (memberSeparator !== -1) {
-      const root = binding.slice(0, memberSeparator);
-      const memberPath = binding.slice(memberSeparator);
+    const bindingPath = binding as OxcRuntimePropertyPathKey;
+    const root = getOxcRuntimePropertyPathKeyRoot(bindingPath);
+    if (root !== binding) {
       const throughObjectAlias = [...(aliasComponents.get(root) ?? [])]
-        .map((alias) => accessors.get(`${alias}${memberPath}`))
+        .map((alias) =>
+          accessors.get(
+            replaceOxcRuntimePropertyPathKeyRoot(bindingPath, alias)
+          )
+        )
         .find((accessor) => accessor !== undefined);
       if (throughObjectAlias) {
         return throughObjectAlias;
@@ -4196,7 +4183,7 @@ export const shakeOxcToESM = (
   // was created or over bindings reachable from its factory. Keep this
   // fail-closed provenance distinct from object aliases: it becomes an effect
   // only when the result (or one of its aliases) is actually invoked.
-  const callableResultRoots = new Map<string, Set<string>>();
+  const callableResultRoots = new Map<OxcRuntimePropertyPathKey, Set<string>>();
   const externalReferencesByStatement = new Map<StatementInfo, Set<string>>();
   const getExternalStatementReferences = (
     statement: StatementInfo
@@ -4266,7 +4253,7 @@ export const shakeOxcToESM = (
   };
 
   const addCallableResultRoots = (
-    binding: string,
+    binding: OxcRuntimePropertyPathKey,
     roots: ReadonlySet<string>
   ): void => {
     if (roots.size === 0) {
@@ -4325,7 +4312,7 @@ export const shakeOxcToESM = (
     if (current.type === 'MemberExpression') {
       const staticPath = getStaticMemberPath(current);
       return staticPath
-        ? new Set(resolveCallableCaptureRoots(staticPath))
+        ? new Set(resolveCallableCaptureRoots(staticPath.key))
         : collectCallableExpressionRoots(current.object);
     }
 
@@ -4385,7 +4372,7 @@ export const shakeOxcToESM = (
   };
   const recordCallableResultValue = (
     value: Node,
-    bindingPath: string
+    bindingPath: OxcRuntimePropertyPathKey
   ): void => {
     const current = unwrapAliasExpression(value);
     if (
@@ -4406,7 +4393,7 @@ export const shakeOxcToESM = (
         if (propertyName !== null && property.type !== 'SpreadElement') {
           recordCallableResultValue(
             property.value,
-            `${bindingPath}.${propertyName}`
+            appendOxcRuntimePropertyPathKey(bindingPath, propertyName)
           );
         } else if (property.type !== 'SpreadElement') {
           recordCallableResultValue(property.value, bindingPath);
@@ -4420,7 +4407,7 @@ export const shakeOxcToESM = (
         if (element) {
           recordCallableResultValue(
             element.type === 'SpreadElement' ? element.argument : element,
-            `${bindingPath}.${index}`
+            appendOxcRuntimePropertyPathKey(bindingPath, String(index))
           );
         }
       });
@@ -4453,13 +4440,19 @@ export const shakeOxcToESM = (
             return;
           }
           if (declarator.id.type === 'Identifier') {
-            recordCallableResultValue(declarator.init, declarator.id.name);
+            recordCallableResultValue(
+              declarator.init,
+              createOxcRuntimePropertyPath(declarator.id.name).key
+            );
             return;
           }
 
           const roots = collectCallableExpressionRoots(declarator.init);
-          collectBindingNames(declarator.id).forEach((binding) =>
-            addCallableResultRoots(binding, roots)
+          collectPatternNames(declarator.id).forEach((binding) =>
+            addCallableResultRoots(
+              createOxcRuntimePropertyPath(binding).key,
+              roots
+            )
           );
         });
         return;
@@ -4471,13 +4464,13 @@ export const shakeOxcToESM = (
 
       const staticPath = getStaticMemberPath(current.left);
       if (staticPath) {
-        recordCallableResultValue(current.right, staticPath);
+        recordCallableResultValue(current.right, staticPath.key);
         return;
       }
 
       const roots = collectCallableExpressionRoots(current.right);
-      collectBindingNames(current.left).forEach((binding) =>
-        addCallableResultRoots(binding, roots)
+      collectPatternNames(current.left).forEach((binding) =>
+        addCallableResultRoots(createOxcRuntimePropertyPath(binding).key, roots)
       );
     });
   });
@@ -4491,14 +4484,11 @@ export const shakeOxcToESM = (
     Map<string, Set<string>>
   >();
   const resolveCallableResultRoots = (
-    binding: string,
+    binding: OxcRuntimePropertyPathKey,
     includeDescendants = false
   ): Set<string> => {
-    const bindingSeparator = binding.indexOf('.');
-    const bindingRoot =
-      bindingSeparator === -1 ? binding : binding.slice(0, bindingSeparator);
-    const bindingSuffix =
-      bindingSeparator === -1 ? '' : binding.slice(bindingSeparator);
+    const bindingRoot = getOxcRuntimePropertyPathKeyRoot(binding);
+    const bindingSuffix = binding.slice(bindingRoot.length);
     const bindingComponent = aliasComponents.get(bindingRoot);
     const cacheKey = `${includeDescendants ? '1' : '0'}${bindingSuffix}`;
     const cache =
@@ -4512,37 +4502,33 @@ export const shakeOxcToESM = (
 
     const roots = new Set<string>();
     const visited = new Set<string>();
-    const pending: Array<{ binding: string; includeDescendants: boolean }> = [
-      { binding, includeDescendants },
-    ];
+    const pending: Array<{
+      binding: OxcRuntimePropertyPathKey;
+      includeDescendants: boolean;
+    }> = [{ binding, includeDescendants }];
 
     while (pending.length > 0) {
       const currentItem = pending.pop()!;
       const current = currentItem.binding;
-      const memberSeparator = current.indexOf('.');
-      const root =
-        memberSeparator === -1 ? current : current.slice(0, memberSeparator);
-      const suffix =
-        memberSeparator === -1 ? '' : current.slice(memberSeparator);
+      const root = getOxcRuntimePropertyPathKeyRoot(current);
       const component = aliasComponents.get(root) ?? new Set([root]);
       component.forEach((aliasRoot) => {
-        const alias = `${aliasRoot}${suffix}`;
+        const alias = replaceOxcRuntimePropertyPathKeyRoot(current, aliasRoot);
         if (visited.has(alias)) {
           return;
         }
         visited.add(alias);
 
         const candidates = currentItem.includeDescendants
-          ? [...callableResultRoots.keys()].filter(
-              (candidate) =>
-                candidate === alias || candidate.startsWith(`${alias}.`)
+          ? [...callableResultRoots.keys()].filter((candidate) =>
+              isOxcRuntimePropertyPathKeyEqualOrDescendant(candidate, alias)
             )
           : [alias];
         candidates.forEach((candidate) => {
           callableResultRoots.get(candidate)?.forEach((resultRoot) => {
             roots.add(resultRoot);
             pending.push({
-              binding: resultRoot,
+              binding: createOxcRuntimePropertyPath(resultRoot).key,
               includeDescendants: false,
             });
           });

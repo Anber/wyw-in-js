@@ -7,6 +7,7 @@ import {
 } from '../collectOxcTemplateDependencies';
 import {
   analyzeProgram,
+  findReferences,
   getRootMutationHazards,
   parseOxc,
   resolveBindingAt,
@@ -14,6 +15,11 @@ import {
 } from '../collectOxcTemplateDependencies/scopeAnalysis';
 
 const filename = '/source.tsx';
+const transparentTypeScriptExpressions = [
+  ['TSAsExpression', 'source as { width: number }'],
+  ['TSSatisfiesExpression', 'source satisfies { width: number }'],
+  ['TSNonNullExpression', 'source!'],
+] as const;
 
 const expectWidthFallback = (code: string): void => {
   const result = collectOxcTemplateDependencies(code, filename, true);
@@ -40,6 +46,38 @@ const expectLastWidthTemplateFallback = (code: string): void => {
 };
 
 describe('collectOxcTemplateDependencies mutation provenance', () => {
+  it.each(transparentTypeScriptExpressions)(
+    'keeps the runtime reference inside a transparent %s',
+    (_description, expression) => {
+      const program = parseOxc(`const alias = ${expression};`, filename);
+      const statement = program.body[0];
+
+      expect(statement?.type).toBe('VariableDeclaration');
+      if (statement?.type !== 'VariableDeclaration') {
+        throw new Error('Expected a variable declaration');
+      }
+
+      const initializer = statement.declarations[0]?.init;
+      expect(initializer).toBeDefined();
+      expect(
+        findReferences(initializer!).map((reference) => reference.name)
+      ).toEqual(['source']);
+    }
+  );
+
+  it.each(transparentTypeScriptExpressions)(
+    'propagates an alias mutation through a transparent %s',
+    (_description, expression) => {
+      expectWidthFallback(dedent`
+        const source = { width: 304 };
+        const alias = ${expression};
+        alias.width = 400;
+        const { width } = source;
+        const template = tag\`${'${width}'}\`;
+      `);
+    }
+  );
+
   it.each([
     [
       'Object.prototype',

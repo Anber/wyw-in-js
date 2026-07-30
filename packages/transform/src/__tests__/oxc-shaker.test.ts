@@ -1063,6 +1063,43 @@ describe('shakeOxcToESM', () => {
     expect(code).not.toContain('box.invoked()');
   });
 
+  it('does not conflate a literal dotted callable key with a nested member path', () => {
+    const { code } = run(
+      ['source'],
+      `
+        const source = { width: 304 };
+        const unrelated = { width: 320 };
+
+        function makeDotted() {
+          return () => {
+            source.width = 400;
+          };
+        }
+        function makeNested() {
+          return () => {
+            unrelated.width = 480;
+          };
+        }
+        const box = {
+          'a.b': makeDotted(),
+          a: {
+            b: makeNested(),
+          },
+        };
+        box.a.b();
+
+        export { source };
+      `
+    );
+
+    expect(code).not.toContain('const unrelated =');
+    expect(code).not.toContain('function makeDotted()');
+    expect(code).not.toContain('source.width = 400');
+    expect(code).not.toContain('function makeNested()');
+    expect(code).not.toContain('const box =');
+    expect(code).not.toContain('box.a.b()');
+  });
+
   it('prunes an invoked callable-result container with an unrelated capture', () => {
     const { code } = run(
       ['source'],

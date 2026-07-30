@@ -12,6 +12,11 @@ import type {
 } from 'oxc-parser';
 
 import { getOxcNodeChildren } from '../oxc/ast';
+import {
+  collectOxcPatternBindingNames,
+  collectOxcPatternRuntimeExpressions,
+  someOxcPatternNode,
+} from '../oxc/patterns';
 import { lookupStaticBinding } from './staticBindings';
 import {
   findReferences,
@@ -395,37 +400,6 @@ const nodeContainsStaticMemberPath = (
   );
 };
 
-const patternContains = (pattern: Node, type: Node['type']): boolean => {
-  if (pattern.type === type) {
-    return true;
-  }
-
-  if (pattern.type === 'AssignmentPattern') {
-    return patternContains(pattern.left, type);
-  }
-
-  if (pattern.type === 'RestElement') {
-    return patternContains(pattern.argument, type);
-  }
-
-  if (pattern.type === 'ObjectPattern') {
-    return pattern.properties.some((property) =>
-      patternContains(
-        property.type === 'RestElement' ? property.argument : property.value,
-        type
-      )
-    );
-  }
-
-  if (pattern.type === 'ArrayPattern') {
-    return pattern.elements.some(
-      (element) => !!element && patternContains(element, type)
-    );
-  }
-
-  return false;
-};
-
 const intrinsicChangesBefore = (
   binding: 'Array' | 'Object' | 'String',
   end: number,
@@ -447,7 +421,7 @@ const hasRelevantIntrinsicMutationBefore = (
   ).some((change) => change.end <= end);
 
   if (
-    patternContains(pattern, 'ObjectPattern') &&
+    someOxcPatternNode(pattern, (node) => node.type === 'ObjectPattern') &&
     (unknownAliasChangesBefore ||
       intrinsicChangesBefore('Object', end, ctx).some(
         (change) =>
@@ -459,7 +433,7 @@ const hasRelevantIntrinsicMutationBefore = (
   }
 
   return (
-    patternContains(pattern, 'ArrayPattern') &&
+    someOxcPatternNode(pattern, (node) => node.type === 'ArrayPattern') &&
     hasArrayIterationMutationBefore(end, ctx)
   );
 };
@@ -1023,84 +997,6 @@ const hasLexicalPreDeclarationChange = (
   );
 };
 
-const collectPatternBindingNames = (
-  pattern: Node,
-  names = new Set<string>()
-): Set<string> => {
-  if (pattern.type === 'Identifier') {
-    names.add(pattern.name);
-    return names;
-  }
-
-  if (pattern.type === 'AssignmentPattern') {
-    return collectPatternBindingNames(pattern.left, names);
-  }
-
-  if (pattern.type === 'RestElement') {
-    return collectPatternBindingNames(pattern.argument, names);
-  }
-
-  if (pattern.type === 'ObjectPattern') {
-    pattern.properties.forEach((property) => {
-      collectPatternBindingNames(
-        property.type === 'RestElement' ? property.argument : property.value,
-        names
-      );
-    });
-    return names;
-  }
-
-  if (pattern.type === 'ArrayPattern') {
-    pattern.elements.forEach((element) => {
-      if (element) {
-        collectPatternBindingNames(element, names);
-      }
-    });
-  }
-
-  return names;
-};
-
-const collectPatternRuntimeExpressions = (
-  pattern: Node,
-  expressions: Expression[] = []
-): Expression[] => {
-  if (pattern.type === 'AssignmentPattern') {
-    collectPatternRuntimeExpressions(pattern.left, expressions);
-    expressions.push(pattern.right);
-    return expressions;
-  }
-
-  if (pattern.type === 'RestElement') {
-    return collectPatternRuntimeExpressions(pattern.argument, expressions);
-  }
-
-  if (pattern.type === 'ObjectPattern') {
-    pattern.properties.forEach((property) => {
-      if (property.type === 'RestElement') {
-        collectPatternRuntimeExpressions(property.argument, expressions);
-        return;
-      }
-
-      if (property.computed) {
-        expressions.push(property.key as Expression);
-      }
-      collectPatternRuntimeExpressions(property.value, expressions);
-    });
-    return expressions;
-  }
-
-  if (pattern.type === 'ArrayPattern') {
-    pattern.elements.forEach((element) => {
-      if (element) {
-        collectPatternRuntimeExpressions(element, expressions);
-      }
-    });
-  }
-
-  return expressions;
-};
-
 const isPatternRuntimeExpressionStable = (
   expression: Expression,
   patternDeclarator: VariableDeclarator,
@@ -1157,7 +1053,9 @@ const isDestructuringProjection = (
   (callee.params[0]?.type === 'ObjectPattern' ||
     callee.params[0]?.type === 'ArrayPattern') &&
   callee.body?.type === 'Identifier' &&
-  collectPatternBindingNames(callee.params[0]).has(callee.body.name);
+  new Set(collectOxcPatternBindingNames(callee.params[0])).has(
+    callee.body.name
+  );
 
 const hasOnlyDataProperties = (value: object): boolean => {
   if (isStaticProxy(value)) {
@@ -1550,7 +1448,7 @@ const collectHoistedVarNames = (
 
   if (node.type === 'VariableDeclaration' && node.kind === 'var') {
     node.declarations.forEach((declarator) => {
-      collectPatternBindingNames(declarator.id).forEach((name) =>
+      collectOxcPatternBindingNames(declarator.id).forEach((name) =>
         names.add(name)
       );
     });
@@ -1579,7 +1477,7 @@ const prepareFunctionBodyEnvironment = (
   fn.body.body.forEach((statement) => {
     if (statement.type === 'VariableDeclaration' && statement.kind !== 'var') {
       statement.declarations.forEach((declarator) => {
-        collectPatternBindingNames(declarator.id).forEach((name) => {
+        collectOxcPatternBindingNames(declarator.id).forEach((name) => {
           env.set(name, uninitializedStaticBinding);
         });
       });
@@ -1608,7 +1506,7 @@ const evaluateFunctionCall = (
     localEnv.set(fn.id.name, createOxcStaticFunctionValue(fn));
   }
   fn.params.forEach((param) => {
-    collectPatternBindingNames(param).forEach((name) => {
+    collectOxcPatternBindingNames(param).forEach((name) => {
       localEnv.set(name, uninitializedStaticBinding);
     });
   });
@@ -2126,7 +2024,7 @@ export const evaluateStatic = (
           ...ctx,
           currentExpressionStart: declarator.start,
         };
-        const patternRuntimeExpressions = collectPatternRuntimeExpressions(
+        const patternRuntimeExpressions = collectOxcPatternRuntimeExpressions(
           declarator.id
         );
         if (
@@ -2153,7 +2051,9 @@ export const evaluateStatic = (
           return undefined;
         }
 
-        const patternBindingNames = collectPatternBindingNames(declarator.id);
+        const patternBindingNames = collectOxcPatternBindingNames(
+          declarator.id
+        );
         const patternEnv = new Map(env);
         patternBindingNames.forEach((name) => {
           patternEnv.set(name, uninitializedStaticBinding);

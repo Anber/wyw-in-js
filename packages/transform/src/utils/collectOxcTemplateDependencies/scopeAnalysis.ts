@@ -16,6 +16,8 @@ import type {
 
 import { getOxcNodeChildren } from '../oxc/ast';
 import { parseOxcProgram } from '../oxc/parse';
+import { collectOxcPatternBindingNames } from '../oxc/patterns';
+import { isOxcTypescriptRuntimeWrapper } from '../oxc/runtimeSemantics';
 import { createOxcSourceLocation } from '../oxc/sourceLocations';
 import type {
   Binding,
@@ -211,40 +213,6 @@ const hasStraightLineVarInitializer = (ancestors: readonly Node[]): boolean => {
   return true;
 };
 
-const collectBindingNames = (node: Node): string[] => {
-  if (node.type === 'Identifier') {
-    return [node.name];
-  }
-
-  if (node.type === 'RestElement') {
-    return collectBindingNames(node.argument);
-  }
-
-  if (node.type === 'AssignmentPattern') {
-    return collectBindingNames(node.left);
-  }
-
-  if (node.type === 'ObjectPattern') {
-    return node.properties.flatMap((property) =>
-      property.type === 'RestElement'
-        ? collectBindingNames(property.argument)
-        : collectBindingNames(property.value)
-    );
-  }
-
-  if (node.type === 'ArrayPattern') {
-    return node.elements.flatMap((element) =>
-      element ? collectBindingNames(element) : []
-    );
-  }
-
-  if (node.type === 'TSParameterProperty') {
-    return collectBindingNames(node.parameter);
-  }
-
-  return [];
-};
-
 const collectPatternDefaultExpressions = (
   pattern: Node,
   expressions: Expression[] = []
@@ -320,7 +288,9 @@ const collectRestContainerBindingNames = (
 export const isInTypeContext = (ancestors: Node[]): boolean =>
   ancestors.some(
     (ancestor) =>
-      ancestor.type.startsWith('TS') || ancestor.type.startsWith('JSDoc')
+      (ancestor.type.startsWith('TS') &&
+        !isOxcTypescriptRuntimeWrapper(ancestor)) ||
+      ancestor.type.startsWith('JSDoc')
   );
 
 export const isPropertyOnlyIdentifier = (
@@ -505,7 +475,7 @@ const visit = (
       currentNode.type === 'ArrowFunctionExpression'
     ) {
       currentNode.params.forEach((param) => {
-        collectBindingNames(param).forEach((name) => {
+        collectOxcPatternBindingNames(param).forEach((name) => {
           nextScope.params.add(name);
           nextScope.bindings.set(name, {
             declaredAt: param.start,
@@ -522,7 +492,7 @@ const visit = (
     }
 
     if (currentNode.type === 'CatchClause' && currentNode.param) {
-      collectBindingNames(currentNode.param).forEach((name) => {
+      collectOxcPatternBindingNames(currentNode.param).forEach((name) => {
         nextScope.bindings.set(name, {
           declarationKind: 'let',
           declaredAt: currentNode.param!.start,
@@ -635,7 +605,7 @@ export const analyzeProgram = (
       }
 
       node.params.forEach((param) => {
-        collectBindingNames(param).forEach((name) => {
+        collectOxcPatternBindingNames(param).forEach((name) => {
           const binding = scope.bindings.get(name);
           if (binding) {
             addBinding(scope, binding);
@@ -681,7 +651,7 @@ export const analyzeProgram = (
     }
 
     if (node.type === 'CatchClause' && node.param) {
-      collectBindingNames(node.param).forEach((name) => {
+      collectOxcPatternBindingNames(node.param).forEach((name) => {
         const binding = scope.bindings.get(name);
         if (binding) {
           addBinding(scope, binding);
@@ -724,7 +694,7 @@ export const analyzeProgram = (
     }
 
     node.declarations.forEach((declarator) => {
-      collectBindingNames(declarator.id).forEach((name) => {
+      collectOxcPatternBindingNames(declarator.id).forEach((name) => {
         const declarationKind = normalizeDeclarationKind(node.kind);
         const declarationScope = getDeclarationScope(scope, declarationKind);
         const preservesInitializer =
@@ -1069,7 +1039,7 @@ const collectRootMutationHazards = (
   };
 
   const collectDeclaredBindingKeys = (
-    names: string[],
+    names: readonly string[],
     predicate: (binding: Binding) => boolean
   ): string[] => [
     ...new Set(
@@ -1271,7 +1241,7 @@ const collectRootMutationHazards = (
           ),
         ],
         targets: collectDeclaredBindingKeys(
-          collectBindingNames(node.param),
+          collectOxcPatternBindingNames(node.param),
           (binding) =>
             binding.declarator === null &&
             binding.declaredAt === node.param!.start &&
@@ -1303,7 +1273,7 @@ const collectRootMutationHazards = (
               ),
             ],
             targets: collectDeclaredBindingKeys(
-              collectBindingNames(declarator.id),
+              collectOxcPatternBindingNames(declarator.id),
               (binding) => belongsToDeclarator(binding, declarator, declaration)
             ),
             unprovenResult: sourceExpressions.some(containsUnprovenAlias),
@@ -1368,7 +1338,7 @@ const collectRootMutationHazards = (
             ),
           ],
           targets: collectDeclaredBindingKeys(
-            collectBindingNames(param),
+            collectOxcPatternBindingNames(param),
             (binding) =>
               binding.kind === 'param' && binding.scope.start === node.start
           ),
@@ -1427,7 +1397,7 @@ const collectRootMutationHazards = (
       ),
     ];
     const targets = collectDeclaredBindingKeys(
-      collectBindingNames(node.id),
+      collectOxcPatternBindingNames(node.id),
       (binding) =>
         parent?.type === 'VariableDeclaration' &&
         belongsToDeclarator(binding, node, parent)
