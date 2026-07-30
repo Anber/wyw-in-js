@@ -233,7 +233,7 @@ generation belong to a separate emitter.
       case is a pending `todo` until the ordered `PatternProgram` replaces
       first-match projection routing.
 - [x] Add structured-key coverage for `a["b.c"]` versus `a.b.c`.
-- [ ] Record correctness and large-scenario performance baseline at
+- [x] Record correctness and large-scenario performance baseline at
       `9baff607`.
 
 ### M1 — Shared syntax primitives (in progress)
@@ -264,9 +264,9 @@ generation belong to a separate emitter.
       leaf instead of a callback-heavy context object.
 - [x] Split shaker pattern/receiver safety proofs.
 - [x] Split shaker executable discovery and binding provenance.
-- [ ] Split shaker module rewriting, effect collection, and statement
+- [x] Split shaker module rewriting, effect collection, and statement
       liveness.
-- [ ] Make `bun run check:ts-size` pass without increasing limits.
+- [x] Make `bun run check:ts-size` pass without increasing limits.
 
 ### M3 — Typed program facts
 
@@ -400,5 +400,28 @@ generation belong to a separate emitter.
   `shared-constants-functional-fanout` samples per side against `9baff607`.
   Trimmed-mean deltas were -0.01% wall, -2.15% evaluator, and +0.48% preeval,
   with no repeatable regression above the 5% investigation threshold.
-- The size guard now reports only `oxcShaker.ts`; every newly introduced
-  production module is below 1,000 lines.
+- Moved import/export rewriting and parse/generate fallbacks into
+  `oxcShaker/moduleRewrites.ts` (577 lines).
+- Moved callable, class, alias, and receiver provenance into
+  `oxcShaker/callableProvenanceIndex.ts` (963 lines). The index is built once
+  per shake rather than recreating its helper closures for every candidate
+  statement.
+- Moved statement ownership and liveness propagation into
+  `oxcShaker/statementGraph.ts` (612 lines), and module-invocation effect
+  collection into `oxcShaker/moduleInvocationEffects.ts` (978 lines).
+  `oxcShaker.ts` is now a two-line public facade over a direct acyclic import
+  graph; the temporary factory/callback boundary was removed.
+- Added characterization coverage for prototype mutation isolation, recursive
+  compound callees with an independent sibling, and guarded class
+  construction cycles. The focused shaker suite passes 146/146.
+- Re-ran the complete transform suite on the final graph: 1,360 pass, one
+  skip, one pre-existing todo, and zero failures. Type build, full transform
+  lint, Prettier, `git diff --check`, and the global TypeScript size guard all
+  pass without increasing a limit.
+- Ran six alternating large benchmark pairs against `9baff607`, with three
+  measured samples after one warmup in each process. Across 18 samples per
+  side, trimmed-mean deltas were -0.14% wall, -0.12% evaluator, and +1.77%
+  preeval; wall medians differed by +1.59%.
+- Recorded peak RSS for each of the same 12 benchmark processes. Current
+  versus baseline RSS differed by +0.99% in the mean and +0.15% in the median.
+  Both time and memory results remain below the 5% investigation threshold.
