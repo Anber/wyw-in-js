@@ -156,8 +156,8 @@ describe('collectOxcTemplateDependencies mutation provenance', () => {
     const sourceReference = code.lastIndexOf('source;');
     const sourceBinding = resolveBindingAt(
       {
+        bindingIndex: analysis.bindingIndex,
         bindingResolutionCache: new Map(),
-        bindingsByName: analysis.bindingsByName,
       },
       'source',
       sourceReference
@@ -433,8 +433,8 @@ describe('collectOxcTemplateDependencies mutation provenance', () => {
   ])('limits a lexical binding to its %s', (_description, code) => {
     const analysis = analyzeProgram(parseOxc(code, filename));
     const resolutionContext = {
+      bindingIndex: analysis.bindingIndex,
       bindingResolutionCache: new Map(),
-      bindingsByName: analysis.bindingsByName,
     };
     const resolveMarker = (marker: string) =>
       resolveBindingAt(
@@ -486,8 +486,8 @@ describe('collectOxcTemplateDependencies mutation provenance', () => {
   ])('keeps %s binding in the RHS temporal dead zone', (_description, code) => {
     const analysis = analyzeProgram(parseOxc(code, filename));
     const resolutionContext = {
+      bindingIndex: analysis.bindingIndex,
       bindingResolutionCache: new Map(),
-      bindingsByName: analysis.bindingsByName,
     };
     const resolveMarker = (marker: string) =>
       resolveBindingAt(
@@ -521,8 +521,8 @@ describe('collectOxcTemplateDependencies mutation provenance', () => {
     `;
     const analysis = analyzeProgram(parseOxc(code, filename));
     const resolutionContext = {
+      bindingIndex: analysis.bindingIndex,
       bindingResolutionCache: new Map(),
-      bindingsByName: analysis.bindingsByName,
     };
     const resolveMarker = (marker: string) =>
       resolveBindingAt(
@@ -556,8 +556,8 @@ describe('collectOxcTemplateDependencies mutation provenance', () => {
       `;
     const analysis = analyzeProgram(parseOxc(code, filename));
     const resolutionContext = {
+      bindingIndex: analysis.bindingIndex,
       bindingResolutionCache: new Map(),
-      bindingsByName: analysis.bindingsByName,
     };
     const resolveMarker = (marker: string) =>
       resolveBindingAt(

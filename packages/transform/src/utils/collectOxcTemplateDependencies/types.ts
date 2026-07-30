@@ -33,6 +33,10 @@ export type Binding = {
   scope: Scope;
 };
 
+export type BindingIndex = {
+  bindingsByName: ReadonlyMap<string, readonly Binding[]>;
+};
+
 export type Replacement = OxcValueReplacement;
 
 export type SpanLookup = Set<string> | null;
@@ -107,7 +111,7 @@ export type StaticLocalExpression = {
 };
 
 export type ProgramAnalysis = {
-  bindingsByName: Map<string, Binding[]>;
+  bindingIndex: BindingIndex;
   rootMutationHazardsByBinding: Map<string, Node[]>;
   rootMutationsByBinding: Map<
     string,
@@ -119,8 +123,8 @@ export type ProgramAnalysis = {
 };
 
 export type ExtractionContext = {
+  bindingIndex: BindingIndex;
   bindingResolutionCache: Map<string, Map<number, Binding | null>>;
-  bindingsByName: Map<string, Binding[]>;
   code: string;
   currentInsertionPoint: number;
   currentExpressionStart: number;

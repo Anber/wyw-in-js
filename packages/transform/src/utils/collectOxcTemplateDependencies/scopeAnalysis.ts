@@ -16,6 +16,7 @@ import { getOxcNodeChildren } from '../oxc/ast';
 import { parseOxcProgram } from '../oxc/parse';
 import { collectOxcPatternBindingNames } from '../oxc/patterns';
 import { createOxcSourceLocation } from '../oxc/sourceLocations';
+import { createBindingIndex } from './bindingResolution';
 import {
   collectProgramMutationAnalysis,
   isEffectiveMutationHazardSeed,
@@ -373,16 +374,17 @@ export const analyzeProgram = (
     });
   });
 
+  const bindingIndex = createBindingIndex(bindings);
   const { rootMutationHazardsByBinding, rootMutationsByBinding } =
     collectProgramMutationAnalysis(
       program,
-      bindings,
+      bindingIndex,
       ignoredMutationHazardNodes,
       hasEffectiveMutationHazardSeed
     );
 
   return {
-    bindingsByName: bindings,
+    bindingIndex,
     rootMutationHazardsByBinding,
     rootMutationsByBinding,
     targetExpressions: targetExpressions.sort((a, b) => a.start - b.start),

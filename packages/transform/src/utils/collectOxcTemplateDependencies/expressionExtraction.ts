@@ -674,7 +674,7 @@ const extractExpressions = (
   program: Program,
   analysis: Pick<
     ProgramAnalysis,
-    | 'bindingsByName'
+    | 'bindingIndex'
     | 'rootMutationHazardsByBinding'
     | 'rootMutationsByBinding'
     | 'usedNames'
@@ -696,8 +696,8 @@ const extractExpressions = (
 
   const insertionPoints = getInsertionPoints(program, expressions);
   const ctx: ExtractionContext = {
+    bindingIndex: analysis.bindingIndex,
     bindingResolutionCache: new Map(),
-    bindingsByName: analysis.bindingsByName,
     code,
     currentInsertionPoint: insertionPoints[0] ?? 0,
     currentExpressionStart: expressions[0].start,
@@ -849,8 +849,8 @@ export const evaluateOxcStaticExpressionAt = (
   }
 
   const ctx: ExtractionContext = {
+    bindingIndex: analysis.bindingIndex,
     bindingResolutionCache: new Map(),
-    bindingsByName: analysis.bindingsByName,
     code,
     currentInsertionPoint: 0,
     currentExpressionStart: expression.start,

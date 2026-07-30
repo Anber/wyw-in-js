@@ -553,7 +553,7 @@ export const evaluateStatic = (
         }
 
         patternBindingNames.forEach((name) => {
-          const siblingBinding = ctx.bindingsByName
+          const siblingBinding = ctx.bindingIndex.bindingsByName
             .get(name)
             ?.find((candidate) => candidate.declarator === declarator);
           const siblingValue = patternEnv.get(name);

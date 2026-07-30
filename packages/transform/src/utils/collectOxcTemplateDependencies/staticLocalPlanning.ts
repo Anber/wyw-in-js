@@ -640,7 +640,7 @@ export const declarationPatternCode = (
 
   const replacements: Replacement[] = [];
   collectOxcPatternBindingIdentifiers(declarator.id).forEach((identifier) => {
-    const patternBinding = ctx.bindingsByName
+    const patternBinding = ctx.bindingIndex.bindingsByName
       .get(identifier.name)
       ?.find((candidate) => candidate.declarator === declarator);
     if (!patternBinding) {

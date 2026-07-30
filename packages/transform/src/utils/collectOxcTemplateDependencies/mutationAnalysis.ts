@@ -11,10 +11,11 @@ import type {
 
 import { getOxcNodeChildren } from '../oxc/ast';
 import { collectOxcPatternBindingNames } from '../oxc/patterns';
-import { shouldPreferBindingAt } from './bindingResolution';
+import { resolveBindingInIndex } from './bindingResolution';
 import { findReferences, visitOxcScopes } from './scopeTraversal';
 import type {
   Binding,
+  BindingIndex,
   ProgramAnalysis,
   ReferenceIdentifier,
   SpanLookup,
@@ -272,9 +273,10 @@ const collectThrownExpressions = (
 const collectRootMutationHazards = (
   program: Program,
   mutations: Map<string, Array<AssignmentExpression | UpdateExpression>>,
-  bindingsByName: ReadonlyMap<string, Binding[]>,
+  bindingIndex: BindingIndex,
   ignoredHazardNodes: ReadonlySet<Node>
 ): Map<string, Node[]> => {
+  const { bindingsByName } = bindingIndex;
   const hazards = new Map<string, Node[]>();
   const siblingHazards = new Map<string, Node[]>();
 
@@ -299,23 +301,8 @@ const collectRootMutationHazards = (
   const resolveReferenceBinding = (
     name: string,
     referenceStart: number
-  ): Binding | undefined => {
-    const bindings = bindingsByName.get(name);
-    let result: Binding | undefined;
-    bindings?.forEach((candidate) => {
-      if (
-        candidate.scope.start > referenceStart ||
-        referenceStart >= candidate.scope.end
-      ) {
-        return;
-      }
-
-      if (!result || shouldPreferBindingAt(candidate, result, referenceStart)) {
-        result = candidate;
-      }
-    });
-    return result;
-  };
+  ): Binding | undefined =>
+    resolveBindingInIndex(bindingIndex, name, referenceStart);
 
   const toReferenceKey = ({ name, start }: ReferenceIdentifier): string => {
     const binding = resolveReferenceBinding(name, start);
@@ -869,7 +856,7 @@ const collectRootMutationHazards = (
 
 export const collectProgramMutationAnalysis = (
   program: Program,
-  bindingsByName: ReadonlyMap<string, Binding[]>,
+  bindingIndex: BindingIndex,
   ignoredMutationHazardNodes: ReadonlySet<Node>,
   hasEffectiveMutationHazardSeed: boolean
 ): Pick<
@@ -883,7 +870,7 @@ export const collectProgramMutationAnalysis = (
       : collectRootMutationHazards(
           program,
           rootMutationsByBinding,
-          bindingsByName,
+          bindingIndex,
           ignoredMutationHazardNodes
         );
 

@@ -1235,8 +1235,8 @@ describe('collectOxcTemplateDependencies', () => {
     const expressionStart = code.lastIndexOf('alias.width');
     const analysis = analyzeProgram(parseOxc(code, filename));
     const resolutionContext = {
+      bindingIndex: analysis.bindingIndex,
       bindingResolutionCache: new Map(),
-      bindingsByName: analysis.bindingsByName,
     };
     const sourceBinding = resolveBindingAt(
       resolutionContext,

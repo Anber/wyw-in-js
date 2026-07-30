@@ -1,4 +1,4 @@
-import type { Binding, ExtractionContext } from './types';
+import type { Binding, BindingIndex, ExtractionContext } from './types';
 
 const shouldPreferBindingAt = (
   candidate: Binding,
@@ -29,24 +29,13 @@ const shouldPreferBindingAt = (
   return candidate.declaredAt > current.declaredAt;
 };
 
-export const resolveBindingAt = (
-  ctx: Pick<ExtractionContext, 'bindingResolutionCache' | 'bindingsByName'>,
+export const resolveBindingInIndex = (
+  index: BindingIndex,
   name: string,
   referenceStart: number
 ): Binding | undefined => {
-  const cachedBindings = ctx.bindingResolutionCache.get(name);
-  if (cachedBindings?.has(referenceStart)) {
-    return cachedBindings.get(referenceStart) ?? undefined;
-  }
-
-  const bindings = ctx.bindingsByName.get(name);
-  const bindingCache = cachedBindings ?? new Map<number, Binding | null>();
-  if (!cachedBindings) {
-    ctx.bindingResolutionCache.set(name, bindingCache);
-  }
-
+  const bindings = index.bindingsByName.get(name);
   if (!bindings || bindings.length === 0) {
-    bindingCache.set(referenceStart, null);
     return undefined;
   }
 
@@ -64,8 +53,31 @@ export const resolveBindingAt = (
     }
   });
 
+  return binding;
+};
+
+export const resolveBindingAt = (
+  ctx: Pick<ExtractionContext, 'bindingIndex' | 'bindingResolutionCache'>,
+  name: string,
+  referenceStart: number
+): Binding | undefined => {
+  const cachedBindings = ctx.bindingResolutionCache.get(name);
+  if (cachedBindings?.has(referenceStart)) {
+    return cachedBindings.get(referenceStart) ?? undefined;
+  }
+
+  const bindingCache = cachedBindings ?? new Map<number, Binding | null>();
+  if (!cachedBindings) {
+    ctx.bindingResolutionCache.set(name, bindingCache);
+  }
+
+  const binding = resolveBindingInIndex(ctx.bindingIndex, name, referenceStart);
   bindingCache.set(referenceStart, binding ?? null);
   return binding;
 };
 
-export { shouldPreferBindingAt };
+export const createBindingIndex = (
+  bindingsByName: ReadonlyMap<string, readonly Binding[]>
+): BindingIndex => ({
+  bindingsByName,
+});
