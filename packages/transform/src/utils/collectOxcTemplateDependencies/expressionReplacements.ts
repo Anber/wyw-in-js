@@ -10,7 +10,8 @@ import {
   isPropertyOnlyIdentifier,
   resolveBindingAt,
 } from './scopeAnalysis';
-import { evaluateStatic, literalCode } from './staticEvaluator';
+import { evaluateStatic } from './staticEvaluator';
+import { literalCode } from './staticValues';
 import type {
   Binding,
   ExtractionContext,

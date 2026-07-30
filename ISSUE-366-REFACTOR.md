@@ -250,8 +250,8 @@ generation belong to a separate emitter.
 ### M2 — Structural split and size gate
 
 - [ ] Split lexical binding/reference indexing from mutation analysis.
-- [ ] Split static host values, pattern execution, intrinsics, and evaluator
-      dispatch.
+- [x] Split static host values from the concrete evaluator.
+- [ ] Split pattern execution, intrinsics, and evaluator dispatch.
 - [ ] Split static-local planning, snapshot analysis, snapshot replay, and
       emission.
 - [ ] Split shaker executable discovery, effect collection, pattern safety,
@@ -346,3 +346,7 @@ generation belong to a separate emitter.
 - Ran paired alternating medium performance scenarios against `9baff607`.
   No repeatable whole-transform regression exceeded the 5% investigation
   threshold; the required large-profile gate remains pending.
+- Started M2 by moving literal serialization, defensive cloning, descriptor
+  reads, and plain receiver/projection checks into `staticValues.ts`.
+  `staticEvaluator.ts` dropped from 2,554 to 2,104 lines without introducing a
+  reverse dependency on the evaluator.

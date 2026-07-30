@@ -12,7 +12,7 @@ import {
 import {
   cloneStaticValue,
   literalCode,
-} from '../collectOxcTemplateDependencies/staticEvaluator';
+} from '../collectOxcTemplateDependencies/staticValues';
 import {
   analyzeProgram,
   getRootMutationHazards,

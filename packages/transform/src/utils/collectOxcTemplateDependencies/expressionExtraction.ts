@@ -36,13 +36,12 @@ import {
   getConstantReplacement,
   replaceIdentifierReferences,
 } from './expressionReplacements';
+import { evaluateStatic, isKnownPureStaticCall } from './staticEvaluator';
 import {
   cloneStaticValue,
-  evaluateStatic,
   isStaticSerializableValue,
-  isKnownPureStaticCall,
   literalCode,
-} from './staticEvaluator';
+} from './staticValues';
 import type {
   Binding,
   ExtractedExpression,
