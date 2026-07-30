@@ -253,12 +253,19 @@ generation belong to a separate emitter.
       mutation analysis.
 - [x] Split static host values from the concrete evaluator.
 - [x] Split static safety proofs from the concrete evaluator.
-- [ ] Split pattern execution, intrinsics, and evaluator dispatch.
+- [x] Split pattern execution, mutation replay, function calls, conversions,
+      and binary operations from the concrete evaluator.
+- [ ] Split the remaining evaluator dispatch/purity SCC only if it can be done
+      without an import cycle or extra calls on the identifier hot path.
 - [x] Split snapshot abstract-value analysis from expression extraction.
-- [ ] Split static-local planning, snapshot replay, and emission.
+- [x] Split static-local planning and snapshot replay from expression
+      extraction.
+- [ ] Split the remaining extraction emission only if it forms a cohesive
+      leaf instead of a callback-heavy context object.
 - [x] Split shaker pattern/receiver safety proofs.
-- [ ] Split shaker executable discovery, effect collection, statement
-      liveness, and rewriting.
+- [x] Split shaker executable discovery and binding provenance.
+- [ ] Split shaker module rewriting, effect collection, and statement
+      liveness.
 - [ ] Make `bun run check:ts-size` pass without increasing limits.
 
 ### M3 — Typed program facts
@@ -372,6 +379,26 @@ generation belong to a separate emitter.
 - Verified the combined structural slices with 1,356 passing transform tests,
   one skip, one pre-existing todo, zero failures, type-check, lint, Prettier,
   and two independent read-only reviews.
-- The size guard now reports only `oxcShaker.ts`, `staticEvaluator.ts`, and
-  `expressionExtraction.ts`; every newly introduced production module is
-  below 1,000 lines.
+- Moved executable-node indexing and free-reference collection into
+  `oxcShaker/executableIndex.ts`; moved binding aliases, callable/accessor
+  catalogs, and class provenance into `oxcShaker/bindingProvenance.ts`.
+  `oxcShaker.ts` dropped from 4,441 to 3,060 lines across those slices.
+- Moved snapshot replay and static-local planning into `snapshotReplay.ts` and
+  `staticLocalPlanning.ts`. `expressionExtraction.ts` dropped from 2,313 to
+  995 lines and now passes its production-size guard.
+- Moved pattern execution, root-mutation replay, local function execution,
+  conversions, and binary operations into `staticEvaluationRuntime.ts`.
+  `staticEvaluator.ts` dropped from 1,707 to 1,020 lines and now passes its
+  legacy size guard; the runtime leaf is 828 lines.
+- Preserved the evaluator/purity strongly connected component in
+  `staticEvaluator.ts`. The runtime split adds no evaluator invocation,
+  callback allocation, wrapper, or reverse import; the 18 callback edges use
+  stable top-level function references.
+- Re-ran the complete transform suite after the combined splits: 1,356 pass,
+  one skip, one pre-existing todo, and zero failures.
+- Ran 30 paired, alternating large
+  `shared-constants-functional-fanout` samples per side against `9baff607`.
+  Trimmed-mean deltas were -0.01% wall, -2.15% evaluator, and +0.48% preeval,
+  with no repeatable regression above the 5% investigation threshold.
+- The size guard now reports only `oxcShaker.ts`; every newly introduced
+  production module is below 1,000 lines.
