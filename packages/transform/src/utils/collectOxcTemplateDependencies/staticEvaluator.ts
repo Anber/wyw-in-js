@@ -517,13 +517,20 @@ const getBindingMutationHazards = (
 
 const bindingValueCacheKey = (
   binding: Binding,
-  ctx: ExtractionContext
+  ctx: ExtractionContext,
+  bindingMutations: readonly Node[] = ctx.rootMutationsByBinding.get(
+    toMutationBindingKey(binding)
+  ) ?? [],
+  bindingMutationHazards: readonly Node[] = getBindingMutationHazards(
+    binding,
+    ctx
+  )
 ): string => {
   const snapshot =
-    (ctx.rootMutationsByBinding.get(toMutationBindingKey(binding)) ?? []).some(
+    bindingMutations.some(
       (mutation) => mutation.start < ctx.currentExpressionStart
     ) ||
-    getBindingMutationHazards(binding, ctx).some(
+    bindingMutationHazards.some(
       (hazard) =>
         !isKnownPureStaticCall(hazard, ctx) &&
         hazard.end <= ctx.currentExpressionStart
@@ -874,8 +881,12 @@ const hasReferencedRootMutationHazardBefore = (
   end: number,
   ctx: ExtractionContext,
   ignoredHazard?: Node
-): boolean =>
-  findReferences(expression, ctx.referencesByNode).some(
+): boolean => {
+  if (ctx.rootMutationHazardsByBinding.size === 0) {
+    return false;
+  }
+
+  return findReferences(expression, ctx.referencesByNode).some(
     ({ name, start: referenceStart }) => {
       const binding = resolveBindingAt(ctx, name, referenceStart);
       if (!binding) {
@@ -892,6 +903,7 @@ const hasReferencedRootMutationHazardBefore = (
       );
     }
   );
+};
 
 const hasBindingMutationHazardBetween = (
   binding: Binding,
@@ -986,7 +998,9 @@ const hasDirectBindingMutationBefore = (
 
 const hasLexicalPreDeclarationChange = (
   binding: Binding,
-  ctx: ExtractionContext
+  ctx: ExtractionContext,
+  bindingMutations: readonly Node[],
+  bindingMutationHazards: readonly Node[]
 ): boolean => {
   if (
     (binding.declarationKind !== 'const' &&
@@ -996,18 +1010,16 @@ const hasLexicalPreDeclarationChange = (
     return false;
   }
 
-  const changes: Node[] = [
-    ...(ctx.rootMutationsByBinding.get(toMutationBindingKey(binding)) ?? []),
-    ...getBindingMutationHazards(binding, ctx),
-  ];
-  return changes.some(
-    (change) =>
-      change.start < binding.declaredAt &&
-      findReferences(change, ctx.referencesByNode).some(
-        ({ name, start }) =>
-          name === binding.name &&
-          resolveBindingAt(ctx, name, start) === binding
-      )
+  const isPreDeclarationChange = (change: Node): boolean =>
+    change.start < binding.declaredAt &&
+    findReferences(change, ctx.referencesByNode).some(
+      ({ name, start }) =>
+        name === binding.name && resolveBindingAt(ctx, name, start) === binding
+    );
+
+  return (
+    bindingMutations.some(isPreDeclarationChange) ||
+    bindingMutationHazards.some(isPreDeclarationChange)
   );
 };
 
@@ -2047,13 +2059,37 @@ export const evaluateStatic = (
       return undefined;
     }
 
-    if (hasLexicalPreDeclarationChange(binding, ctx)) {
+    const bindingKey = toMutationBindingKey(binding);
+    const bindingMutations = ctx.rootMutationsByBinding.get(bindingKey) ?? [];
+    const bindingMutationHazards = getRootMutationHazards(
+      ctx.rootMutationHazardsByBinding,
+      bindingKey
+    );
+    const bindingHasChanges =
+      bindingMutations.length > 0 || bindingMutationHazards.length > 0;
+
+    if (
+      bindingHasChanges &&
+      hasLexicalPreDeclarationChange(
+        binding,
+        ctx,
+        bindingMutations,
+        bindingMutationHazards
+      )
+    ) {
       return undefined;
     }
 
     const { declarator } = binding;
     const init = declarator?.init;
-    const valueCacheKey = init ? bindingValueCacheKey(binding, ctx) : null;
+    const valueCacheKey = init
+      ? bindingValueCacheKey(
+          binding,
+          ctx,
+          bindingMutations,
+          bindingMutationHazards
+        )
+      : null;
     if (valueCacheKey && env.has(valueCacheKey)) {
       return env.get(valueCacheKey);
     }
@@ -2194,13 +2230,18 @@ export const evaluateStatic = (
       value = createOxcStaticFunctionValue(binding.functionNode);
     }
 
-    const priorMutations =
-      ctx.rootMutationsByBinding
-        .get(toMutationBindingKey(binding))
-        ?.filter((mutation) => mutation.start < ctx.currentExpressionStart) ??
-      [];
+    if (value !== undefined && !bindingHasChanges) {
+      if (valueCacheKey) {
+        env.set(valueCacheKey, value);
+      }
+      return value;
+    }
+
+    const priorMutations = bindingMutations.filter(
+      (mutation) => mutation.start < ctx.currentExpressionStart
+    );
     const replayedMutationNodes = new Set<Node>(priorMutations);
-    const priorMutationHazards = getBindingMutationHazards(binding, ctx).filter(
+    const priorMutationHazards = bindingMutationHazards.filter(
       (hazard) =>
         !isKnownPureStaticCall(hazard, ctx) &&
         !replayedMutationNodes.has(hazard) &&

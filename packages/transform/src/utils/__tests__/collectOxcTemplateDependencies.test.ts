@@ -13,6 +13,13 @@ import {
   cloneStaticValue,
   literalCode,
 } from '../collectOxcTemplateDependencies/staticEvaluator';
+import {
+  analyzeProgram,
+  getRootMutationHazards,
+  parseOxc,
+  resolveBindingAt,
+  toMutationBindingKey,
+} from '../collectOxcTemplateDependencies/scopeAnalysis';
 
 const filename = '/source.tsx';
 
@@ -1216,6 +1223,53 @@ describe('collectOxcTemplateDependencies', () => {
     expect(result.staticValues).toEqual([]);
     expect(result.staticValueCandidates).toEqual([]);
     expect(result.dependencyNames).toEqual(['width']);
+  });
+
+  it('checks initializer hazards when the alias binding has no own changes', () => {
+    const code = dedent`
+      const source = { width: 304 };
+      Object.assign(source, { width: 400 });
+      const alias = source;
+      alias.width;
+    `;
+    const expressionStart = code.lastIndexOf('alias.width');
+    const analysis = analyzeProgram(parseOxc(code, filename));
+    const resolutionContext = {
+      bindingResolutionCache: new Map(),
+      bindingsByName: analysis.bindingsByName,
+    };
+    const sourceBinding = resolveBindingAt(
+      resolutionContext,
+      'source',
+      code.indexOf('source;')
+    );
+    const aliasBinding = resolveBindingAt(
+      resolutionContext,
+      'alias',
+      code.indexOf('alias.width')
+    );
+
+    expect(sourceBinding).toBeDefined();
+    expect(aliasBinding).toBeDefined();
+    expect(
+      getRootMutationHazards(
+        analysis.rootMutationHazardsByBinding,
+        toMutationBindingKey(sourceBinding!)
+      )
+    ).not.toHaveLength(0);
+    expect(
+      getRootMutationHazards(
+        analysis.rootMutationHazardsByBinding,
+        toMutationBindingKey(aliasBinding!)
+      )
+    ).toHaveLength(0);
+
+    expect(
+      evaluateOxcStaticExpressionAt(code, filename, {
+        end: expressionStart + 'alias.width'.length,
+        start: expressionStart,
+      })
+    ).toBeUndefined();
   });
 
   it('falls back when a nested source is mutated through a scoped alias', () => {

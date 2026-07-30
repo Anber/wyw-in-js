@@ -55,6 +55,47 @@ const matchesSpanLookup = (
   spanLookup: SpanLookup
 ): boolean => !spanLookup || spanLookup.has(toSpanKey(node.start, node.end));
 
+const markIgnoredMutationHazardTree = (
+  node: Node,
+  ignoredHazardNodes: Set<Node>
+): void => {
+  ignoredHazardNodes.add(node);
+  getOxcNodeChildren(node).forEach((child) =>
+    markIgnoredMutationHazardTree(child, ignoredHazardNodes)
+  );
+};
+
+const registerMutationHazardNode = (
+  node: Node,
+  ignoreLookup: SpanLookup,
+  ignoredHazardNodes: Set<Node>
+): void => {
+  if (!ignoreLookup?.has(toSpanKey(node.start, node.end))) {
+    return;
+  }
+
+  ignoredHazardNodes.add(node);
+  if (node.type === 'TaggedTemplateExpression') {
+    // Suppress the processor tag construction/invocation itself. Quasi
+    // interpolations remain visible so nested calls and mutations still
+    // participate in provenance analysis.
+    markIgnoredMutationHazardTree(node.tag, ignoredHazardNodes);
+  }
+};
+
+const isMutationHazardSeed = (node: Node): boolean =>
+  node.type === 'AssignmentExpression' ||
+  node.type === 'UpdateExpression' ||
+  (node.type === 'UnaryExpression' && node.operator === 'delete') ||
+  node.type === 'CallExpression' ||
+  node.type === 'NewExpression' ||
+  node.type === 'TaggedTemplateExpression';
+
+const isEffectiveMutationHazardSeed = (
+  node: Node,
+  ignoredHazardNodes: ReadonlySet<Node>
+): boolean => isMutationHazardSeed(node) && !ignoredHazardNodes.has(node);
+
 export const getSourceLocation = (
   start: number,
   end: number,
@@ -528,6 +569,8 @@ export const analyzeProgram = (
   const usedNames = new Set<string>();
   const templateLiterals: TemplateLiteral[] = [];
   const targetExpressions: Expression[] = [];
+  const ignoredMutationHazardNodes = new Set<Node>();
+  let hasEffectiveMutationHazardSeed = false;
 
   const addBinding = (scope: Scope, binding: Binding): void => {
     scope.bindings.set(binding.name, binding);
@@ -557,6 +600,18 @@ export const analyzeProgram = (
   };
 
   visit(program, null, (node, scope, parent, ancestors) => {
+    if (mutationHazardIgnoreLookup) {
+      registerMutationHazardNode(
+        node,
+        mutationHazardIgnoreLookup,
+        ignoredMutationHazardNodes
+      );
+    }
+    hasEffectiveMutationHazardSeed ||= isEffectiveMutationHazardSeed(
+      node,
+      ignoredMutationHazardNodes
+    );
+
     collectTargets(node, ancestors);
 
     if (node.type === 'Identifier') {
@@ -695,14 +750,18 @@ export const analyzeProgram = (
   });
 
   const rootMutationsByBinding = collectRootMutations(program);
+  const rootMutationHazardsByBinding =
+    rootMutationsByBinding.size === 0 && !hasEffectiveMutationHazardSeed
+      ? new Map<string, Node[]>()
+      : collectRootMutationHazards(
+          program,
+          rootMutationsByBinding,
+          bindings,
+          ignoredMutationHazardNodes
+        );
   return {
     bindingsByName: bindings,
-    rootMutationHazardsByBinding: collectRootMutationHazards(
-      program,
-      rootMutationsByBinding,
-      bindings,
-      mutationHazardIgnoreLookup
-    ),
+    rootMutationHazardsByBinding,
     rootMutationsByBinding,
     targetExpressions: targetExpressions.sort((a, b) => a.start - b.start),
     templateLiterals,
@@ -916,31 +975,10 @@ const collectRootMutationHazards = (
   program: Program,
   mutations: Map<string, Array<AssignmentExpression | UpdateExpression>>,
   bindingsByName: ReadonlyMap<string, Binding[]>,
-  ignoreLookup: SpanLookup = null
+  ignoredHazardNodes: ReadonlySet<Node>
 ): Map<string, Node[]> => {
   const hazards = new Map<string, Node[]>();
   const siblingHazards = new Map<string, Node[]>();
-  const ignoredHazardNodes = new Set<Node>();
-  const markIgnoredHazardTree = (node: Node): void => {
-    ignoredHazardNodes.add(node);
-    getOxcNodeChildren(node).forEach(markIgnoredHazardTree);
-  };
-  const collectIgnoredHazardNodes = (node: Node): void => {
-    if (ignoreLookup?.has(toSpanKey(node.start, node.end))) {
-      ignoredHazardNodes.add(node);
-      if (node.type === 'TaggedTemplateExpression') {
-        // Suppress the processor tag construction/invocation itself. Quasi
-        // interpolations remain visible so nested calls and mutations still
-        // participate in provenance analysis.
-        markIgnoredHazardTree(node.tag);
-      }
-    }
-
-    getOxcNodeChildren(node).forEach(collectIgnoredHazardNodes);
-  };
-  if (ignoreLookup) {
-    collectIgnoredHazardNodes(program);
-  }
 
   const modeledMutations = new Set<Node>(
     [...mutations.values()].flatMap((nodes) => nodes)
@@ -1131,7 +1169,7 @@ const collectRootMutationHazards = (
   };
 
   visit(program, null, (node) => {
-    if (ignoredHazardNodes.has(node)) {
+    if (!isEffectiveMutationHazardSeed(node, ignoredHazardNodes)) {
       return;
     }
 

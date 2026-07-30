@@ -731,7 +731,7 @@ describe('collectOxcTemplateDependencies mutation provenance', () => {
     expect(result.staticValueCandidates[0]?.source).toContain('=> width');
   });
 
-  it('preserves nested interpolation side effects inside processor-managed tags', () => {
+  it('preserves a nested call hazard seed inside a processor-managed interpolation', () => {
     const code = dedent`
       import { mutate, source } from './tokens';
 
