@@ -249,13 +249,16 @@ generation belong to a separate emitter.
 
 ### M2 — Structural split and size gate
 
-- [ ] Split lexical binding/reference indexing from mutation analysis.
+- [x] Split lexical binding/reference traversal, binding resolution, and
+      mutation analysis.
 - [x] Split static host values from the concrete evaluator.
+- [x] Split static safety proofs from the concrete evaluator.
 - [ ] Split pattern execution, intrinsics, and evaluator dispatch.
-- [ ] Split static-local planning, snapshot analysis, snapshot replay, and
-      emission.
-- [ ] Split shaker executable discovery, effect collection, pattern safety,
-      statement liveness, and rewriting.
+- [x] Split snapshot abstract-value analysis from expression extraction.
+- [ ] Split static-local planning, snapshot replay, and emission.
+- [x] Split shaker pattern/receiver safety proofs.
+- [ ] Split shaker executable discovery, effect collection, statement
+      liveness, and rewriting.
 - [ ] Make `bun run check:ts-size` pass without increasing limits.
 
 ### M3 — Typed program facts
@@ -350,3 +353,25 @@ generation belong to a separate emitter.
   reads, and plain receiver/projection checks into `staticValues.ts`.
   `staticEvaluator.ts` dropped from 2,554 to 2,104 lines without introducing a
   reverse dependency on the evaluator.
+- Moved shaker receiver and pattern-abruptness proofs into
+  `oxcShaker/patternEffects.ts`; `oxcShaker.ts` dropped from 4,858 to 4,441
+  lines.
+- Moved lexical traversal, binding resolution, and mutation/alias propagation
+  into `scopeTraversal.ts`, `bindingResolution.ts`, and `mutationAnalysis.ts`.
+  `scopeAnalysis.ts` dropped from 1,617 to 392 lines and now passes its
+  production-size guard.
+- Moved snapshot abstract-value inference into `snapshotValueAnalysis.ts`;
+  `expressionExtraction.ts` dropped from 3,049 to 2,313 lines. Removed a
+  duplicate recursive RHS inference from alias-mutation analysis.
+- Reused the shared runtime-expression unwrapping policy without allocating an
+  options object per call, and replaced the snapshot-specific wrapper chain
+  with the common implementation.
+- Moved intrinsic, binding, pattern-stability, and deterministic-undefined
+  safety proofs into `staticEvaluationSafety.ts`; `staticEvaluator.ts` is now
+  1,707 lines.
+- Verified the combined structural slices with 1,356 passing transform tests,
+  one skip, one pre-existing todo, zero failures, type-check, lint, Prettier,
+  and two independent read-only reviews.
+- The size guard now reports only `oxcShaker.ts`, `staticEvaluator.ts`, and
+  `expressionExtraction.ts`; every newly introduced production module is
+  below 1,000 lines.
