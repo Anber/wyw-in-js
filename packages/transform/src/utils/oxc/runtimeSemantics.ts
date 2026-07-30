@@ -2,10 +2,12 @@ import type { Node } from 'oxc-parser';
 
 type AnyOxcNode = Node & { expression?: Node };
 
-export type OxcFunctionLike =
-  | Extract<Node, { type: 'ArrowFunctionExpression' }>
-  | Extract<Node, { type: 'FunctionDeclaration' }>
-  | Extract<Node, { type: 'FunctionExpression' }>;
+export type OxcFunctionLike = Node & {
+  async: boolean;
+  body: Node | null;
+  id?: { name: string } | null;
+  params: Node[];
+};
 
 const OXC_TYPESCRIPT_RUNTIME_WRAPPERS = new Set([
   'TSAsExpression',

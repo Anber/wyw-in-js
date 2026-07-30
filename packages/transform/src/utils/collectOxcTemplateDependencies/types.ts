@@ -11,14 +11,10 @@ import type {
 } from 'oxc-parser';
 
 import type { OxcValueReplacement } from '../oxc/replacements';
+import type { OxcFunctionLike } from '../oxc/runtimeSemantics';
 import type { OxcLocationLookup } from '../oxc/sourceLocations';
 
-export type OxcFunctionLikeNode = Node & {
-  async: boolean;
-  body: Node | null;
-  id?: { name: string } | null;
-  params: Node[];
-};
+export type OxcFunctionLikeNode = OxcFunctionLike;
 export type BindingKind = 'function' | 'import' | 'param' | 'variable';
 export type ScopedDeclarationKind = 'const' | 'let' | 'var';
 
