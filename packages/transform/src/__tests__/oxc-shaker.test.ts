@@ -1576,6 +1576,27 @@ describe('shakeOxcToESM', () => {
     expect(code).toContain('(false || mutate)()');
   });
 
+  it('isolates a recursive compound callee from its sibling target', () => {
+    const result = runSourceWidth(`
+      const source = { width: 304 };
+
+      function mutate() {
+        source.width = 400;
+      }
+      function recurse(depth) {
+        (depth > 0 ? recurse : mutate)(depth - 1);
+      }
+      recurse(1);
+
+      export { source };
+    `);
+
+    expect(result.code).toContain('function recurse(depth)');
+    expect(result.code).toContain('(depth > 0 ? recurse : mutate)(depth - 1)');
+    expect(result.code).toContain('source.width = 400');
+    expect(result.width).toBe(400);
+  });
+
   it('prunes inline callable flows with only local mutations', () => {
     const { code } = run(
       ['source'],
@@ -2138,6 +2159,64 @@ describe('shakeOxcToESM', () => {
     expect(result.width).toBe(400);
   });
 
+  it.each([
+    [
+      'an Object.prototype accessor',
+      `
+        const { measured } = {};
+        void measured;
+      `,
+      `
+        Object.defineProperty(Object.prototype, 'measured', {
+          get() {
+            source.width += 1;
+            return source.width;
+          },
+          configurable: true,
+        });
+      `,
+      'delete Object.prototype.measured;',
+      "Object.defineProperty(Object.prototype, 'measured'",
+    ],
+    [
+      'an Array.prototype iterator',
+      `
+        const [measured] = [1];
+        void measured;
+      `,
+      `
+        const previous = Array.prototype[Symbol.iterator];
+        Array.prototype[Symbol.iterator] = function* iterator() {
+          source.width += 1;
+          yield 1;
+        };
+      `,
+      'Array.prototype[Symbol.iterator] = previous;',
+      'Array.prototype[Symbol.iterator] = function* iterator()',
+    ],
+  ])(
+    'keeps the same local projection before and after mutating %s',
+    (_name, projection, mutation, cleanup, mutationMarker) => {
+      const result = runSourceWidth(`
+        const source = { width: 304 };
+
+        function project() {
+          ${projection}
+        }
+        project();
+        ${mutation}
+        project();
+        ${cleanup}
+
+        export { source };
+      `);
+
+      expect(result.code.match(/\bproject\(\);/g)).toHaveLength(2);
+      expect(result.code).toContain(mutationMarker);
+      expect(result.width).toBe(305);
+    }
+  );
+
   it('prunes proven plain-data receiver operations and unrelated dynamic callables', () => {
     const { code } = run(
       ['source'],
@@ -2266,6 +2345,37 @@ describe('shakeOxcToESM', () => {
     expect(code).toContain('class Mutate');
     expect(code).toContain('source.width = 400');
     expect(code).toContain('new Mutate()');
+  });
+
+  it('prunes a guarded class-construction cycle without hiding an independent constructor', () => {
+    const result = runSourceWidth(`
+      const source = { width: 304 };
+      let recurse = true;
+
+      class First {
+        next = recurse ? ((recurse = false), new Second()) : null;
+      }
+      class Second {
+        next = recurse ? ((recurse = false), new First()) : null;
+      }
+      class Mutate {
+        constructor() {
+          source.width = 400;
+        }
+      }
+      new First();
+      new Mutate();
+
+      export { source };
+    `);
+
+    expect(result.code).not.toContain('class First');
+    expect(result.code).not.toContain('class Second');
+    expect(result.code).not.toContain('let recurse');
+    expect(result.code).toContain('class Mutate');
+    expect(result.code).toContain('source.width = 400');
+    expect(result.code).toContain('new Mutate()');
+    expect(result.width).toBe(400);
   });
 
   it('keeps effects reached through aliased and member constructors', () => {
