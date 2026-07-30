@@ -35,6 +35,7 @@ export type Binding = {
 
 export type BindingIndex = {
   bindingsByName: ReadonlyMap<string, readonly Binding[]>;
+  referenceScopesByStart: ReadonlyMap<number, Scope>;
 };
 
 export type Replacement = OxcValueReplacement;

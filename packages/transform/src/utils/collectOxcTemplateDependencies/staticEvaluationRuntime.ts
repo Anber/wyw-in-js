@@ -626,6 +626,10 @@ export const evaluateFunctionCall = (
   for (const statement of fn.body.body) {
     if (statement.type === 'VariableDeclaration') {
       for (const declarator of statement.declarations) {
+        if (statement.kind === 'var' && !declarator.init) {
+          continue;
+        }
+
         const value = declarator.init
           ? evaluateStatic(declarator.init, ctx, localEnv, stack)
           : undefined;

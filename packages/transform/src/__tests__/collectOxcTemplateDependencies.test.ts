@@ -364,6 +364,81 @@ describe('evaluateOxcStaticExpression', () => {
     expect(evaluateLastExpression(code, 'run()')).toBe('number');
   });
 
+  it('does not overwrite a parameter with an uninitialized var redeclaration', () => {
+    const code = `
+      function run(value) {
+        var value;
+        return value;
+      }
+      run(1);
+    `;
+
+    expect(evaluateLastExpression(code, 'run(1)')).toBe(1);
+  });
+
+  it('does not overwrite a defaulted parameter with an uninitialized var redeclaration', () => {
+    const code = `
+      function run(value = 1) {
+        var value;
+        return value;
+      }
+      run();
+    `;
+
+    expect(evaluateLastExpression(code, 'run()')).toBe(1);
+  });
+
+  it('initializes an uninitialized let declaration to undefined', () => {
+    const code = `
+      const value = 1;
+      function run() {
+        let value;
+        return typeof value;
+      }
+      run();
+    `;
+
+    expect(evaluateLastExpression(code, 'run()')).toBe('undefined');
+  });
+
+  it('assigns an initialized var redeclaration over a parameter', () => {
+    const code = `
+      function run(value) {
+        var value = 2;
+        return value;
+      }
+      run(1);
+    `;
+
+    expect(evaluateLastExpression(code, 'run(1)')).toBe(2);
+  });
+
+  it('keeps body var bindings out of parameter default evaluation', () => {
+    const code = `
+      const source = 1;
+      function run(value = source) {
+        var source = 2;
+        return value;
+      }
+      run();
+    `;
+
+    expect(evaluateLastExpression(code, 'run()')).toBe(1);
+  });
+
+  it('makes parameters and body var bindings visible in the function body', () => {
+    const code = `
+      const source = 1;
+      function run(value = source) {
+        var source = 2;
+        return value + source;
+      }
+      run();
+    `;
+
+    expect(evaluateLastExpression(code, 'run()')).toBe(3);
+  });
+
   it.each([
     `
       function run() {

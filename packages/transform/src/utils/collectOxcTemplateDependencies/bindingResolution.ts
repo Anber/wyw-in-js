@@ -1,4 +1,4 @@
-import type { Binding, BindingIndex, ExtractionContext } from './types';
+import type { Binding, BindingIndex, ExtractionContext, Scope } from './types';
 
 const shouldPreferBindingAt = (
   candidate: Binding,
@@ -39,6 +39,36 @@ export const resolveBindingInIndex = (
     return undefined;
   }
 
+  let referenceScope = index.referenceScopesByStart.get(referenceStart) ?? null;
+  if (referenceScope) {
+    while (referenceScope) {
+      let binding: Binding | undefined;
+      for (
+        let candidateIndex = 0;
+        candidateIndex < bindings.length;
+        candidateIndex += 1
+      ) {
+        const candidate = bindings[candidateIndex]!;
+        if (
+          candidate.scope === referenceScope &&
+          (!binding ||
+            shouldPreferBindingAt(candidate, binding, referenceStart))
+        ) {
+          binding = candidate;
+        }
+      }
+
+      if (binding) {
+        return binding;
+      }
+      referenceScope = referenceScope.parent;
+    }
+
+    return undefined;
+  }
+
+  // Some callers intentionally resolve synthetic offsets which do not point
+  // at an Identifier node. Preserve the range-based resolver for those spans.
   let binding: Binding | undefined;
   bindings.forEach((candidate) => {
     if (
@@ -77,7 +107,9 @@ export const resolveBindingAt = (
 };
 
 export const createBindingIndex = (
-  bindingsByName: ReadonlyMap<string, readonly Binding[]>
+  bindingsByName: ReadonlyMap<string, readonly Binding[]>,
+  referenceScopesByStart: ReadonlyMap<number, Scope> = new Map()
 ): BindingIndex => ({
   bindingsByName,
+  referenceScopesByStart,
 });

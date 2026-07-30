@@ -22,7 +22,7 @@ import {
   isEffectiveMutationHazardSeed,
   registerMutationHazardNode,
 } from './mutationAnalysis';
-import { isInTypeContext, visitOxcScopes } from './scopeTraversal';
+import { visitOxcScopes } from './scopeTraversal';
 import type {
   Binding,
   ExpressionSpan,
@@ -195,6 +195,7 @@ export const analyzeProgram = (
   const templateLiterals: TemplateLiteral[] = [];
   const targetExpressions: Expression[] = [];
   const ignoredMutationHazardNodes = new Set<Node>();
+  const referenceScopesByStart = new Map<number, Scope>();
   let hasEffectiveMutationHazardSeed = false;
 
   const addBinding = (scope: Scope, binding: Binding): void => {
@@ -224,7 +225,14 @@ export const analyzeProgram = (
     }
   };
 
-  visitOxcScopes(program, null, (node, scope, parent, ancestors) => {
+  const collectScopeNode = (
+    node: Node,
+    scope: Scope,
+    parent: Node | null,
+    ancestors: Node[],
+    runtime: boolean,
+    reference: boolean
+  ): void => {
     if (mutationHazardIgnoreLookup) {
       registerMutationHazardNode(
         node,
@@ -243,7 +251,11 @@ export const analyzeProgram = (
       usedNames.add(node.name);
     }
 
-    if (isInTypeContext(ancestors)) {
+    if (reference) {
+      referenceScopesByStart.set(node.start, scope);
+    }
+
+    if (!runtime) {
       return;
     }
 
@@ -372,9 +384,10 @@ export const analyzeProgram = (
         addBinding(declarationScope, binding);
       });
     });
-  });
+  };
+  visitOxcScopes(program, null, collectScopeNode);
 
-  const bindingIndex = createBindingIndex(bindings);
+  const bindingIndex = createBindingIndex(bindings, referenceScopesByStart);
   const { rootMutationHazardsByBinding, rootMutationsByBinding } =
     collectProgramMutationAnalysis(
       program,
