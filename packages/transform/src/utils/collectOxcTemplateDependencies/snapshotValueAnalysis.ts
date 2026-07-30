@@ -562,16 +562,18 @@ const inferSnapshotAssignmentKind = (
       : joinSnapshotValueKinds(previous, assigned);
   }
 
-  if (
-    (inferSnapshotExpressionKind(assignment.right, ctx, stack) === 'identity' ||
-      inferSnapshotExpressionKind(assignment.right, ctx, stack) ===
-        'unknown') &&
-    targetIsRecordedAlias
-  ) {
-    // Alias propagation proves that the assignment can reach this binding,
-    // but a differently shaped target does not prove which projected leaf it
-    // changes. An identity-bearing RHS therefore remains unsafe.
-    return 'unknown';
+  if (targetIsRecordedAlias) {
+    const assignedKind = inferSnapshotExpressionKind(
+      assignment.right,
+      ctx,
+      stack
+    );
+    if (assignedKind === 'identity' || assignedKind === 'unknown') {
+      // Alias propagation proves that the assignment can reach this binding,
+      // but a differently shaped target does not prove which projected leaf
+      // it changes. An identity-bearing RHS therefore remains unsafe.
+      return 'unknown';
+    }
   }
 
   return previous;
