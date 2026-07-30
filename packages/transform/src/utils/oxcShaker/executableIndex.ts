@@ -1,13 +1,12 @@
 import type { Node } from 'oxc-parser';
 
 import { getOxcNodeChildren as getChildren } from '../oxc/ast';
-import { collectOxcPatternIdentifierNames as collectPatternNames } from '../oxc/patterns';
 import {
-  isOxcTypescriptRuntimeWrapper,
-  unwrapOxcRuntimeExpression,
-} from '../oxc/runtimeSemantics';
-
-type AnyNode = Node & Record<string, unknown>;
+  visitOxcLexicalScopes,
+  type OxcLexicalScopeBoundary,
+} from '../oxc/lexicalScopes';
+import { collectOxcPatternIdentifierNames as collectPatternNames } from '../oxc/patterns';
+import { unwrapOxcRuntimeExpression } from '../oxc/runtimeSemantics';
 
 export type CallableNode = Node & {
   body: Node;
@@ -17,102 +16,6 @@ export type CallableNode = Node & {
 export const unwrapAliasExpression = (node: Node): Node =>
   unwrapOxcRuntimeExpression(node, true);
 
-const isBindingIdentifier = (node: Node, parent: Node | null): boolean => {
-  if (node.type !== 'Identifier' || !parent) {
-    return false;
-  }
-
-  const parentNode = parent as AnyNode;
-  if (parent.type === 'VariableDeclarator' && parentNode.id === node) {
-    return true;
-  }
-
-  if (
-    (parent.type === 'FunctionDeclaration' ||
-      parent.type === 'FunctionExpression' ||
-      parent.type === 'ClassDeclaration' ||
-      parent.type === 'ClassExpression' ||
-      parent.type === 'TSEnumDeclaration') &&
-    parentNode.id === node
-  ) {
-    return true;
-  }
-
-  if (
-    (parent.type === 'ImportSpecifier' ||
-      parent.type === 'ImportDefaultSpecifier' ||
-      parent.type === 'ImportNamespaceSpecifier') &&
-    parentNode.local === node
-  ) {
-    return true;
-  }
-
-  return false;
-};
-
-const isIdentifierReference = (
-  node: Node,
-  parent: Node | null,
-  grandparent: Node | null
-): boolean => {
-  if (node.type !== 'Identifier') {
-    return false;
-  }
-
-  if (isBindingIdentifier(node, parent)) {
-    return false;
-  }
-
-  if (!parent) {
-    return true;
-  }
-
-  const parentNode = parent as AnyNode;
-  if (
-    parent.type === 'Property' &&
-    parentNode.key === node &&
-    !parentNode.computed &&
-    parentNode.value !== node
-  ) {
-    return false;
-  }
-
-  if (
-    (parent.type === 'MethodDefinition' ||
-      parent.type === 'PropertyDefinition') &&
-    parentNode.key === node &&
-    !parentNode.computed
-  ) {
-    return false;
-  }
-
-  if (
-    parent.type === 'MemberExpression' &&
-    parentNode.property === node &&
-    !parentNode.computed
-  ) {
-    return false;
-  }
-
-  if (parent.type === 'ExportSpecifier' && parentNode.exported === node) {
-    return false;
-  }
-
-  if (parent.type === 'ExportSpecifier' && parentNode.local === node) {
-    return grandparent?.type === 'ExportNamedDeclaration'
-      ? !grandparent.source
-      : true;
-  }
-
-  // The `imported` name of `import { X as Y }` is what to take from the source
-  // module — it does not reference a local binding `X` in the current module.
-  if (parent.type === 'ImportSpecifier' && parentNode.imported === node) {
-    return false;
-  }
-
-  return true;
-};
-
 const collectScopedReferences = (
   node: Node,
   rootBindingsAreExternal: boolean
@@ -120,7 +23,7 @@ const collectScopedReferences = (
   type ReferenceScope = {
     activeFrom: number;
     bindings: Set<string>;
-    functionScope: boolean;
+    functionBoundary: boolean;
     parent: ReferenceScope | null;
   };
   type PendingReference = {
@@ -131,15 +34,24 @@ const collectScopedReferences = (
 
   const createScope = (
     parent: ReferenceScope | null,
-    functionScope = false,
-    activeFrom = Number.NEGATIVE_INFINITY
+    boundary: OxcLexicalScopeBoundary
   ): ReferenceScope => ({
-    activeFrom,
+    activeFrom:
+      boundary.kind === 'switch' ? boundary.start : Number.NEGATIVE_INFINITY,
     bindings: new Set(),
-    functionScope,
+    functionBoundary: boundary.functionBoundary,
     parent,
   });
-  const rootScope = createScope(null, true);
+  const initialScope: ReferenceScope | null =
+    node.type === 'Program'
+      ? null
+      : {
+          activeFrom: Number.NEGATIVE_INFINITY,
+          bindings: new Set(),
+          functionBoundary: true,
+          parent: null,
+        };
+  let rootBindingScope = initialScope;
   const pendingReferences: PendingReference[] = [];
   const addPattern = (
     scope: ReferenceScope,
@@ -151,149 +63,72 @@ const collectScopedReferences = (
   };
   const nearestFunctionScope = (scope: ReferenceScope): ReferenceScope => {
     let current = scope;
-    while (!current.functionScope && current.parent) {
+    while (!current.functionBoundary && current.parent) {
       current = current.parent;
     }
     return current;
   };
-  const hasDecorator = (decoratedNode: Node, child: Node): boolean => {
-    const { decorators } = decoratedNode as AnyNode;
-    return Array.isArray(decorators) && decorators.includes(child);
-  };
-  const visit = (
-    current: Node,
-    inheritedScope: ReferenceScope,
-    parent: Node | null = null,
-    grandparent: Node | null = null,
-    decoratorScope: ReferenceScope | null = null,
-    isFunctionBody = false,
-    collectReferences = true
-  ): void => {
-    const runtimeExpression = isOxcTypescriptRuntimeWrapper(current)
-      ? ((current as AnyNode).expression as Node | undefined)
-      : undefined;
-    const collectCurrentReferences =
-      collectReferences &&
-      (!current.type.startsWith('TS') ||
-        current.type === 'TSEnumDeclaration' ||
-        current.type === 'TSParameterProperty' ||
-        runtimeExpression !== undefined);
+  visitOxcLexicalScopes(
+    node,
+    initialScope,
+    (parent, boundary) => {
+      const scope = createScope(parent, boundary);
+      if (boundary.root) {
+        rootBindingScope = scope;
+      }
+      return scope;
+    },
+    (current, currentScope, _parent, _ancestors, _runtime, reference) => {
+      const isFunction =
+        current.type === 'FunctionDeclaration' ||
+        current.type === 'FunctionExpression' ||
+        current.type === 'ArrowFunctionExpression';
 
-    let currentScope = inheritedScope;
-    const isFunction =
-      current.type === 'FunctionDeclaration' ||
-      current.type === 'FunctionExpression' ||
-      current.type === 'ArrowFunctionExpression';
-
-    if (isFunction) {
       if (current.type === 'FunctionDeclaration' && current.id) {
-        addPattern(inheritedScope, current.id);
-      }
-      currentScope = createScope(inheritedScope, true);
-      if (current.type === 'FunctionExpression' && current.id) {
+        addPattern(currentScope.parent ?? currentScope, current.id);
+      } else if (current.type === 'FunctionExpression' && current.id) {
         addPattern(currentScope, current.id);
       }
-      current.params.forEach((parameter) =>
-        addPattern(currentScope, parameter)
-      );
-    } else if (current.type === 'ClassExpression') {
-      currentScope = createScope(inheritedScope);
-      if (current.id) {
-        addPattern(currentScope, current.id);
+
+      if (isFunction) {
+        current.params.forEach((parameter) =>
+          addPattern(currentScope, parameter)
+        );
       }
-    } else if (current.type === 'StaticBlock') {
-      currentScope = createScope(inheritedScope, true);
-    } else if (current.type === 'BlockStatement' && isFunctionBody) {
-      // Functions with a non-simple parameter list evaluate defaults in a
-      // parameter environment that cannot see body-level var declarations.
-      // A separate body function scope is also valid for simple parameters
-      // and keeps free-reference classification uniform.
-      currentScope = createScope(inheritedScope, true);
-    } else if (current.type === 'SwitchStatement') {
-      currentScope = createScope(
-        inheritedScope,
-        false,
-        current.cases[0]?.start ?? current.end
-      );
-    } else if (
-      current.type === 'BlockStatement' ||
-      current.type === 'CatchClause' ||
-      current.type === 'ForStatement' ||
-      current.type === 'ForInStatement' ||
-      current.type === 'ForOfStatement'
-    ) {
-      currentScope = createScope(inheritedScope);
-    }
 
-    if (current.type === 'VariableDeclaration') {
-      const declarationScope =
-        current.kind === 'var'
-          ? nearestFunctionScope(currentScope)
-          : currentScope;
-      current.declarations.forEach((declaration) =>
-        addPattern(declarationScope, declaration.id)
-      );
-    } else if (
-      (current.type === 'ClassDeclaration' ||
-        current.type === 'TSEnumDeclaration') &&
-      current.id
-    ) {
-      addPattern(currentScope, current.id);
-    } else if (current.type === 'CatchClause') {
-      addPattern(currentScope, current.param);
-    } else if (current.type === 'ImportDeclaration') {
-      current.specifiers.forEach((specifier) =>
-        addPattern(currentScope, specifier.local)
-      );
-    }
-
-    if (
-      collectCurrentReferences &&
-      isIdentifierReference(current, parent, grandparent)
-    ) {
-      pendingReferences.push({
-        name: (current as AnyNode).name as string,
-        scope: currentScope,
-        start: current.start,
-      });
-    }
-
-    getChildren(current).forEach((child) => {
-      let childDecoratorScope: ReferenceScope | null = null;
-      let childScope = currentScope;
-
-      if (decoratorScope && hasDecorator(current, child)) {
-        childScope = decoratorScope;
+      if (current.type === 'ClassExpression' && current.id) {
+        addPattern(currentScope, current.id);
+      } else if (current.type === 'VariableDeclaration') {
+        const declarationScope =
+          current.kind === 'var'
+            ? nearestFunctionScope(currentScope)
+            : currentScope;
+        current.declarations.forEach((declaration) =>
+          addPattern(declarationScope, declaration.id)
+        );
       } else if (
-        current.type === 'ClassExpression' &&
-        hasDecorator(current, child)
+        (current.type === 'ClassDeclaration' ||
+          current.type === 'TSEnumDeclaration') &&
+        current.id
       ) {
-        childScope = inheritedScope;
+        addPattern(currentScope, current.id);
+      } else if (current.type === 'CatchClause') {
+        addPattern(currentScope, current.param);
+      } else if (current.type === 'ImportDeclaration') {
+        current.specifiers.forEach((specifier) =>
+          addPattern(currentScope, specifier.local)
+        );
       }
 
-      if (
-        isFunction &&
-        current.params.includes(child as (typeof current.params)[number])
-      ) {
-        childDecoratorScope = inheritedScope;
+      if (reference && current.type === 'Identifier') {
+        pendingReferences.push({
+          name: current.name,
+          scope: currentScope,
+          start: current.start,
+        });
       }
-
-      visit(
-        child,
-        childScope,
-        current,
-        parent,
-        childDecoratorScope,
-        isFunction &&
-          current.body?.type === 'BlockStatement' &&
-          current.body === child,
-        collectCurrentReferences &&
-          (runtimeExpression === undefined || runtimeExpression === child)
-      );
-    });
-  };
-
-  visit(node, rootScope);
+    }
+  );
 
   const references = new Set<string>();
   pendingReferences.forEach(({ name, scope: referenceScope, start }) => {
@@ -301,7 +136,7 @@ const collectScopedReferences = (
     while (scope && (start < scope.activeFrom || !scope.bindings.has(name))) {
       scope = scope.parent;
     }
-    if (!scope || (rootBindingsAreExternal && scope === rootScope)) {
+    if (!scope || (rootBindingsAreExternal && scope === rootBindingScope)) {
       references.add(name);
     }
   });
