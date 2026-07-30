@@ -14,7 +14,7 @@ import { createCallableProvenanceIndex } from './callableProvenanceIndex';
 import {
   collectMutations,
   collectNestedMutations,
-  collectReferences,
+  collectModuleReferences,
   forEachModuleExecutedNode,
 } from './executableIndex';
 import {
@@ -146,7 +146,7 @@ const buildStatementInfo = (
     const exportNames = new Set<string>();
     const bindings = new Set<string>();
     const imports: OxcCollectedImport[] = [];
-    const references = collectReferences(node);
+    const references = collectModuleReferences(node);
     let sideEffectImport = false;
 
     if (node.type === 'ImportDeclaration') {

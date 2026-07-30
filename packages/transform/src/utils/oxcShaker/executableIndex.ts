@@ -71,6 +71,16 @@ const isIdentifierReference = (
   if (
     parent.type === 'Property' &&
     parentNode.key === node &&
+    !parentNode.computed &&
+    parentNode.value !== node
+  ) {
+    return false;
+  }
+
+  if (
+    (parent.type === 'MethodDefinition' ||
+      parent.type === 'PropertyDefinition') &&
+    parentNode.key === node &&
     !parentNode.computed
   ) {
     return false;
@@ -103,39 +113,10 @@ const isIdentifierReference = (
   return true;
 };
 
-export const collectReferences = (node: Node): Set<string> => {
-  const references = new Set<string>();
-
-  const visit = (
-    current: Node,
-    parent: Node | null = null,
-    grandparent: Node | null = null
-  ): void => {
-    if (isOxcTypescriptRuntimeWrapper(current)) {
-      const expression = (current as AnyNode).expression as Node | undefined;
-      if (expression) {
-        visit(expression, current, parent);
-      }
-      return;
-    }
-
-    if (current.type.startsWith('TS') && current.type !== 'TSEnumDeclaration') {
-      return;
-    }
-
-    if (isIdentifierReference(current, parent, grandparent)) {
-      references.add((current as AnyNode).name as string);
-    }
-
-    getChildren(current).forEach((child) => visit(child, current, parent));
-  };
-
-  visit(node);
-
-  return references;
-};
-
-export const collectExternalReferences = (node: Node): Set<string> => {
+const collectScopedReferences = (
+  node: Node,
+  rootBindingsAreExternal: boolean
+): Set<string> => {
   type ReferenceScope = {
     activeFrom: number;
     bindings: Set<string>;
@@ -150,6 +131,19 @@ export const collectExternalReferences = (node: Node): Set<string> => {
     parent: null,
   };
   const scopes = new Map<Node, ReferenceScope>();
+  const functionBodies = new WeakSet<Node>();
+  const decoratorScopes = new WeakMap<Node, ReferenceScope>();
+  const assignDecoratorScope = (
+    decoratedNode: Node,
+    scope: ReferenceScope
+  ): void => {
+    const { decorators } = decoratedNode as AnyNode;
+    if (Array.isArray(decorators)) {
+      decorators.forEach((decorator) =>
+        decoratorScopes.set(decorator as Node, scope)
+      );
+    }
+  };
   const addPattern = (
     scope: ReferenceScope,
     pattern: Node | null | undefined
@@ -170,6 +164,15 @@ export const collectExternalReferences = (node: Node): Set<string> => {
     current: Node,
     inheritedScope: ReferenceScope
   ): void => {
+    const decoratorScope = decoratorScopes.get(current);
+    if (decoratorScope) {
+      scopes.set(current, decoratorScope);
+      getChildren(current).forEach((child) =>
+        assignScopes(child, decoratorScope)
+      );
+      return;
+    }
+
     let currentScope = inheritedScope;
     const isFunction =
       current.type === 'FunctionDeclaration' ||
@@ -189,10 +192,15 @@ export const collectExternalReferences = (node: Node): Set<string> => {
       if (current.type === 'FunctionExpression' && current.id) {
         addPattern(currentScope, current.id);
       }
-      current.params.forEach((parameter) =>
-        addPattern(currentScope, parameter)
-      );
+      current.params.forEach((parameter) => {
+        assignDecoratorScope(parameter, inheritedScope);
+        addPattern(currentScope, parameter);
+      });
+      if (current.body?.type === 'BlockStatement') {
+        functionBodies.add(current.body);
+      }
     } else if (current.type === 'ClassExpression') {
+      assignDecoratorScope(current, inheritedScope);
       currentScope = {
         activeFrom: Number.NEGATIVE_INFINITY,
         bindings: new Set(),
@@ -209,6 +217,20 @@ export const collectExternalReferences = (node: Node): Set<string> => {
         functionScope: true,
         parent: inheritedScope,
       };
+    } else if (
+      current.type === 'BlockStatement' &&
+      functionBodies.has(current)
+    ) {
+      // Functions with a non-simple parameter list evaluate defaults in a
+      // parameter environment that cannot see body-level var declarations.
+      // A separate body function scope is also valid for simple parameters
+      // and keeps free-reference classification uniform.
+      currentScope = {
+        activeFrom: Number.NEGATIVE_INFINITY,
+        bindings: new Set(),
+        functionScope: true,
+        parent: inheritedScope,
+      };
     } else if (current.type === 'SwitchStatement') {
       currentScope = {
         activeFrom: current.cases[0]?.start ?? current.end,
@@ -217,12 +239,11 @@ export const collectExternalReferences = (node: Node): Set<string> => {
         parent: inheritedScope,
       };
     } else if (
-      current !== node &&
-      (current.type === 'BlockStatement' ||
-        current.type === 'CatchClause' ||
-        current.type === 'ForStatement' ||
-        current.type === 'ForInStatement' ||
-        current.type === 'ForOfStatement')
+      current.type === 'BlockStatement' ||
+      current.type === 'CatchClause' ||
+      current.type === 'ForStatement' ||
+      current.type === 'ForInStatement' ||
+      current.type === 'ForOfStatement'
     ) {
       currentScope = {
         activeFrom: Number.NEGATIVE_INFINITY,
@@ -275,7 +296,11 @@ export const collectExternalReferences = (node: Node): Set<string> => {
       return;
     }
 
-    if (current.type.startsWith('TS') && current.type !== 'TSEnumDeclaration') {
+    if (
+      current.type.startsWith('TS') &&
+      current.type !== 'TSEnumDeclaration' &&
+      current.type !== 'TSParameterProperty'
+    ) {
       return;
     }
 
@@ -288,7 +313,7 @@ export const collectExternalReferences = (node: Node): Set<string> => {
       ) {
         scope = scope.parent;
       }
-      if (!scope) {
+      if (!scope || (rootBindingsAreExternal && scope === rootScope)) {
         references.add(name);
       }
     }
@@ -299,6 +324,12 @@ export const collectExternalReferences = (node: Node): Set<string> => {
   visit(node);
   return references;
 };
+
+export const collectExternalReferences = (node: Node): Set<string> =>
+  collectScopedReferences(node, false);
+
+export const collectModuleReferences = (node: Node): Set<string> =>
+  collectScopedReferences(node, true);
 
 export const getMutatedBinding = (node: Node): string | null => {
   const current = unwrapAliasExpression(node);

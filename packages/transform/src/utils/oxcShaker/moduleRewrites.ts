@@ -17,7 +17,7 @@ import { isOxcNode as isNode } from '../oxc/ast';
 import { collectOxcPatternIdentifierNames as collectPatternNames } from '../oxc/patterns';
 import { parseOxcCached } from '../parseOxc';
 import { stripQueryAndHash } from '../parseRequest';
-import { collectReferences } from './executableIndex';
+import { collectModuleReferences } from './executableIndex';
 
 type AnyNode = Node & Record<string, unknown>;
 
@@ -239,7 +239,7 @@ const removeUnusedImportSpecifiers = (
       return;
     }
 
-    collectReferences(statement as Node).forEach((name) =>
+    collectModuleReferences(statement as Node).forEach((name) =>
       referencedNames.add(name)
     );
   });

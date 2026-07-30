@@ -68,6 +68,231 @@ describe('shakeOxcToESM', () => {
     expect(imports.size).toBe(0);
   });
 
+  it('does not retain a root binding shadowed by a surviving parameter', () => {
+    const { code } = run(
+      ['live'],
+      `
+        const source = 1;
+
+        export function live(source) {
+          return source;
+        }
+      `
+    );
+
+    expect(code).toContain('export function live(source)');
+    expect(code).not.toContain('const source = 1');
+  });
+
+  it('does not retain an import shadowed by a surviving parameter', () => {
+    const { code, imports } = run(
+      ['live'],
+      `
+        import { source } from './source';
+
+        export function live(source) {
+          return source;
+        }
+      `
+    );
+
+    expect(code).toContain('export function live(source)');
+    expect(code).not.toContain("from './source'");
+    expect(imports.size).toBe(0);
+  });
+
+  it('retains a real outer capture used by a surviving function', () => {
+    const { code } = run(
+      ['live'],
+      `
+        const source = 1;
+
+        export function live() {
+          return source;
+        }
+      `
+    );
+
+    expect(code).toContain('const source = 1');
+    expect(code).toContain('return source');
+  });
+
+  it('retains an outer binding used by a default before a body var exists', () => {
+    const { code } = run(
+      ['live'],
+      `
+        const source = 1;
+
+        export function live(value = source) {
+          var source = 2;
+          return value;
+        }
+      `
+    );
+
+    expect(code).toContain('const source = 1');
+    expect(code).toContain('value = source');
+    expect(code).toContain('var source = 2');
+  });
+
+  it('retains an import used by a default before a body var exists', () => {
+    const { code, imports } = run(
+      ['live'],
+      `
+        import { source } from './source';
+
+        export function live(value = source) {
+          var source = 2;
+          return value;
+        }
+      `
+    );
+
+    expect(code).toContain("from './source'");
+    expect(code).toContain('value = source');
+    expect(imports.get('./source')).toEqual(['source']);
+  });
+
+  it('retains an import used by a parameter decorator', () => {
+    const { code, imports } = run(
+      ['Live'],
+      `
+        import { source } from './source';
+
+        export class Live {
+          method(@source source: unknown) {}
+        }
+      `
+    );
+
+    expect(code).toContain("from './source'");
+    expect(code).toContain('@source source: unknown');
+    expect(imports.get('./source')).toEqual(['source']);
+  });
+
+  it('retains an import used by a parameter-property default', () => {
+    const { code, imports } = run(
+      ['Live'],
+      `
+        import { source } from './source';
+
+        export class Live {
+          constructor(public value = source) {}
+        }
+      `
+    );
+
+    expect(code).toContain("from './source'");
+    expect(code).toContain('public value = source');
+    expect(imports.get('./source')).toEqual(['source']);
+  });
+
+  it('retains an import used by a parameter-property decorator', () => {
+    const { code, imports } = run(
+      ['Live'],
+      `
+        import { source } from './source';
+
+        export class Live {
+          constructor(@source public value: unknown) {}
+        }
+      `
+    );
+
+    expect(code).toContain("from './source'");
+    expect(code).toContain('@source public value: unknown');
+    expect(imports.get('./source')).toEqual(['source']);
+  });
+
+  it('resolves a named class expression decorator in the outer scope', () => {
+    const { code, imports } = run(
+      ['Live'],
+      `
+        import { source } from './source';
+
+        export const Live = @source class source {};
+      `
+    );
+
+    expect(code).toContain("from './source'");
+    expect(code).toContain('@source class source');
+    expect(imports.get('./source')).toEqual(['source']);
+  });
+
+  it('keeps a module var reached through a later nested var declaration', () => {
+    const { code } = run(
+      ['live'],
+      `
+        var source = 1;
+        export var live = 0;
+
+        if (true) {
+          var source;
+          live = source;
+        }
+      `
+    );
+
+    expect(code).toContain('var source = 1');
+    expect(code).toContain('var source;');
+    expect(code).toContain('live = source');
+  });
+
+  it('does not retain a module binding shadowed by a root block lexical', () => {
+    const { code } = run(
+      ['live'],
+      `
+        const source = 1;
+        export var live = 0;
+
+        {
+          let source = 2;
+          live = source;
+        }
+      `
+    );
+
+    expect(code).not.toContain('const source = 1');
+    expect(code).toContain('let source = 2');
+    expect(code).toContain('live = source');
+  });
+
+  it('does not retain a module binding shadowed by a root for lexical', () => {
+    const { code } = run(
+      ['live'],
+      `
+        const source = 1;
+        export var live = 0;
+
+        for (let source of [2]) {
+          live = source;
+        }
+      `
+    );
+
+    expect(code).not.toContain('const source = 1');
+    expect(code).toContain('let source of [2]');
+    expect(code).toContain('live = source');
+  });
+
+  it('does not treat a noncomputed method key as a root reference', () => {
+    const { code } = run(
+      ['Live'],
+      `
+        const source = 1;
+
+        export class Live {
+          source() {
+            return 2;
+          }
+        }
+      `
+    );
+
+    expect(code).toContain('source()');
+    expect(code).not.toContain('const source = 1');
+  });
+
   it('drops property assignments for dead exports', () => {
     const { code } = run(
       ['__wywPreval'],
