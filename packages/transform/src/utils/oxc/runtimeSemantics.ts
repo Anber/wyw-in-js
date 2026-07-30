@@ -30,11 +30,7 @@ export const isOxcTransparentRuntimeExpression = (
 
 export const unwrapOxcRuntimeExpression = (
   node: Node,
-  {
-    includeChainExpression,
-  }: {
-    includeChainExpression: boolean;
-  }
+  includeChainExpression: boolean
 ): Node => {
   let current = node;
   while (

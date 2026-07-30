@@ -91,7 +91,7 @@ type RemoveUnusedImportSpecifiersResult = {
 const warnedDynamicImportFiles = new Set<string>();
 
 const unwrapAliasExpression = (node: Node): Node =>
-  unwrapOxcRuntimeExpression(node, { includeChainExpression: true });
+  unwrapOxcRuntimeExpression(node, true);
 
 const parseOxc = (
   code: string,

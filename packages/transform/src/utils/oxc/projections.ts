@@ -3,7 +3,7 @@ import type { Node } from 'oxc-parser';
 import { unwrapOxcRuntimeExpression } from './runtimeSemantics';
 
 const unwrapProjectionExpression = (node: Node): Node =>
-  unwrapOxcRuntimeExpression(node, { includeChainExpression: true });
+  unwrapOxcRuntimeExpression(node, true);
 
 export type OxcPropertyKeyPart =
   | {

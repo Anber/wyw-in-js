@@ -3,6 +3,7 @@
 import type { Expression, Node } from 'oxc-parser';
 
 import { getOxcNodeChildren } from '../oxc/ast';
+import { unwrapOxcRuntimeExpression } from '../oxc/runtimeSemantics';
 import {
   getRootMutationHazards,
   resolveBindingAt,
@@ -50,25 +51,8 @@ const joinSnapshotValueKinds = (
   return 'primitive';
 };
 
-const unwrapSnapshotExpression = (node: Node): Node => {
-  let current = node;
-  while (
-    current.type === 'ParenthesizedExpression' ||
-    current.type === 'ChainExpression' ||
-    current.type === 'TSAsExpression' ||
-    current.type === 'TSSatisfiesExpression' ||
-    current.type === 'TSTypeAssertion' ||
-    current.type === 'TSNonNullExpression' ||
-    current.type === 'TSInstantiationExpression'
-  ) {
-    const { expression } = current as Node & { expression?: Node };
-    if (!expression) {
-      break;
-    }
-    current = expression;
-  }
-  return current;
-};
+const unwrapSnapshotExpression = (node: Node): Node =>
+  unwrapOxcRuntimeExpression(node, true);
 
 const snapshotStaticPropertyKey = (
   key: Node,

@@ -6,7 +6,7 @@ import { unwrapOxcRuntimeExpression } from '../oxc/runtimeSemantics';
 type AnyNode = Node & Record<string, unknown>;
 
 const unwrapAliasExpression = (node: Node): Node =>
-  unwrapOxcRuntimeExpression(node, { includeChainExpression: true });
+  unwrapOxcRuntimeExpression(node, true);
 
 export type ReceiverOperation = {
   kind: 'copy' | 'delete' | 'get' | 'has' | 'iterate' | 'ownKeys' | 'set';
