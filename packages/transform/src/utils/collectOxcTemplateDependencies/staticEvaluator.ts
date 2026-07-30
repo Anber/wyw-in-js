@@ -43,6 +43,7 @@ import {
   evaluateFunctionCall,
   evaluateKnownObjectMember,
   evaluateNumberConversion,
+  evaluateStaticPropertyKey,
   evaluateStringConversion,
   isOxcStaticCallableValue,
   isOxcStaticFunctionValue,
@@ -687,19 +688,15 @@ export const evaluateStatic = (
         continue;
       }
 
-      let key: unknown;
-      if (property.computed) {
-        key = evaluateStatic(property.key as Expression, ctx, env, stack);
-      } else if (property.key.type === 'Identifier') {
-        key = property.key.name;
-      } else if (property.key.type === 'Literal') {
-        key = property.key.value;
-      }
-      if (
-        key === undefined ||
-        key === null ||
-        (typeof key !== 'string' && typeof key !== 'number')
-      ) {
+      const key = evaluateStaticPropertyKey(
+        property.key,
+        property.computed,
+        ctx,
+        env,
+        stack,
+        evaluateStatic
+      );
+      if (key === null) {
         return undefined;
       }
 
@@ -764,17 +761,15 @@ export const evaluateStatic = (
   }
 
   if (expression.type === 'MemberExpression') {
-    let key: unknown;
-    if (expression.computed) {
-      key = evaluateStatic(expression.property as Expression, ctx, env, stack);
-    } else if (expression.property.type === 'Identifier') {
-      key = expression.property.name;
-    }
-    if (
-      key === undefined ||
-      key === null ||
-      (typeof key !== 'string' && typeof key !== 'number')
-    ) {
+    const key = evaluateStaticPropertyKey(
+      expression.property,
+      expression.computed,
+      ctx,
+      env,
+      stack,
+      evaluateStatic
+    );
+    if (key === null) {
       return undefined;
     }
 
@@ -985,17 +980,14 @@ export const evaluateStatic = (
         env,
         stack
       );
-      let key: unknown;
-      if (expression.callee.computed) {
-        key = evaluateStatic(
-          expression.callee.property as Expression,
-          ctx,
-          env,
-          stack
-        );
-      } else if (expression.callee.property.type === 'Identifier') {
-        key = expression.callee.property.name;
-      }
+      const key = evaluateStaticPropertyKey(
+        expression.callee.property,
+        expression.callee.computed,
+        ctx,
+        env,
+        stack,
+        evaluateStatic
+      );
       if (typeof objectValue === 'string') {
         if (
           key === 'toLowerCase' &&

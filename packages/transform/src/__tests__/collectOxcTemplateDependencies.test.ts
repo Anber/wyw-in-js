@@ -1,7 +1,11 @@
+import type { Node } from 'oxc-parser';
+
 import {
   evaluateOxcStaticExpression,
   evaluateOxcStaticExpressionAt,
 } from '../utils/collectOxcTemplateDependencies';
+import { evaluateStaticPropertyKey } from '../utils/collectOxcTemplateDependencies/staticEvaluationRuntime';
+import type { ExtractionContext } from '../utils/collectOxcTemplateDependencies/types';
 
 const evaluateLastExpression = (
   code: string,
@@ -15,6 +19,55 @@ const evaluateLastExpression = (
 };
 
 describe('evaluateOxcStaticExpression', () => {
+  it('resolves static property keys without duplicate computed evaluation', () => {
+    const evaluateStatic = jest.fn((): unknown => 'resolved');
+    const ctx = {} as ExtractionContext;
+    const env = new Map<string, unknown>();
+    const resolve = (key: Node, computed: boolean) =>
+      evaluateStaticPropertyKey(key, computed, ctx, env, [], evaluateStatic);
+    const identifierKey = {
+      name: 'plain',
+      type: 'Identifier',
+    } as unknown as Node;
+
+    expect(resolve(identifierKey, false)).toBe('plain');
+    expect(evaluateStatic).toHaveBeenCalledTimes(0);
+
+    expect(resolve(identifierKey, true)).toBe('resolved');
+    expect(evaluateStatic).toHaveBeenCalledTimes(1);
+
+    evaluateStatic.mockReturnValue({});
+    expect(resolve(identifierKey, true)).toBeNull();
+    expect(evaluateStatic).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    [
+      'computed object creation and read',
+      "({ ['accent']: 'red' })['accent'];",
+      "({ ['accent']: 'red' })['accent']",
+      'red',
+    ],
+    [
+      'computed root mutation replay',
+      `
+        const source = { width: 608 };
+        source['width'] = 704;
+        source['width'];
+      `,
+      "source['width']",
+      704,
+    ],
+    [
+      'computed string member calls',
+      "'wyw'['toUpperCase']();",
+      "'wyw'['toUpperCase']()",
+      'WYW',
+    ],
+  ])('preserves %s', (_description, code, expression, expected) => {
+    expect(evaluateLastExpression(code, expression)).toEqual(expected);
+  });
+
   it('folds typeof of undeclared globals to "undefined"', () => {
     // JS spec: `typeof undeclaredVar` returns 'undefined' regardless of
     // whether the symbol is declared. Folding this lets wyw collapse

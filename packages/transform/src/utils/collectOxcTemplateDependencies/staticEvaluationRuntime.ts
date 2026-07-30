@@ -84,24 +84,21 @@ export const bindingValueCacheKey = (
   return `\0wyw-static-binding:${binding.declaredAt}:${snapshot}:${binding.name}`;
 };
 
-const staticObjectPropertyKey = (
-  property: Node & { computed?: boolean; key?: Node },
+export const evaluateStaticPropertyKey = (
+  keyNode: Node,
+  computed: boolean,
   ctx: ExtractionContext,
   env: EvalEnv,
   stack: string[],
   evaluateStatic: EvaluateStatic
 ): string | number | null => {
-  if (!property.key) {
-    return null;
-  }
-
   let key: unknown;
-  if (property.computed) {
-    key = evaluateStatic(property.key as Expression, ctx, env, stack);
-  } else if (property.key.type === 'Identifier') {
-    key = property.key.name;
-  } else if (property.key.type === 'Literal') {
-    key = property.key.value;
+  if (computed) {
+    key = evaluateStatic(keyNode as Expression, ctx, env, stack);
+  } else if (keyNode.type === 'Identifier') {
+    key = keyNode.name;
+  } else if (keyNode.type === 'Literal') {
+    key = keyNode.value;
   }
 
   return typeof key === 'string' || typeof key === 'number' ? key : null;
@@ -125,8 +122,9 @@ const evaluateObjectExpressionMember = (
       return undefined;
     }
 
-    const key = staticObjectPropertyKey(
-      property,
+    const key = evaluateStaticPropertyKey(
+      property.key,
+      property.computed,
       ctx,
       env,
       stack,
@@ -358,15 +356,15 @@ export const assignPatternValue = (
         continue;
       }
 
-      let key: unknown;
-      if (property.computed) {
-        key = evaluateStatic(property.key as Expression, ctx, env, stack);
-      } else if (property.key.type === 'Identifier') {
-        key = property.key.name;
-      } else if (property.key.type === 'Literal') {
-        key = property.key.value;
-      }
-      if (typeof key !== 'string' && typeof key !== 'number') {
+      const key = evaluateStaticPropertyKey(
+        property.key,
+        property.computed,
+        ctx,
+        env,
+        stack,
+        evaluateStatic
+      );
+      if (key === null) {
         return false;
       }
 
@@ -486,17 +484,15 @@ export const applyRootMutation = (
       return null;
     }
 
-    let key: unknown;
-    if (node.computed) {
-      key = evaluateStatic(node.property as Expression, ctx, env, stack);
-    } else if (node.property.type === 'Identifier') {
-      key = node.property.name;
-    }
-    if (
-      key === undefined ||
-      key === null ||
-      (typeof key !== 'string' && typeof key !== 'number')
-    ) {
+    const key = evaluateStaticPropertyKey(
+      node.property,
+      node.computed,
+      ctx,
+      env,
+      stack,
+      evaluateStatic
+    );
+    if (key === null) {
       return null;
     }
 
