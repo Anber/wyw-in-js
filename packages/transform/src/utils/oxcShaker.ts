@@ -617,42 +617,27 @@ const getImmediatelyInvokedFunction = (node: Node): CallableNode | null => {
     : null;
 };
 
-const forEachModuleExecutedNode = (
-  node: Node,
-  visitor: (node: Node) => void
-): void => {
-  const visit = (current: Node): void => {
-    visitor(current);
-
-    if (
-      current.type === 'FunctionDeclaration' ||
-      current.type === 'FunctionExpression' ||
-      current.type === 'ArrowFunctionExpression'
-    ) {
-      return;
-    }
-
-    if (current.type === 'CallExpression') {
-      const invoked = getImmediatelyInvokedFunction(current.callee);
-      getChildren(current).forEach(visit);
-      if (invoked) {
-        visit(invoked.body);
-      }
-      return;
-    }
-
-    getChildren(current).forEach(visit);
-  };
-
-  visit(node);
+type ModuleExecutedNodeEntry = {
+  node: Node;
+  parent: Node | null;
 };
 
-const forEachModuleExecutedNodeWithParent = (
-  node: Node,
-  visitor: (node: Node, parent: Node | null) => void
-): void => {
+const moduleExecutedNodesCache = new WeakMap<
+  Node,
+  readonly ModuleExecutedNodeEntry[]
+>();
+
+const getModuleExecutedNodes = (
+  node: Node
+): readonly ModuleExecutedNodeEntry[] => {
+  const cached = moduleExecutedNodesCache.get(node);
+  if (cached) {
+    return cached;
+  }
+
+  const entries: ModuleExecutedNodeEntry[] = [];
   const visit = (current: Node, parent: Node | null): void => {
-    visitor(current, parent);
+    entries.push({ node: current, parent });
 
     if (
       current.type === 'FunctionDeclaration' ||
@@ -675,6 +660,26 @@ const forEachModuleExecutedNodeWithParent = (
   };
 
   visit(node, null);
+  moduleExecutedNodesCache.set(node, entries);
+  return entries;
+};
+
+const forEachModuleExecutedNode = (
+  node: Node,
+  visitor: (node: Node) => void
+): void => {
+  getModuleExecutedNodes(node).forEach(({ node: current }) => {
+    visitor(current);
+  });
+};
+
+const forEachModuleExecutedNodeWithParent = (
+  node: Node,
+  visitor: (node: Node, parent: Node | null) => void
+): void => {
+  getModuleExecutedNodes(node).forEach(({ node: current, parent }) => {
+    visitor(current, parent);
+  });
 };
 
 const isMemberRead = (node: Node, parent: Node | null): boolean => {
@@ -699,6 +704,58 @@ const isMemberRead = (node: Node, parent: Node | null): boolean => {
 
   return true;
 };
+
+const hasModuleInvocationCandidate = (node: Node): boolean =>
+  getModuleExecutedNodes(node).some(({ node: current, parent }) => {
+    if (
+      current.type === 'CallExpression' ||
+      current.type === 'NewExpression' ||
+      current.type === 'TaggedTemplateExpression' ||
+      current.type === 'ForInStatement' ||
+      current.type === 'ForOfStatement' ||
+      (current.type === 'BinaryExpression' && current.operator === 'in') ||
+      (current.type === 'YieldExpression' &&
+        current.delegate &&
+        !!current.argument)
+    ) {
+      return true;
+    }
+
+    if (current.type === 'VariableDeclaration') {
+      return current.declarations.some(
+        (declarator) =>
+          !!declarator.init &&
+          (declarator.id.type === 'ArrayPattern' ||
+            declarator.id.type === 'ObjectPattern')
+      );
+    }
+
+    if (current.type === 'MemberExpression') {
+      return isMemberRead(current, parent);
+    }
+
+    if (current.type === 'AssignmentExpression') {
+      return (
+        current.left.type === 'MemberExpression' ||
+        (current.operator === '=' &&
+          (current.left.type === 'ArrayPattern' ||
+            current.left.type === 'ObjectPattern'))
+      );
+    }
+
+    if (
+      current.type === 'UpdateExpression' ||
+      (current.type === 'UnaryExpression' && current.operator === 'delete')
+    ) {
+      return current.argument.type === 'MemberExpression';
+    }
+
+    return (
+      current.type === 'SpreadElement' &&
+      (parent?.type === 'ArrayExpression' ||
+        parent?.type === 'ObjectExpression')
+    );
+  });
 
 const collectMutations = (node: Node): Set<string> => {
   const mutations = new Set<string>();
@@ -1612,6 +1669,10 @@ const collectModuleInvocationEffects = (
   isReceiverOperationProvenInert: (operation: ReceiverOperation) => boolean,
   resolveReceiverOperationRoots: (binding: string) => ReadonlySet<string>
 ): ModuleInvocationEffects => {
+  if (!hasModuleInvocationCandidate(node)) {
+    return { bindings: new Set(), opaqueImportedCall: false };
+  }
+
   const bindings = new Set<string>();
   let opaqueImportedCall = false;
 
@@ -4421,10 +4482,34 @@ export const shakeOxcToESM = (
     });
   });
 
+  const callableResultRootsByComponentCache = new Map<
+    Set<string>,
+    Map<string, Set<string>>
+  >();
+  const callableResultRootsByBindingCache = new Map<
+    string,
+    Map<string, Set<string>>
+  >();
   const resolveCallableResultRoots = (
     binding: string,
     includeDescendants = false
   ): Set<string> => {
+    const bindingSeparator = binding.indexOf('.');
+    const bindingRoot =
+      bindingSeparator === -1 ? binding : binding.slice(0, bindingSeparator);
+    const bindingSuffix =
+      bindingSeparator === -1 ? '' : binding.slice(bindingSeparator);
+    const bindingComponent = aliasComponents.get(bindingRoot);
+    const cacheKey = `${includeDescendants ? '1' : '0'}${bindingSuffix}`;
+    const cache =
+      bindingComponent === undefined
+        ? callableResultRootsByBindingCache.get(bindingRoot)
+        : callableResultRootsByComponentCache.get(bindingComponent);
+    const cached = cache?.get(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
     const roots = new Set<string>();
     const visited = new Set<string>();
     const pending: Array<{ binding: string; includeDescendants: boolean }> = [
@@ -4465,6 +4550,13 @@ export const shakeOxcToESM = (
       });
     }
 
+    const nextCache = cache ?? new Map<string, Set<string>>();
+    nextCache.set(cacheKey, roots);
+    if (bindingComponent === undefined) {
+      callableResultRootsByBindingCache.set(bindingRoot, nextCache);
+    } else {
+      callableResultRootsByComponentCache.set(bindingComponent, nextCache);
+    }
     return roots;
   };
 
