@@ -188,6 +188,20 @@ describe('evaluateOxcStaticExpression', () => {
     expect(resolve(identifierKey, false)).toBe('plain');
     expect(evaluateStatic).toHaveBeenCalledTimes(0);
 
+    const literalKey = {
+      type: 'Literal',
+      value: 'literal',
+    } as unknown as Node;
+    expect(resolve(literalKey, true)).toBe('literal');
+    expect(evaluateStatic).toHaveBeenCalledTimes(0);
+
+    const numericLiteralKey = {
+      type: 'Literal',
+      value: 4,
+    } as unknown as Node;
+    expect(resolve(numericLiteralKey, true)).toBe(4);
+    expect(evaluateStatic).toHaveBeenCalledTimes(0);
+
     expect(resolve(identifierKey, true)).toBe('resolved');
     expect(evaluateStatic).toHaveBeenCalledTimes(1);
 

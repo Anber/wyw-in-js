@@ -71,6 +71,24 @@ export const classifyOxcPropertyKey = (
   return null;
 };
 
+export const getOxcSyntacticPropertyKey = (
+  key: Node,
+  computed: boolean
+): string | number | null => {
+  if (!computed && key.type === 'Identifier') {
+    return key.name;
+  }
+
+  if (
+    key.type === 'Literal' &&
+    (typeof key.value === 'string' || typeof key.value === 'number')
+  ) {
+    return key.value;
+  }
+
+  return null;
+};
+
 export const decomposeOxcMemberPath = (
   node: Node
 ): OxcProjectionPath | null => {

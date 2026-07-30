@@ -16,6 +16,7 @@ import {
   collectOxcPatternBindingNames,
   someOxcPatternNode,
 } from '../oxc/patterns';
+import { getOxcSyntacticPropertyKey } from '../oxc/projections';
 import {
   findReferences,
   getRootMutationHazards,
@@ -71,17 +72,8 @@ const getUnshadowedStaticMemberPath = (
     return null;
   }
 
-  let key: string | number | null = null;
-  if (!node.computed && node.property.type === 'Identifier') {
-    key = node.property.name;
-  } else if (
-    node.computed &&
-    node.property.type === 'Literal' &&
-    (typeof node.property.value === 'string' ||
-      typeof node.property.value === 'number')
-  ) {
-    key = node.property.value;
-  } else if (node.computed) {
+  let key = getOxcSyntacticPropertyKey(node.property, node.computed);
+  if (key === null && node.computed) {
     const propertyPath = getUnshadowedStaticMemberPath(
       node.property,
       ctx,

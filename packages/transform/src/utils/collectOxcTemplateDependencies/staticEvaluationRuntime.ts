@@ -9,6 +9,7 @@ import type {
 
 import { getOxcNodeChildren } from '../oxc/ast';
 import { collectOxcPatternBindingNames } from '../oxc/patterns';
+import { getOxcSyntacticPropertyKey } from '../oxc/projections';
 import { isOxcFunctionLike } from '../oxc/runtimeSemantics';
 import { resolveBindingAt, toMutationBindingKey } from './scopeAnalysis';
 import {
@@ -92,15 +93,16 @@ export const evaluateStaticPropertyKey = (
   stack: string[],
   evaluateStatic: EvaluateStatic
 ): string | number | null => {
-  let key: unknown;
-  if (computed) {
-    key = evaluateStatic(keyNode as Expression, ctx, env, stack);
-  } else if (keyNode.type === 'Identifier') {
-    key = keyNode.name;
-  } else if (keyNode.type === 'Literal') {
-    key = keyNode.value;
+  const syntactic = getOxcSyntacticPropertyKey(keyNode, computed);
+  if (syntactic !== null) {
+    return syntactic;
   }
 
+  if (!computed) {
+    return null;
+  }
+
+  const key = evaluateStatic(keyNode as Expression, ctx, env, stack);
   return typeof key === 'string' || typeof key === 'number' ? key : null;
 };
 

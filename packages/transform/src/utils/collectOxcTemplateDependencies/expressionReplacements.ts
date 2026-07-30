@@ -9,6 +9,7 @@ import {
 } from '../oxc/assignmentTargets';
 import { getOxcNodeChildren } from '../oxc/ast';
 import { collectOxcPatternBindingNames } from '../oxc/patterns';
+import { getOxcSyntacticPropertyKey } from '../oxc/projections';
 import {
   isBindingPosition,
   isInTypeContext,
@@ -444,19 +445,11 @@ const allocateStaticImportAlias = (
 const staticMemberPropertyName = (
   expression: MemberExpression
 ): string | null => {
-  if (!expression.computed && expression.property.type === 'Identifier') {
-    return expression.property.name;
-  }
-
-  if (
-    expression.computed &&
-    expression.property.type === 'Literal' &&
-    typeof expression.property.value === 'string'
-  ) {
-    return expression.property.value;
-  }
-
-  return null;
+  const key = getOxcSyntacticPropertyKey(
+    expression.property,
+    expression.computed
+  );
+  return typeof key === 'string' ? key : null;
 };
 
 export const collectStaticNamespaceMemberReferences = (

@@ -15,6 +15,7 @@ import {
 } from '../oxc/assignmentTargets';
 import { getOxcNodeChildren } from '../oxc/ast';
 import { collectOxcPatternBindingNames } from '../oxc/patterns';
+import { getOxcSyntacticPropertyKey } from '../oxc/projections';
 import { resolveBindingInIndex } from './bindingResolution';
 import { findReferences, visitOxcScopes } from './scopeTraversal';
 import type {
@@ -167,17 +168,7 @@ const collectRootMutations = (
       return null;
     }
 
-    let key: string | number | null = null;
-    if (
-      node.computed &&
-      node.property.type === 'Literal' &&
-      (typeof node.property.value === 'string' ||
-        typeof node.property.value === 'number')
-    ) {
-      key = node.property.value;
-    } else if (!node.computed && node.property.type === 'Identifier') {
-      key = node.property.name;
-    }
+    const key = getOxcSyntacticPropertyKey(node.property, node.computed);
     if (key === null) {
       return null;
     }

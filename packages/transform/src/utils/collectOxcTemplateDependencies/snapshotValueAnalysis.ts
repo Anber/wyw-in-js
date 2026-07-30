@@ -3,6 +3,7 @@
 import type { Expression, Node } from 'oxc-parser';
 
 import { getOxcNodeChildren } from '../oxc/ast';
+import { getOxcSyntacticPropertyKey } from '../oxc/projections';
 import { unwrapOxcRuntimeExpression } from '../oxc/runtimeSemantics';
 import {
   getRootMutationHazards,
@@ -59,14 +60,9 @@ const snapshotStaticPropertyKey = (
   computed: boolean,
   ctx: ExtractionContext
 ): number | string | null => {
-  if (!computed && key.type === 'Identifier') {
-    return key.name;
-  }
-  if (
-    key.type === 'Literal' &&
-    (typeof key.value === 'string' || typeof key.value === 'number')
-  ) {
-    return key.value;
+  const syntactic = getOxcSyntacticPropertyKey(key, computed);
+  if (syntactic !== null) {
+    return syntactic;
   }
   if (!computed) {
     return null;

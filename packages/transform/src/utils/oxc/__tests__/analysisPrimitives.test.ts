@@ -20,6 +20,7 @@ import {
   appendOxcRuntimePropertyPath,
   createOxcRuntimePropertyPath,
   decomposeOxcMemberPath,
+  getOxcSyntacticPropertyKey,
   getOxcRuntimePropertyPath,
   isOxcRuntimePropertyPathEqualOrDescendant,
   replaceOxcRuntimePropertyPathRoot,
@@ -224,6 +225,39 @@ describe('shared OXC analysis primitives', () => {
       ],
     });
     expect(dottedPath?.key).not.toBe(nestedPath?.key);
+  });
+
+  it('recognizes only scalar syntactic property keys', () => {
+    const property = (code: string): { computed: boolean; key: Node } => {
+      const expression = firstDeclarator(`const value = ${code};`).init;
+      if (!expression || expression.type !== 'MemberExpression') {
+        throw new Error('Expected a member expression');
+      }
+      return { computed: expression.computed, key: expression.property };
+    };
+
+    const plain = property('source.width');
+    const string = property('source["width"]');
+    const number = property('source[4]');
+    const dynamic = property('source[key]');
+    const boolean = property('source[true]');
+    const nil = property('source[null]');
+    const bigint = property('source[1n]');
+
+    expect(getOxcSyntacticPropertyKey(plain.key, plain.computed)).toBe('width');
+    expect(getOxcSyntacticPropertyKey(string.key, string.computed)).toBe(
+      'width'
+    );
+    expect(getOxcSyntacticPropertyKey(string.key, false)).toBe('width');
+    expect(getOxcSyntacticPropertyKey(number.key, number.computed)).toBe(4);
+    expect(
+      getOxcSyntacticPropertyKey(dynamic.key, dynamic.computed)
+    ).toBeNull();
+    expect(
+      getOxcSyntacticPropertyKey(boolean.key, boolean.computed)
+    ).toBeNull();
+    expect(getOxcSyntacticPropertyKey(nil.key, nil.computed)).toBeNull();
+    expect(getOxcSyntacticPropertyKey(bigint.key, bigint.computed)).toBeNull();
   });
 
   it('supports root replacement and segment-aware descendant checks', () => {
