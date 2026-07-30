@@ -15,6 +15,7 @@ import {
   collectOxcPatternRuntimeExpressions,
   someOxcPatternNode,
 } from '../oxc/patterns';
+import { isOxcFunctionLike } from '../oxc/runtimeSemantics';
 import { lookupStaticBinding } from './staticBindings';
 import {
   findReferences,
@@ -455,9 +456,7 @@ export const isKnownPureStaticCall = (
   const fn = binding?.functionNode ?? binding?.declarator?.init;
   if (
     !fn ||
-    (fn.type !== 'ArrowFunctionExpression' &&
-      fn.type !== 'FunctionDeclaration' &&
-      fn.type !== 'FunctionExpression') ||
+    !isOxcFunctionLike(fn) ||
     (binding?.declarator && binding.declarator.end > node.start) ||
     node.arguments.some((argument) => argument.type === 'SpreadElement')
   ) {
@@ -987,12 +986,7 @@ const collectHoistedVarNames = (
   names = new Set<string>(),
   root = node
 ): Set<string> => {
-  if (
-    node !== root &&
-    (node.type === 'FunctionDeclaration' ||
-      node.type === 'FunctionExpression' ||
-      node.type === 'ArrowFunctionExpression')
-  ) {
+  if (node !== root && isOxcFunctionLike(node)) {
     return names;
   }
 
@@ -2049,12 +2043,7 @@ export const evaluateStatic = (
       }
 
       const fn = binding?.functionNode ?? binding?.declarator?.init;
-      if (
-        fn &&
-        (fn.type === 'ArrowFunctionExpression' ||
-          fn.type === 'FunctionDeclaration' ||
-          fn.type === 'FunctionExpression')
-      ) {
+      if (fn && isOxcFunctionLike(fn)) {
         return evaluateFunctionCall(fn, args, ctx, env, [
           ...stack,
           expression.callee.name,

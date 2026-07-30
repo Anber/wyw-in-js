@@ -2,6 +2,11 @@ import type { Node } from 'oxc-parser';
 
 type AnyOxcNode = Node & { expression?: Node };
 
+export type OxcFunctionLike =
+  | Extract<Node, { type: 'ArrowFunctionExpression' }>
+  | Extract<Node, { type: 'FunctionDeclaration' }>
+  | Extract<Node, { type: 'FunctionExpression' }>;
+
 const OXC_TYPESCRIPT_RUNTIME_WRAPPERS = new Set([
   'TSAsExpression',
   'TSInstantiationExpression',
@@ -39,12 +44,7 @@ export const unwrapOxcRuntimeExpression = (
   return current;
 };
 
-export const isOxcFunctionLike = (
-  node: Node
-): node is Node & {
-  body: Node | null;
-  params: Node[];
-} =>
+export const isOxcFunctionLike = (node: Node): node is OxcFunctionLike =>
   node.type === 'ArrowFunctionExpression' ||
   node.type === 'FunctionDeclaration' ||
   node.type === 'FunctionExpression';

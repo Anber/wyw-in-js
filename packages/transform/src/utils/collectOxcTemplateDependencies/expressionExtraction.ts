@@ -11,6 +11,7 @@ import {
   collectOxcPatternRuntimeExpressions,
   collectOxcPatternShorthandProperties,
 } from '../oxc/patterns';
+import { isOxcFunctionLike } from '../oxc/runtimeSemantics';
 import { applyOxcReplacements } from '../oxc/replacements';
 import { createOxcLocationLookup } from '../oxc/sourceLocations';
 import {
@@ -1733,10 +1734,7 @@ function inferSnapshotBindingKind(
   return hasOpaqueCallHazard ? 'unknown' : result;
 }
 
-const isFunctionBoundaryNode = (node: Node): boolean =>
-  node.type === 'FunctionDeclaration' ||
-  node.type === 'FunctionExpression' ||
-  node.type === 'ArrowFunctionExpression';
+const isFunctionBoundaryNode = isOxcFunctionLike;
 
 const findSnapshotBody = (
   node: Node,
