@@ -3,6 +3,7 @@ import type {
   AssignmentExpression,
   Expression,
   Node,
+  Program,
   TemplateLiteral,
   UpdateExpression,
   VariableDeclaration,
@@ -29,6 +30,7 @@ export type Binding = {
   functionNode?: OxcFunctionLikeNode | null;
   imported?: 'default' | '*' | string;
   importedFrom?: string;
+  isIteration?: boolean;
   isRoot: boolean;
   kind: BindingKind;
   name: string;
@@ -110,6 +112,7 @@ export type StaticLocalExpression = {
 
 export type ProgramAnalysis = {
   bindingsByName: Map<string, Binding[]>;
+  rootMutationHazardsByBinding: Map<string, Node[]>;
   rootMutationsByBinding: Map<
     string,
     Array<AssignmentExpression | UpdateExpression>
@@ -133,8 +136,10 @@ export type ExtractionContext = {
   hoistedDeclarationsByInsertionPoint: Map<number, string[]>;
   loc: LocationLookup;
   processorManagedExpressionSpans: Set<string>;
+  program: Program;
   referencesByNode: WeakMap<Node, ReferenceIdentifier[]>;
   replacements: Replacement[];
+  rootMutationHazardsByBinding: Map<string, Node[]>;
   rootMutationsByBinding: Map<
     string,
     Array<AssignmentExpression | UpdateExpression>
