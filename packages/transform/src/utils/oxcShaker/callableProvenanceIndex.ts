@@ -462,6 +462,9 @@ export const createCallableProvenanceIndex = ({
     string,
     Map<string, Set<string>>
   >();
+  let callableResultPathsByRoot:
+    | Map<string, OxcRuntimePropertyPathKey[]>
+    | undefined;
   const resolveCallableResultRoots = (
     binding: OxcRuntimePropertyPathKey,
     includeDescendants = false
@@ -489,6 +492,16 @@ export const createCallableProvenanceIndex = ({
       const current = currentItem.binding;
       const root = getOxcRuntimePropertyPathKeyRoot(current);
       const component = aliasComponents.get(root) ?? new Set([root]);
+      if (currentItem.includeDescendants && !callableResultPathsByRoot) {
+        callableResultPathsByRoot = new Map();
+        for (const path of callableResultRoots.keys()) {
+          const pathRoot = getOxcRuntimePropertyPathKeyRoot(path);
+          const paths = callableResultPathsByRoot.get(pathRoot) ?? [];
+          paths.push(path);
+          callableResultPathsByRoot.set(pathRoot, paths);
+        }
+      }
+      const pathsByRoot = callableResultPathsByRoot;
       component.forEach((aliasRoot) => {
         const alias = replaceOxcRuntimePropertyPathKeyRoot(current, aliasRoot);
         if (visited.has(alias)) {
@@ -496,11 +509,15 @@ export const createCallableProvenanceIndex = ({
         }
         visited.add(alias);
         const candidates = currentItem.includeDescendants
-          ? [...callableResultRoots.keys()].filter((candidate) =>
-              isOxcRuntimePropertyPathKeyEqualOrDescendant(candidate, alias)
-            )
+          ? pathsByRoot?.get(aliasRoot) ?? []
           : [alias];
         candidates.forEach((candidate) => {
+          if (
+            currentItem.includeDescendants &&
+            !isOxcRuntimePropertyPathKeyEqualOrDescendant(candidate, alias)
+          ) {
+            return;
+          }
           callableResultRoots.get(candidate)?.forEach((resultRoot) => {
             roots.add(resultRoot);
             pending.push({
