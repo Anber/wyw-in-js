@@ -6,8 +6,8 @@
 - Branch: `anber/fix-static-destructuring`
 - Behavioral baseline: `9baff607f6121fc0d33db9119e2ce014d408834b`
 - Refactor/optimization audit base: `30fc5f72`
-- Current implementation checkpoint: `675fa936`
-- Next slice: profile O11/O14; O10d and O15 stay deferred
+- Current implementation checkpoint: `04ec7a7d`
+- Next slice: re-profile O9/O12; O10d, O14, and O15 stay deferred
 
 Issue #366 static destructuring support is behaviorally complete. The remaining
 work reduces repeated analysis and converges duplicated semantic models without
@@ -108,24 +108,25 @@ revertible.
       root and unresolved names keep their direct shared namespace (`625d236e`).
 - [x] O16 — merge published/strong mutation facts into one bit-state map,
       removing duplicate hazard Sets and their merge pass (`675fa936`).
+- [x] O11 — append alias provenance into one caller-owned Set instead of
+      allocating and merging a Set at every recursive node (`04ec7a7d`).
 
 ### Open
 
-| ID   | Change                                                                                                                  | Required guard                                                                                    |
-| ---- | ----------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| O9   | Index callable result paths by structured root/prefix.                                                                  | Preserve collision-free path equality and descendant semantics.                                   |
-| O10d | Introduce canonical lexical-slot IDs only when resolved-reference or mutation consumers can adopt them together.        | Do not equate declaration-version `Binding` records with canonical lexical slots.                 |
-| O11  | Convert recursive set-returning provenance collectors to caller-owned sinks and share policy-neutral forwarding syntax. | Keep assignment, projection, alias, and abruptness policy consumer-owned.                         |
-| O12  | Pre-index exports by top-level statement.                                                                               | Preserve re-export, default, and source-span ownership behavior.                                  |
-| O14  | Replace copied recursion-guard sets with backtracking or visit epochs.                                                  | Sibling branches must not leak visited state.                                                     |
-| O15  | Deduplicate wide-link delivery by `(link, node, direction, strength)`.                                                  | Preserve weak-to-strong promotion; land only if real high-arity profiles justify the extra state. |
+| ID   | Change                                                                                                           | Required guard                                                                                    |
+| ---- | ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| O9   | Index callable result paths by structured root/prefix.                                                           | Preserve collision-free path equality and descendant semantics.                                   |
+| O10d | Introduce canonical lexical-slot IDs only when resolved-reference or mutation consumers can adopt them together. | Do not equate declaration-version `Binding` records with canonical lexical slots.                 |
+| O12  | Pre-index exports by top-level statement.                                                                        | Preserve re-export, default, and source-span ownership behavior.                                  |
+| O14  | Replace copied recursion-guard sets with backtracking or visit epochs.                                           | Sibling branches must not leak visited state.                                                     |
+| O15  | Deduplicate wide-link delivery by `(link, node, direction, strength)`.                                           | Preserve weak-to-strong promotion; land only if real high-arity profiles justify the extra state. |
 
 ### Order
 
 1. Defer O10d until an adopting consumer proves the required identity boundary.
 2. Revisit O15 on real wide destructuring/assignment profiles, not the
    synthetic stress case alone.
-3. Attempt O11, O12, and O14 only when profiles show material cost.
+3. Attempt O12 and O14 only when profiles show material cost.
 
 ## Acceptance gates
 
@@ -337,6 +338,21 @@ revertible.
   signature and method counts.
 - O16 verification: 1,446 pass, one skip, one existing todo, zero failures;
   type build, lint, formatting, diff check, and size guard pass.
+- O11 (`04ec7a7d`) changes alias-root recursion from returned-and-merged Sets to
+  one caller-owned sink while preserving source-order insertion, sequence-last,
+  assignment-RHS, await/member forwarding, imported-call widening, and the
+  outer-member-only nested-alias expansion. Production shrank by six lines;
+  independent semantic review and a 5,000-expression exact-order differential
+  passed.
+- The nested provenance ABBA improved 76.96% by trimmed mean and its direct
+  identifier control improved 15.25%. A targeted full-shaker workload improved
+  7.41%; the broader O8 companion changed -1.36%, with identical output hashes.
+  The focused allocation gate improved peak RSS 26.34% and post-GC heap 82.48%.
+- O11's ten-sample large gate preserved the exact 60/56/8,540 signature and all
+  method counts. Wall median/trimmed mean changed +1.43%/+0.47%; every tracked
+  component stayed within +1.15% trimmed mean. Final verification: 1,446 pass,
+  one skip, one existing todo, zero failures; type build, lint, formatting,
+  diff check, and size guard pass.
 
 ## Non-goals
 
