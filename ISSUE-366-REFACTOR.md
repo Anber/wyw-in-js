@@ -6,8 +6,8 @@
 - Branch: `anber/fix-static-destructuring`
 - Behavioral baseline: `9baff607f6121fc0d33db9119e2ce014d408834b`
 - Refactor/optimization audit base: `30fc5f72`
-- Current implementation checkpoint: `04ec7a7d`
-- Next slice: re-profile O9/O12; O10d, O14, and O15 stay deferred
+- Current implementation checkpoint: `11ee6a15`
+- Next slice: profile-backed backlog exhausted; O10d/O12/O14/O15 deferred
 
 Issue #366 static destructuring support is behaviorally complete. The remaining
 work reduces repeated analysis and converges duplicated semantic models without
@@ -110,12 +110,13 @@ revertible.
       removing duplicate hazard Sets and their merge pass (`675fa936`).
 - [x] O11 — append alias provenance into one caller-owned Set instead of
       allocating and merging a Set at every recursive node (`04ec7a7d`).
+- [x] O9 — lazily group callable result paths by canonical root for computed
+      descendant lookup (`11ee6a15`).
 
 ### Open
 
 | ID   | Change                                                                                                           | Required guard                                                                                    |
 | ---- | ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| O9   | Index callable result paths by structured root/prefix.                                                           | Preserve collision-free path equality and descendant semantics.                                   |
 | O10d | Introduce canonical lexical-slot IDs only when resolved-reference or mutation consumers can adopt them together. | Do not equate declaration-version `Binding` records with canonical lexical slots.                 |
 | O12  | Pre-index exports by top-level statement.                                                                        | Preserve re-export, default, and source-span ownership behavior.                                  |
 | O14  | Replace copied recursion-guard sets with backtracking or visit epochs.                                           | Sibling branches must not leak visited state.                                                     |
@@ -353,6 +354,25 @@ revertible.
   component stayed within +1.15% trimmed mean. Final verification: 1,446 pass,
   one skip, one existing todo, zero failures; type build, lint, formatting,
   diff check, and size guard pass.
+- O9 (`11ee6a15`) replaces each computed descendant query's global result-path
+  scan with a lazily built canonical-root bucket. Exact lookups allocate no
+  index; alias-component order, length-encoded dotted/numeric/`#` paths, prefix
+  checks, and result insertion order are unchanged. Independent review passed;
+  production grew by 17 lines.
+- At 256 roots × 16 callable-result paths, the resolver improved 92.01% and the
+  full dynamic-dispatch shaker 48.28% by trimmed mean. The exact-only control
+  changed -1.39%. At 512 × 16, peak RSS and post-GC RSS improved 17.97%/18.04%
+  because queries no longer materialize the global key array.
+- O9's ten-sample large gate preserved the exact 60/56/8,540 signature and all
+  method counts. Wall median/trimmed mean changed +0.16%/-0.73%; every tracked
+  trimmed delta stayed within 1.23%. Final verification: 1,446 pass, one skip,
+  one existing todo, zero failures; type build, lint, formatting, diff check,
+  and size guard pass.
+- O12's quadratic CommonJS export-owner scan is real, but the tracked large
+  workload bypasses it and the checked compiled corpus exposes no wide owner
+  set. A safe index would add roughly 20–30 production lines and can tax mixed
+  ESM modules, so O12 remains deferred until a production-sized CJS profile
+  justifies it.
 
 ## Non-goals
 
