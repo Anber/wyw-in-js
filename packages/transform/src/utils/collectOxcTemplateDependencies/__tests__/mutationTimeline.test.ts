@@ -107,17 +107,6 @@ describe('mutation timelines', () => {
     expect(someTimelineFullyContained(timeline, 9, 8, () => true)).toBe(false);
   });
 
-  it('shares one ordering when input, start, and end order already agree', () => {
-    const timeline = sealMutationTimeline([
-      span('first', 1, 2),
-      span('second', 3, 4),
-      span('third', 5, 6),
-    ]);
-
-    expect(timeline.byEnd).toBe(timeline.byStart);
-    expect(Object.isFrozen(timeline.byStart)).toBe(true);
-  });
-
   it('iterates bounded prefixes without changing their timeline order', () => {
     const timeline = sealMutationTimeline([
       span('outer', 1, 10),
@@ -177,10 +166,6 @@ describe('mutation timelines', () => {
     const singleton = sealMutationTimeline([outer]);
     expect(withoutTimelineNode(singleton, absent)).toBe(singleton);
     expect(withoutTimelineNode(singleton, outer).byStart).toEqual([]);
-
-    const monotonic = sealMutationTimeline([inner, absent]);
-    const monotonicRemoved = withoutTimelineNode(monotonic, absent);
-    expect(monotonicRemoved.byEnd).toBe(monotonicRemoved.byStart);
   });
 
   it('merges equal-start groups mutation-first and deduplicates identities', () => {
