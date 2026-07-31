@@ -65,11 +65,11 @@ const hasWywPrevalExport = (code: string, filename: string): boolean =>
     '__wywPreval'
   );
 
-const emitCurrentStaticPlanDebug = (
+export const emitCurrentStaticPlanDebug = (
   action: ITransformAction,
   imports: Map<string, string[]> | null
 ): void => {
-  if (!action.services.eventEmitter.enabled) {
+  if (!action.services.eventEmitter.hasEventListener('staticPlan')) {
     return;
   }
 

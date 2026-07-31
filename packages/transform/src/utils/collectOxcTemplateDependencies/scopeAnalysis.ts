@@ -8,7 +8,6 @@ import type {
   ModuleExportName,
   Node,
   Program,
-  TemplateLiteral,
   VariableDeclaration,
 } from 'oxc-parser';
 
@@ -186,38 +185,167 @@ const hasStraightLineVarInitializer = (ancestors: readonly Node[]): boolean => {
   return true;
 };
 
-export const analyzeProgram = (
-  program: Program,
-  {
-    collectTargetExpressions = false,
-    collectTemplateLiterals = false,
-    expressionSpanLookup = null,
-    mutationHazardIgnoreLookup = null,
-    templateSpanLookup = null,
-  }: {
-    collectTargetExpressions?: boolean;
-    collectTemplateLiterals?: boolean;
-    expressionSpanLookup?: SpanLookup;
-    mutationHazardIgnoreLookup?: SpanLookup;
-    templateSpanLookup?: SpanLookup;
-  } = {}
-): ProgramAnalysis => {
-  const bindings = new Map<string, Binding[]>();
-  const usedNames = new Set<string>();
-  const templateLiterals: TemplateLiteral[] = [];
-  const targetExpressions: Expression[] = [];
-  const ignoredMutationHazardNodes = new Set<Node>();
-  const referenceScopesByStart = new Map<number, Scope>();
-  let hasEffectiveMutationHazardSeed = false;
+type AnalyzeProgramOptions = {
+  collectTargetExpressions?: boolean;
+  collectTemplateLiterals?: boolean;
+  expressionSpanLookup?: SpanLookup;
+  mutationHazardIgnoreLookup?: SpanLookup;
+  templateSpanLookup?: SpanLookup;
+};
 
-  const addBinding = (scope: Scope, binding: Binding): void => {
-    scope.bindings.set(binding.name, binding);
-    const existing = bindings.get(binding.name) ?? [];
-    existing.push(binding);
-    bindings.set(binding.name, existing);
+type NormalizedAnalyzeProgramOptions = {
+  collectTargetExpressions: boolean;
+  collectTemplateLiterals: boolean;
+  expressionSpanLookup: SpanLookup;
+  mutationHazardIgnoreLookup: SpanLookup;
+  templateSpanLookup: SpanLookup;
+};
+
+type ProgramScopeFacts = Readonly<
+  Pick<ProgramAnalysis, 'bindingIndex' | 'usedNames'>
+>;
+
+type RequestAnalysis = Pick<
+  ProgramAnalysis,
+  'targetExpressions' | 'templateLiterals'
+> & {
+  hasEffectiveMutationHazardSeed: boolean;
+  ignoredMutationHazardNodes: Set<Node>;
+};
+
+const programScopeFacts = new WeakMap<Program, ProgramScopeFacts>();
+const programRootMutations = new WeakMap<
+  Program,
+  ProgramAnalysis['rootMutationsByBinding']
+>();
+const programDefaultMutationHazards = new WeakMap<
+  Program,
+  ProgramAnalysis['rootMutationHazardsByBinding']
+>();
+const MAX_PROGRAM_ANALYSIS_VARIANTS = 4;
+const programAnalysisVariants = new WeakMap<
+  Program,
+  Map<string, ProgramAnalysis>
+>();
+
+const normalizeSpanLookup = (lookup: SpanLookup | undefined): SpanLookup =>
+  lookup && lookup.size > 0 ? lookup : null;
+
+const normalizeAnalyzeProgramOptions = ({
+  collectTargetExpressions = false,
+  collectTemplateLiterals = false,
+  expressionSpanLookup,
+  mutationHazardIgnoreLookup,
+  templateSpanLookup,
+}: AnalyzeProgramOptions): NormalizedAnalyzeProgramOptions => {
+  const normalizedExpressionSpanLookup =
+    normalizeSpanLookup(expressionSpanLookup);
+  const shouldCollectTargetExpressions =
+    collectTargetExpressions && normalizedExpressionSpanLookup !== null;
+
+  return {
+    collectTargetExpressions: shouldCollectTargetExpressions,
+    collectTemplateLiterals,
+    expressionSpanLookup: shouldCollectTargetExpressions
+      ? normalizedExpressionSpanLookup
+      : null,
+    mutationHazardIgnoreLookup: normalizeSpanLookup(mutationHazardIgnoreLookup),
+    templateSpanLookup: collectTemplateLiterals
+      ? templateSpanLookup ?? null
+      : null,
+  };
+};
+
+const sortedSpanLookup = (lookup: SpanLookup): string[] | null =>
+  lookup ? [...lookup].sort() : null;
+
+const programAnalysisCacheKey = ({
+  collectTargetExpressions,
+  collectTemplateLiterals,
+  expressionSpanLookup,
+  mutationHazardIgnoreLookup,
+  templateSpanLookup,
+}: NormalizedAnalyzeProgramOptions): string =>
+  JSON.stringify([
+    collectTargetExpressions ? '1' : '0',
+    collectTemplateLiterals ? '1' : '0',
+    sortedSpanLookup(expressionSpanLookup),
+    sortedSpanLookup(mutationHazardIgnoreLookup),
+    sortedSpanLookup(templateSpanLookup),
+  ]);
+
+const getCachedProgramAnalysis = (
+  program: Program,
+  key: string
+): ProgramAnalysis | undefined => {
+  const variants = programAnalysisVariants.get(program);
+  const cached = variants?.get(key);
+  if (cached && variants) {
+    variants.delete(key);
+    variants.set(key, cached);
+  }
+
+  return cached;
+};
+
+const cacheProgramAnalysis = (
+  program: Program,
+  key: string,
+  analysis: ProgramAnalysis
+): ProgramAnalysis => {
+  const variants = programAnalysisVariants.get(program) ?? new Map();
+  variants.set(key, analysis);
+  if (variants.size > MAX_PROGRAM_ANALYSIS_VARIANTS) {
+    variants.delete(variants.keys().next().value!);
+  }
+  programAnalysisVariants.set(program, variants);
+  return analysis;
+};
+
+const createImmutableUsedNames = (source: ReadonlySet<string>): Set<string> => {
+  const result = new Set(source);
+  const rejectMutation = (): never => {
+    throw new TypeError('Cached program analysis is immutable');
+  };
+  Object.defineProperties(result, {
+    add: { value: rejectMutation },
+    clear: { value: rejectMutation },
+    delete: { value: rejectMutation },
+  });
+
+  return Object.freeze(result);
+};
+
+const createRequestAnalysis = ({
+  collectTargetExpressions,
+  collectTemplateLiterals,
+  expressionSpanLookup,
+  mutationHazardIgnoreLookup,
+  templateSpanLookup,
+}: NormalizedAnalyzeProgramOptions): {
+  collect: (node: Node, ancestors: Node[]) => void;
+  result: RequestAnalysis;
+} => {
+  const result: RequestAnalysis = {
+    hasEffectiveMutationHazardSeed: false,
+    ignoredMutationHazardNodes: new Set(),
+    targetExpressions: [],
+    templateLiterals: [],
   };
 
-  const collectTargets = (node: Node, ancestors: Node[]): void => {
+  const collect = (node: Node, ancestors: Node[]): void => {
+    if (mutationHazardIgnoreLookup) {
+      registerMutationHazardNode(
+        node,
+        mutationHazardIgnoreLookup,
+        result.ignoredMutationHazardNodes
+      );
+    }
+    result.hasEffectiveMutationHazardSeed ||= isEffectiveMutationHazardSeed(
+      node,
+      result.ignoredMutationHazardNodes
+    );
+
     if (
       collectTemplateLiterals &&
       node.type === 'TemplateLiteral' &&
@@ -225,7 +353,7 @@ export const analyzeProgram = (
       !ancestors.some((ancestor) => ancestor.type === 'TemplateLiteral') &&
       matchesSpanLookup(node, templateSpanLookup)
     ) {
-      templateLiterals.push(node);
+      result.templateLiterals.push(node);
     }
 
     if (
@@ -233,8 +361,41 @@ export const analyzeProgram = (
       expressionSpanLookup &&
       matchesSpanLookup(node, expressionSpanLookup)
     ) {
-      targetExpressions.push(node as Expression);
+      result.targetExpressions.push(node as Expression);
     }
+  };
+
+  return { collect, result };
+};
+
+const collectRequestAnalysis = (
+  program: Program,
+  collect: (node: Node, ancestors: Node[]) => void
+): void => {
+  const ancestors: Node[] = [];
+  const visit = (node: Node): void => {
+    collect(node, ancestors);
+    ancestors.push(node);
+    getOxcNodeChildren(node).forEach(visit);
+    ancestors.pop();
+  };
+
+  visit(program);
+};
+
+const buildProgramScopeFacts = (
+  program: Program,
+  collectRequestNode?: (node: Node, ancestors: Node[]) => void
+): ProgramScopeFacts => {
+  const bindings = new Map<string, Binding[]>();
+  const usedNames = new Set<string>();
+  const referenceScopesByStart = new Map<number, Scope>();
+
+  const addBinding = (scope: Scope, binding: Binding): void => {
+    scope.bindings.set(binding.name, binding);
+    const existing = bindings.get(binding.name) ?? [];
+    existing.push(binding);
+    bindings.set(binding.name, existing);
   };
 
   const collectScopeNode = (
@@ -245,19 +406,7 @@ export const analyzeProgram = (
     runtime: boolean,
     reference: boolean
   ): void => {
-    if (mutationHazardIgnoreLookup) {
-      registerMutationHazardNode(
-        node,
-        mutationHazardIgnoreLookup,
-        ignoredMutationHazardNodes
-      );
-    }
-    hasEffectiveMutationHazardSeed ||= isEffectiveMutationHazardSeed(
-      node,
-      ignoredMutationHazardNodes
-    );
-
-    collectTargets(node, ancestors);
+    collectRequestNode?.(node, ancestors);
 
     if (node.type === 'Identifier') {
       usedNames.add(node.name);
@@ -399,21 +548,86 @@ export const analyzeProgram = (
   };
   visitOxcScopes(program, null, collectScopeNode);
 
-  const bindingIndex = createBindingIndex(bindings, referenceScopesByStart);
-  const { rootMutationHazardsByBinding, rootMutationsByBinding } =
-    collectProgramMutationAnalysis(
-      program,
-      bindingIndex,
-      ignoredMutationHazardNodes,
-      hasEffectiveMutationHazardSeed
-    );
-
-  return {
+  // The contained maps/scopes are completed before publication and exposed
+  // through readonly types. Freeze the shared top-level identity only; deep
+  // snapshots would duplicate the program-sized graph this cache reuses.
+  const bindingIndex = Object.freeze(
+    createBindingIndex(bindings, referenceScopesByStart)
+  );
+  return Object.freeze({
     bindingIndex,
+    usedNames: createImmutableUsedNames(usedNames),
+  });
+};
+
+export const analyzeProgram = (
+  program: Program,
+  options: AnalyzeProgramOptions = {}
+): ProgramAnalysis => {
+  const normalizedOptions = normalizeAnalyzeProgramOptions(options);
+  const cacheKey = programAnalysisCacheKey(normalizedOptions);
+  const cached = getCachedProgramAnalysis(program, cacheKey);
+  if (cached) {
+    return cached;
+  }
+
+  const {
+    collectTargetExpressions = false,
+    collectTemplateLiterals = false,
+    expressionSpanLookup = null,
+    mutationHazardIgnoreLookup = null,
+  } = normalizedOptions;
+  const request = createRequestAnalysis(normalizedOptions);
+  let scopeFacts = programScopeFacts.get(program);
+  const cachedDefaultMutationHazards = mutationHazardIgnoreLookup
+    ? undefined
+    : programDefaultMutationHazards.get(program);
+  const needsRequestTraversal =
+    mutationHazardIgnoreLookup !== null ||
+    cachedDefaultMutationHazards === undefined ||
+    collectTemplateLiterals ||
+    (collectTargetExpressions && expressionSpanLookup !== null);
+
+  if (!scopeFacts) {
+    scopeFacts = buildProgramScopeFacts(program, request.collect);
+    programScopeFacts.set(program, scopeFacts);
+  } else if (needsRequestTraversal) {
+    collectRequestAnalysis(program, request.collect);
+  }
+
+  let rootMutationHazardsByBinding = cachedDefaultMutationHazards;
+  let rootMutationsByBinding = programRootMutations.get(program);
+  if (!rootMutationHazardsByBinding) {
+    const mutationAnalysis = collectProgramMutationAnalysis(
+      program,
+      scopeFacts.bindingIndex,
+      request.result.ignoredMutationHazardNodes,
+      request.result.hasEffectiveMutationHazardSeed
+    );
+    rootMutationHazardsByBinding =
+      mutationAnalysis.rootMutationHazardsByBinding;
+    rootMutationsByBinding ??= mutationAnalysis.rootMutationsByBinding;
+    if (!programRootMutations.has(program)) {
+      programRootMutations.set(program, rootMutationsByBinding);
+    }
+    if (!mutationHazardIgnoreLookup) {
+      programDefaultMutationHazards.set(program, rootMutationHazardsByBinding);
+    }
+  }
+
+  const targetExpressions = request.result.targetExpressions.sort(
+    (a, b) => a.start - b.start
+  );
+  Object.freeze(targetExpressions);
+  Object.freeze(request.result.templateLiterals);
+  const analysis: ProgramAnalysis = {
+    bindingIndex: scopeFacts.bindingIndex,
     rootMutationHazardsByBinding,
-    rootMutationsByBinding,
-    targetExpressions: targetExpressions.sort((a, b) => a.start - b.start),
-    templateLiterals,
-    usedNames,
+    rootMutationsByBinding: rootMutationsByBinding!,
+    targetExpressions,
+    templateLiterals: request.result.templateLiterals,
+    usedNames: scopeFacts.usedNames,
   };
+
+  return cacheProgramAnalysis(program, cacheKey, Object.freeze(analysis));
 };

@@ -254,4 +254,30 @@ describe('buildStaticPlan', () => {
       }),
     ]);
   });
+
+  it('does not emit plan attribution without a staticPlan listener', () => {
+    const events: Record<string, unknown>[] = [];
+    const eventEmitter = new EventEmitter(
+      (labels, type) => {
+        if (type === 'single') {
+          events.push(labels);
+        }
+      },
+      () => 0,
+      () => {},
+      true,
+      { debugEvents: [] }
+    );
+    const plan = buildStaticPlan({
+      code: `export const color = 'red';`,
+      filename,
+      options: {},
+    });
+
+    emitStaticPlanDebug(eventEmitter, plan);
+
+    expect(eventEmitter.enabled).toBe(true);
+    expect(eventEmitter.hasEventListener('staticPlan')).toBe(false);
+    expect(events).toEqual([]);
+  });
 });

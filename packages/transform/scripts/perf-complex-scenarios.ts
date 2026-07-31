@@ -655,7 +655,9 @@ class PerfRecorder {
       }
     },
     () => 0,
-    () => {}
+    () => {},
+    true,
+    { debugEvents: [] }
   );
 
   private readonly counts = new Map<string, number>();

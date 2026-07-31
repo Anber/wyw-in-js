@@ -325,7 +325,7 @@ export const emitStaticPlanDebug = (
   eventEmitter: EventEmitter,
   plan: StaticPlan
 ): void => {
-  if (!eventEmitter.enabled) {
+  if (!eventEmitter.hasEventListener('staticPlan')) {
     return;
   }
 
