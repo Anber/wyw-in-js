@@ -5,7 +5,8 @@
 - State: in progress
 - Feature branch: `anber/fix-static-destructuring`
 - Behavioral baseline: `9baff607f6121fc0d33db9119e2ce014d408834b`
-- Current refactor checkpoint: `cfc96b02`
+- Current implementation checkpoint: `a476c176`
+- Optimization audit base: `30fc5f72`
 - Target: preserve the full static destructuring support implemented for
   issue #366 while replacing duplicated semantic models with shared,
   typed analysis primitives.
@@ -232,6 +233,60 @@ type ReferencePlan =
 
 Planning is immutable. Name allocation, replacements, hoists, and source
 generation belong to a separate emitter.
+
+## Optimization backlog
+
+The structural split exposed several independent performance opportunities.
+They are deliberately tracked as separate slices so each change can be
+benchmarked against its immediate parent and reverted without coupling it to a
+semantic migration.
+
+| ID  | Area                  | Optimization                                                                                                                                             | Expected benefit                                                                                                         | Risk and constraints                                                                                                                |
+| --- | --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------- |
+| O1  | shaker effects        | Remove the full `statements` scan from `bindingEffectsBefore`; direct mutations are already present in the strictly richer `effectsByBinding` index.     | High for member/receiver-heavy modules; removes an avoidable statement-count multiplier.                                 | Low. Preserve the existing alias-component and source-position filters.                                                             |
+| O2  | extraction            | Memoize `requiresSnapshotReplay(binding)` for one `extractExpression` invocation.                                                                        | High when one expression repeats local bindings or has destructuring dependency fanout.                                  | Low. The cache must not cross expressions because `currentExpressionStart` changes, and exception/pass order must remain unchanged. |
+| O3  | graph queues          | Replace FIFO `Array.shift()` loops in statement liveness and snapshot replay with monotonically increasing head indexes.                                 | Medium for long dependency closures; removes quadratic array compaction.                                                 | Very low. Preserve the existing statement-before-binding queue priority.                                                            |
+| O4  | static calls          | Cache immutable function-body facts such as hoisted `var` names and top-level lexical/function declarations by function AST node.                        | High for repeated calls to one local function.                                                                           | Low if only syntax facts are cached. Environment writes and function values remain per invocation.                                  |
+| O5  | purity proofs         | Cache completed `isKnownPureStaticCall` results and stop cloning the complete mutation-hazard map for every proof.                                       | High for hazard-heavy evaluation.                                                                                        | Medium. Recursive proofs need an explicit in-progress state and must fail closed; do not cache context-sensitive partial results.   |
+| O6  | mutation queries      | Store sorted mutation/hazard timelines and expose allocation-free `someBefore`, `before`, and `between` range queries using binary search.               | High for snapshot and evaluator workloads with many changes; removes repeated `filter`, `sort`, and linear prefix scans. | Medium. Start-based and end-based predicates are not interchangeable and need characterization tests.                               |
+| O7  | alias propagation     | Replace repeated whole-graph fixed-point scans with an indexed worklist keyed by newly added mutation/hazard events and reverse alias adjacency.         | High for long alias chains and fanout.                                                                                   | Medium. Preserve unknown-alias and sibling-import propagation exactly and process each newly discovered fact once.                  |
+| O8  | callable analysis     | Cache immutable per-`CallableNode` syntax facts: assignments, direct/nested mutations, callee candidates, and local callable/class/accessor catalogs.    | High for repeated reachable call sites.                                                                                  | Medium. Caller aliases and invocation-sensitive facts must remain per invocation.                                                   |
+| O9  | callable result paths | Index callable result paths by root/prefix instead of scanning every recorded path for each descendant query.                                            | Medium to high for large returned object graphs.                                                                         | Medium. Structured path equality and descendant semantics must remain collision-free.                                               |
+| O10 | bindings              | Introduce canonical `BindingId`s, a resolved-reference index, and cached binding identities/mutation keys.                                               | Medium and broad; removes repeated string construction and repeated name/scope resolution.                               | Medium due to breadth. Land after range-query APIs establish the required consumers.                                                |
+| O11 | provenance collectors | Convert recursive set-returning value/provenance collectors to caller-owned sinks or append APIs, and share only policy-neutral value-forwarding syntax. | Medium allocation and code-size reduction.                                                                               | Medium. Assignment operators, projections, alias policy, and abruptness remain consumer-owned; avoid callback-heavy hot dispatch.   |
+| O12 | export ownership      | Pre-index collected exports by top-level statement instead of scanning all exports for every ordinary statement.                                         | Medium for modules with many statements and exports.                                                                     | Low to medium. Preserve re-export, default, and source-span ownership behavior.                                                     |
+| O13 | reference collection  | Reuse a local `findReferences` cache throughout mutation/escape analysis instead of traversing the same expression once per proof.                       | Medium on nested alias expressions.                                                                                      | Low. Cache only immutable syntax-level references.                                                                                  |
+| O14 | recursion guards      | Replace copied `Set` guards in recursive receiver/provenance proofs with backtracked mutable guards or numeric visit epochs.                             | Small to medium allocation reduction on deep graphs.                                                                     | Medium. Sibling branches must not leak visited state.                                                                               |
+
+The larger `PatternProgram`, `EvalOutcome`, explicit snapshot abstract domain,
+and extraction plan/emitter split remain architecture and correctness work.
+They may unlock later optimization, but they are not treated as performance
+wins without focused measurements. In particular, `PatternProgram` remains
+blocked on the complete assignment-target evaluation schedule.
+
+### Optimization order
+
+1. Land O1, O3, and O2 as isolated low-risk slices.
+2. Land the syntax-only caches O4 and O13.
+3. Introduce O6 before O7 so the worklist publishes canonical timeline facts.
+4. Measure O5 and O8 independently on hazard-heavy and callable-fanout
+   fixtures.
+5. Use O10 as the typed foundation for O9 and the later `PatternProgram`
+   migration.
+6. Attempt O11, O12, and O14 only with focused profiles showing that their
+   allocation or lookup patterns are material.
+
+Completed optimization slices:
+
+- [x] O1: indexed-only shaker effect lookup (`a476c176`).
+- [x] O2: per-expression snapshot decision memoization (`a476c176`).
+- [x] O3: cursor-based shaker and snapshot replay queues (`a476c176`).
+
+Every optimization must preserve generated output, CSS bytes/file counts,
+evaluation counts, and existing fail-closed behavior. Performance comparisons
+use paired alternating processes, track shaker/evaluator/preevaluation spans
+separately from wall time, and record peak RSS for changes that add persistent
+indexes or caches.
 
 ## Milestones
 
@@ -473,3 +528,28 @@ generation belong to a separate emitter.
   processes per side. From `f3378291` through `cfc96b02`, production
   TypeScript decreased by 27 lines overall while the shared lexical and
   assignment-target kernels replaced the duplicated implementations.
+
+### 2026-07-31
+
+- Recorded fourteen independent optimization vectors, their semantic
+  constraints, benchmark shapes, and implementation order.
+- Landed O1, O2, and O3 in `a476c176`: removed the redundant all-statement
+  shaker effect scan, replaced four FIFO `shift()` calls with cursor queues,
+  and added a reusable binding-fact memoizer scoped to one extracted
+  expression.
+- Ran five fresh-process ABBA blocks against `30fc5f72` for each focused
+  benchmark, with 200 measured samples per side. The 800-pair member-heavy
+  shaker profile improved from 35.235 ms to 10.559 ms in the 10% trimmed mean
+  (-70.03%); medians improved from 36.656 ms to 10.461 ms (-71.46%).
+- The 512-reference, 32-alias snapshot profile improved from 10.544 ms to
+  8.568 ms in the 10% trimmed mean (-18.74%); medians improved from 10.474 ms
+  to 8.542 ms (-18.45%). Baseline and candidate output hashes and result counts
+  were identical in both focused profiles.
+- Ran two large ABBA blocks of `shared-constants-functional-fanout`, producing
+  20 samples per side. Trimmed-mean deltas were -2.00% wall, -1.05% evaluator,
+  -1.33% preevaluation, and -2.16% eval-file time. CSS bytes, CSS file counts,
+  and every recorded method count were identical.
+- Verified the implementation with 1,396 passing transform tests, one skip,
+  one existing todo, and zero failures. Type build, full transform lint,
+  Prettier, `git diff --check`, and the global TypeScript size guard pass;
+  `expressionExtraction.ts` remains below its unchanged limit at 998 lines.
