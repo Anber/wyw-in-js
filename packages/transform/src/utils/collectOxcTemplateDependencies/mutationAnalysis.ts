@@ -1,4 +1,4 @@
-/* eslint-disable no-restricted-syntax,no-continue,@typescript-eslint/no-use-before-define */
+/* eslint-disable no-restricted-syntax,no-continue,no-bitwise,@typescript-eslint/no-use-before-define */
 
 import type {
   AssignmentExpression,
@@ -292,8 +292,18 @@ const collectRootMutationHazards = (
 ): Map<string, Node[]> => {
   const { bindingsByName } = bindingIndex;
   const hazards = new Map<string, Node[]>();
-  const hazardNodes = new Map<string, Set<Node>>();
-  const siblingHazards = new Map<string, Set<Node>>();
+  const factPublished = 1;
+  const factStrong = 2;
+  const factsByBinding = new Map<string, Map<Node, number>>();
+  const getFacts = (key: string): Map<Node, number> => {
+    const existing = factsByBinding.get(key);
+    if (existing) {
+      return existing;
+    }
+    const created = new Map<Node, number>();
+    factsByBinding.set(key, created);
+    return created;
+  };
 
   const modeledMutations = new Set<Node>(
     [...mutations.values()].flatMap((nodes) => nodes)
@@ -410,20 +420,17 @@ const collectRootMutationHazards = (
     hazard: Node,
     canAffectSiblingImport = false
   ): void => {
-    const bucket = hazards.get(name) ?? [];
-    const nodes = hazardNodes.get(name) ?? new Set<Node>();
-    if (!nodes.has(hazard)) {
-      nodes.add(hazard);
+    const facts = getFacts(name);
+    const current = facts.get(hazard) ?? 0;
+    if ((current & factPublished) === 0) {
+      const bucket = hazards.get(name) ?? [];
       bucket.push(hazard);
       hazards.set(name, bucket);
-      hazardNodes.set(name, nodes);
     }
-
-    if (canAffectSiblingImport) {
-      const siblingBucket = siblingHazards.get(name) ?? new Set<Node>();
-      siblingBucket.add(hazard);
-      siblingHazards.set(name, siblingBucket);
-    }
+    facts.set(
+      hazard,
+      current | factPublished | (canAffectSiblingImport ? factStrong : 0)
+    );
   };
 
   const addReferences = (
@@ -744,44 +751,30 @@ const collectRootMutationHazards = (
   // seeds. The indexes let each new fact or promotion visit only adjacent
   // links instead of rescanning the complete alias graph.
   type WorkItem = { change: Node; key: string; strong: boolean };
-  const factsByBinding = new Map<string, Map<Node, boolean>>();
   const worklist: WorkItem[] = [];
-  const getFacts = (key: string): Map<Node, boolean> => {
-    const existing = factsByBinding.get(key);
-    if (existing) {
-      return existing;
-    }
-    const created = new Map<Node, boolean>();
-    factsByBinding.set(key, created);
-    return created;
-  };
   mutations.forEach((changes, key) => {
     const facts = getFacts(key);
-    changes.forEach((change) => facts.set(change, true));
-  });
-  hazards.forEach((changes, key) => {
-    const facts = getFacts(key);
-    const siblings = siblingHazards.get(key);
     changes.forEach((change) => {
-      facts.set(
-        change,
-        facts.get(change) === true || (siblings?.has(change) ?? false)
-      );
+      facts.set(change, (facts.get(change) ?? 0) | factStrong);
     });
   });
   factsByBinding.forEach((facts, key) => {
-    facts.forEach((strong, change) => {
-      worklist.push({ change, key, strong });
+    facts.forEach((state, change) => {
+      worklist.push({
+        change,
+        key,
+        strong: (state & factStrong) !== 0,
+      });
     });
   });
 
   const publishHazard = (key: string, change: Node): void => {
-    const nodes = hazardNodes.get(key) ?? new Set<Node>();
-    if (nodes.has(change)) {
+    const facts = getFacts(key);
+    const current = facts.get(change) ?? 0;
+    if ((current & factPublished) !== 0) {
       return;
     }
-    nodes.add(change);
-    hazardNodes.set(key, nodes);
+    facts.set(change, current | factPublished);
     const bucket = hazards.get(key) ?? [];
     bucket.push(change);
     hazards.set(key, bucket);
@@ -791,18 +784,18 @@ const collectRootMutationHazards = (
     const state = facts.get(change);
     publishHazard(key, change);
     if (state === undefined) {
-      facts.set(change, sibling);
+      facts.set(change, factPublished | (sibling ? factStrong : 0));
       worklist.push({ change, key, strong: sibling });
       return;
     }
-    if (!state && sibling) {
-      facts.set(change, true);
+    if ((state & factStrong) === 0 && sibling) {
+      facts.set(change, state | factPublished | factStrong);
       worklist.push({ change, key, strong: true });
     }
   };
   const endpointIsStrong = (keys: readonly string[], change: Node): boolean => {
     for (const key of keys) {
-      if (factsByBinding.get(key)?.get(change) === true) {
+      if (((factsByBinding.get(key)?.get(change) ?? 0) & factStrong) !== 0) {
         return true;
       }
     }
@@ -847,7 +840,10 @@ const collectRootMutationHazards = (
     const item = worklist[cursor]!;
     cursor += 1;
     const current = factsByBinding.get(item.key)?.get(item.change);
-    if (current === undefined || (!item.strong && current)) {
+    if (
+      current === undefined ||
+      (!item.strong && (current & factStrong) !== 0)
+    ) {
       continue;
     }
 
@@ -889,7 +885,7 @@ const collectRootMutationHazards = (
       }
     }
 
-    if (current) {
+    if ((current & factStrong) !== 0) {
       const importGroupsForBinding = importGroupsByBinding.get(item.key);
       if (importGroupsForBinding) {
         for (const importGroup of importGroupsForBinding) {
