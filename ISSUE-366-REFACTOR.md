@@ -6,8 +6,8 @@
 - Branch: `anber/fix-static-destructuring`
 - Behavioral baseline: `9baff607f6121fc0d33db9119e2ce014d408834b`
 - Refactor/optimization audit base: `30fc5f72`
-- Current implementation checkpoint: `a476c176`
-- Next slices: O4 (function-body fact cache), then O13 (local reference cache)
+- Current implementation checkpoint: `56e64a45`
+- Next slices: O6 (range queries), then O7 (indexed alias worklist)
 
 Issue #366 static destructuring support is behaviorally complete. The remaining
 work reduces repeated analysis and converges duplicated semantic models without
@@ -86,12 +86,15 @@ revertible.
       (`a476c176`).
 - [x] O3 — replace four FIFO `shift()` queues with cursor queues
       (`a476c176`).
+- [x] O4 — cache function-body syntax facts without sharing invocation state
+      (`9da559b3`).
+- [x] O13 — reuse one analysis-local cache of raw references
+      (`56e64a45`).
 
 ### Open
 
 | ID  | Change                                                                                                                  | Required guard                                                                                  |
 | --- | ----------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| O4  | Cache immutable function-body facts by function AST node.                                                               | Cache syntax only; environments, writes, and function values stay per call.                     |
 | O5  | Cache completed static-call purity proofs and avoid cloning the full hazard map per proof.                              | Use an explicit in-progress state; recursion and context-sensitive partial results fail closed. |
 | O6  | Store sorted mutation/hazard timelines with allocation-free binary-search range queries.                                | Preserve distinct start-based and end-based predicates with characterization tests.             |
 | O7  | Replace whole-graph alias fixed-point rescans with a worklist and reverse adjacency.                                    | Publish canonical timeline facts first; process each newly discovered fact once.                |
@@ -100,16 +103,14 @@ revertible.
 | O10 | Add canonical `BindingId`s, resolved-reference indexes, and cached mutation identities.                                 | Land after O6 establishes the query API; this is a broad semantic foundation.                   |
 | O11 | Convert recursive set-returning provenance collectors to caller-owned sinks and share policy-neutral forwarding syntax. | Keep assignment, projection, alias, and abruptness policy consumer-owned.                       |
 | O12 | Pre-index exports by top-level statement.                                                                               | Preserve re-export, default, and source-span ownership behavior.                                |
-| O13 | Reuse one local `findReferences` cache during mutation/escape analysis.                                                 | Cache immutable syntax-level references only.                                                   |
 | O14 | Replace copied recursion-guard sets with backtracking or visit epochs.                                                  | Sibling branches must not leak visited state.                                                   |
 
 ### Order
 
-1. O4, then O13.
-2. O6 before O7.
-3. Measure O5 and O8 independently on hazard-heavy and callable-fanout cases.
-4. Use O10 as the typed base for O9 and later `PatternProgram` work.
-5. Attempt O11, O12, and O14 only when profiles show material cost.
+1. O6 before O7.
+2. Measure O5 and O8 independently on hazard-heavy and callable-fanout cases.
+3. Use O10 as the typed base for O9 and later `PatternProgram` work.
+4. Attempt O11, O12, and O14 only when profiles show material cost.
 
 ## Acceptance gates
 
@@ -156,6 +157,20 @@ revertible.
 - O1–O3 large gate: 20 samples per side; wall -2.00%, evaluator -1.05%,
   preevaluation -1.33%, and `evalFile` -2.16%, with identical outputs and
   method counts.
+- O4 (`9da559b3`) caches hoisted `var` names and ordered top-level declaration
+  facts by function body. Environments and function wrappers remain
+  per-invocation; two new isolation tests cover that boundary.
+- O4 focused ABBA: 20 fresh processes per side, 1,024 calls to one function
+  AST; trimmed mean `53.483 → 20.764 ms` (-61.18%), identical result hash.
+- O13 (`56e64a45`) shares one raw-reference `WeakMap` only within
+  `collectRootMutationHazards`. Focused ABBA: 24 processes per side; trimmed
+  mean `37.736 → 30.480 ms` (-19.23%), identical hazard hash.
+- The 8,192-member cache-pollution companion improved 17.28%; two peak-RSS
+  samples per side showed no increase. Immediate-parent large gates preserved
+  CSS bytes, file/evaluation counts, and method counts; attributable
+  evaluator/preevaluation medians stayed within 1.5%.
+- Final verification: 1,398 pass, one skip, one existing todo, zero failures;
+  type build, full lint, formatting, diff check, and size guard pass.
 
 ## Non-goals
 
