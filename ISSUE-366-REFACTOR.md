@@ -6,8 +6,8 @@
 - Branch: `anber/fix-static-destructuring`
 - Behavioral baseline: `9baff607f6121fc0d33db9119e2ce014d408834b`
 - Refactor/optimization audit base: `30fc5f72`
-- Current implementation checkpoint: `8507cced`
-- Next slice: O10b shared resolved-reference index
+- Current implementation checkpoint: `31c63f67`
+- Next slice: O10c scoped mutation-identity cache, if its focused benchmark wins
 
 Issue #366 static destructuring support is behaviorally complete. The remaining
 work reduces repeated analysis and converges duplicated semantic models without
@@ -38,10 +38,10 @@ changing public APIs, generated output, or fail-closed behavior.
 The structural refactor is complete and the global TypeScript size guard passes.
 
 - `utils/oxc/` owns canonical node traversal, transparent runtime wrappers,
-  function classification, raw pattern/assignment facts, lexical traversal,
-  and structured property keys/paths.
+  function classification, raw pattern/assignment facts, lexical and scoped
+  reference traversal, and structured property keys/paths.
 - `scopeTraversal.ts`, `bindingResolution.ts`, and `mutationAnalysis.ts` own
-  lexical facts, resolution, and mutation/alias propagation.
+  lexical facts, cached reference resolution, and mutation/alias propagation.
 - Static evaluation is split into values, safety proofs, pattern execution,
   mutation replay, function runtime, conversions, and binary operations.
 - Expression extraction delegates abstract-value analysis, static-local
@@ -57,9 +57,8 @@ The structural refactor is complete and the global TypeScript size guard passes.
 
 - Complete the assignment-target evaluation schedule, including computed-key,
   default, and target-reference order. This blocks `PatternProgram`.
-- Introduce a shared resolved-reference index, then add canonical lexical-slot
-  identities only when a concrete consumer can replace name/scope identities
-  without changing root or unresolved grouping.
+- Add canonical lexical-slot identities only when a concrete consumer can
+  replace name/scope identities without changing root or unresolved grouping.
 - Introduce internal `EvalOutcome` so known `undefined`, unknown analysis, and
   abrupt completion are distinct.
 - Split immutable extraction planning from source emission and replace the
@@ -103,13 +102,14 @@ revertible.
 - [x] O10a — share a private, selective binding-resolution cache across
       analysis consumers while keeping the single-binding path direct
       (`8507cced`).
+- [x] O10b — share policy-parameterized scoped-reference collection and cache
+      resolved reference attachments (`cdcf2990`, `31c63f67`).
 
 ### Open
 
 | ID   | Change                                                                                                                  | Required guard                                                                                                   |
 | ---- | ----------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
 | O9   | Index callable result paths by structured root/prefix.                                                                  | Preserve collision-free path equality and descendant semantics.                                                  |
-| O10b | Replace duplicate scoped-reference traversals with one analysis-local resolved-reference index.                         | Preserve synthetic-offset fallback, shadowing/TDZ, and consumer-specific execution policy.                       |
 | O10c | Cache scoped mutation-identity derivation at the binding/reference boundary.                                            | Preserve root bare-name grouping and the conservative unresolved/root namespace; require a focused win.          |
 | O10d | Introduce canonical lexical-slot IDs only when resolved-reference or mutation consumers can adopt them together.        | Do not equate declaration-version `Binding` records with canonical lexical slots.                                |
 | O11  | Convert recursive set-returning provenance collectors to caller-owned sinks and share policy-neutral forwarding syntax. | Keep assignment, projection, alias, and abruptness policy consumer-owned.                                        |
@@ -120,14 +120,12 @@ revertible.
 
 ### Order
 
-1. Take O10b next as a deletion-driven slice; target removal of the duplicate
-   shaker and scope-reference traversals before adding another identity model.
-2. Attempt O10c only with its prepared scoped/root key benchmark. Defer O10d
+1. Attempt O10c only with its prepared scoped/root key benchmark. Defer O10d
    until an adopting consumer proves the required identity boundary.
-3. Revisit O15 on real wide destructuring/assignment profiles, not the
+2. Revisit O15 on real wide destructuring/assignment profiles, not the
    synthetic stress case alone.
-4. Take O16 only when it shrinks production code and allocations together.
-5. Attempt O11, O12, and O14 only when profiles show material cost.
+3. Take O16 only when it shrinks production code and allocations together.
+4. Attempt O11, O12, and O14 only when profiles show material cost.
 
 ## Acceptance gates
 
@@ -281,6 +279,31 @@ revertible.
   policy-specific branches. Final verification: 1,439 pass, one skip, one
   existing todo; type build, full lint, formatting, diff check, and size guard
   pass. Independent semantic differential: 5,002/5,002 resolutions matched.
+- O10b (`cdcf2990`, `31c63f67`) replaces duplicate scope/shaker collectors
+  with one explicit binding/root-policy traversal and attaches completed
+  resolutions to references through an analysis-lifetime `WeakMap`. Synthetic
+  Object/Array snapshot lookups remain explicit. Production shrank by 30 lines;
+  the shared collector's characterization tests add 180 lines.
+- Differential checks matched 1,173/1,173 ordered scoped-reference projections
+  and 5,002/5,002 binding resolutions. Focused collector, evaluator/extraction,
+  and shaker suites passed; final verification is 1,446 pass, one skip, one
+  existing todo, and zero failures. Type build, lint, formatting, diff check,
+  and size guard pass.
+- Focused paired fresh-process measurements preserved every signature. The
+  duplicate-collector path improved 3.80% by trimmed mean, the direct shaker
+  collector 2.86%, and the full shaker 1.02%. Amplified declaration/reference
+  build controls stayed within 1.35%; a shorter declaration run was rejected
+  after process outliers and is not used as evidence.
+- The 500-module collector RSS gate changed -1.66% peak RSS and -3.31% post-GC
+  heap; the full-shaker gate changed -0.13% peak RSS and +0.21% post-GC heap.
+  Exact aggregate signatures matched in every sample.
+- The first ten-sample large gate was RED at +11.66% wall median and +7.65%
+  trimmed mean; an independent identical rerun was -0.98%/-0.48%. A
+  predeclared 20-sample confirmation, with removal required above 5% wall,
+  measured +3.82%/+3.47%. Its evaluator, preevaluation, dangerous-node removal,
+  and `evalFile` median/trimmed deltas were +1.20%/+1.64%, +0.29%/+1.79%,
+  +0.43%/+0.27%, and +6.61%/+4.91%. All runs preserved the exact 60-file,
+  56-CSS-file, 8,540-byte signature and every method count.
 
 ## Non-goals
 
