@@ -6,8 +6,9 @@
 - Branch: `anber/fix-static-destructuring`
 - Behavioral baseline: `9baff607f6121fc0d33db9119e2ce014d408834b`
 - Refactor/optimization audit base: `30fc5f72`
-- Current implementation checkpoint: `110d386b`
-- Next slices: measure O5/O8; take O15 only if real profiles justify it
+- Current implementation checkpoint: `48b8dbe8`
+- Next slice: O5a fail-closed recursion plus completed-proof caching; measure
+  lazy hazard views separately
 
 Issue #366 static destructuring support is behaviorally complete. The remaining
 work reduces repeated analysis and converges duplicated semantic models without
@@ -94,13 +95,14 @@ revertible.
       (`4acf460d`).
 - [x] O7 — replace alias fixed-point rescans with indexed monotone worklists
       (`110d386b`).
+- [x] O8 — cache immutable callable syntax facts for one provenance analysis
+      (`48b8dbe8`).
 
 ### Open
 
 | ID  | Change                                                                                                                  | Required guard                                                                                                   |
 | --- | ----------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
 | O5  | Cache completed static-call purity proofs and avoid cloning the full hazard map per proof.                              | Use an explicit in-progress state; recursion and context-sensitive partial results fail closed.                  |
-| O8  | Cache immutable callable syntax facts: assignments, mutations, callee candidates, and local catalogs.                   | Caller aliases and invocation-sensitive facts remain per invocation.                                             |
 | O9  | Index callable result paths by structured root/prefix.                                                                  | Preserve collision-free path equality and descendant semantics.                                                  |
 | O10 | Add canonical `BindingId`s, resolved-reference indexes, and cached mutation identities.                                 | Build on O6's query API; this is a broad semantic foundation.                                                    |
 | O11 | Convert recursive set-returning provenance collectors to caller-owned sinks and share policy-neutral forwarding syntax. | Keep assignment, projection, alias, and abruptness policy consumer-owned.                                        |
@@ -111,7 +113,8 @@ revertible.
 
 ### Order
 
-1. Measure O5 and O8 independently on hazard-heavy and callable-fanout cases.
+1. Split O5 into completed-proof caching and a separately measured lazy
+   excluded-hazard view. Add fail-closed direct/mutual recursion guards first.
 2. Use O10 as the typed base for O9 and later `PatternProgram` work.
 3. Revisit O15 on real wide destructuring/assignment profiles, not the
    synthetic stress case alone.
@@ -194,9 +197,29 @@ revertible.
   `eabb50e564b307716cb7cf089887d4f6bc23d3b55f0f7880e0621634f2e17d23`,
   and every method count. Wall median/trimmed mean changed -7.40%/-4.78%;
   evaluator trimmed mean +0.68%, preevaluation -7.00%, and `evalFile` -6.05%.
-- Final verification: 1,421 pass, one skip, one existing todo, zero failures
+- O7 verification: 1,421 pass, one skip, one existing todo, zero failures
   (20-second timeout avoids the existing five-second eval-runner flake); type
   build, full lint, formatting, diff check, and size guard pass.
+- O8 (`48b8dbe8`) replaces repeated callable assignment, mutation, callee, and
+  local-catalog scans with syntax facts cached for one provenance analysis.
+  Caller aliases, merged catalogs, recursion guards, and final effects remain
+  invocation-local. Production code shrank by 23 lines.
+- O8 focused ABBA (24 fresh processes per side, 1,024 calls, alias width 64)
+  preserved generated-code SHA-256
+  `8d86801a9b734704f2ac2a8c5e358897703b75798e124fea6e1769d9b92fa05c`;
+  median improved `144.384 → 116.260 ms` (-19.48%) and paired geometric time
+  improved 19.56%. The 256/512-call medians improved 16.48%/19.53%.
+- A rejected module-global cache raised the 1,000-module pollution RSS median
+  by 7.47%. The accepted analysis-local lifetime reduced single-module RSS to
+  +0.02%; 100/500/1,000-module companions were -0.72%/+3.83%/+2.69%, with
+  matching aggregate output hashes and no retention slope.
+- O8's large gate (10 samples per side) preserved 60 transformed files, 56 CSS files,
+  8,540 CSS bytes, and every method count; every median/trimmed regression was
+  at most 2.6%. Final verification: 1,423 pass, one skip, one existing todo;
+  type build, full lint, formatting, diff check, and size guard pass.
+- O5 preflight exposed direct and mutual recursive purity proofs overflowing the
+  stack. O5a must make cycles fail closed and memoize only completed proofs;
+  context-partial results cannot enter the cache.
 
 ## Non-goals
 
