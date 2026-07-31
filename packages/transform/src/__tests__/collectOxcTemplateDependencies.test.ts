@@ -560,6 +560,22 @@ describe('evaluateOxcStaticExpression', () => {
     expect(evaluateLastExpression(code, 'source.value')).toBeUndefined();
   });
 
+  it('excludes a pure local call from every referenced root hazard', () => {
+    const code = `
+      const first = { value: 304 };
+      const second = { value: 400 };
+      function add(left, right) {
+        return left + right;
+      }
+      add(first.value, second.value);
+      first.value + second.value;
+    `;
+
+    expect(evaluateLastExpression(code, 'first.value + second.value')).toBe(
+      704
+    );
+  });
+
   it('keeps hoisted function values scoped to one invocation', () => {
     const code = `
       function make() {

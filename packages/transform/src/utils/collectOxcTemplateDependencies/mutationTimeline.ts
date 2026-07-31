@@ -1,4 +1,8 @@
-import type { MutationSpan, MutationTimeline } from './types';
+import type {
+  MutationSpan,
+  MutationTimeline,
+  MutationTimelineLookup,
+} from './types';
 
 type TimelinePredicate<T extends MutationSpan> = (node: T) => boolean;
 type TimelineVisitor<T extends MutationSpan> = (node: T) => void;
@@ -122,8 +126,31 @@ export const withoutTimelineNode = <T extends MutationSpan>(
   });
 };
 
+export const withoutTimelineMapNode = <T extends MutationSpan>(
+  timelines: MutationTimelineLookup<T>,
+  node: T
+): MutationTimelineLookup<T> => {
+  const cache = new Map<string, MutationTimeline<T> | undefined>();
+
+  return Object.freeze<MutationTimelineLookup<T>>({
+    get(binding) {
+      if (cache.has(binding)) {
+        return cache.get(binding);
+      }
+
+      const sourceTimeline = timelines.get(binding);
+      const result = sourceTimeline
+        ? withoutTimelineNode(sourceTimeline, node)
+        : undefined;
+      cache.set(binding, result);
+      return result;
+    },
+    size: timelines.size,
+  });
+};
+
 export const getMutationTimeline = <T extends MutationSpan>(
-  timelines: ReadonlyMap<string, MutationTimeline<T>>,
+  timelines: MutationTimelineLookup<T>,
   binding: string
 ): MutationTimeline<T> => timelines.get(binding) ?? emptyMutationTimeline;
 

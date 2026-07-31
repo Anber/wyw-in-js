@@ -13,6 +13,7 @@ import {
   someTimelineEndAtOrBefore,
   someTimelineFullyContained,
   someTimelineStartBefore,
+  withoutTimelineMapNode,
   withoutTimelineNode,
 } from '../mutationTimeline';
 import {
@@ -166,6 +167,78 @@ describe('mutation timelines', () => {
     const singleton = sealMutationTimeline([outer]);
     expect(withoutTimelineNode(singleton, absent)).toBe(singleton);
     expect(withoutTimelineNode(singleton, outer).byStart).toEqual([]);
+  });
+
+  it('lazily excludes one node and caches each requested binding', () => {
+    const excluded = span('excluded', 1, 10);
+    const retained = span('retained', 2, 8);
+    const unaffected = sealMutationTimeline([retained]);
+    const affected = sealMutationTimeline([excluded, retained]);
+    const timelines = new Map([
+      ['affected', affected],
+      ['unaffected', unaffected],
+    ]);
+    const reads: string[] = [];
+    const source = {
+      get(binding: string) {
+        reads.push(binding);
+        return timelines.get(binding);
+      },
+      size: timelines.size,
+    };
+    const view = withoutTimelineMapNode(source, excluded);
+
+    expect(reads).toEqual([]);
+    const filtered = view.get('affected');
+    expect(filtered?.byStart).toEqual([retained]);
+    expect(filtered?.byEnd).toEqual([retained]);
+    expect(view.get('affected')).toBe(filtered);
+    expect(reads).toEqual(['affected']);
+    expect(view.get('unaffected')).toBe(unaffected);
+    expect(view.get('unaffected')).toBe(unaffected);
+    expect(reads).toEqual(['affected', 'unaffected']);
+    expect(view.get('missing')).toBeUndefined();
+    expect(view.get('missing')).toBeUndefined();
+    expect(reads).toEqual(['affected', 'unaffected', 'missing']);
+    expect(Object.isFrozen(view)).toBe(true);
+    expect(affected.byStart).toEqual([excluded, retained]);
+  });
+
+  it('preserves missing, present-empty, identity, and size semantics', () => {
+    const excluded = span('excluded', 1, 2);
+    const equalSpan = span('equal-span', 1, 2);
+    const singleton = sealMutationTimeline([excluded]);
+    const equalSpanTimeline = sealMutationTimeline([equalSpan]);
+    const view = withoutTimelineMapNode(
+      new Map([
+        ['singleton', singleton],
+        ['equal-span', equalSpanTimeline],
+      ]),
+      excluded
+    );
+
+    expect(view.size).toBe(2);
+    expect(view.get('missing')).toBeUndefined();
+    expect(view.get('singleton')).toBe(getMutationTimeline(new Map(), 'none'));
+    expect(view.get('equal-span')).toBe(equalSpanTimeline);
+  });
+
+  it('composes nested exclusions without changing the base timeline', () => {
+    const outer = span('outer', 1, 10);
+    const retained = span('retained', 2, 8);
+    const inner = span('inner', 3, 5);
+    const baseTimeline = sealMutationTimeline([outer, retained, inner]);
+    const base = new Map([['source', baseTimeline]]);
+    const outerView = withoutTimelineMapNode(base, outer);
+    const innerView = withoutTimelineMapNode(outerView, inner);
+
+    expect(outerView.get('source')?.byStart).toEqual([retained, inner]);
+    expect(outerView.get('source')?.byEnd).toEqual([inner, retained]);
+    expect(innerView.get('source')?.byStart).toEqual([retained]);
+    expect(innerView.get('source')?.byEnd).toEqual([retained]);
+    expect(base.get('source')).toBe(baseTimeline);
+    expect(baseTimeline.byStart).toEqual([outer, retained, inner]);
+    expect(baseTimeline.byEnd).toEqual([inner, retained, outer]);
   });
 
   it('merges equal-start groups mutation-first and deduplicates identities', () => {

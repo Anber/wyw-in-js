@@ -127,17 +127,13 @@ export const isKnownPureStaticCall = (
   }
 
   return recursiveProof.run(node, ctx.staticCallProof, () => {
-    const proofHazards = new Map(ctx.rootMutationHazardsByBinding);
-    proofHazards.forEach((hazardTimeline, key) => {
-      const proofTimeline = timeline.withoutTimelineNode(hazardTimeline, node);
-      if (proofTimeline !== hazardTimeline) {
-        proofHazards.set(key, proofTimeline);
-      }
-    });
     const proofCtx: ExtractionContext = {
       ...ctx,
       currentExpressionStart: node.start,
-      rootMutationHazardsByBinding: proofHazards,
+      rootMutationHazardsByBinding: timeline.withoutTimelineMapNode(
+        ctx.rootMutationHazardsByBinding,
+        node
+      ),
       staticCallProof: recursiveProof.partial(ctx.staticCallProof),
     };
     const isScalar = (value: unknown): boolean =>

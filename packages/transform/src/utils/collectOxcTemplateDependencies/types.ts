@@ -62,6 +62,11 @@ export type MutationTimelineMap<T extends MutationSpan = Node> = ReadonlyMap<
   MutationTimeline<T>
 >;
 
+export type MutationTimelineLookup<T extends MutationSpan = Node> = Pick<
+  MutationTimelineMap<T>,
+  'get' | 'size'
+>;
+
 export type Scope = {
   bindings: Map<string, Binding>;
   depth: number;
@@ -152,7 +157,7 @@ export type ExtractionContext = {
   program: Program;
   referencesByNode: WeakMap<Node, ReferenceIdentifier[]>;
   replacements: Replacement[];
-  rootMutationHazardsByBinding: MutationTimelineMap;
+  rootMutationHazardsByBinding: MutationTimelineLookup;
   rootMutationsByBinding: MutationTimelineMap<
     AssignmentExpression | UpdateExpression
   >;
