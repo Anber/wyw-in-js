@@ -476,6 +476,32 @@ describe('evaluateOxcStaticExpression', () => {
     expect(evaluateLastExpression(code, 'run()')).toBe(304);
   });
 
+  it('keeps function-local environments independent across invocations', () => {
+    const code = `
+      function run(value) {
+        let local = value;
+        return local;
+      }
+      run(304) + run(400);
+    `;
+
+    expect(evaluateLastExpression(code, 'run(304) + run(400)')).toBe(704);
+  });
+
+  it('keeps hoisted function values scoped to one invocation', () => {
+    const code = `
+      function make() {
+        function local() {
+          return 304;
+        }
+        return local;
+      }
+      make() === make();
+    `;
+
+    expect(evaluateLastExpression(code, 'make() === make()')).toBeUndefined();
+  });
+
   it('uses a named function expression self-binding instead of an outer binding', () => {
     const code = `
       const self = 304;

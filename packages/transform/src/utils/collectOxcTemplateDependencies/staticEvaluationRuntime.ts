@@ -553,6 +553,61 @@ const collectHoistedVarNames = (
   return names;
 };
 
+type FunctionBodyDeclarationFact =
+  | {
+      kind: 'function';
+      name: string;
+      node: OxcFunctionLikeNode;
+    }
+  | {
+      kind: 'lexical';
+      names: readonly string[];
+    };
+
+type FunctionBodyFacts = {
+  hoistedVarNames: readonly string[];
+  topLevelDeclarations: readonly FunctionBodyDeclarationFact[];
+};
+
+type FunctionBodyNode = Extract<Node, { type: 'BlockStatement' }>;
+
+const functionBodyFactsCache = new WeakMap<
+  FunctionBodyNode,
+  FunctionBodyFacts
+>();
+
+const getFunctionBodyFacts = (body: FunctionBodyNode): FunctionBodyFacts => {
+  const cached = functionBodyFactsCache.get(body);
+  if (cached) {
+    return cached;
+  }
+
+  const topLevelDeclarations: FunctionBodyDeclarationFact[] = [];
+  body.body.forEach((statement) => {
+    if (statement.type === 'VariableDeclaration' && statement.kind !== 'var') {
+      topLevelDeclarations.push({
+        kind: 'lexical',
+        names: statement.declarations.flatMap((declarator) =>
+          collectOxcPatternBindingNames(declarator.id)
+        ),
+      });
+    } else if (statement.type === 'FunctionDeclaration' && statement.id) {
+      topLevelDeclarations.push({
+        kind: 'function',
+        name: statement.id.name,
+        node: statement,
+      });
+    }
+  });
+
+  const facts = {
+    hoistedVarNames: [...collectHoistedVarNames(body)],
+    topLevelDeclarations,
+  };
+  functionBodyFactsCache.set(body, facts);
+  return facts;
+};
+
 const prepareFunctionBodyEnvironment = (
   fn: OxcFunctionLikeNode,
   env: EvalEnv
@@ -561,25 +616,22 @@ const prepareFunctionBodyEnvironment = (
     return;
   }
 
-  collectHoistedVarNames(fn.body).forEach((name) => {
+  const facts = getFunctionBodyFacts(fn.body);
+  facts.hoistedVarNames.forEach((name) => {
     if (!env.has(name)) {
       env.set(name, undefined);
     }
   });
 
-  fn.body.body.forEach((statement) => {
-    if (statement.type === 'VariableDeclaration' && statement.kind !== 'var') {
-      statement.declarations.forEach((declarator) => {
-        collectOxcPatternBindingNames(declarator.id).forEach((name) => {
-          env.set(name, uninitializedStaticBinding);
-        });
+  facts.topLevelDeclarations.forEach((declaration) => {
+    if (declaration.kind === 'lexical') {
+      declaration.names.forEach((name) => {
+        env.set(name, uninitializedStaticBinding);
       });
       return;
     }
 
-    if (statement.type === 'FunctionDeclaration' && statement.id) {
-      env.set(statement.id.name, createOxcStaticFunctionValue(statement));
-    }
+    env.set(declaration.name, createOxcStaticFunctionValue(declaration.node));
   });
 };
 
