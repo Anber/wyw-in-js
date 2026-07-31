@@ -49,6 +49,18 @@ export type ExpressionSpan = {
   start: number;
 };
 
+export type MutationSpan = Pick<Node, 'end' | 'start'>;
+
+export type MutationTimeline<T extends MutationSpan = Node> = {
+  readonly byEnd: readonly T[];
+  readonly byStart: readonly T[];
+};
+
+export type MutationTimelineMap<T extends MutationSpan = Node> = ReadonlyMap<
+  string,
+  MutationTimeline<T>
+>;
+
 export type Scope = {
   bindings: Map<string, Binding>;
   depth: number;
@@ -113,10 +125,9 @@ export type StaticLocalExpression = {
 
 export type ProgramAnalysis = {
   bindingIndex: BindingIndex;
-  rootMutationHazardsByBinding: Map<string, Node[]>;
-  rootMutationsByBinding: Map<
-    string,
-    Array<AssignmentExpression | UpdateExpression>
+  rootMutationHazardsByBinding: MutationTimelineMap;
+  rootMutationsByBinding: MutationTimelineMap<
+    AssignmentExpression | UpdateExpression
   >;
   targetExpressions: Expression[];
   templateLiterals: TemplateLiteral[];
@@ -140,10 +151,9 @@ export type ExtractionContext = {
   program: Program;
   referencesByNode: WeakMap<Node, ReferenceIdentifier[]>;
   replacements: Replacement[];
-  rootMutationHazardsByBinding: Map<string, Node[]>;
-  rootMutationsByBinding: Map<
-    string,
-    Array<AssignmentExpression | UpdateExpression>
+  rootMutationHazardsByBinding: MutationTimelineMap;
+  rootMutationsByBinding: MutationTimelineMap<
+    AssignmentExpression | UpdateExpression
   >;
   staticBindings?: StaticBindings;
   staticImportAliases: Map<string, string>;

@@ -11,9 +11,12 @@ import { getOxcNodeChildren } from '../oxc/ast';
 import { collectOxcPatternBindingNames } from '../oxc/patterns';
 import { isOxcFunctionLike } from '../oxc/runtimeSemantics';
 import {
+  forEachTimelineFullyContained,
   findReferences,
-  getRootMutationHazards,
+  getMutationTimeline,
   resolveBindingAt,
+  someTimelineEndAtOrBefore,
+  someTimelineStartBefore,
   toMutationBindingKey,
 } from './scopeAnalysis';
 import { isKnownPureStaticCall } from './staticEvaluator';
@@ -56,14 +59,15 @@ export const hasDestructuringIntrinsicMutationBefore = (
       !resolveBindingAt(ctx, name, change.start);
 
     return (
-      (ctx.rootMutationsByBinding.get(name) ?? []).some(
-        (mutation) =>
-          mutation.start < referenceStart &&
-          changesUnshadowedIntrinsic(mutation)
+      someTimelineStartBefore(
+        getMutationTimeline(ctx.rootMutationsByBinding, name),
+        referenceStart,
+        changesUnshadowedIntrinsic
       ) ||
-      getRootMutationHazards(ctx.rootMutationHazardsByBinding, name).some(
-        (hazard) =>
-          hazard.end <= referenceStart && changesUnshadowedIntrinsic(hazard)
+      someTimelineEndAtOrBefore(
+        getMutationTimeline(ctx.rootMutationHazardsByBinding, name),
+        referenceStart,
+        changesUnshadowedIntrinsic
       )
     );
   });
@@ -86,10 +90,12 @@ export const hasAnyBindingChange = (
 ): boolean => {
   const bindingKey = toMutationBindingKey(binding);
   return (
-    (ctx.rootMutationsByBinding.get(bindingKey)?.length ?? 0) > 0 ||
-    getRootMutationHazards(ctx.rootMutationHazardsByBinding, bindingKey).some(
-      (hazard) => isOpaqueDestructuringHazard(hazard, ctx)
-    )
+    getMutationTimeline(ctx.rootMutationsByBinding, bindingKey).byStart.length >
+      0 ||
+    getMutationTimeline(
+      ctx.rootMutationHazardsByBinding,
+      bindingKey
+    ).byStart.some((hazard) => isOpaqueDestructuringHazard(hazard, ctx))
   );
 };
 
@@ -397,27 +403,30 @@ const collectSnapshotStatements = (
       const dependency = pendingBindings[pendingBindingCursor]!;
       pendingBindingCursor += 1;
       const dependencyKey = toMutationBindingKey(dependency);
-      const changes: Node[] = [
-        ...(ctx.rootMutationsByBinding.get(dependencyKey) ?? []),
-        ...getRootMutationHazards(
-          ctx.rootMutationHazardsByBinding,
-          dependencyKey
-        ).filter((hazard) => isOpaqueDestructuringHazard(hazard, ctx)),
-      ];
-
-      changes.forEach((change) => {
-        if (
-          change.start < body.start ||
-          change.end > ctx.currentExpressionStart
-        ) {
+      const includeChange = (change: Node): void => {
+        const owner = directSnapshotOwner(body, change);
+        if (!owner || crossesDeferredFunctionBoundary(owner, change)) {
           return;
         }
 
-        const owner = directSnapshotOwner(body, change);
-        if (owner && !crossesDeferredFunctionBoundary(owner, change)) {
-          includeStatement(owner);
+        includeStatement(owner);
+      };
+      forEachTimelineFullyContained(
+        getMutationTimeline(ctx.rootMutationsByBinding, dependencyKey),
+        body.start,
+        ctx.currentExpressionStart,
+        includeChange
+      );
+      forEachTimelineFullyContained(
+        getMutationTimeline(ctx.rootMutationHazardsByBinding, dependencyKey),
+        body.start,
+        ctx.currentExpressionStart,
+        (hazard) => {
+          if (isOpaqueDestructuringHazard(hazard, ctx)) {
+            includeChange(hazard);
+          }
         }
-      });
+      );
     }
   }
 
@@ -465,12 +474,14 @@ const collectSnapshotStatements = (
       dependency.declarationKind === 'const' &&
       !!dependency.declaration &&
       dependency.declaration.end <= ctx.currentInsertionPoint &&
-      (ctx.rootMutationsByBinding.get(toMutationBindingKey(dependency))
-        ?.length ?? 0) === 0 &&
-      getRootMutationHazards(
+      getMutationTimeline(
+        ctx.rootMutationsByBinding,
+        toMutationBindingKey(dependency)
+      ).byStart.length === 0 &&
+      getMutationTimeline(
         ctx.rootMutationHazardsByBinding,
         toMutationBindingKey(dependency)
-      ).every((hazard) => !isOpaqueDestructuringHazard(hazard, ctx))
+      ).byStart.every((hazard) => !isOpaqueDestructuringHazard(hazard, ctx))
     ) {
       return;
     }

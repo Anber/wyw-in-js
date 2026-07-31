@@ -17,10 +17,15 @@ import { getOxcNodeChildren } from '../oxc/ast';
 import { collectOxcPatternBindingNames } from '../oxc/patterns';
 import { getOxcSyntacticPropertyKey } from '../oxc/projections';
 import { resolveBindingInIndex } from './bindingResolution';
+import {
+  getMutationTimeline,
+  sealMutationTimelineMap,
+} from './mutationTimeline';
 import { findReferences, visitOxcScopes } from './scopeTraversal';
 import type {
   Binding,
   BindingIndex,
+  MutationTimeline,
   ProgramAnalysis,
   ReferenceIdentifier,
   SpanLookup,
@@ -221,9 +226,9 @@ export const toMutationBindingKey = (binding: Binding): string =>
     : `\0wyw-static-scope:${binding.scope.start}:${binding.declaredAt}:${binding.name}`;
 
 export const getRootMutationHazards = (
-  hazards: ReadonlyMap<string, Node[]>,
+  hazards: ReadonlyMap<string, MutationTimeline<Node>>,
   binding: string
-): Node[] => hazards.get(binding) ?? [];
+): readonly Node[] => getMutationTimeline(hazards, binding).byStart;
 
 const containsOpaqueAliasConstruct = (
   node: Node,
@@ -836,9 +841,6 @@ const collectRootMutationHazards = (
     });
   });
 
-  hazards.forEach((nodes) => {
-    nodes.sort((left, right) => left.start - right.start);
-  });
   return hazards;
 };
 
@@ -863,7 +865,9 @@ export const collectProgramMutationAnalysis = (
         );
 
   return {
-    rootMutationHazardsByBinding,
-    rootMutationsByBinding,
+    rootMutationHazardsByBinding: sealMutationTimelineMap(
+      rootMutationHazardsByBinding
+    ),
+    rootMutationsByBinding: sealMutationTimelineMap(rootMutationsByBinding),
   };
 };

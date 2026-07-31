@@ -11,9 +11,14 @@ import { getOxcNodeChildren } from '../oxc/ast';
 import { collectOxcPatternBindingNames } from '../oxc/patterns';
 import { getOxcSyntacticPropertyKey } from '../oxc/projections';
 import { isOxcFunctionLike } from '../oxc/runtimeSemantics';
-import { resolveBindingAt, toMutationBindingKey } from './scopeAnalysis';
 import {
-  getBindingMutationHazards,
+  hasTimelineStartBefore,
+  resolveBindingAt,
+  someTimelineEndAtOrBefore,
+} from './scopeAnalysis';
+import {
+  getBindingDirectTimeline,
+  getBindingHazardTimeline,
   hasArrayIterationMutationBefore,
   hasRelevantIntrinsicMutationBefore,
   isDeterministicUndefinedExpression,
@@ -29,7 +34,12 @@ import {
   readObjectProjectionProperty,
   readOwnDataProperty,
 } from './staticValues';
-import type { Binding, ExtractionContext, OxcFunctionLikeNode } from './types';
+import type {
+  Binding,
+  ExtractionContext,
+  MutationTimeline,
+  OxcFunctionLikeNode,
+} from './types';
 
 type EvaluateStatic = (
   expression: Expression,
@@ -62,23 +72,22 @@ export const bitwiseNot = (value: number): number => -toInt32(value) - 1;
 export const bindingValueCacheKey = (
   binding: Binding,
   ctx: ExtractionContext,
-  bindingMutations: readonly Node[] = ctx.rootMutationsByBinding.get(
-    toMutationBindingKey(binding)
-  ) ?? [],
-  bindingMutationHazards: readonly Node[] = getBindingMutationHazards(
+  bindingMutations: MutationTimeline<Node> = getBindingDirectTimeline(
+    binding,
+    ctx
+  ),
+  bindingMutationHazards: MutationTimeline<Node> = getBindingHazardTimeline(
     binding,
     ctx
   ),
   isKnownPureStaticCall: IsKnownPureStaticCall
 ): string => {
   const snapshot =
-    bindingMutations.some(
-      (mutation) => mutation.start < ctx.currentExpressionStart
-    ) ||
-    bindingMutationHazards.some(
-      (hazard) =>
-        !isKnownPureStaticCall(hazard, ctx) &&
-        hazard.end <= ctx.currentExpressionStart
+    hasTimelineStartBefore(bindingMutations, ctx.currentExpressionStart) ||
+    someTimelineEndAtOrBefore(
+      bindingMutationHazards,
+      ctx.currentExpressionStart,
+      (hazard) => !isKnownPureStaticCall(hazard, ctx)
     )
       ? ctx.currentExpressionStart
       : 'stable';

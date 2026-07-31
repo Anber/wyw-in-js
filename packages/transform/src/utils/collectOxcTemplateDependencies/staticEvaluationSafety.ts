@@ -19,12 +19,20 @@ import {
 import { getOxcSyntacticPropertyKey } from '../oxc/projections';
 import {
   findReferences,
-  getRootMutationHazards,
+  getMutationTimeline,
+  hasTimelineEndAtOrBefore,
+  someTimelineEndAtOrBefore,
+  someTimelineStartBefore,
   unknownAliasMutationBinding,
   resolveBindingAt,
   toMutationBindingKey,
 } from './scopeAnalysis';
-import type { Binding, ExtractionContext, OxcFunctionLikeNode } from './types';
+import type {
+  Binding,
+  ExtractionContext,
+  MutationTimeline,
+  OxcFunctionLikeNode,
+} from './types';
 
 const symbolIteratorPathPart = '\0wyw-static-Symbol.iterator';
 
@@ -115,30 +123,43 @@ const nodeContainsStaticMemberPath = (
   );
 };
 
-const intrinsicChangesBefore = (
+const someIntrinsicChangeEndAtOrBefore = (
   binding: 'Array' | 'Object' | 'String',
   end: number,
-  ctx: ExtractionContext
-): Node[] =>
-  [
-    ...(ctx.rootMutationsByBinding.get(binding) ?? []),
-    ...(ctx.rootMutationHazardsByBinding.get(binding) ?? []),
-  ].filter((change) => change.end <= end);
+  ctx: ExtractionContext,
+  predicate: (change: Node) => boolean
+): boolean =>
+  someTimelineEndAtOrBefore(
+    getMutationTimeline(ctx.rootMutationsByBinding, binding),
+    end,
+    predicate
+  ) ||
+  someTimelineEndAtOrBefore(
+    getMutationTimeline(ctx.rootMutationHazardsByBinding, binding),
+    end,
+    predicate
+  );
 
 export const hasRelevantIntrinsicMutationBefore = (
   pattern: Node,
   end: number,
   ctx: ExtractionContext
 ): boolean => {
-  const unknownAliasChangesBefore = getRootMutationHazards(
-    ctx.rootMutationHazardsByBinding,
-    unknownAliasMutationBinding
-  ).some((change) => change.end <= end);
+  const unknownAliasChangesBefore = hasTimelineEndAtOrBefore(
+    getMutationTimeline(
+      ctx.rootMutationHazardsByBinding,
+      unknownAliasMutationBinding
+    ),
+    end
+  );
 
   if (
     someOxcPatternNode(pattern, (node) => node.type === 'ObjectPattern') &&
     (unknownAliasChangesBefore ||
-      intrinsicChangesBefore('Object', end, ctx).some(
+      someIntrinsicChangeEndAtOrBefore(
+        'Object',
+        end,
+        ctx,
         (change) =>
           !nodeContainsStaticMemberPath(change, 'Object', [], ctx) ||
           nodeContainsStaticMemberPath(change, 'Object', ['prototype'], ctx)
@@ -157,16 +178,25 @@ export const hasArrayIterationMutationBefore = (
   end: number,
   ctx: ExtractionContext
 ): boolean =>
-  getRootMutationHazards(
-    ctx.rootMutationHazardsByBinding,
-    unknownAliasMutationBinding
-  ).some((change) => change.end <= end) ||
-  intrinsicChangesBefore('Object', end, ctx).some(
+  hasTimelineEndAtOrBefore(
+    getMutationTimeline(
+      ctx.rootMutationHazardsByBinding,
+      unknownAliasMutationBinding
+    ),
+    end
+  ) ||
+  someIntrinsicChangeEndAtOrBefore(
+    'Object',
+    end,
+    ctx,
     (change) =>
       !nodeContainsStaticMemberPath(change, 'Object', [], ctx) ||
       nodeContainsStaticMemberPath(change, 'Object', ['prototype'], ctx)
   ) ||
-  intrinsicChangesBefore('Array', end, ctx).some(
+  someIntrinsicChangeEndAtOrBefore(
+    'Array',
+    end,
+    ctx,
     (change) =>
       !nodeContainsStaticMemberPath(change, 'Array', [], ctx) ||
       nodeContainsStaticMemberPath(change, 'Array', ['prototype'], ctx)
@@ -176,17 +206,29 @@ export const hasStringPrototypeMutationBefore = (
   end: number,
   ctx: ExtractionContext
 ): boolean =>
-  intrinsicChangesBefore('String', end, ctx).some(
+  someIntrinsicChangeEndAtOrBefore(
+    'String',
+    end,
+    ctx,
     (change) =>
       !nodeContainsStaticMemberPath(change, 'String', [], ctx) ||
       nodeContainsStaticMemberPath(change, 'String', ['prototype'], ctx)
   );
 
-export const getBindingMutationHazards = (
+export const getBindingDirectTimeline = (
   binding: Binding,
   ctx: ExtractionContext
-): Node[] =>
-  getRootMutationHazards(
+) =>
+  getMutationTimeline(
+    ctx.rootMutationsByBinding,
+    toMutationBindingKey(binding)
+  );
+
+export const getBindingHazardTimeline = (
+  binding: Binding,
+  ctx: ExtractionContext
+) =>
+  getMutationTimeline(
     ctx.rootMutationHazardsByBinding,
     toMutationBindingKey(binding)
   );
@@ -230,20 +272,22 @@ export const hasDirectBindingMutationBefore = (
   end: number,
   ctx: ExtractionContext
 ): boolean =>
-  [
-    ...(ctx.rootMutationsByBinding.get(toMutationBindingKey(binding)) ?? []),
-    ...getBindingMutationHazards(binding, ctx),
-  ].some(
-    (mutation) =>
-      mutation.end <= end &&
-      mutationDirectlyTargetsBinding(mutation, binding, ctx)
+  someTimelineEndAtOrBefore(
+    getBindingDirectTimeline(binding, ctx),
+    end,
+    (mutation) => mutationDirectlyTargetsBinding(mutation, binding, ctx)
+  ) ||
+  someTimelineEndAtOrBefore(
+    getBindingHazardTimeline(binding, ctx),
+    end,
+    (mutation) => mutationDirectlyTargetsBinding(mutation, binding, ctx)
   );
 
 export const hasLexicalPreDeclarationChange = (
   binding: Binding,
   ctx: ExtractionContext,
-  bindingMutations: readonly Node[],
-  bindingMutationHazards: readonly Node[]
+  bindingMutations: MutationTimeline<Node>,
+  bindingMutationHazards: MutationTimeline<Node>
 ): boolean => {
   if (
     (binding.declarationKind !== 'const' &&
@@ -254,15 +298,22 @@ export const hasLexicalPreDeclarationChange = (
   }
 
   const isPreDeclarationChange = (change: Node): boolean =>
-    change.start < binding.declaredAt &&
     findReferences(change, ctx.referencesByNode).some(
       ({ name, start }) =>
         name === binding.name && resolveBindingAt(ctx, name, start) === binding
     );
 
   return (
-    bindingMutations.some(isPreDeclarationChange) ||
-    bindingMutationHazards.some(isPreDeclarationChange)
+    someTimelineStartBefore(
+      bindingMutations,
+      binding.declaredAt,
+      isPreDeclarationChange
+    ) ||
+    someTimelineStartBefore(
+      bindingMutationHazards,
+      binding.declaredAt,
+      isPreDeclarationChange
+    )
   );
 };
 

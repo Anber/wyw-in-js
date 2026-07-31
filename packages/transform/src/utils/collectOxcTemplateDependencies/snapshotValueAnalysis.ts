@@ -6,8 +6,11 @@ import { getOxcNodeChildren } from '../oxc/ast';
 import { getOxcSyntacticPropertyKey } from '../oxc/projections';
 import { unwrapOxcRuntimeExpression } from '../oxc/runtimeSemantics';
 import {
-  getRootMutationHazards,
+  forEachMergedTimelineStartBefore,
+  forEachTimelineStartBefore,
+  getMutationTimeline,
   resolveBindingAt,
+  someTimelineStartBefore,
   toMutationBindingKey,
 } from './scopeAnalysis';
 import { evaluateStatic } from './staticEvaluator';
@@ -87,28 +90,30 @@ const snapshotStaticPropertyKey = (
     return scalar;
   }
 
-  const changes = (
-    ctx.rootMutationsByBinding.get(toMutationBindingKey(binding)) ?? []
-  )
-    .filter((change) => change.start < key.start)
-    .sort((left, right) => left.start - right.start);
-  changes.forEach((change) => {
-    if (
-      change.type !== 'AssignmentExpression' ||
-      change.operator !== '=' ||
-      change.left.type !== 'Identifier' ||
-      resolveBindingAt(ctx, change.left.name, change.left.start) !== binding
-    ) {
-      scalar = null;
-      return;
+  forEachTimelineStartBefore(
+    getMutationTimeline(
+      ctx.rootMutationsByBinding,
+      toMutationBindingKey(binding)
+    ),
+    key.start,
+    (change) => {
+      if (
+        change.type !== 'AssignmentExpression' ||
+        change.operator !== '=' ||
+        change.left.type !== 'Identifier' ||
+        resolveBindingAt(ctx, change.left.name, change.left.start) !== binding
+      ) {
+        scalar = null;
+        return;
+      }
+      const right = unwrapSnapshotExpression(change.right);
+      scalar =
+        right.type === 'Literal' &&
+        (typeof right.value === 'string' || typeof right.value === 'number')
+          ? right.value
+          : null;
     }
-    const right = unwrapSnapshotExpression(change.right);
-    scalar =
-      right.type === 'Literal' &&
-      (typeof right.value === 'string' || typeof right.value === 'number')
-        ? right.value
-        : null;
-  });
+  );
   return scalar;
 };
 
@@ -514,9 +519,10 @@ const inferSnapshotAssignmentKind = (
   const sameBinding = target.binding === binding;
   const targetIsRecordedAlias =
     !sameBinding &&
-    (
-      ctx.rootMutationsByBinding.get(toMutationBindingKey(binding)) ?? []
-    ).includes(assignment);
+    getMutationTimeline(
+      ctx.rootMutationsByBinding,
+      toMutationBindingKey(binding)
+    ).byStart.includes(assignment);
   if (!sameBinding && !targetIsRecordedAlias) {
     return previous;
   }
@@ -650,54 +656,43 @@ function inferSnapshotBindingKind(
   }
 
   const bindingKey = toMutationBindingKey(binding);
-  const changes = [
-    ...new Set([
-      ...(ctx.rootMutationsByBinding.get(bindingKey) ?? []),
-      ...getRootMutationHazards(
-        ctx.rootMutationHazardsByBinding,
-        bindingKey
-      ).filter(
-        (
-          hazard
-        ): hazard is Extract<
-          Node,
-          { type: 'AssignmentExpression' | 'UpdateExpression' }
-        > =>
-          hazard.type === 'AssignmentExpression' ||
-          hazard.type === 'UpdateExpression'
-      ),
-    ]),
-  ]
-    .filter((change) => change.start < ctx.currentExpressionStart)
-    .sort((left, right) => left.start - right.start);
-  changes.forEach((change) => {
-    if (change.type === 'UpdateExpression') {
-      const target = snapshotMemberPath(change.argument, ctx);
-      if (
-        target &&
-        target.binding === binding &&
-        snapshotPathMatches(target.segments, accessPath)
-      ) {
-        result = 'primitive';
+  forEachMergedTimelineStartBefore(
+    getMutationTimeline(ctx.rootMutationsByBinding, bindingKey),
+    getMutationTimeline(ctx.rootMutationHazardsByBinding, bindingKey),
+    ctx.currentExpressionStart,
+    (hazard) =>
+      hazard.type === 'AssignmentExpression' ||
+      hazard.type === 'UpdateExpression',
+    (change) => {
+      if (change.type === 'UpdateExpression') {
+        const target = snapshotMemberPath(change.argument, ctx);
+        if (
+          target &&
+          target.binding === binding &&
+          snapshotPathMatches(target.segments, accessPath)
+        ) {
+          result = 'primitive';
+        }
+        return;
       }
-      return;
+      if (change.type !== 'AssignmentExpression') {
+        return;
+      }
+      result = inferSnapshotAssignmentKind(
+        change,
+        binding,
+        accessPath,
+        ctx,
+        nextStack,
+        result
+      );
     }
-    result = inferSnapshotAssignmentKind(
-      change,
-      binding,
-      accessPath,
-      ctx,
-      nextStack,
-      result
-    );
-  });
+  );
 
-  const hasOpaqueCallHazard = getRootMutationHazards(
-    ctx.rootMutationHazardsByBinding,
-    bindingKey
-  )
-    .filter((hazard) => hazard.start < ctx.currentExpressionStart)
-    .some((hazard) => {
+  const hasOpaqueCallHazard = someTimelineStartBefore(
+    getMutationTimeline(ctx.rootMutationHazardsByBinding, bindingKey),
+    ctx.currentExpressionStart,
+    (hazard) => {
       if (
         hazard.type === 'CallExpression' &&
         inlineSnapshotCallPreservesPrimitiveShape(hazard, ctx, nextStack)
@@ -721,7 +716,8 @@ function inferSnapshotBindingKind(
       };
       visit(hazard);
       return found;
-    });
+    }
+  );
 
   return hasOpaqueCallHazard ? 'unknown' : result;
 }

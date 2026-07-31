@@ -40,6 +40,18 @@ export {
   unknownAliasMutationBinding,
 } from './mutationAnalysis';
 export {
+  forEachMergedTimelineStartBefore,
+  forEachTimelineFullyContained,
+  forEachTimelineStartBefore,
+  getMutationTimeline,
+  hasTimelineEndAtOrBefore,
+  hasTimelineStartBefore,
+  hasTimelineStartInRange,
+  someTimelineEndAtOrBefore,
+  someTimelineFullyContained,
+  someTimelineStartBefore,
+} from './mutationTimeline';
+export {
   findReferences,
   isBindingDeclaredWithin,
   isBindingPosition,

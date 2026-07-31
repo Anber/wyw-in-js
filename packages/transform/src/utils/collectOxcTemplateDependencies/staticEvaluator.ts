@@ -8,14 +8,11 @@ import {
 } from '../oxc/patterns';
 import { isOxcFunctionLike } from '../oxc/runtimeSemantics';
 import { lookupStaticBinding } from './staticBindings';
+import * as timeline from './mutationTimeline';
+import { findReferences, resolveBindingAt } from './scopeAnalysis';
 import {
-  findReferences,
-  getRootMutationHazards,
-  resolveBindingAt,
-  toMutationBindingKey,
-} from './scopeAnalysis';
-import {
-  getBindingMutationHazards,
+  getBindingDirectTimeline,
+  getBindingHazardTimeline,
   hasDirectBindingMutationBefore,
   hasLexicalPreDeclarationChange,
   hasStringPrototypeMutationBefore,
@@ -70,14 +67,16 @@ const hasReferencedRootMutationBetween = (
       }
 
       return (
-        (
-          ctx.rootMutationsByBinding.get(toMutationBindingKey(binding)) ?? []
-        ).some((mutation) => start <= mutation.start && mutation.start < end) ||
-        getBindingMutationHazards(binding, ctx).some(
-          (hazard) =>
-            !isKnownPureStaticCall(hazard, ctx) &&
-            start <= hazard.start &&
-            hazard.end <= end
+        timeline.hasTimelineStartInRange(
+          getBindingDirectTimeline(binding, ctx),
+          start,
+          end
+        ) ||
+        timeline.someTimelineFullyContained(
+          getBindingHazardTimeline(binding, ctx),
+          start,
+          end,
+          (hazard) => !isKnownPureStaticCall(hazard, ctx)
         )
       );
     }
@@ -126,12 +125,10 @@ export const isKnownPureStaticCall = (
   }
 
   const proofHazards = new Map(ctx.rootMutationHazardsByBinding);
-  proofHazards.forEach((hazards, key) => {
-    if (hazards.includes(node)) {
-      proofHazards.set(
-        key,
-        hazards.filter((hazard) => hazard !== node)
-      );
+  proofHazards.forEach((hazardTimeline, key) => {
+    const proofTimeline = timeline.withoutTimelineNode(hazardTimeline, node);
+    if (proofTimeline !== hazardTimeline) {
+      proofHazards.set(key, proofTimeline);
     }
   });
   const proofCtx: ExtractionContext = {
@@ -171,13 +168,14 @@ const hasReferencedRootMutationHazardBefore = (
         return false;
       }
 
-      return getBindingMutationHazards(binding, ctx).some(
+      return timeline.someTimelineEndAtOrBefore(
+        getBindingHazardTimeline(binding, ctx),
+        end,
         (hazard) =>
           !isKnownPureStaticCall(hazard, ctx) &&
           (!ignoredHazard ||
             hazard.start < ignoredHazard.start ||
-            ignoredHazard.end < hazard.end) &&
-          hazard.end <= end
+            ignoredHazard.end < hazard.end)
       );
     }
   );
@@ -189,11 +187,11 @@ const hasBindingMutationHazardBetween = (
   end: number,
   ctx: ExtractionContext
 ): boolean =>
-  getBindingMutationHazards(binding, ctx).some(
-    (hazard) =>
-      !isKnownPureStaticCall(hazard, ctx) &&
-      start <= hazard.start &&
-      hazard.end <= end
+  timeline.someTimelineFullyContained(
+    getBindingHazardTimeline(binding, ctx),
+    start,
+    end,
+    (hazard) => !isKnownPureStaticCall(hazard, ctx)
   );
 
 const hasBindingMutationBefore = (
@@ -201,11 +199,14 @@ const hasBindingMutationBefore = (
   end: number,
   ctx: ExtractionContext
 ): boolean =>
-  (ctx.rootMutationsByBinding.get(toMutationBindingKey(binding)) ?? []).some(
-    (mutation) => mutation.start < end
+  timeline.hasTimelineStartBefore(
+    getBindingDirectTimeline(binding, ctx),
+    end
   ) ||
-  getBindingMutationHazards(binding, ctx).some(
-    (hazard) => !isKnownPureStaticCall(hazard, ctx) && hazard.end <= end
+  timeline.someTimelineEndAtOrBefore(
+    getBindingHazardTimeline(binding, ctx),
+    end,
+    (hazard) => !isKnownPureStaticCall(hazard, ctx)
   );
 
 export const evaluateStatic = (
@@ -407,14 +408,11 @@ export const evaluateStatic = (
       return undefined;
     }
 
-    const bindingKey = toMutationBindingKey(binding);
-    const bindingMutations = ctx.rootMutationsByBinding.get(bindingKey) ?? [];
-    const bindingMutationHazards = getRootMutationHazards(
-      ctx.rootMutationHazardsByBinding,
-      bindingKey
-    );
+    const bindingMutations = getBindingDirectTimeline(binding, ctx);
+    const bindingMutationHazards = getBindingHazardTimeline(binding, ctx);
     const bindingHasChanges =
-      bindingMutations.length > 0 || bindingMutationHazards.length > 0;
+      bindingMutations.byStart.length > 0 ||
+      bindingMutationHazards.byStart.length > 0;
 
     if (
       bindingHasChanges &&
@@ -560,10 +558,8 @@ export const evaluateStatic = (
           const siblingValue = patternEnv.get(name);
           const siblingHasChanges =
             !!siblingBinding &&
-            ((ctx.rootMutationsByBinding.get(
-              toMutationBindingKey(siblingBinding)
-            )?.length ?? 0) > 0 ||
-              getBindingMutationHazards(siblingBinding, ctx).length > 0);
+            (getBindingDirectTimeline(siblingBinding, ctx).byStart.length > 0 ||
+              getBindingHazardTimeline(siblingBinding, ctx).byStart.length > 0);
           if (
             siblingBinding &&
             patternEnv.has(name) &&
@@ -598,23 +594,28 @@ export const evaluateStatic = (
       return value;
     }
 
-    const priorMutations = bindingMutations.filter(
-      (mutation) => mutation.start < ctx.currentExpressionStart
+    const hasPriorMutations = timeline.hasTimelineStartBefore(
+      bindingMutations,
+      ctx.currentExpressionStart
     );
-    const replayedMutationNodes = new Set<Node>(priorMutations);
-    const priorMutationHazards = bindingMutationHazards.filter(
-      (hazard) =>
-        !isKnownPureStaticCall(hazard, ctx) &&
-        !replayedMutationNodes.has(hazard) &&
-        hazard.end <= ctx.currentExpressionStart
-    );
-    const priorDirectMutationHazards = priorMutationHazards.filter((hazard) =>
-      mutationDirectlyTargetsBinding(hazard, binding, ctx)
-    );
+    const isUnreplayedPriorHazard = (hazard: Node): boolean =>
+      !isKnownPureStaticCall(hazard, ctx) &&
+      !timeline.timelineStartBeforeIncludes(
+        bindingMutations,
+        ctx.currentExpressionStart,
+        hazard
+      );
     if (
       value !== undefined &&
       (typeof value !== 'object' || value === null) &&
-      (priorMutations.length > 0 || priorDirectMutationHazards.length > 0)
+      (hasPriorMutations ||
+        timeline.someTimelineEndAtOrBefore(
+          bindingMutationHazards,
+          ctx.currentExpressionStart,
+          (hazard) =>
+            isUnreplayedPriorHazard(hazard) &&
+            mutationDirectlyTargetsBinding(hazard, binding, ctx)
+        ))
     ) {
       return undefined;
     }
@@ -624,7 +625,11 @@ export const evaluateStatic = (
       typeof value === 'object' &&
       value !== null &&
       declarator?.id.type === 'Identifier' &&
-      priorMutationHazards.length > 0
+      timeline.someTimelineEndAtOrBefore(
+        bindingMutationHazards,
+        ctx.currentExpressionStart,
+        isUnreplayedPriorHazard
+      )
     ) {
       return undefined;
     }
@@ -635,29 +640,33 @@ export const evaluateStatic = (
       typeof value === 'object' &&
       value !== null
     ) {
-      if (priorMutations.length === 0) {
+      if (!hasPriorMutations) {
         if (valueCacheKey) {
           env.set(valueCacheKey, value);
         }
         return value;
       }
 
-      let nextValue = cloneStaticValue(value);
-      for (const mutation of priorMutations) {
-        const applied = applyRootMutation(
-          binding.name,
-          nextValue,
-          mutation,
-          ctx,
-          env,
-          [...stack, binding.name],
-          evaluateStatic
-        );
-        if (applied === undefined) {
-          return undefined;
+      let nextValue: unknown | undefined = cloneStaticValue(value);
+      timeline.forEachTimelineStartBefore(
+        bindingMutations,
+        ctx.currentExpressionStart,
+        (mutation) => {
+          if (nextValue !== undefined) {
+            nextValue = applyRootMutation(
+              binding.name,
+              nextValue,
+              mutation,
+              ctx,
+              env,
+              [...stack, binding.name],
+              evaluateStatic
+            );
+          }
         }
-
-        nextValue = applied;
+      );
+      if (nextValue === undefined) {
+        return undefined;
       }
 
       if (valueCacheKey) {

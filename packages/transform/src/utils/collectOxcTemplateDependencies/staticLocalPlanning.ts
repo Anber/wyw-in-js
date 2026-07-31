@@ -17,8 +17,10 @@ import {
 } from './expressionReplacements';
 import {
   findReferences,
-  getRootMutationHazards,
+  getMutationTimeline,
+  hasTimelineStartBefore,
   resolveBindingAt,
+  someTimelineEndAtOrBefore,
   toMutationBindingKey,
   unknownAliasMutationBinding,
 } from './scopeAnalysis';
@@ -125,19 +127,18 @@ export const hasReferencedRootMutationBefore = (
     const dependencyKey = toMutationBindingKey(dependency);
 
     return (
-      (ctx.rootMutationsByBinding.get(dependencyKey) ?? []).some(
-        (mutation) => mutation.start < referenceStart
+      hasTimelineStartBefore(
+        getMutationTimeline(ctx.rootMutationsByBinding, dependencyKey),
+        referenceStart
       ) ||
-      getRootMutationHazards(
-        ctx.rootMutationHazardsByBinding,
-        dependencyKey
-      ).some(
+      someTimelineEndAtOrBefore(
+        getMutationTimeline(ctx.rootMutationHazardsByBinding, dependencyKey),
+        referenceStart,
         (hazard) =>
           !isKnownPureStaticCall(hazard, ctx) &&
           (!ignoredHazard ||
             hazard.start < ignoredHazard.start ||
-            ignoredHazard.end < hazard.end) &&
-          hazard.end <= referenceStart
+            ignoredHazard.end < hazard.end)
       )
     );
   });
@@ -149,12 +150,14 @@ export const hasBindingMutationBefore = (
 ): boolean => {
   const bindingKey = toMutationBindingKey(binding);
   return (
-    (ctx.rootMutationsByBinding.get(bindingKey) ?? []).some(
-      (mutation) => mutation.start < referenceStart
+    hasTimelineStartBefore(
+      getMutationTimeline(ctx.rootMutationsByBinding, bindingKey),
+      referenceStart
     ) ||
-    getRootMutationHazards(ctx.rootMutationHazardsByBinding, bindingKey).some(
-      (hazard) =>
-        !isKnownPureStaticCall(hazard, ctx) && hazard.end <= referenceStart
+    someTimelineEndAtOrBefore(
+      getMutationTimeline(ctx.rootMutationHazardsByBinding, bindingKey),
+      referenceStart,
+      (hazard) => !isKnownPureStaticCall(hazard, ctx)
     )
   );
 };
@@ -164,9 +167,10 @@ export const hasOpaqueDestructuringHazardBefore = (
   referenceStart: number,
   ctx: ExtractionContext
 ): boolean =>
-  getRootMutationHazards(ctx.rootMutationHazardsByBinding, bindingKey).some(
-    (hazard) =>
-      isOpaqueDestructuringHazard(hazard, ctx) && hazard.end <= referenceStart
+  someTimelineEndAtOrBefore(
+    getMutationTimeline(ctx.rootMutationHazardsByBinding, bindingKey),
+    referenceStart,
+    (hazard) => isOpaqueDestructuringHazard(hazard, ctx)
   );
 
 const hasFunctionContextSyntax = (node: Node): boolean =>
@@ -428,16 +432,18 @@ function collectStaticDestructuringProjection(
   }
 
   const bindingKey = toMutationBindingKey(binding);
-  const targetMutations = ctx.rootMutationsByBinding.get(bindingKey) ?? [];
-  const targetMutationHazards = getRootMutationHazards(
+  const targetMutations = getMutationTimeline(
+    ctx.rootMutationsByBinding,
+    bindingKey
+  );
+  const targetMutationHazards = getMutationTimeline(
     ctx.rootMutationHazardsByBinding,
     bindingKey
   );
   if (
-    targetMutations.some((mutation) => mutation.start < referenceStart) ||
-    targetMutationHazards.some(
-      (hazard) =>
-        isOpaqueDestructuringHazard(hazard, ctx) && hazard.end <= referenceStart
+    hasTimelineStartBefore(targetMutations, referenceStart) ||
+    someTimelineEndAtOrBefore(targetMutationHazards, referenceStart, (hazard) =>
+      isOpaqueDestructuringHazard(hazard, ctx)
     )
   ) {
     return null;

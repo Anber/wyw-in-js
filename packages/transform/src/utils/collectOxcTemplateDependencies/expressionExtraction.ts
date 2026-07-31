@@ -7,6 +7,7 @@ import type { Expression, Program } from 'oxc-parser';
 import { collectOxcPatternRuntimeExpressions } from '../oxc/patterns';
 import { applyOxcReplacements } from '../oxc/replacements';
 import { createOxcLocationLookup } from '../oxc/sourceLocations';
+import * as timeline from './mutationTimeline';
 import {
   analyzeProgram,
   containsTaggedTemplateExpression,
@@ -158,8 +159,9 @@ const requiresSnapshotReplay = (
 
   const bindingKey = toMutationBindingKey(binding);
   if (
-    (ctx.rootMutationsByBinding.get(bindingKey) ?? []).some(
-      (mutation) => mutation.start < ctx.currentExpressionStart
+    timeline.hasTimelineStartBefore(
+      timeline.getMutationTimeline(ctx.rootMutationsByBinding, bindingKey),
+      ctx.currentExpressionStart
     ) ||
     hasOpaqueDestructuringHazardBefore(
       bindingKey,
