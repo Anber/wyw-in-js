@@ -2727,6 +2727,34 @@ describe('shakeOxcToESM', () => {
     expect(code).toContain('wrapper()');
   });
 
+  it.each([
+    ['unrelated then selected', 'mutate(unrelated);\nmutate(source);'],
+    ['selected then unrelated', 'mutate(source);\nmutate(unrelated);'],
+  ])(
+    'keeps caller alias state local to each repeated callable invocation: %s',
+    (_order, calls) => {
+      const { code, width } = runSourceWidth(
+        `
+          const source = { width: 304 };
+          const unrelated = { width: 320 };
+          function mutate(value) {
+            const alias = value;
+            alias.width = 400;
+          }
+          ${calls}
+
+          export { source };
+        `
+      );
+
+      expect(code).toContain('mutate(unrelated)');
+      expect(code).toContain('const alias = value');
+      expect(code).toContain('alias.width = 400');
+      expect(code).toContain('mutate(source)');
+      expect(width).toBe(400);
+    }
+  );
+
   it('keeps an imported callable alias invoked inside a local wrapper', () => {
     const { code, imports } = run(
       ['__wywPreval'],

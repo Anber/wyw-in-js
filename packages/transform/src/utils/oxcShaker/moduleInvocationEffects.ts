@@ -10,22 +10,17 @@ import {
   type OxcRuntimePropertyPath,
 } from '../oxc/projections';
 import {
-  collectClassAccessors,
-  collectClassCallables,
-  collectObjectAccessors,
-  collectObjectCallables,
   getCalleeBinding,
   getStaticMemberPath,
   type ClassNode,
 } from './bindingProvenance';
+import { extendCallableSyntaxCatalogs } from './callableSyntaxFacts';
 import {
   type AliasEnvironment,
   type CallableProvenanceIndex,
 } from './callableProvenanceIndex';
 import {
   collectExternalReferences,
-  collectMutations,
-  forEachModuleExecutedNode,
   forEachModuleExecutedNodeWithParent,
   hasModuleInvocationCandidate,
   isMemberRead,
@@ -33,31 +28,6 @@ import {
   type CallableNode,
 } from './executableIndex';
 import type { ReceiverOperation } from './patternEffects';
-
-const hasModuleExecutedImportedCall = (
-  node: Node,
-  aliasesImportedRoot: (binding: string) => boolean
-): boolean => {
-  let found = false;
-
-  forEachModuleExecutedNode(node, (current) => {
-    if (found) {
-      return;
-    }
-
-    let callee: string | null = null;
-    if (current.type === 'CallExpression' || current.type === 'NewExpression') {
-      callee = getCalleeBinding(current.callee);
-    } else if (current.type === 'TaggedTemplateExpression') {
-      callee = getCalleeBinding(current.tag);
-    }
-    if (callee !== null && aliasesImportedRoot(callee)) {
-      found = true;
-    }
-  });
-
-  return found;
-};
 
 type ModuleInvocationEffects = {
   bindings: Set<string>;
@@ -79,6 +49,7 @@ export const collectModuleInvocationEffects = (
     collectCallableAliases,
     collectCallableExpressionRoots,
     collectContextualRoots,
+    getCallableSyntaxFacts,
     resolveAliasBinding,
     resolveCallableResultRoots,
     resolveCalleeCallables,
@@ -88,6 +59,13 @@ export const collectModuleInvocationEffects = (
   const bindings = new Set<string>();
   let opaqueImportedCall = false;
   const emptyAliases: AliasEnvironment = new Map();
+  const hasImportedCallee = (
+    candidates: ReadonlySet<string>,
+    aliases: AliasEnvironment
+  ): boolean =>
+    [...candidates].some((binding) =>
+      [...resolveAliasBinding(binding, aliases)].some(aliasesImportedRoot)
+    );
 
   const addRoots = (
     value: Node,
@@ -406,128 +384,6 @@ export const collectModuleInvocationEffects = (
     }
   };
 
-  const collectScopedCallables = (
-    body: Node,
-    inherited: ReadonlyMap<string, CallableNode>
-  ): Map<string, CallableNode> => {
-    const scoped = new Map(inherited);
-    forEachModuleExecutedNode(body, (current) => {
-      if (current.type === 'FunctionDeclaration' && current.id) {
-        scoped.set(current.id.name, current as CallableNode);
-        return;
-      }
-
-      if (current.type === 'ClassDeclaration' && current.id) {
-        collectClassCallables(
-          current,
-          createOxcRuntimePropertyPath(current.id.name).key,
-          scoped
-        );
-        return;
-      }
-
-      if (current.type !== 'VariableDeclaration') {
-        return;
-      }
-      current.declarations.forEach((declarator) => {
-        if (declarator.id.type !== 'Identifier' || !declarator.init) {
-          return;
-        }
-
-        const initializer = unwrapAliasExpression(declarator.init);
-        if (
-          initializer.type === 'FunctionExpression' ||
-          initializer.type === 'ArrowFunctionExpression'
-        ) {
-          scoped.set(declarator.id.name, initializer as CallableNode);
-        } else if (initializer.type === 'ClassExpression') {
-          collectClassCallables(
-            initializer,
-            createOxcRuntimePropertyPath(declarator.id.name).key,
-            scoped
-          );
-        } else if (initializer.type === 'ObjectExpression') {
-          collectObjectCallables(
-            initializer,
-            createOxcRuntimePropertyPath(declarator.id.name).key,
-            scoped
-          );
-        }
-      });
-    });
-    return scoped;
-  };
-
-  const collectScopedClasses = (
-    body: Node,
-    inherited: ReadonlyMap<string, ClassNode>
-  ): Map<string, ClassNode> => {
-    const scoped = new Map(inherited);
-    forEachModuleExecutedNode(body, (current) => {
-      if (current.type === 'ClassDeclaration' && current.id) {
-        scoped.set(current.id.name, current as ClassNode);
-        return;
-      }
-
-      if (current.type !== 'VariableDeclaration') {
-        return;
-      }
-      current.declarations.forEach((declarator) => {
-        if (declarator.id.type !== 'Identifier' || !declarator.init) {
-          return;
-        }
-
-        const initializer = unwrapAliasExpression(declarator.init);
-        if (initializer.type === 'ClassExpression') {
-          scoped.set(declarator.id.name, initializer as ClassNode);
-        }
-      });
-    });
-    return scoped;
-  };
-
-  const collectScopedAccessors = (
-    body: Node,
-    inherited: ReadonlyMap<string, CallableNode>
-  ): Map<string, CallableNode> => {
-    const scoped = new Map(inherited);
-    forEachModuleExecutedNode(body, (current) => {
-      if (current.type === 'ClassDeclaration' && current.id) {
-        collectClassAccessors(
-          current,
-          createOxcRuntimePropertyPath(current.id.name).key,
-          scoped
-        );
-        return;
-      }
-
-      if (current.type !== 'VariableDeclaration') {
-        return;
-      }
-      current.declarations.forEach((declarator) => {
-        if (declarator.id.type !== 'Identifier' || !declarator.init) {
-          return;
-        }
-
-        const initializer = unwrapAliasExpression(declarator.init);
-        if (initializer.type === 'ClassExpression') {
-          collectClassAccessors(
-            initializer,
-            createOxcRuntimePropertyPath(declarator.id.name).key,
-            scoped
-          );
-        } else if (initializer.type === 'ObjectExpression') {
-          collectObjectAccessors(
-            initializer,
-            createOxcRuntimePropertyPath(declarator.id.name).key,
-            scoped
-          );
-        }
-      });
-    });
-    return scoped;
-  };
-
   let addClassConstructionEffects: (
     classNode: ClassNode,
     args: readonly (Node | null)[],
@@ -554,15 +410,16 @@ export const collectModuleInvocationEffects = (
     visiting.add(callable);
 
     const aliases = collectCallableAliases(callable, args, callerAliases);
-    const scopedCallables = collectScopedCallables(
-      callable.body,
-      inheritedCallables
-    );
-    const scopedAccessors = collectScopedAccessors(
-      callable.body,
-      inheritedAccessors
-    );
-    const scopedClasses = collectScopedClasses(callable.body, inheritedClasses);
+    const facts = getCallableSyntaxFacts(callable.body);
+    const {
+      accessors: scopedAccessors,
+      callables: scopedCallables,
+      classes: scopedClasses,
+    } = extendCallableSyntaxCatalogs(facts, {
+      accessors: inheritedAccessors,
+      callables: inheritedCallables,
+      classes: inheritedClasses,
+    });
     callable.params.forEach((parameter) => {
       collectPatternNames(parameter).forEach((binding) => {
         resolveAliasBinding(binding, aliases).forEach((root) =>
@@ -571,16 +428,12 @@ export const collectModuleInvocationEffects = (
       });
     });
 
-    collectMutations(callable.body).forEach((binding) => {
+    facts.mutationBindings.forEach((binding) => {
       resolveAliasBinding(binding, aliases).forEach((root) =>
         bindings.add(root)
       );
     });
-    if (
-      hasModuleExecutedImportedCall(callable.body, (binding) =>
-        [...resolveAliasBinding(binding, aliases)].some(aliasesImportedRoot)
-      )
-    ) {
+    if (hasImportedCallee(facts.calleeCandidates, aliases)) {
       opaqueImportedCall = true;
     }
 
@@ -735,18 +588,13 @@ export const collectModuleInvocationEffects = (
         return;
       }
 
-      collectMutations(element.value).forEach((binding) => {
+      const facts = getCallableSyntaxFacts(element.value);
+      facts.mutationBindings.forEach((binding) => {
         resolveAliasBinding(binding, callerAliases).forEach((root) =>
           bindings.add(root)
         );
       });
-      if (
-        hasModuleExecutedImportedCall(element.value, (binding) =>
-          [...resolveAliasBinding(binding, callerAliases)].some(
-            aliasesImportedRoot
-          )
-        )
-      ) {
+      if (hasImportedCallee(facts.calleeCandidates, callerAliases)) {
         opaqueImportedCall = true;
       }
       forEachModuleExecutedNodeWithParent(element.value, (current, parent) => {

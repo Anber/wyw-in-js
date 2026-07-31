@@ -31,6 +31,7 @@ import {
   unwrapAliasExpression,
   type CallableNode,
 } from './executableIndex';
+import { createCallableSyntaxFactsCache } from './callableSyntaxFacts';
 
 type AnyNode = Node & Record<string, unknown>;
 type StatementOwner = { node: Node };
@@ -44,6 +45,7 @@ export const createCallableProvenanceIndex = ({
   bindingOwners: ReadonlyMap<string, StatementOwner>;
   program: Program;
 }) => {
+  const getCallableSyntaxFacts = createCallableSyntaxFactsCache();
   const rootImportedBindings = new Set<string>();
   program.body.forEach((node) => {
     if (
@@ -702,34 +704,13 @@ export const createCallableProvenanceIndex = ({
       addBindingRoots(parameter, roots);
     });
 
-    const assignments: Array<{ pattern: Node; value: Node }> = [];
-    forEachModuleExecutedNode(callable.body, (current) => {
-      if (current.type === 'VariableDeclaration') {
-        current.declarations.forEach((declarator) => {
-          if (declarator.init) {
-            assignments.push({
-              pattern: declarator.id,
-              value: declarator.init,
-            });
-          }
-        });
-      } else if (
-        current.type === 'AssignmentExpression' &&
-        current.operator === '=' &&
-        collectPatternNames(current.left).length > 0
-      ) {
-        assignments.push({
-          pattern: current.left,
-          value: current.right,
-        });
-      }
-    });
+    const { assignmentPairs } = getCallableSyntaxFacts(callable.body);
 
     let changed = true;
-    let passes = assignments.length + 1;
+    let passes = assignmentPairs.length + 1;
     while (changed && passes > 0) {
       passes -= 1;
-      changed = assignments
+      changed = assignmentPairs
         .map(({ pattern, value }) =>
           addBindingRoots(pattern, collectContextualRoots(value, aliases))
         )
@@ -946,6 +927,7 @@ export const createCallableProvenanceIndex = ({
     collectCallableExpressionRoots,
     collectContextualRoots,
     collectInlineCallableCaptureRoots,
+    getCallableSyntaxFacts,
     getExternalStatementReferences,
     nestedAliasSources,
     resolveAliasBinding,
