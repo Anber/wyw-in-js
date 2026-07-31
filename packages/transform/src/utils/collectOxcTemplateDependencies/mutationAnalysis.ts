@@ -285,7 +285,8 @@ const collectRootMutationHazards = (
 ): Map<string, Node[]> => {
   const { bindingsByName } = bindingIndex;
   const hazards = new Map<string, Node[]>();
-  const siblingHazards = new Map<string, Node[]>();
+  const hazardNodes = new Map<string, Set<Node>>();
+  const siblingHazards = new Map<string, Set<Node>>();
   const referencesByNode = new WeakMap<Node, ReferenceIdentifier[]>();
 
   const modeledMutations = new Set<Node>(
@@ -409,25 +410,21 @@ const collectRootMutationHazards = (
     name: string,
     hazard: Node,
     canAffectSiblingImport = false
-  ): boolean => {
+  ): void => {
     const bucket = hazards.get(name) ?? [];
-    let changed = false;
-    if (!bucket.includes(hazard)) {
+    const nodes = hazardNodes.get(name) ?? new Set<Node>();
+    if (!nodes.has(hazard)) {
+      nodes.add(hazard);
       bucket.push(hazard);
       hazards.set(name, bucket);
-      changed = true;
+      hazardNodes.set(name, nodes);
     }
 
     if (canAffectSiblingImport) {
-      const siblingBucket = siblingHazards.get(name) ?? [];
-      if (!siblingBucket.includes(hazard)) {
-        siblingBucket.push(hazard);
-        siblingHazards.set(name, siblingBucket);
-        changed = true;
-      }
+      const siblingBucket = siblingHazards.get(name) ?? new Set<Node>();
+      siblingBucket.add(hazard);
+      siblingHazards.set(name, siblingBucket);
     }
-
-    return changed;
   };
 
   const addReferences = (
@@ -743,102 +740,188 @@ const collectRootMutationHazards = (
     }
   });
 
-  // Propagate actual writes/escapes through local aliases. Merely reading a
-  // source into another const is safe; a later change through that alias is
-  // not. Iterate to cover chains such as `const b = a; const c = b`.
-  const canAffectSiblingImport = (keys: string[], change: Node): boolean =>
-    keys.some(
-      (key) =>
-        (mutations.get(key) ?? []).includes(
-          change as AssignmentExpression | UpdateExpression
-        ) || (siblingHazards.get(key) ?? []).includes(change)
-    );
+  // Propagation capability forms an absent < weak < strong lattice, while
+  // published hazard membership is tracked separately from modeled mutation
+  // seeds. The indexes let each new fact or promotion visit only adjacent
+  // links instead of rescanning the complete alias graph.
+  type WorkItem = { change: Node; key: string; strong: boolean };
+  const factsByBinding = new Map<string, Map<Node, boolean>>();
+  const worklist: WorkItem[] = [];
+  const getFacts = (key: string): Map<Node, boolean> => {
+    const existing = factsByBinding.get(key);
+    if (existing) {
+      return existing;
+    }
+    const created = new Map<Node, boolean>();
+    factsByBinding.set(key, created);
+    return created;
+  };
+  mutations.forEach((changes, key) => {
+    const facts = getFacts(key);
+    changes.forEach((change) => facts.set(change, true));
+  });
+  hazards.forEach((changes, key) => {
+    const facts = getFacts(key);
+    const siblings = siblingHazards.get(key);
+    changes.forEach((change) => {
+      facts.set(
+        change,
+        facts.get(change) === true || (siblings?.has(change) ?? false)
+      );
+    });
+  });
+  factsByBinding.forEach((facts, key) => {
+    facts.forEach((strong, change) => {
+      worklist.push({ change, key, strong });
+    });
+  });
 
-  let propagated = true;
-  while (propagated) {
-    propagated = false;
-    for (const {
-      declaredAt,
-      sourceChangeCanAffectTargets = () => true,
-      sourceChangesAffectTargets = true,
-      sources,
-      targetChangeCanAffectSources = () => true,
-      targets,
-      unprovenResult,
-    } of aliasLinks) {
-      const targetChanges = targets.flatMap((target) => [
-        ...(mutations.get(target) ?? []),
-        ...(hazards.get(target) ?? []),
-      ]);
-      for (const change of targetChanges) {
-        if (
-          change.start < declaredAt ||
-          !targetChangeCanAffectSources(change)
-        ) {
-          continue;
-        }
-
-        if (unprovenResult) {
-          propagated =
-            addHazard(unknownAliasMutationBinding, change) || propagated;
-        }
-        for (const source of sources) {
-          propagated =
-            addHazard(
-              source,
-              change,
-              canAffectSiblingImport(targets, change)
-            ) || propagated;
-        }
+  const publishHazard = (key: string, change: Node): void => {
+    const nodes = hazardNodes.get(key) ?? new Set<Node>();
+    if (nodes.has(change)) {
+      return;
+    }
+    nodes.add(change);
+    hazardNodes.set(key, nodes);
+    const bucket = hazards.get(key) ?? [];
+    bucket.push(change);
+    hazards.set(key, bucket);
+  };
+  const addFact = (key: string, change: Node, sibling: boolean): void => {
+    const facts = getFacts(key);
+    const state = facts.get(change);
+    publishHazard(key, change);
+    if (state === undefined) {
+      facts.set(change, sibling);
+      worklist.push({ change, key, strong: sibling });
+      return;
+    }
+    if (!state && sibling) {
+      facts.set(change, true);
+      worklist.push({ change, key, strong: true });
+    }
+  };
+  const endpointIsStrong = (keys: readonly string[], change: Node): boolean => {
+    for (const key of keys) {
+      if (factsByBinding.get(key)?.get(change) === true) {
+        return true;
       }
+    }
+    return false;
+  };
 
-      const sourceChanges = sourceChangesAffectTargets
-        ? sources.flatMap((source) => [
-            ...(mutations.get(source) ?? []),
-            ...(hazards.get(source) ?? []),
-          ])
-        : [];
-      for (const change of sourceChanges) {
+  const linksBySource = new Map<string, typeof aliasLinks>();
+  const linksByTarget = new Map<string, typeof aliasLinks>();
+  const indexLink = (
+    index: Map<string, typeof aliasLinks>,
+    key: string,
+    link: (typeof aliasLinks)[number]
+  ): void => {
+    const bucket = index.get(key) ?? [];
+    bucket.push(link);
+    index.set(key, bucket);
+  };
+  aliasLinks.forEach((link) => {
+    // Link producers canonicalize both endpoint lists before registration.
+    link.sources.forEach((key) => indexLink(linksBySource, key, link));
+    link.targets.forEach((key) => indexLink(linksByTarget, key, link));
+  });
+
+  type ImportGroup = {
+    bindings: string[];
+    broadcasted: Set<Node>;
+  };
+  const importGroupsByBinding = new Map<string, ImportGroup[]>();
+  const importGroups: ImportGroup[] = [];
+  importedBindingsBySource.forEach((bindings) => {
+    const group = { bindings, broadcasted: new Set<Node>() };
+    importGroups.push(group);
+    bindings.forEach((binding) => {
+      const groups = importGroupsByBinding.get(binding) ?? [];
+      groups.push(group);
+      importGroupsByBinding.set(binding, groups);
+    });
+  });
+
+  let cursor = 0;
+  while (cursor < worklist.length) {
+    const item = worklist[cursor]!;
+    cursor += 1;
+    const current = factsByBinding.get(item.key)?.get(item.change);
+    if (current === undefined || (!item.strong && current)) {
+      continue;
+    }
+
+    const targetLinks = linksByTarget.get(item.key);
+    if (targetLinks) {
+      for (const link of targetLinks) {
         if (
-          change.start < declaredAt ||
-          !sourceChangeCanAffectTargets(change)
+          item.change.start < link.declaredAt ||
+          (link.targetChangeCanAffectSources &&
+            !link.targetChangeCanAffectSources(item.change))
         ) {
           continue;
         }
-
-        for (const target of targets) {
-          propagated =
-            addHazard(
-              target,
-              change,
-              canAffectSiblingImport(sources, change)
-            ) || propagated;
+        if (link.unprovenResult) {
+          addFact(unknownAliasMutationBinding, item.change, false);
+        }
+        const strong = endpointIsStrong(link.targets, item.change);
+        for (const source of link.sources) {
+          addFact(source, item.change, strong);
         }
       }
     }
 
-    for (const bindings of importedBindingsBySource.values()) {
-      const sourceChanges = bindings.flatMap((binding) => [
-        ...(mutations.get(binding) ?? []),
-        ...(siblingHazards.get(binding) ?? []),
-      ]);
-      for (const change of sourceChanges) {
-        for (const binding of bindings) {
-          propagated = addHazard(binding, change, true) || propagated;
+    const sourceLinks = linksBySource.get(item.key);
+    if (sourceLinks) {
+      for (const link of sourceLinks) {
+        if (
+          link.sourceChangesAffectTargets === false ||
+          item.change.start < link.declaredAt ||
+          (link.sourceChangeCanAffectTargets &&
+            !link.sourceChangeCanAffectTargets(item.change))
+        ) {
+          continue;
+        }
+        const strong = endpointIsStrong(link.sources, item.change);
+        for (const target of link.targets) {
+          addFact(target, item.change, strong);
+        }
+      }
+    }
+
+    if (current) {
+      const importGroupsForBinding = importGroupsByBinding.get(item.key);
+      if (importGroupsForBinding) {
+        for (const importGroup of importGroupsForBinding) {
+          if (importGroup.broadcasted.has(item.change)) {
+            continue;
+          }
+          importGroup.broadcasted.add(item.change);
+          for (const binding of importGroup.bindings) {
+            addFact(binding, item.change, true);
+          }
         }
       }
     }
   }
 
-  importedBindingsBySource.forEach((bindings) => {
-    bindings.forEach((binding) => {
-      [
-        ...(mutations.get(binding) ?? []),
-        ...(siblingHazards.get(binding) ?? []),
-      ].forEach((change) => {
-        addHazard(unknownAliasMutationBinding, change);
-      });
-    });
+  // Imported mutation/sibling facts conservatively affect unknown aliases,
+  // but this final publication is intentionally weak and does not re-enter the
+  // worklist.
+  importGroups.forEach(({ broadcasted }) => {
+    broadcasted.forEach((change) =>
+      publishHazard(unknownAliasMutationBinding, change)
+    );
+  });
+
+  // Independent worklist paths can discover nested equal-end nodes in either
+  // order. Canonical source order preserves the stable tie behavior when O6
+  // seals the separate start and end timelines.
+  hazards.forEach((nodes) => {
+    if (nodes.length > 1) {
+      nodes.sort((left, right) => left.start - right.start);
+    }
   });
 
   return hazards;
