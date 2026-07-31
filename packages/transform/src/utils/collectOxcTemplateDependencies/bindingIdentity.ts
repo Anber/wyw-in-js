@@ -1,9 +1,9 @@
 import type { Binding } from './types';
 
 export const memoizeBindingFact = <T>(
-  resolve: (binding: Binding) => T
+  resolve: (binding: Binding) => T,
+  cache: Map<Binding, T> | WeakMap<Binding, T> = new Map()
 ): ((binding: Binding) => T) => {
-  const cache = new Map<Binding, T>();
   return (binding) => {
     const cached = cache.get(binding);
     if (cached !== undefined || cache.has(binding)) {

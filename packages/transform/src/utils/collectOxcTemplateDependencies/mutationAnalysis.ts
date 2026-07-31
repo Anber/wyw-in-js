@@ -20,6 +20,7 @@ import {
   findResolvedReferences as getReferences,
   resolveBindingInIndex,
 } from './bindingResolution';
+import { memoizeBindingFact } from './bindingIdentity';
 import {
   getMutationTimeline,
   sealMutationTimelineMap,
@@ -222,10 +223,14 @@ const collectRootMutations = (
 export const unknownAliasMutationBinding =
   '\0wyw-static-unknown-alias-mutation';
 
+const toScopedMutationBindingKey = memoizeBindingFact(
+  (binding: Binding): string =>
+    `\0wyw-static-scope:${binding.scope.start}:${binding.declaredAt}:${binding.name}`,
+  new WeakMap()
+);
+
 export const toMutationBindingKey = (binding: Binding): string =>
-  binding.isRoot
-    ? binding.name
-    : `\0wyw-static-scope:${binding.scope.start}:${binding.declaredAt}:${binding.name}`;
+  binding.isRoot ? binding.name : toScopedMutationBindingKey(binding);
 
 export const getRootMutationHazards = (
   hazards: ReadonlyMap<string, MutationTimeline<Node>>,
