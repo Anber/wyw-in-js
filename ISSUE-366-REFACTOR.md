@@ -6,8 +6,8 @@
 - Branch: `anber/fix-static-destructuring`
 - Behavioral baseline: `9baff607f6121fc0d33db9119e2ce014d408834b`
 - Refactor/optimization audit base: `30fc5f72`
-- Current implementation checkpoint: `994d184e`
-- Next slice: O5b lazy excluded-hazard views, measured separately against O5a
+- Current implementation checkpoint: `38c1088d`
+- Next slice: O10 canonical binding identities and resolved-reference indexes
 
 Issue #366 static destructuring support is behaviorally complete. The remaining
 work reduces repeated analysis and converges duplicated semantic models without
@@ -98,12 +98,13 @@ revertible.
       (`48b8dbe8`).
 - [x] O5a — fail closed on recursive function evaluation and cache only
       completed static-call purity proofs (`994d184e`).
+- [x] O5b — replace eager full-map proof filtering with a lazy excluded-node
+      timeline view (`38c1088d`).
 
 ### Open
 
 | ID  | Change                                                                                                                  | Required guard                                                                                                   |
 | --- | ----------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| O5b | Replace the full hazard-map clone on proof misses with a lazy excluded-node view.                                       | Preserve lookup semantics; nested partial proofs exclude every active hazard and remain uncached.                |
 | O9  | Index callable result paths by structured root/prefix.                                                                  | Preserve collision-free path equality and descendant semantics.                                                  |
 | O10 | Add canonical `BindingId`s, resolved-reference indexes, and cached mutation identities.                                 | Build on O6's query API; this is a broad semantic foundation.                                                    |
 | O11 | Convert recursive set-returning provenance collectors to caller-owned sinks and share policy-neutral forwarding syntax. | Keep assignment, projection, alias, and abruptness policy consumer-owned.                                        |
@@ -114,13 +115,11 @@ revertible.
 
 ### Order
 
-1. Measure O5b independently against O5a; retain it only if miss-heavy or
-   low-reuse proofs improve without a general-path regression.
-2. Use O10 as the typed base for O9 and later `PatternProgram` work.
-3. Revisit O15 on real wide destructuring/assignment profiles, not the
+1. Use O10 as the typed base for O9 and later `PatternProgram` work.
+2. Revisit O15 on real wide destructuring/assignment profiles, not the
    synthetic stress case alone.
-4. Take O16 only when it shrinks production code and allocations together.
-5. Attempt O11, O12, and O14 only when profiles show material cost.
+3. Take O16 only when it shrinks production code and allocations together.
+4. Attempt O11, O12, and O14 only when profiles show material cost.
 
 ## Acceptance gates
 
@@ -235,6 +234,21 @@ revertible.
   process. All 40 runs preserved 60 transformed files, 56 CSS files, 8,540 CSS
   bytes, and every method count; all tracked median/trimmed regressions stayed
   below 5%. Final verification: 1,432 pass, one skip, one existing todo; type
+  build, full lint, formatting, diff check, and size guard pass.
+- O5b (`38c1088d`) narrows proof contexts to an immutable `get`/`size` lookup
+  and filters only requested timelines. A 10,000-case eager/lazy differential
+  preserved nested exclusion, missing/empty, identity, ordering, and size
+  semantics. Production grew by 28 lines and tests by 89 lines.
+- O5b isolated ABBA improved one miss across 8,192 hazards by 3.99%, nested
+  partial proofs by 11.18%, and distinct low-reuse proofs by 9.75%. The
+  2,048-key adversarial full-read companion was +0.47%; peak RSS was -0.13%.
+  Post-GC 100/500/1,000-context RSS changed -1.78%/+0.81%/-0.09%, with no
+  candidate retention slope and exact aggregate hashes.
+- O5b's first accidentally concurrent large timing run formally failed after
+  two 4.6–5.3-second candidate spikes while other stress benches ran. The
+  declared isolated rerun preserved the same exact 60/56/8,540 signature and
+  all method counts across 40 runs; every median/trimmed delta was at most
+  +2.96%. Final verification: 1,436 pass, one skip, one existing todo; type
   build, full lint, formatting, diff check, and size guard pass.
 
 ## Non-goals
