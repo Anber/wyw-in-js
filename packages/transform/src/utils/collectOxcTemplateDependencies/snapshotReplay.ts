@@ -10,9 +10,9 @@ import {
 import { getOxcNodeChildren } from '../oxc/ast';
 import { collectOxcPatternBindingNames } from '../oxc/patterns';
 import { isOxcFunctionLike } from '../oxc/runtimeSemantics';
+import { findResolvedReferences as getReferences } from './bindingResolution';
 import {
   forEachTimelineFullyContained,
-  findReferences,
   getMutationTimeline,
   resolveBindingAt,
   someTimelineEndAtOrBefore,
@@ -282,12 +282,12 @@ const callReferenceRoot = (node: Node): Node | null => {
 };
 
 const collectSnapshotStatements = (
-  binding: Binding,
+  targetBinding: Binding,
   ctx: ExtractionContext
 ): Node[] => {
-  const { declarator } = binding;
-  const functionScope = binding.scope.parent;
-  const body = findSnapshotBody(ctx.program, binding);
+  const { declarator } = targetBinding;
+  const functionScope = targetBinding.scope.parent;
+  const body = findSnapshotBody(ctx.program, targetBinding);
   if (
     !declarator ||
     !body ||
@@ -366,13 +366,13 @@ const collectSnapshotStatements = (
 
   const targetOwner = directSnapshotOwner(
     body,
-    binding.declaration ?? declarator
+    targetBinding.declaration ?? declarator
   );
   if (!targetOwner) {
     throw snapshotReplayError();
   }
   includeStatement(targetOwner);
-  includeBinding(binding);
+  includeBinding(targetBinding);
 
   let pendingStatementCursor = 0;
   let pendingBindingCursor = 0;
@@ -383,11 +383,10 @@ const collectSnapshotStatements = (
     while (pendingStatementCursor < pendingStatements.length) {
       const statement = pendingStatements[pendingStatementCursor]!;
       pendingStatementCursor += 1;
-      findReferences(statement, ctx.referencesByNode).forEach(
-        ({ name, start }) => {
-          const dependency = resolveBindingAt(ctx, name, start);
-          if (dependency) {
-            includeBinding(dependency);
+      getReferences(statement, ctx.bindingIndex).forEach(
+        ({ binding, name }) => {
+          if (binding) {
+            includeBinding(binding);
             return;
           }
 
@@ -448,12 +447,14 @@ const collectSnapshotStatements = (
         (statement.start <= candidate.scope.start &&
           candidate.scope.end <= statement.end)
     );
-  const assertInternalReference = (name: string, start: number): void => {
+  const assertInternalReference = (
+    name: string,
+    dependency: Binding | null
+  ): void => {
     if (selectedClassNames.has(name)) {
       return;
     }
 
-    const dependency = resolveBindingAt(ctx, name, start);
     if (
       !dependency &&
       (name === 'undefined' || name === 'NaN' || name === 'Infinity')
@@ -563,14 +564,12 @@ const collectSnapshotStatements = (
   };
 
   selected.forEach((statement) => {
-    findReferences(statement, ctx.referencesByNode).forEach(
-      ({ name, start }) => {
-        if (name === 'arguments') {
-          throw snapshotReplayError();
-        }
-        assertInternalReference(name, start);
+    getReferences(statement, ctx.bindingIndex).forEach(({ binding, name }) => {
+      if (name === 'arguments') {
+        throw snapshotReplayError();
       }
-    );
+      assertInternalReference(name, binding);
+    });
     validateNode(statement);
   });
 

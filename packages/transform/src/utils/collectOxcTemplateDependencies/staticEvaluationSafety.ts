@@ -17,8 +17,8 @@ import {
   someOxcPatternNode,
 } from '../oxc/patterns';
 import { getOxcSyntacticPropertyKey } from '../oxc/projections';
+import { findResolvedReferences as getReferences } from './bindingResolution';
 import {
-  findReferences,
   getMutationTimeline,
   hasTimelineEndAtOrBefore,
   someTimelineEndAtOrBefore,
@@ -298,9 +298,9 @@ export const hasLexicalPreDeclarationChange = (
   }
 
   const isPreDeclarationChange = (change: Node): boolean =>
-    findReferences(change, ctx.referencesByNode).some(
-      ({ name, start }) =>
-        name === binding.name && resolveBindingAt(ctx, name, start) === binding
+    getReferences(change, ctx.bindingIndex).some(
+      (reference) =>
+        reference.name === binding.name && reference.binding === binding
     );
 
   return (
@@ -324,13 +324,12 @@ export const isPatternRuntimeExpressionStable = (
   env: ReadonlyMap<string, unknown>,
   stack = new Set<string>()
 ): boolean =>
-  findReferences(expression, ctx.referencesByNode).every(
-    ({ name, start: referenceStart }) => {
+  getReferences(expression, ctx.bindingIndex).every(
+    ({ binding, name, start: referenceStart }) => {
       if (env.has(name)) {
         return true;
       }
 
-      const binding = resolveBindingAt(ctx, name, referenceStart);
       if (!binding || binding.kind === 'param') {
         return false;
       }

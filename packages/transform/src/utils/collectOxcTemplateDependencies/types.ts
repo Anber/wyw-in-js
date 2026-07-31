@@ -84,6 +84,10 @@ export type ReferenceIdentifier = {
   start: number;
 };
 
+export type ResolvedReference = Readonly<
+  ReferenceIdentifier & { binding: Binding | null }
+>;
+
 export type OxcStaticImportReference = {
   imported: 'default' | string;
   importLocal?: string;
@@ -154,7 +158,6 @@ export type ExtractionContext = {
   loc: LocationLookup;
   processorManagedExpressionSpans: Set<string>;
   program: Program;
-  referencesByNode: WeakMap<Node, ReferenceIdentifier[]>;
   replacements: Replacement[];
   rootMutationHazardsByBinding: MutationTimelineLookup;
   rootMutationsByBinding: MutationTimelineMap<

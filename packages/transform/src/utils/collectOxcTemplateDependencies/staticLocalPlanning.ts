@@ -9,6 +9,7 @@ import {
   collectOxcPatternShorthandProperties,
 } from '../oxc/patterns';
 import { toOxcBindingIdentity } from './bindingIdentity';
+import { findResolvedReferences as getReferences } from './bindingResolution';
 import {
   applyExpressionReplacements,
   collectIdentifierReferenceReplacements,
@@ -16,10 +17,8 @@ import {
   replaceIdentifierReferences,
 } from './expressionReplacements';
 import {
-  findReferences,
   getMutationTimeline,
   hasTimelineStartBefore,
-  resolveBindingAt,
   someTimelineEndAtOrBefore,
   toMutationBindingKey,
   unknownAliasMutationBinding,
@@ -115,33 +114,34 @@ export const hasReferencedRootMutationBefore = (
   ignoredReferences: ReadonlySet<string> = new Set(),
   ignoredHazard?: Node
 ): boolean =>
-  findReferences(expression, ctx.referencesByNode).some(({ name, start }) => {
-    if (ignoredReferences.has(name)) {
-      return false;
-    }
+  getReferences(expression, ctx.bindingIndex).some(
+    ({ binding: dependency, name }) => {
+      if (ignoredReferences.has(name)) {
+        return false;
+      }
 
-    const dependency = resolveBindingAt(ctx, name, start);
-    if (!dependency) {
-      return false;
-    }
-    const dependencyKey = toMutationBindingKey(dependency);
+      if (!dependency) {
+        return false;
+      }
+      const dependencyKey = toMutationBindingKey(dependency);
 
-    return (
-      hasTimelineStartBefore(
-        getMutationTimeline(ctx.rootMutationsByBinding, dependencyKey),
-        referenceStart
-      ) ||
-      someTimelineEndAtOrBefore(
-        getMutationTimeline(ctx.rootMutationHazardsByBinding, dependencyKey),
-        referenceStart,
-        (hazard) =>
-          !isKnownPureStaticCall(hazard, ctx) &&
-          (!ignoredHazard ||
-            hazard.start < ignoredHazard.start ||
-            ignoredHazard.end < hazard.end)
-      )
-    );
-  });
+      return (
+        hasTimelineStartBefore(
+          getMutationTimeline(ctx.rootMutationsByBinding, dependencyKey),
+          referenceStart
+        ) ||
+        someTimelineEndAtOrBefore(
+          getMutationTimeline(ctx.rootMutationHazardsByBinding, dependencyKey),
+          referenceStart,
+          (hazard) =>
+            !isKnownPureStaticCall(hazard, ctx) &&
+            (!ignoredHazard ||
+              hazard.start < ignoredHazard.start ||
+              ignoredHazard.end < hazard.end)
+        )
+      );
+    }
+  );
 
 export const hasBindingMutationBefore = (
   binding: Binding,
@@ -256,9 +256,8 @@ export const nestedDestructuringHasCallTimeUncertainty = (
         return true;
       }
 
-      return findReferences(expression, ctx.referencesByNode).some(
-        ({ name, start }) => {
-          const dependency = resolveBindingAt(ctx, name, start);
+      return getReferences(expression, ctx.bindingIndex).some(
+        ({ binding: dependency, name }) => {
           if (!dependency) {
             return !(
               name === 'undefined' ||
@@ -303,10 +302,10 @@ export const expressionHasNestedCallTimeUncertainty = (
   expression: Expression,
   ctx: ExtractionContext
 ): boolean =>
-  findReferences(expression, ctx.referencesByNode).some(({ name, start }) => {
-    const binding = resolveBindingAt(ctx, name, start);
-    return !!binding && nestedDestructuringHasCallTimeUncertainty(binding, ctx);
-  });
+  getReferences(expression, ctx.bindingIndex).some(
+    ({ binding }) =>
+      !!binding && nestedDestructuringHasCallTimeUncertainty(binding, ctx)
+  );
 
 function collectStaticLocalExpression(
   expression: Expression,
@@ -318,15 +317,14 @@ function collectStaticLocalExpression(
   const importedFrom = new Set<string>();
   const imports: OxcStaticImportReference[] = [];
 
-  for (const { name, start } of findReferences(
+  for (const { binding, name, start } of getReferences(
     expression,
-    ctx.referencesByNode
+    ctx.bindingIndex
   )) {
     if (ignoredReferences.has(name)) {
       continue;
     }
 
-    const binding = resolveBindingAt(ctx, name, start);
     if (!binding) {
       return null;
     }
@@ -453,13 +451,12 @@ function collectStaticDestructuringProjection(
     ...ctx,
     currentExpressionStart: declarator.start,
   };
-  const initializerReferences = findReferences(
+  const initializerReferences = getReferences(
     declarator.init,
-    ctx.referencesByNode
+    ctx.bindingIndex
   );
   if (
-    initializerReferences.some(({ name, start }) => {
-      const dependency = resolveBindingAt(ctx, name, start);
+    initializerReferences.some(({ binding: dependency }) => {
       return (
         dependency?.declarator === declarator ||
         (!!dependency &&
@@ -605,19 +602,20 @@ export const declarationInitCode = (
   ctx: ExtractionContext
 ): string => {
   const renamedDependencies = new Map<number, string>();
-  findReferences(init, ctx.referencesByNode).forEach(({ name, start }) => {
-    const dependency = resolveBindingAt(ctx, name, start);
-    if (
-      !dependency ||
-      dependency.importedFrom ||
-      dependency.isRoot ||
-      dependency.declarator?.id.type !== 'Identifier'
-    ) {
-      return;
-    }
+  getReferences(init, ctx.bindingIndex).forEach(
+    ({ binding: dependency, start }) => {
+      if (
+        !dependency ||
+        dependency.importedFrom ||
+        dependency.isRoot ||
+        dependency.declarator?.id.type !== 'Identifier'
+      ) {
+        return;
+      }
 
-    renamedDependencies.set(start, getHoistedBindingName(dependency, ctx));
-  });
+      renamedDependencies.set(start, getHoistedBindingName(dependency, ctx));
+    }
+  );
 
   return renamedDependencies.size > 0
     ? replaceIdentifierReferences(
@@ -661,9 +659,8 @@ export const declarationPatternCode = (
   });
 
   collectOxcPatternRuntimeExpressions(declarator.id).forEach((expression) => {
-    findReferences(expression, ctx.referencesByNode).forEach(
-      ({ end, name, start }) => {
-        const dependency = resolveBindingAt(ctx, name, start);
+    getReferences(expression, ctx.bindingIndex).forEach(
+      ({ binding: dependency, end, start }) => {
         if (
           !dependency ||
           dependency.importedFrom ||

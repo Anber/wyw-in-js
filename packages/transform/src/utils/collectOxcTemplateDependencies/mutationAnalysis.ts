@@ -16,18 +16,20 @@ import {
 import { getOxcNodeChildren } from '../oxc/ast';
 import { collectOxcPatternBindingNames } from '../oxc/patterns';
 import { getOxcSyntacticPropertyKey } from '../oxc/projections';
-import { resolveBindingInIndex } from './bindingResolution';
+import {
+  findResolvedReferences as getReferences,
+  resolveBindingInIndex,
+} from './bindingResolution';
 import {
   getMutationTimeline,
   sealMutationTimelineMap,
 } from './mutationTimeline';
-import { findReferences, visitOxcScopes } from './scopeTraversal';
+import { visitOxcScopes } from './scopeTraversal';
 import type {
   Binding,
   BindingIndex,
   MutationTimeline,
   ProgramAnalysis,
-  ReferenceIdentifier,
   SpanLookup,
 } from './types';
 
@@ -232,7 +234,7 @@ export const getRootMutationHazards = (
 
 const containsOpaqueAliasConstruct = (
   node: Node,
-  referencesByNode: WeakMap<Node, ReferenceIdentifier[]>
+  bindingIndex: BindingIndex
 ): boolean =>
   node.type === 'CallExpression' ||
   node.type === 'NewExpression' ||
@@ -241,18 +243,18 @@ const containsOpaqueAliasConstruct = (
   node.type === 'ThisExpression' ||
   node.type === 'Super' ||
   (node.type === 'MemberExpression' &&
-    findReferences(node, referencesByNode).length === 0) ||
+    getReferences(node, bindingIndex).length === 0) ||
   getOxcNodeChildren(node).some((child) =>
-    containsOpaqueAliasConstruct(child, referencesByNode)
+    containsOpaqueAliasConstruct(child, bindingIndex)
   );
 
 const containsUnprovenAliasSource = (
   node: Node,
-  isUnresolvedReference: (reference: ReferenceIdentifier) => boolean,
-  referencesByNode: WeakMap<Node, ReferenceIdentifier[]>
+  bindingIndex: BindingIndex
 ): boolean =>
-  findReferences(node, referencesByNode).some(isUnresolvedReference) ||
-  containsOpaqueAliasConstruct(node, referencesByNode);
+  getReferences(node, bindingIndex).some(
+    (reference) => reference.binding === null
+  ) || containsOpaqueAliasConstruct(node, bindingIndex);
 
 const collectThrownExpressions = (
   node: Node,
@@ -287,7 +289,6 @@ const collectRootMutationHazards = (
   const hazards = new Map<string, Node[]>();
   const hazardNodes = new Map<string, Set<Node>>();
   const siblingHazards = new Map<string, Set<Node>>();
-  const referencesByNode = new WeakMap<Node, ReferenceIdentifier[]>();
 
   const modeledMutations = new Set<Node>(
     [...mutations.values()].flatMap((nodes) => nodes)
@@ -313,23 +314,16 @@ const collectRootMutationHazards = (
   ): Binding | undefined =>
     resolveBindingInIndex(bindingIndex, name, referenceStart);
 
-  const toReferenceKey = ({ name, start }: ReferenceIdentifier): string => {
-    const binding = resolveReferenceBinding(name, start);
-    return binding ? toMutationBindingKey(binding) : name;
-  };
-
   const collectReferenceKeys = (node: Node): string[] => [
-    ...new Set(findReferences(node, referencesByNode).map(toReferenceKey)),
+    ...new Set(
+      getReferences(node, bindingIndex).map(({ binding, name }) =>
+        binding ? toMutationBindingKey(binding) : name
+      )
+    ),
   ];
 
-  const isUnresolvedReference = ({
-    name,
-    start,
-  }: ReferenceIdentifier): boolean =>
-    resolveReferenceBinding(name, start) === undefined;
-
   const containsUnprovenAlias = (node: Node): boolean =>
-    containsUnprovenAliasSource(node, isUnresolvedReference, referencesByNode);
+    containsUnprovenAliasSource(node, bindingIndex);
 
   const shallowCopyChangeCanAffectBindings = (
     bindings: readonly string[],

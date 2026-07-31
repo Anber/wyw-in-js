@@ -12,6 +12,7 @@ import {
 } from '../oxc/lexicalScopes';
 import { collectOxcPatternBindingNames } from '../oxc/patterns';
 import { isOxcFunctionLike } from '../oxc/runtimeSemantics';
+import { visitOxcScopedReferences } from '../oxc/scopedReferences';
 import type { Binding, ReferenceIdentifier, Scope } from './types';
 
 const createScope = (
@@ -116,76 +117,13 @@ export const visitOxcScopes = (
   );
 };
 
-const hasLocalBinding = (scope: Scope, name: string): boolean => {
-  let current: Scope | null = scope;
-
-  while (current) {
-    if (current.bindings.has(name)) {
-      return true;
-    }
-
-    current = current.parent;
-  }
-
-  return false;
-};
-
-const hasLocalBindingCached = (
-  scope: Scope,
-  name: string,
-  cache: WeakMap<Scope, Map<string, boolean>>
-): boolean => {
-  const scopeCache = cache.get(scope);
-  if (scopeCache?.has(name)) {
-    return scopeCache.get(name)!;
-  }
-
-  const result = hasLocalBinding(scope, name);
-  const nextScopeCache = scopeCache ?? new Map<string, boolean>();
-  nextScopeCache.set(name, result);
-  if (!scopeCache) {
-    cache.set(scope, nextScopeCache);
-  }
-
-  return result;
-};
-
-export const findReferences = (
-  node: Node,
-  referenceCache?: WeakMap<Node, ReferenceIdentifier[]>
-): ReferenceIdentifier[] => {
-  const cachedReferences = referenceCache?.get(node);
-  if (cachedReferences) {
-    return cachedReferences;
-  }
-
+export const findReferences = (node: Node): ReferenceIdentifier[] => {
   const refs = new Map<string, ReferenceIdentifier>();
-  const localBindingCache = new WeakMap<Scope, Map<string, boolean>>();
-
-  visitOxcScopes(
-    node,
-    null,
-    (current, scope, _parent, _ancestors, _runtime, reference) => {
-      if (
-        !reference ||
-        current.type !== 'Identifier' ||
-        hasLocalBindingCached(scope, current.name, localBindingCache)
-      ) {
-        return;
-      }
-
-      const key = `${current.start}:${current.end}:${current.name}`;
-      refs.set(key, {
-        end: current.end,
-        name: current.name,
-        start: current.start,
-      });
-    }
+  visitOxcScopedReferences(node, 'minimal', 'local', (name, start, end) =>
+    refs.set(`${start}:${end}:${name}`, { end, name, start })
   );
 
-  const resolvedReferences = [...refs.values()];
-  referenceCache?.set(node, resolvedReferences);
-  return resolvedReferences;
+  return [...refs.values()];
 };
 
 export const isBindingDeclaredWithin = (

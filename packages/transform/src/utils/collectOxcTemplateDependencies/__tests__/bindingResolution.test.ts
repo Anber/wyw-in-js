@@ -1,8 +1,64 @@
 import { analyzeProgram, parseOxc, resolveBindingAt } from '../scopeAnalysis';
+import {
+  createBindingIndex,
+  findResolvedReferences,
+} from '../bindingResolution';
 
 const filename = '/binding-resolution.ts';
 
 describe('binding resolution cache', () => {
+  it('caches nested shadow references by binding index and node', () => {
+    const code = `
+      const value = 'root';
+      {
+        const value = 'block';
+        (() => value)();
+      }
+      value;
+    `;
+    const program = parseOxc(code, filename);
+    const analysis = analyzeProgram(program);
+    const [rootBinding, blockBinding] =
+      analysis.bindingIndex.bindingsByName.get('value') ?? [];
+    const references = findResolvedReferences(program, analysis.bindingIndex);
+    const valueReferences = references.filter(({ name }) => name === 'value');
+
+    expect(valueReferences.map(({ binding }) => binding)).toEqual([
+      blockBinding,
+      rootBinding,
+    ]);
+    expect(findResolvedReferences(program, analysis.bindingIndex)).toBe(
+      references
+    );
+    expect(
+      findResolvedReferences(program, createBindingIndex(new Map())).every(
+        ({ binding }) => binding === null
+      )
+    ).toBe(true);
+  });
+
+  it('resolves same-scope var redeclarations at each exact reference', () => {
+    const code = `
+      var value = 'first';
+      value;
+      var value = 'second';
+      value;
+    `;
+    const program = parseOxc(code, filename);
+    const analysis = analyzeProgram(program);
+    const [firstBinding, secondBinding] =
+      analysis.bindingIndex.bindingsByName.get('value') ?? [];
+    const valueReferences = findResolvedReferences(
+      program,
+      analysis.bindingIndex
+    ).filter(({ name }) => name === 'value');
+
+    expect(valueReferences.map(({ binding }) => binding)).toEqual([
+      firstBinding,
+      secondBinding,
+    ]);
+  });
+
   it('preserves repeated positive and negative resolutions', () => {
     const code = 'const source = 1; source; missing;';
     const analysis = analyzeProgram(parseOxc(code, filename));

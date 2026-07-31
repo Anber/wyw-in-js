@@ -7,10 +7,11 @@ import {
   collectOxcPatternRuntimeExpressions,
 } from '../oxc/patterns';
 import { isOxcFunctionLike } from '../oxc/runtimeSemantics';
+import { findResolvedReferences as getReferences } from './bindingResolution';
 import { lookupStaticBinding } from './staticBindings';
 import * as timeline from './mutationTimeline';
 import * as recursiveProof from './recursiveProof';
-import { findReferences, resolveBindingAt } from './scopeAnalysis';
+import { resolveBindingAt } from './scopeAnalysis';
 import {
   getBindingDirectTimeline,
   getBindingHazardTimeline,
@@ -61,28 +62,25 @@ const hasReferencedRootMutationBetween = (
   end: number,
   ctx: ExtractionContext
 ): boolean =>
-  findReferences(expression, ctx.referencesByNode).some(
-    ({ name, start: referenceStart }) => {
-      const binding = resolveBindingAt(ctx, name, referenceStart);
-      if (!binding) {
-        return false;
-      }
-
-      return (
-        timeline.hasTimelineStartInRange(
-          getBindingDirectTimeline(binding, ctx),
-          start,
-          end
-        ) ||
-        timeline.someTimelineFullyContained(
-          getBindingHazardTimeline(binding, ctx),
-          start,
-          end,
-          (hazard) => !isKnownPureStaticCall(hazard, ctx)
-        )
-      );
+  getReferences(expression, ctx.bindingIndex).some(({ binding }) => {
+    if (!binding) {
+      return false;
     }
-  );
+
+    return (
+      timeline.hasTimelineStartInRange(
+        getBindingDirectTimeline(binding, ctx),
+        start,
+        end
+      ) ||
+      timeline.someTimelineFullyContained(
+        getBindingHazardTimeline(binding, ctx),
+        start,
+        end,
+        (hazard) => !isKnownPureStaticCall(hazard, ctx)
+      )
+    );
+  });
 
 export const isKnownPureStaticCall = (
   node: Node,
@@ -162,24 +160,21 @@ const hasReferencedRootMutationHazardBefore = (
     return false;
   }
 
-  return findReferences(expression, ctx.referencesByNode).some(
-    ({ name, start: referenceStart }) => {
-      const binding = resolveBindingAt(ctx, name, referenceStart);
-      if (!binding) {
-        return false;
-      }
-
-      return timeline.someTimelineEndAtOrBefore(
-        getBindingHazardTimeline(binding, ctx),
-        end,
-        (hazard) =>
-          !isKnownPureStaticCall(hazard, ctx) &&
-          (!ignoredHazard ||
-            hazard.start < ignoredHazard.start ||
-            ignoredHazard.end < hazard.end)
-      );
+  return getReferences(expression, ctx.bindingIndex).some(({ binding }) => {
+    if (!binding) {
+      return false;
     }
-  );
+
+    return timeline.someTimelineEndAtOrBefore(
+      getBindingHazardTimeline(binding, ctx),
+      end,
+      (hazard) =>
+        !isKnownPureStaticCall(hazard, ctx) &&
+        (!ignoredHazard ||
+          hazard.start < ignoredHazard.start ||
+          ignoredHazard.end < hazard.end)
+    );
+  });
 };
 
 const hasBindingMutationHazardBetween = (

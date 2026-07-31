@@ -1,17 +1,20 @@
-import type { Binding, BindingIndex, ExtractionContext, Scope } from './types';
+import type { Node } from 'oxc-parser';
 
-const resolutionCaches = new WeakMap<
-  BindingIndex,
-  Map<number, Binding | string>
->();
+import { findReferences } from './scopeTraversal';
+import type { Binding, BindingIndex, ResolvedReference, Scope } from './types';
 
-const getResolutionCache = (
-  index: BindingIndex
-): Map<number, Binding | string> => {
-  let cache = resolutionCaches.get(index);
+type BindingAnalysisCache = {
+  references: WeakMap<Node, readonly ResolvedReference[]>;
+  resolutions: Map<number, Binding | string>;
+};
+
+const analysisCaches = new WeakMap<BindingIndex, BindingAnalysisCache>();
+
+const getAnalysisCache = (index: BindingIndex): BindingAnalysisCache => {
+  let cache = analysisCaches.get(index);
   if (!cache) {
-    cache = new Map();
-    resolutionCaches.set(index, cache);
+    cache = { references: new WeakMap(), resolutions: new Map() };
+    analysisCaches.set(index, cache);
   }
 
   return cache;
@@ -79,7 +82,7 @@ export const resolveBindingInIndex = (
 
   // Multiple declarations require a candidate search, so repeated queries
   // are worth memoizing across analysis consumers.
-  const cache = getResolutionCache(index);
+  const cache = getAnalysisCache(index).resolutions;
   const cached = cache.get(referenceStart);
   if (typeof cached === 'string' ? cached === name : cached?.name === name) {
     return typeof cached === 'string' ? undefined : cached;
@@ -133,11 +136,28 @@ export const resolveBindingInIndex = (
 };
 
 export const resolveBindingAt = (
-  ctx: Pick<ExtractionContext, 'bindingIndex'>,
+  ctx: { bindingIndex: BindingIndex },
   name: string,
   referenceStart: number
 ): Binding | undefined =>
   resolveBindingInIndex(ctx.bindingIndex, name, referenceStart);
+
+export const findResolvedReferences = (
+  node: Node,
+  bindingIndex: BindingIndex
+): readonly ResolvedReference[] => {
+  const cache = getAnalysisCache(bindingIndex).references;
+  const references =
+    cache.get(node) ??
+    findReferences(node).map(({ end, name, start }) => ({
+      binding: resolveBindingInIndex(bindingIndex, name, start) ?? null,
+      end,
+      name,
+      start,
+    }));
+  cache.set(node, references);
+  return references;
+};
 
 export const createBindingIndex = (
   bindingsByName: ReadonlyMap<string, readonly Binding[]>,

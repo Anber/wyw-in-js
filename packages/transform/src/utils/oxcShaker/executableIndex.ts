@@ -5,12 +5,11 @@ import {
   type OxcAssignmentTargetLeaf,
 } from '../oxc/assignmentTargets';
 import { getOxcNodeChildren as getChildren } from '../oxc/ast';
-import {
-  visitOxcLexicalScopes,
-  type OxcLexicalScopeBoundary,
-} from '../oxc/lexicalScopes';
-import { collectOxcPatternIdentifierNames as collectPatternNames } from '../oxc/patterns';
 import { unwrapOxcRuntimeExpression } from '../oxc/runtimeSemantics';
+import {
+  visitOxcScopedReferences,
+  type OxcScopedRootPolicy,
+} from '../oxc/scopedReferences';
 
 export type CallableNode = Node & {
   body: Node;
@@ -20,139 +19,23 @@ export type CallableNode = Node & {
 export const unwrapAliasExpression = (node: Node): Node =>
   unwrapOxcRuntimeExpression(node, true);
 
-const collectScopedReferences = (
+const collectScopedReferenceNames = (
   node: Node,
-  rootBindingsAreExternal: boolean
+  rootPolicy: OxcScopedRootPolicy
 ): Set<string> => {
-  type ReferenceScope = {
-    activeFrom: number;
-    bindings: Set<string>;
-    functionBoundary: boolean;
-    parent: ReferenceScope | null;
-  };
-  type PendingReference = {
-    name: string;
-    scope: ReferenceScope;
-    start: number;
-  };
-
-  const createScope = (
-    parent: ReferenceScope | null,
-    boundary: OxcLexicalScopeBoundary
-  ): ReferenceScope => ({
-    activeFrom:
-      boundary.kind === 'switch' ? boundary.start : Number.NEGATIVE_INFINITY,
-    bindings: new Set(),
-    functionBoundary: boundary.functionBoundary,
-    parent,
-  });
-  const initialScope: ReferenceScope | null =
-    node.type === 'Program'
-      ? null
-      : {
-          activeFrom: Number.NEGATIVE_INFINITY,
-          bindings: new Set(),
-          functionBoundary: true,
-          parent: null,
-        };
-  let rootBindingScope = initialScope;
-  const pendingReferences: PendingReference[] = [];
-  const addPattern = (
-    scope: ReferenceScope,
-    pattern: Node | null | undefined
-  ): void => {
-    collectPatternNames(pattern).forEach((binding) =>
-      scope.bindings.add(binding)
-    );
-  };
-  const nearestFunctionScope = (scope: ReferenceScope): ReferenceScope => {
-    let current = scope;
-    while (!current.functionBoundary && current.parent) {
-      current = current.parent;
-    }
-    return current;
-  };
-  visitOxcLexicalScopes(
-    node,
-    initialScope,
-    (parent, boundary) => {
-      const scope = createScope(parent, boundary);
-      if (boundary.root) {
-        rootBindingScope = scope;
-      }
-      return scope;
-    },
-    (current, currentScope, _parent, _ancestors, _runtime, reference) => {
-      const isFunction =
-        current.type === 'FunctionDeclaration' ||
-        current.type === 'FunctionExpression' ||
-        current.type === 'ArrowFunctionExpression';
-
-      if (current.type === 'FunctionDeclaration' && current.id) {
-        addPattern(currentScope.parent ?? currentScope, current.id);
-      } else if (current.type === 'FunctionExpression' && current.id) {
-        addPattern(currentScope, current.id);
-      }
-
-      if (isFunction) {
-        current.params.forEach((parameter) =>
-          addPattern(currentScope, parameter)
-        );
-      }
-
-      if (current.type === 'ClassExpression' && current.id) {
-        addPattern(currentScope, current.id);
-      } else if (current.type === 'VariableDeclaration') {
-        const declarationScope =
-          current.kind === 'var'
-            ? nearestFunctionScope(currentScope)
-            : currentScope;
-        current.declarations.forEach((declaration) =>
-          addPattern(declarationScope, declaration.id)
-        );
-      } else if (
-        (current.type === 'ClassDeclaration' ||
-          current.type === 'TSEnumDeclaration') &&
-        current.id
-      ) {
-        addPattern(currentScope, current.id);
-      } else if (current.type === 'CatchClause') {
-        addPattern(currentScope, current.param);
-      } else if (current.type === 'ImportDeclaration') {
-        current.specifiers.forEach((specifier) =>
-          addPattern(currentScope, specifier.local)
-        );
-      }
-
-      if (reference && current.type === 'Identifier') {
-        pendingReferences.push({
-          name: current.name,
-          scope: currentScope,
-          start: current.start,
-        });
-      }
-    }
-  );
-
   const references = new Set<string>();
-  pendingReferences.forEach(({ name, scope: referenceScope, start }) => {
-    let scope: ReferenceScope | null = referenceScope;
-    while (scope && (start < scope.activeFrom || !scope.bindings.has(name))) {
-      scope = scope.parent;
-    }
-    if (!scope || (rootBindingsAreExternal && scope === rootBindingScope)) {
-      references.add(name);
-    }
-  });
+  visitOxcScopedReferences(node, 'full', rootPolicy, (name) =>
+    references.add(name)
+  );
 
   return references;
 };
 
 export const collectExternalReferences = (node: Node): Set<string> =>
-  collectScopedReferences(node, false);
+  collectScopedReferenceNames(node, 'local');
 
 export const collectModuleReferences = (node: Node): Set<string> =>
-  collectScopedReferences(node, true);
+  collectScopedReferenceNames(node, 'external');
 
 export const getMutatedBinding = (node: Node): string | null => {
   const current = unwrapAliasExpression(node);

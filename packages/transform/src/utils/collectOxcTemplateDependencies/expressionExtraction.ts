@@ -7,12 +7,12 @@ import type { Expression, Program } from 'oxc-parser';
 import { collectOxcPatternRuntimeExpressions } from '../oxc/patterns';
 import { applyOxcReplacements } from '../oxc/replacements';
 import { createOxcLocationLookup } from '../oxc/sourceLocations';
+import { findResolvedReferences as getReferences } from './bindingResolution';
 import * as timeline from './mutationTimeline';
 import {
   analyzeProgram,
   containsTaggedTemplateExpression,
   createSpanLookup,
-  findReferences,
   getSourceLocation,
   isBindingDeclaredWithin,
   parseOxc,
@@ -125,9 +125,8 @@ const dependsOnLocalDestructuring = (
     return false;
   }
 
-  return findReferences(declarator.init, ctx.referencesByNode).some(
-    ({ name, start }) => {
-      const dependency = resolveBindingAt(ctx, name, start);
+  return getReferences(declarator.init, ctx.bindingIndex).some(
+    ({ binding: dependency }) => {
       return (
         !!dependency &&
         dependency.declarator !== declarator &&
@@ -210,9 +209,8 @@ const requiresSnapshotReplay = (
       ctx.currentExpressionStart,
       ctx
     ) ||
-    findReferences(declarator.init, ctx.referencesByNode).some(
-      ({ name, start }) => {
-        const dependency = resolveBindingAt(ctx, name, start);
+    getReferences(declarator.init, ctx.bindingIndex).some(
+      ({ binding: dependency }) => {
         return (
           !!dependency &&
           hasOpaqueDestructuringHazardBefore(
@@ -245,20 +243,21 @@ const assertHoistable = (
     ...collectOxcPatternRuntimeExpressions(binding.declarator.id),
   ];
   hoistSources.forEach((source) => {
-    findReferences(source, ctx.referencesByNode).forEach(({ name, start }) => {
-      const nextBinding = resolveBindingAt(ctx, name, start);
-      if (!nextBinding || nextBinding.declarator === binding.declarator) {
-        return;
-      }
+    getReferences(source, ctx.bindingIndex).forEach(
+      ({ binding: nextBinding }) => {
+        if (!nextBinding || nextBinding.declarator === binding.declarator) {
+          return;
+        }
 
-      if (nextBinding.kind === 'param') {
-        throw new Error(
-          `This identifier cannot be used in the template, because it is a function parameter.`
-        );
-      }
+        if (nextBinding.kind === 'param') {
+          throw new Error(
+            `This identifier cannot be used in the template, because it is a function parameter.`
+          );
+        }
 
-      assertHoistable(nextBinding, ctx, [...stack, bindingKey]);
-    });
+        assertHoistable(nextBinding, ctx, [...stack, bindingKey]);
+      }
+    );
   });
 };
 
@@ -283,12 +282,13 @@ const addHoistedDeclaration = (
     ...collectOxcPatternRuntimeExpressions(binding.declarator.id),
   ];
   hoistSources.forEach((source) => {
-    findReferences(source, ctx.referencesByNode).forEach(({ name, start }) => {
-      const dependency = resolveBindingAt(ctx, name, start);
-      if (dependency && dependency.declarator !== binding.declarator) {
-        addHoistedDeclaration(dependency, ctx, [...stack, bindingKey]);
+    getReferences(source, ctx.bindingIndex).forEach(
+      ({ binding: dependency }) => {
+        if (dependency && dependency.declarator !== binding.declarator) {
+          addHoistedDeclaration(dependency, ctx, [...stack, bindingKey]);
+        }
       }
-    });
+    );
   });
 
   if (!ctx.hoistedDeclarations.has(bindingKey)) {
@@ -353,7 +353,7 @@ const extractExpression = (
   snapshotWriteFallbackBindings: ReadonlySet<Binding>
 ): ExtractedExpression => {
   const source = ctx.code.slice(expression.start, expression.end);
-  const expressionReferences = findReferences(expression, ctx.referencesByNode);
+  const expressionReferences = getReferences(expression, ctx.bindingIndex);
   const requiresSnapshotReplayForExpression = memoizeBindingFact((binding) =>
     requiresSnapshotReplay(binding, ctx)
   );
@@ -377,12 +377,11 @@ const extractExpression = (
     throw snapshotReplayError();
   }
   if (
-    expressionReferences.some(({ name, start }) => {
+    expressionReferences.some(({ binding, start }) => {
       if (eagerNodeStarts.has(start)) {
         return false;
       }
 
-      const binding = resolveBindingAt(ctx, name, start);
       return !!binding && snapshotWriteFallbackBindings.has(binding);
     })
   ) {
@@ -397,8 +396,7 @@ const extractExpression = (
     throw new OxcSnapshotWriteUnsupportedError();
   }
 
-  const snapshotBindings = expressionReferences.flatMap(({ name, start }) => {
-    const binding = resolveBindingAt(ctx, name, start);
+  const snapshotBindings = expressionReferences.flatMap(({ binding }) => {
     return binding &&
       requiresSnapshotReplayForExpression(binding) &&
       !snapshotWriteFallbackBindings.has(binding)
@@ -414,8 +412,7 @@ const extractExpression = (
 
   const identityReferencesAreRootVisible =
     expressionReferences.length > 0 &&
-    expressionReferences.every(({ name, start }) => {
-      const binding = resolveBindingAt(ctx, name, start);
+    expressionReferences.every(({ binding }) => {
       return !binding || !!binding.importedFrom || binding.isRoot;
     });
   let preserveRuntimeIdentity = false;
@@ -466,8 +463,7 @@ const extractExpression = (
   let hasInlinableLocalReference = false;
   let hasSnapshotReplay = preserveRuntimeIdentity;
 
-  expressionReferences.forEach(({ name, start }) => {
-    const binding = resolveBindingAt(ctx, name, start);
+  expressionReferences.forEach(({ binding, name, start }) => {
     if (!binding) {
       return;
     }
@@ -713,7 +709,6 @@ const extractExpressions = (
       processorManagedExpressionSpans.map(expressionSpanKey)
     ),
     program,
-    referencesByNode: new WeakMap(),
     replacements: [],
     rootMutationHazardsByBinding: analysis.rootMutationHazardsByBinding,
     rootMutationsByBinding: analysis.rootMutationsByBinding,
@@ -864,7 +859,6 @@ export const evaluateOxcStaticExpressionAt = (
     loc: createOxcLocationLookup(code),
     processorManagedExpressionSpans: new Set(),
     program,
-    referencesByNode: new WeakMap(),
     replacements: [],
     rootMutationHazardsByBinding: analysis.rootMutationHazardsByBinding,
     rootMutationsByBinding: analysis.rootMutationsByBinding,
