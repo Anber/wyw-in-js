@@ -82,12 +82,26 @@ export const sealMutationTimeline = <T extends MutationSpan>(
     return emptyMutationTimeline;
   }
 
-  const byStart = Object.freeze(
-    [...nodes].sort((left, right) => left.start - right.start)
-  );
-  const byEnd = Object.freeze(
-    [...nodes].sort((left, right) => left.end - right.end)
-  );
+  const byStart = [...nodes];
+  let preservesInputOrder = true;
+  for (let index = 1; index < byStart.length; index += 1) {
+    if (byStart[index - 1]!.start > byStart[index]!.start) {
+      preservesInputOrder = false;
+      byStart.sort((left, right) => left.start - right.start);
+      break;
+    }
+  }
+  Object.freeze(byStart);
+
+  let hasSameEndOrder = preservesInputOrder;
+  for (let index = 1; hasSameEndOrder && index < byStart.length; index += 1) {
+    if (byStart[index - 1]!.end > byStart[index]!.end) {
+      hasSameEndOrder = false;
+    }
+  }
+  const byEnd = hasSameEndOrder
+    ? byStart
+    : Object.freeze([...nodes].sort((left, right) => left.end - right.end));
   return Object.freeze({ byEnd, byStart });
 };
 
@@ -112,13 +126,17 @@ export const withoutTimelineNode = <T extends MutationSpan>(
     return emptyMutationTimeline;
   }
 
+  const byStart = Object.freeze(
+    timeline.byStart.filter((candidate) => candidate !== node)
+  );
   return Object.freeze({
-    byEnd: Object.freeze(
-      timeline.byEnd.filter((candidate) => candidate !== node)
-    ),
-    byStart: Object.freeze(
-      timeline.byStart.filter((candidate) => candidate !== node)
-    ),
+    byEnd:
+      timeline.byEnd === timeline.byStart
+        ? byStart
+        : Object.freeze(
+            timeline.byEnd.filter((candidate) => candidate !== node)
+          ),
+    byStart,
   });
 };
 
