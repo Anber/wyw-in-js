@@ -9,6 +9,7 @@ import {
 import { isOxcFunctionLike } from '../oxc/runtimeSemantics';
 import { lookupStaticBinding } from './staticBindings';
 import * as timeline from './mutationTimeline';
+import * as recursiveProof from './recursiveProof';
 import { findReferences, resolveBindingAt } from './scopeAnalysis';
 import {
   getBindingDirectTimeline,
@@ -48,6 +49,7 @@ import {
   uninitializedStaticBinding,
   unwrapOxcStaticCallableValue,
   type EvalEnv,
+  type EvaluationStack,
 } from './staticEvaluationRuntime';
 import type { Binding, ExtractionContext } from './types';
 
@@ -124,31 +126,34 @@ export const isKnownPureStaticCall = (
     return false;
   }
 
-  const proofHazards = new Map(ctx.rootMutationHazardsByBinding);
-  proofHazards.forEach((hazardTimeline, key) => {
-    const proofTimeline = timeline.withoutTimelineNode(hazardTimeline, node);
-    if (proofTimeline !== hazardTimeline) {
-      proofHazards.set(key, proofTimeline);
-    }
-  });
-  const proofCtx: ExtractionContext = {
-    ...ctx,
-    currentExpressionStart: node.start,
-    rootMutationHazardsByBinding: proofHazards,
-  };
-  const isScalar = (value: unknown): boolean =>
-    value === null ||
-    typeof value === 'string' ||
-    typeof value === 'number' ||
-    typeof value === 'boolean' ||
-    typeof value === 'bigint';
-  const argumentsAreScalar = node.arguments.every(
-    (argument) =>
-      argument.type !== 'SpreadElement' &&
-      isScalar(evaluateStatic(argument, proofCtx))
-  );
+  return recursiveProof.run(node, ctx.staticCallProof, () => {
+    const proofHazards = new Map(ctx.rootMutationHazardsByBinding);
+    proofHazards.forEach((hazardTimeline, key) => {
+      const proofTimeline = timeline.withoutTimelineNode(hazardTimeline, node);
+      if (proofTimeline !== hazardTimeline) {
+        proofHazards.set(key, proofTimeline);
+      }
+    });
+    const proofCtx: ExtractionContext = {
+      ...ctx,
+      currentExpressionStart: node.start,
+      rootMutationHazardsByBinding: proofHazards,
+      staticCallProof: recursiveProof.partial(ctx.staticCallProof),
+    };
+    const isScalar = (value: unknown): boolean =>
+      value === null ||
+      typeof value === 'string' ||
+      typeof value === 'number' ||
+      typeof value === 'boolean' ||
+      typeof value === 'bigint';
+    const argumentsAreScalar = node.arguments.every(
+      (argument) =>
+        argument.type !== 'SpreadElement' &&
+        isScalar(evaluateStatic(argument, proofCtx))
+    );
 
-  return argumentsAreScalar && isScalar(evaluateStatic(node, proofCtx));
+    return argumentsAreScalar && isScalar(evaluateStatic(node, proofCtx));
+  });
 };
 
 const hasReferencedRootMutationHazardBefore = (
@@ -213,7 +218,7 @@ export const evaluateStatic = (
   expression: Expression,
   ctx: ExtractionContext,
   env: EvalEnv = new Map(),
-  stack: string[] = []
+  stack: EvaluationStack = []
 ): unknown | undefined => {
   if (
     expression.type === 'TSAsExpression' ||
@@ -867,7 +872,7 @@ export const evaluateStatic = (
         args,
         ctx,
         env,
-        [...stack, `<inline:${inlineCallee.start}>`],
+        stack,
         evaluateStatic
       );
     }
@@ -901,7 +906,7 @@ export const evaluateStatic = (
           args,
           ctx,
           env,
-          [...stack, expression.callee.name],
+          stack,
           evaluateStatic
         );
       }
@@ -971,14 +976,7 @@ export const evaluateStatic = (
 
       const fn = binding?.functionNode ?? binding?.declarator?.init;
       if (fn && isOxcFunctionLike(fn)) {
-        return evaluateFunctionCall(
-          fn,
-          args,
-          ctx,
-          env,
-          [...stack, expression.callee.name],
-          evaluateStatic
-        );
+        return evaluateFunctionCall(fn, args, ctx, env, stack, evaluateStatic);
       }
     }
 

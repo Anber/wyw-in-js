@@ -60,6 +60,7 @@ import {
   replaceStaticLocalReferences,
 } from './staticLocalPlanning';
 import { inferSnapshotExpressionKind } from './snapshotValueAnalysis';
+import * as recursiveProof from './recursiveProof';
 import type {
   Binding,
   ExtractedExpression,
@@ -647,22 +648,18 @@ const getInsertionPoints = (
   let ownerIndex = 0;
 
   expressions.forEach((expression) => {
+    const { end, start } = expression;
     while (
       ownerIndex < program.body.length - 1 &&
-      program.body[ownerIndex]!.end < expression.start
+      program.body[ownerIndex]!.end < start
     ) {
       ownerIndex += 1;
     }
 
     let owner: Program['body'][number] | undefined = program.body[ownerIndex];
-    if (
-      !owner ||
-      owner.start > expression.start ||
-      owner.end < expression.end
-    ) {
+    if (!owner || owner.start > start || owner.end < end) {
       owner = program.body.find(
-        (statement) =>
-          statement.start <= expression.start && statement.end >= expression.end
+        (statement) => statement.start <= start && statement.end >= end
       );
     }
 
@@ -722,6 +719,7 @@ const extractExpressions = (
     rootMutationHazardsByBinding: analysis.rootMutationHazardsByBinding,
     rootMutationsByBinding: analysis.rootMutationsByBinding,
     staticBindings,
+    staticCallProof: recursiveProof.create(),
     staticImportAliases: new Map(),
     staticValueCandidates: [],
     staticValues: [],
@@ -873,6 +871,7 @@ export const evaluateOxcStaticExpressionAt = (
     rootMutationHazardsByBinding: analysis.rootMutationHazardsByBinding,
     rootMutationsByBinding: analysis.rootMutationsByBinding,
     staticBindings,
+    staticCallProof: recursiveProof.create(),
     staticImportAliases: new Map(),
     staticValueCandidates: [],
     staticValues: [],

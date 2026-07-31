@@ -488,6 +488,78 @@ describe('evaluateOxcStaticExpression', () => {
     expect(evaluateLastExpression(code, 'run(304) + run(400)')).toBe(704);
   });
 
+  it.each([
+    [
+      'direct recursion',
+      `
+        function run() {
+          return run();
+        }
+        run();
+      `,
+      'run()',
+    ],
+    [
+      'mutual recursion',
+      `
+        function first() {
+          return second();
+        }
+        function second() {
+          return first();
+        }
+        first();
+      `,
+      'first()',
+    ],
+  ])('fails closed for %s', (_name, code, expression) => {
+    expect(evaluateLastExpression(code, expression)).toBeUndefined();
+  });
+
+  it('distinguishes same-named nested function nodes', () => {
+    const code = `
+      function outer() {
+        function outer() {
+          return 304;
+        }
+        return outer();
+      }
+      outer();
+    `;
+
+    expect(evaluateLastExpression(code, 'outer()')).toBe(304);
+  });
+
+  it.each([
+    [
+      'direct recursion',
+      `
+        function loop(value) {
+          return loop(value);
+        }
+        const source = { value: 1 };
+        loop(source);
+        source.value;
+      `,
+    ],
+    [
+      'mutual recursion',
+      `
+        function first(value) {
+          return second(value);
+        }
+        function second(value) {
+          return first(value);
+        }
+        const source = { value: 1 };
+        first(source);
+        source.value;
+      `,
+    ],
+  ])('fails closed for a %s purity hazard', (_name, code) => {
+    expect(evaluateLastExpression(code, 'source.value')).toBeUndefined();
+  });
+
   it('keeps hoisted function values scoped to one invocation', () => {
     const code = `
       function make() {

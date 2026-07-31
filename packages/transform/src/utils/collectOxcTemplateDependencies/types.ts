@@ -13,6 +13,7 @@ import type {
 import type { OxcValueReplacement } from '../oxc/replacements';
 import type { OxcFunctionLike } from '../oxc/runtimeSemantics';
 import type { OxcLocationLookup } from '../oxc/sourceLocations';
+import type { RecursiveProofState } from './recursiveProof';
 
 export type OxcFunctionLikeNode = OxcFunctionLike;
 export type BindingKind = 'function' | 'import' | 'param' | 'variable';
@@ -157,6 +158,7 @@ export type ExtractionContext = {
   >;
   staticBindings?: StaticBindings;
   staticImportAliases: Map<string, string>;
+  staticCallProof: RecursiveProofState<Node>;
   staticValueCandidates: OxcStaticValueCandidate[];
   staticValues: OxcStaticValue[];
   usedNames: Set<string>;

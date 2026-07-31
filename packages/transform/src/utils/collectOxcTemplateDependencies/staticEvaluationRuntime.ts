@@ -45,8 +45,10 @@ type EvaluateStatic = (
   expression: Expression,
   ctx: ExtractionContext,
   env?: EvalEnv,
-  stack?: string[]
+  stack?: EvaluationStack
 ) => unknown | undefined;
+
+export type EvaluationStack = Array<string | OxcFunctionLikeNode>;
 
 type IsKnownPureStaticCall = (node: Node, ctx: ExtractionContext) => boolean;
 
@@ -99,7 +101,7 @@ export const evaluateStaticPropertyKey = (
   computed: boolean,
   ctx: ExtractionContext,
   env: EvalEnv,
-  stack: string[],
+  stack: EvaluationStack,
   evaluateStatic: EvaluateStatic
 ): string | number | null => {
   const syntactic = getOxcSyntacticPropertyKey(keyNode, computed);
@@ -120,7 +122,7 @@ const evaluateObjectExpressionMember = (
   propertyKey: string | number,
   ctx: ExtractionContext,
   env: EvalEnv,
-  stack: string[],
+  stack: EvaluationStack,
   evaluateStatic: EvaluateStatic
 ): unknown | undefined => {
   if (expression.type !== 'ObjectExpression') {
@@ -158,7 +160,7 @@ export const evaluateKnownObjectMember = (
   propertyKey: string | number,
   ctx: ExtractionContext,
   env: EvalEnv,
-  stack: string[],
+  stack: EvaluationStack,
   evaluateStatic: EvaluateStatic
 ): unknown | undefined => {
   const objectMember = evaluateObjectExpressionMember(
@@ -280,7 +282,7 @@ export const assignPatternValue = (
   value: unknown,
   ctx: ExtractionContext,
   env: EvalEnv,
-  stack: string[],
+  stack: EvaluationStack,
   evaluateStatic: EvaluateStatic
 ): boolean => {
   if (pattern.type === 'Identifier') {
@@ -457,7 +459,7 @@ export const applyRootMutation = (
   mutation: AssignmentExpression | UpdateExpression,
   ctx: ExtractionContext,
   env: EvalEnv,
-  stack: string[],
+  stack: EvaluationStack,
   evaluateStatic: EvaluateStatic
 ): unknown | undefined => {
   const resolvePath = (node: Node): { path: Array<string | number> } | null => {
@@ -649,13 +651,14 @@ export const evaluateFunctionCall = (
   args: unknown[],
   ctx: ExtractionContext,
   env: EvalEnv,
-  stack: string[],
+  stack: EvaluationStack,
   evaluateStatic: EvaluateStatic
 ): unknown | undefined => {
-  if (fn.async || !fn.body) {
+  if (fn.async || !fn.body || stack.includes(fn)) {
     return undefined;
   }
 
+  const nextStack = [...stack, fn];
   const localEnv = new Map(env);
   if (fn.id) {
     localEnv.set(fn.id.name, createOxcStaticFunctionValue(fn));
@@ -672,7 +675,7 @@ export const evaluateFunctionCall = (
         args[idx],
         ctx,
         localEnv,
-        stack,
+        nextStack,
         evaluateStatic
       )
     ) {
@@ -681,7 +684,7 @@ export const evaluateFunctionCall = (
   }
 
   if (fn.body.type !== 'BlockStatement') {
-    return evaluateStatic(fn.body as Expression, ctx, localEnv, stack);
+    return evaluateStatic(fn.body as Expression, ctx, localEnv, nextStack);
   }
 
   prepareFunctionBodyEnvironment(fn, localEnv);
@@ -694,7 +697,7 @@ export const evaluateFunctionCall = (
         }
 
         const value = declarator.init
-          ? evaluateStatic(declarator.init, ctx, localEnv, stack)
+          ? evaluateStatic(declarator.init, ctx, localEnv, nextStack)
           : undefined;
         if (
           declarator.init &&
@@ -709,7 +712,7 @@ export const evaluateFunctionCall = (
             value,
             ctx,
             localEnv,
-            stack,
+            nextStack,
             evaluateStatic
           )
         ) {
@@ -728,7 +731,7 @@ export const evaluateFunctionCall = (
         return undefined;
       }
 
-      return evaluateStatic(statement.argument, ctx, localEnv, stack);
+      return evaluateStatic(statement.argument, ctx, localEnv, nextStack);
     }
 
     return undefined;
@@ -760,7 +763,7 @@ export const evaluateBinary = (
   expression: Expression,
   ctx: ExtractionContext,
   env: EvalEnv = new Map(),
-  stack: string[] = [],
+  stack: EvaluationStack = [],
   evaluateStatic: EvaluateStatic
 ): unknown | undefined => {
   if (expression.type !== 'BinaryExpression') {
