@@ -45,79 +45,72 @@ const getDirectCallBinding = (node: Node): string | null => {
     : null;
 };
 
-const collectAliasRoots = (
+const appendAliasRoots = (
   node: Node,
-  rootImportedBindings: ReadonlySet<string>
-): Set<string> => {
+  rootImportedBindings: ReadonlySet<string>,
+  roots: Set<string>
+): void => {
   const current = unwrapAliasExpression(node);
-  if (current.type === 'Identifier') {
-    return new Set([current.name]);
-  }
-
-  if (current.type === 'MemberExpression') {
-    return collectAliasRoots(current.object, rootImportedBindings);
-  }
-
-  if (current.type === 'ConditionalExpression') {
-    return new Set([
-      ...collectAliasRoots(current.consequent, rootImportedBindings),
-      ...collectAliasRoots(current.alternate, rootImportedBindings),
-    ]);
-  }
-
-  if (current.type === 'LogicalExpression') {
-    return new Set([
-      ...collectAliasRoots(current.left, rootImportedBindings),
-      ...collectAliasRoots(current.right, rootImportedBindings),
-    ]);
-  }
-
-  if (current.type === 'SequenceExpression') {
-    const last = current.expressions[current.expressions.length - 1];
-    return last ? collectAliasRoots(last, rootImportedBindings) : new Set();
-  }
-
-  if (current.type === 'AssignmentExpression') {
-    return collectAliasRoots(current.right, rootImportedBindings);
-  }
-
-  if (current.type === 'ArrayExpression') {
-    const roots = new Set<string>();
-    current.elements.forEach((element) => {
-      if (element) {
-        const value =
-          element.type === 'SpreadElement' ? element.argument : element;
-        collectAliasRoots(value, rootImportedBindings).forEach((root) =>
-          roots.add(root)
+  switch (current.type) {
+    case 'Identifier':
+      roots.add(current.name);
+      return;
+    case 'MemberExpression':
+      appendAliasRoots(current.object, rootImportedBindings, roots);
+      return;
+    case 'ConditionalExpression':
+      appendAliasRoots(current.consequent, rootImportedBindings, roots);
+      appendAliasRoots(current.alternate, rootImportedBindings, roots);
+      return;
+    case 'LogicalExpression':
+      appendAliasRoots(current.left, rootImportedBindings, roots);
+      appendAliasRoots(current.right, rootImportedBindings, roots);
+      return;
+    case 'SequenceExpression': {
+      const last = current.expressions[current.expressions.length - 1];
+      if (last) {
+        appendAliasRoots(last, rootImportedBindings, roots);
+      }
+      return;
+    }
+    case 'AssignmentExpression':
+      appendAliasRoots(current.right, rootImportedBindings, roots);
+      return;
+    case 'ArrayExpression':
+      for (const element of current.elements) {
+        if (element) {
+          appendAliasRoots(
+            element.type === 'SpreadElement' ? element.argument : element,
+            rootImportedBindings,
+            roots
+          );
+        }
+      }
+      return;
+    case 'ObjectExpression':
+      for (const property of current.properties) {
+        appendAliasRoots(
+          property.type === 'SpreadElement'
+            ? property.argument
+            : property.value,
+          rootImportedBindings,
+          roots
         );
       }
-    });
-    return roots;
+      return;
+    case 'AwaitExpression':
+      appendAliasRoots(current.argument, rootImportedBindings, roots);
+      return;
+    default: {
+      const importedCallee = getDirectCallBinding(current);
+      if (importedCallee && rootImportedBindings.has(importedCallee)) {
+        // The return identity of imported code is unknowable in this module.
+        for (const binding of rootImportedBindings) {
+          roots.add(binding);
+        }
+      }
+    }
   }
-
-  if (current.type === 'ObjectExpression') {
-    const roots = new Set<string>();
-    current.properties.forEach((property) => {
-      const value =
-        property.type === 'SpreadElement' ? property.argument : property.value;
-      collectAliasRoots(value, rootImportedBindings).forEach((root) =>
-        roots.add(root)
-      );
-    });
-    return roots;
-  }
-
-  if (current.type === 'AwaitExpression') {
-    return collectAliasRoots(current.argument, rootImportedBindings);
-  }
-
-  const importedCallee = getDirectCallBinding(current);
-  if (importedCallee && rootImportedBindings.has(importedCallee)) {
-    // The return identity of imported code is unknowable in this module.
-    return new Set(rootImportedBindings);
-  }
-
-  return new Set();
 };
 
 const addAlias = (
@@ -190,7 +183,8 @@ export const collectAssignedAliasRoots = (
   aliases: ReadonlyMap<string, Set<string>>,
   nestedAliases: ReadonlyMap<string, Set<string>>
 ): Set<string> => {
-  const roots = collectAliasRoots(node, rootImportedBindings);
+  const roots = new Set<string>();
+  appendAliasRoots(node, rootImportedBindings, roots);
   return unwrapAliasExpression(node).type === 'MemberExpression'
     ? expandNestedValueAliases(roots, aliases, nestedAliases)
     : roots;
