@@ -225,22 +225,29 @@ export const getRootMutationHazards = (
   binding: string
 ): Node[] => hazards.get(binding) ?? [];
 
-const containsOpaqueAliasConstruct = (node: Node): boolean =>
+const containsOpaqueAliasConstruct = (
+  node: Node,
+  referencesByNode: WeakMap<Node, ReferenceIdentifier[]>
+): boolean =>
   node.type === 'CallExpression' ||
   node.type === 'NewExpression' ||
   node.type === 'TaggedTemplateExpression' ||
   node.type === 'ImportExpression' ||
   node.type === 'ThisExpression' ||
   node.type === 'Super' ||
-  (node.type === 'MemberExpression' && findReferences(node).length === 0) ||
-  getOxcNodeChildren(node).some(containsOpaqueAliasConstruct);
+  (node.type === 'MemberExpression' &&
+    findReferences(node, referencesByNode).length === 0) ||
+  getOxcNodeChildren(node).some((child) =>
+    containsOpaqueAliasConstruct(child, referencesByNode)
+  );
 
 const containsUnprovenAliasSource = (
   node: Node,
-  isUnresolvedReference: (reference: ReferenceIdentifier) => boolean
+  isUnresolvedReference: (reference: ReferenceIdentifier) => boolean,
+  referencesByNode: WeakMap<Node, ReferenceIdentifier[]>
 ): boolean =>
-  findReferences(node).some(isUnresolvedReference) ||
-  containsOpaqueAliasConstruct(node);
+  findReferences(node, referencesByNode).some(isUnresolvedReference) ||
+  containsOpaqueAliasConstruct(node, referencesByNode);
 
 const collectThrownExpressions = (
   node: Node,
@@ -274,6 +281,7 @@ const collectRootMutationHazards = (
   const { bindingsByName } = bindingIndex;
   const hazards = new Map<string, Node[]>();
   const siblingHazards = new Map<string, Node[]>();
+  const referencesByNode = new WeakMap<Node, ReferenceIdentifier[]>();
 
   const modeledMutations = new Set<Node>(
     [...mutations.values()].flatMap((nodes) => nodes)
@@ -305,7 +313,7 @@ const collectRootMutationHazards = (
   };
 
   const collectReferenceKeys = (node: Node): string[] => [
-    ...new Set(findReferences(node).map(toReferenceKey)),
+    ...new Set(findReferences(node, referencesByNode).map(toReferenceKey)),
   ];
 
   const isUnresolvedReference = ({
@@ -315,7 +323,7 @@ const collectRootMutationHazards = (
     resolveReferenceBinding(name, start) === undefined;
 
   const containsUnprovenAlias = (node: Node): boolean =>
-    containsUnprovenAliasSource(node, isUnresolvedReference);
+    containsUnprovenAliasSource(node, isUnresolvedReference, referencesByNode);
 
   const shallowCopyChangeCanAffectBindings = (
     bindings: readonly string[],
