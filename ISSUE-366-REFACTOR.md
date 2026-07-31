@@ -6,8 +6,8 @@
 - Branch: `anber/fix-static-destructuring`
 - Behavioral baseline: `9baff607f6121fc0d33db9119e2ce014d408834b`
 - Refactor/optimization audit base: `30fc5f72`
-- Current implementation checkpoint: `38c1088d`
-- Next slice: O10 canonical binding identities and resolved-reference indexes
+- Current implementation checkpoint: `8507cced`
+- Next slice: O10b shared resolved-reference index
 
 Issue #366 static destructuring support is behaviorally complete. The remaining
 work reduces repeated analysis and converges duplicated semantic models without
@@ -57,9 +57,9 @@ The structural refactor is complete and the global TypeScript size guard passes.
 
 - Complete the assignment-target evaluation schedule, including computed-key,
   default, and target-reference order. This blocks `PatternProgram`.
-- Introduce canonical `BindingId`s, resolved-reference indexes, typed
-  mutation/escape/receiver events, sorted timelines, and explicit unknown
-  provenance.
+- Introduce a shared resolved-reference index, then add canonical lexical-slot
+  identities only when a concrete consumer can replace name/scope identities
+  without changing root or unresolved grouping.
 - Introduce internal `EvalOutcome` so known `undefined`, unknown analysis, and
   abrupt completion are distinct.
 - Split immutable extraction planning from source emission and replace the
@@ -100,26 +100,34 @@ revertible.
       completed static-call purity proofs (`994d184e`).
 - [x] O5b — replace eager full-map proof filtering with a lazy excluded-node
       timeline view (`38c1088d`).
+- [x] O10a — share a private, selective binding-resolution cache across
+      analysis consumers while keeping the single-binding path direct
+      (`8507cced`).
 
 ### Open
 
-| ID  | Change                                                                                                                  | Required guard                                                                                                   |
-| --- | ----------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| O9  | Index callable result paths by structured root/prefix.                                                                  | Preserve collision-free path equality and descendant semantics.                                                  |
-| O10 | Add canonical `BindingId`s, resolved-reference indexes, and cached mutation identities.                                 | Build on O6's query API; this is a broad semantic foundation.                                                    |
-| O11 | Convert recursive set-returning provenance collectors to caller-owned sinks and share policy-neutral forwarding syntax. | Keep assignment, projection, alias, and abruptness policy consumer-owned.                                        |
-| O12 | Pre-index exports by top-level statement.                                                                               | Preserve re-export, default, and source-span ownership behavior.                                                 |
-| O14 | Replace copied recursion-guard sets with backtracking or visit epochs.                                                  | Sibling branches must not leak visited state.                                                                    |
-| O15 | Deduplicate wide-link delivery by `(link, node, direction, strength)`.                                                  | Preserve weak-to-strong promotion; land only if real high-arity profiles justify the extra state.                |
-| O16 | Merge published/strong fact bookkeeping into explicit bit flags and build import indexes once.                          | Keep mutation seeds unpublished and final imported `UNKNOWN` facts non-reentrant; require a code/allocation win. |
+| ID   | Change                                                                                                                  | Required guard                                                                                                   |
+| ---- | ----------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| O9   | Index callable result paths by structured root/prefix.                                                                  | Preserve collision-free path equality and descendant semantics.                                                  |
+| O10b | Replace duplicate scoped-reference traversals with one analysis-local resolved-reference index.                         | Preserve synthetic-offset fallback, shadowing/TDZ, and consumer-specific execution policy.                       |
+| O10c | Cache scoped mutation-identity derivation at the binding/reference boundary.                                            | Preserve root bare-name grouping and the conservative unresolved/root namespace; require a focused win.          |
+| O10d | Introduce canonical lexical-slot IDs only when resolved-reference or mutation consumers can adopt them together.        | Do not equate declaration-version `Binding` records with canonical lexical slots.                                |
+| O11  | Convert recursive set-returning provenance collectors to caller-owned sinks and share policy-neutral forwarding syntax. | Keep assignment, projection, alias, and abruptness policy consumer-owned.                                        |
+| O12  | Pre-index exports by top-level statement.                                                                               | Preserve re-export, default, and source-span ownership behavior.                                                 |
+| O14  | Replace copied recursion-guard sets with backtracking or visit epochs.                                                  | Sibling branches must not leak visited state.                                                                    |
+| O15  | Deduplicate wide-link delivery by `(link, node, direction, strength)`.                                                  | Preserve weak-to-strong promotion; land only if real high-arity profiles justify the extra state.                |
+| O16  | Merge published/strong fact bookkeeping into explicit bit flags and build import indexes once.                          | Keep mutation seeds unpublished and final imported `UNKNOWN` facts non-reentrant; require a code/allocation win. |
 
 ### Order
 
-1. Use O10 as the typed base for O9 and later `PatternProgram` work.
-2. Revisit O15 on real wide destructuring/assignment profiles, not the
+1. Take O10b next as a deletion-driven slice; target removal of the duplicate
+   shaker and scope-reference traversals before adding another identity model.
+2. Attempt O10c only with its prepared scoped/root key benchmark. Defer O10d
+   until an adopting consumer proves the required identity boundary.
+3. Revisit O15 on real wide destructuring/assignment profiles, not the
    synthetic stress case alone.
-3. Take O16 only when it shrinks production code and allocations together.
-4. Attempt O11, O12, and O14 only when profiles show material cost.
+4. Take O16 only when it shrinks production code and allocations together.
+5. Attempt O11, O12, and O14 only when profiles show material cost.
 
 ## Acceptance gates
 
@@ -250,6 +258,29 @@ revertible.
   all method counts across 40 runs; every median/trimmed delta was at most
   +2.96%. Final verification: 1,436 pass, one skip, one existing todo; type
   build, full lint, formatting, diff check, and size guard pass.
+- O10a (`8507cced`, parent `9e307606`) shares completed binding resolutions in
+  a private program-lifetime `WeakMap`. Only multi-declaration names are
+  admitted; missing and single-declaration lookups bypass cache storage, and a
+  specialized single-binding scope/range path preserves the cheap case.
+  Positive-first and negative-first same-offset collisions remain name-guarded.
+- O10a formal ABBA used 24 fresh processes per side. Shadowed lookup, mutation,
+  and full collector medians improved 79.27%, 32.49%, and 50.64%. Unique lookup
+  improved 3.44%; unique mutation was +0.32% and unique collector -0.53%. The
+  no-hazard build control was +0.36% median and -2.19% trimmed mean. Every
+  focused source/result/hazard signature matched.
+- The 8,192-reference peak-RSS median changed +2.10% for the cache-heavy shadow
+  case and +0.57% for unique names. Same-offset positive/negative collision
+  controls improved 5.48%/4.45% with identical checksums.
+- O10a's isolated large gate preserved 60 transformed files, 56 CSS files,
+  8,540 CSS bytes, and every method count across 20 samples. Wall median/trimmed
+  mean changed +1.72%/+0.58%; evaluator +0.63%/+1.38%, preevaluation
+  +1.89%/+1.85%, and `evalFile` +0.34%/-0.01%.
+- O10a grows production by 30 lines and tests by 55 lines because the hot
+  single-binding path stays explicit. The next O10b slice owns the code-volume
+  payoff by deleting duplicate reference traversals rather than generalizing
+  policy-specific branches. Final verification: 1,439 pass, one skip, one
+  existing todo; type build, full lint, formatting, diff check, and size guard
+  pass. Independent semantic differential: 5,002/5,002 resolutions matched.
 
 ## Non-goals
 
