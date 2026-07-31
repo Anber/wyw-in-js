@@ -6,8 +6,8 @@
 - Branch: `anber/fix-static-destructuring`
 - Behavioral baseline: `9baff607f6121fc0d33db9119e2ce014d408834b`
 - Refactor/optimization audit base: `30fc5f72`
-- Current implementation checkpoint: `625d236e`
-- Next slice: re-profile the remaining backlog; O10d stays deferred
+- Current implementation checkpoint: `675fa936`
+- Next slice: profile O11/O14; O10d and O15 stay deferred
 
 Issue #366 static destructuring support is behaviorally complete. The remaining
 work reduces repeated analysis and converges duplicated semantic models without
@@ -106,26 +106,26 @@ revertible.
       resolved reference attachments (`cdcf2990`, `31c63f67`).
 - [x] O10c — cache only repeated scoped mutation keys by weak binding identity;
       root and unresolved names keep their direct shared namespace (`625d236e`).
+- [x] O16 — merge published/strong mutation facts into one bit-state map,
+      removing duplicate hazard Sets and their merge pass (`675fa936`).
 
 ### Open
 
-| ID   | Change                                                                                                                  | Required guard                                                                                                   |
-| ---- | ----------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| O9   | Index callable result paths by structured root/prefix.                                                                  | Preserve collision-free path equality and descendant semantics.                                                  |
-| O10d | Introduce canonical lexical-slot IDs only when resolved-reference or mutation consumers can adopt them together.        | Do not equate declaration-version `Binding` records with canonical lexical slots.                                |
-| O11  | Convert recursive set-returning provenance collectors to caller-owned sinks and share policy-neutral forwarding syntax. | Keep assignment, projection, alias, and abruptness policy consumer-owned.                                        |
-| O12  | Pre-index exports by top-level statement.                                                                               | Preserve re-export, default, and source-span ownership behavior.                                                 |
-| O14  | Replace copied recursion-guard sets with backtracking or visit epochs.                                                  | Sibling branches must not leak visited state.                                                                    |
-| O15  | Deduplicate wide-link delivery by `(link, node, direction, strength)`.                                                  | Preserve weak-to-strong promotion; land only if real high-arity profiles justify the extra state.                |
-| O16  | Merge published/strong fact bookkeeping into explicit bit flags and build import indexes once.                          | Keep mutation seeds unpublished and final imported `UNKNOWN` facts non-reentrant; require a code/allocation win. |
+| ID   | Change                                                                                                                  | Required guard                                                                                    |
+| ---- | ----------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| O9   | Index callable result paths by structured root/prefix.                                                                  | Preserve collision-free path equality and descendant semantics.                                   |
+| O10d | Introduce canonical lexical-slot IDs only when resolved-reference or mutation consumers can adopt them together.        | Do not equate declaration-version `Binding` records with canonical lexical slots.                 |
+| O11  | Convert recursive set-returning provenance collectors to caller-owned sinks and share policy-neutral forwarding syntax. | Keep assignment, projection, alias, and abruptness policy consumer-owned.                         |
+| O12  | Pre-index exports by top-level statement.                                                                               | Preserve re-export, default, and source-span ownership behavior.                                  |
+| O14  | Replace copied recursion-guard sets with backtracking or visit epochs.                                                  | Sibling branches must not leak visited state.                                                     |
+| O15  | Deduplicate wide-link delivery by `(link, node, direction, strength)`.                                                  | Preserve weak-to-strong promotion; land only if real high-arity profiles justify the extra state. |
 
 ### Order
 
 1. Defer O10d until an adopting consumer proves the required identity boundary.
 2. Revisit O15 on real wide destructuring/assignment profiles, not the
    synthetic stress case alone.
-3. Take O16 only when it shrinks production code and allocations together.
-4. Attempt O11, O12, and O14 only when profiles show material cost.
+3. Attempt O11, O12, and O14 only when profiles show material cost.
 
 ## Acceptance gates
 
@@ -319,6 +319,23 @@ revertible.
   +2.39% wall median and +2.28% trimmed mean, with every attributable trimmed
   delta within 3.02% and the exact 60/56/8,540 signature and method counts.
 - O10c verification: 1,446 pass, one skip, one existing todo, zero failures;
+  type build, lint, formatting, diff check, and size guard pass.
+- O16 (`675fa936`) stores publication and strong-propagation capability as
+  orthogonal bits in the existing fact map. Modeled seeds remain unpublished,
+  weak-to-strong promotion stays monotone, import broadcast stays strong-only,
+  and final imported UNKNOWN publication does not re-enter the worklist.
+  Production shrank by four lines and removes the per-binding hazard/sibling
+  Sets plus the hazards-to-facts merge pass. Independent semantic review passed.
+- A 5,000-program differential matched exact per-binding membership and
+  `byStart`/`byEnd` order. Only the unconsumed outer Map insertion order differs.
+  Repeated- and single-reference mutation-analysis ABBA improved 3.12% and
+  4.96% by trimmed mean, with exact hazard signatures.
+- The eight-sample allocation gate improved peak RSS 3.60%, post-GC RSS 3.43%,
+  and post-GC heap 7.14%. An initial noisy large gate favored the candidate; an
+  independent clean ten-sample gate improved wall median/trimmed mean
+  2.24%/2.22%, with all tracked components improving and the exact 60/56/8,540
+  signature and method counts.
+- O16 verification: 1,446 pass, one skip, one existing todo, zero failures;
   type build, lint, formatting, diff check, and size guard pass.
 
 ## Non-goals
