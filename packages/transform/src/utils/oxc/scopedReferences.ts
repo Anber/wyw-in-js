@@ -5,7 +5,6 @@ import {
   type OxcLexicalScopeBoundary,
 } from './lexicalScopes';
 import { collectOxcPatternIdentifierNames } from './patterns';
-import { isOxcFunctionLike } from './runtimeSemantics';
 
 export type OxcScopedBindingPolicy = 'full' | 'minimal';
 export type OxcScopedRootPolicy = 'external' | 'local';
@@ -84,15 +83,13 @@ export const visitOxcScopedReferences = (
     (current, currentScope, _parent, _ancestors, _runtime, reference) => {
       if (current.type === 'FunctionExpression' && current.id) {
         addPattern(currentScope, current.id);
-      } else if (
-        fullBindings &&
-        current.type === 'FunctionDeclaration' &&
-        current.id
-      ) {
-        addPattern(currentScope.parent ?? currentScope, current.id);
       }
 
-      if (isOxcFunctionLike(current)) {
+      if (
+        current.type === 'FunctionDeclaration' ||
+        current.type === 'FunctionExpression' ||
+        current.type === 'ArrowFunctionExpression'
+      ) {
         current.params.forEach((parameter) =>
           addPattern(currentScope, parameter)
         );
@@ -102,25 +99,30 @@ export const visitOxcScopedReferences = (
         addPattern(currentScope, current.id);
       } else if (current.type === 'CatchClause') {
         addPattern(currentScope, current.param);
-      } else if (fullBindings && current.type === 'VariableDeclaration') {
-        const declarationScope =
-          current.kind === 'var'
-            ? nearestFunctionScope(currentScope)
-            : currentScope;
-        current.declarations.forEach((declaration) =>
-          addPattern(declarationScope, declaration.id)
-        );
-      } else if (
-        fullBindings &&
-        (current.type === 'ClassDeclaration' ||
-          current.type === 'TSEnumDeclaration') &&
-        current.id
-      ) {
-        addPattern(currentScope, current.id);
-      } else if (fullBindings && current.type === 'ImportDeclaration') {
-        current.specifiers.forEach((specifier) =>
-          addPattern(currentScope, specifier.local)
-        );
+      }
+
+      if (fullBindings) {
+        if (current.type === 'FunctionDeclaration' && current.id) {
+          addPattern(currentScope.parent ?? currentScope, current.id);
+        } else if (current.type === 'VariableDeclaration') {
+          const declarationScope =
+            current.kind === 'var'
+              ? nearestFunctionScope(currentScope)
+              : currentScope;
+          current.declarations.forEach((declaration) =>
+            addPattern(declarationScope, declaration.id)
+          );
+        } else if (
+          (current.type === 'ClassDeclaration' ||
+            current.type === 'TSEnumDeclaration') &&
+          current.id
+        ) {
+          addPattern(currentScope, current.id);
+        } else if (current.type === 'ImportDeclaration') {
+          current.specifiers.forEach((specifier) =>
+            addPattern(currentScope, specifier.local)
+          );
+        }
       }
 
       if (reference && current.type === 'Identifier') {
