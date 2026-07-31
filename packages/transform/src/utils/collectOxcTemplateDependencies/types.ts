@@ -142,7 +142,6 @@ export type ProgramAnalysis = {
 
 export type ExtractionContext = {
   bindingIndex: BindingIndex;
-  bindingResolutionCache: Map<string, Map<number, Binding | null>>;
   code: string;
   currentInsertionPoint: number;
   currentExpressionStart: number;

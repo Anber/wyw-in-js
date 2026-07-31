@@ -699,7 +699,6 @@ const extractExpressions = (
   const insertionPoints = getInsertionPoints(program, expressions);
   const ctx: ExtractionContext = {
     bindingIndex: analysis.bindingIndex,
-    bindingResolutionCache: new Map(),
     code,
     currentInsertionPoint: insertionPoints[0] ?? 0,
     currentExpressionStart: expressions[0].start,
@@ -853,7 +852,6 @@ export const evaluateOxcStaticExpressionAt = (
 
   const ctx: ExtractionContext = {
     bindingIndex: analysis.bindingIndex,
-    bindingResolutionCache: new Map(),
     code,
     currentInsertionPoint: 0,
     currentExpressionStart: expression.start,

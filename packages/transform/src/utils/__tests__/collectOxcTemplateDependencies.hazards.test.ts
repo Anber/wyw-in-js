@@ -157,7 +157,6 @@ describe('collectOxcTemplateDependencies mutation provenance', () => {
     const sourceBinding = resolveBindingAt(
       {
         bindingIndex: analysis.bindingIndex,
-        bindingResolutionCache: new Map(),
       },
       'source',
       sourceReference
@@ -434,7 +433,6 @@ describe('collectOxcTemplateDependencies mutation provenance', () => {
     const analysis = analyzeProgram(parseOxc(code, filename));
     const resolutionContext = {
       bindingIndex: analysis.bindingIndex,
-      bindingResolutionCache: new Map(),
     };
     const resolveMarker = (marker: string) =>
       resolveBindingAt(
@@ -487,7 +485,6 @@ describe('collectOxcTemplateDependencies mutation provenance', () => {
     const analysis = analyzeProgram(parseOxc(code, filename));
     const resolutionContext = {
       bindingIndex: analysis.bindingIndex,
-      bindingResolutionCache: new Map(),
     };
     const resolveMarker = (marker: string) =>
       resolveBindingAt(
@@ -522,7 +519,6 @@ describe('collectOxcTemplateDependencies mutation provenance', () => {
     const analysis = analyzeProgram(parseOxc(code, filename));
     const resolutionContext = {
       bindingIndex: analysis.bindingIndex,
-      bindingResolutionCache: new Map(),
     };
     const resolveMarker = (marker: string) =>
       resolveBindingAt(
@@ -557,7 +553,6 @@ describe('collectOxcTemplateDependencies mutation provenance', () => {
     const analysis = analyzeProgram(parseOxc(code, filename));
     const resolutionContext = {
       bindingIndex: analysis.bindingIndex,
-      bindingResolutionCache: new Map(),
     };
     const resolveMarker = (marker: string) =>
       resolveBindingAt(

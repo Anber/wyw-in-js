@@ -1,5 +1,22 @@
 import type { Binding, BindingIndex, ExtractionContext, Scope } from './types';
 
+const resolutionCaches = new WeakMap<
+  BindingIndex,
+  Map<number, Binding | string>
+>();
+
+const getResolutionCache = (
+  index: BindingIndex
+): Map<number, Binding | string> => {
+  let cache = resolutionCaches.get(index);
+  if (!cache) {
+    cache = new Map();
+    resolutionCaches.set(index, cache);
+  }
+
+  return cache;
+};
+
 const shouldPreferBindingAt = (
   candidate: Binding,
   current: Binding,
@@ -39,10 +56,40 @@ export const resolveBindingInIndex = (
     return undefined;
   }
 
-  let referenceScope = index.referenceScopesByStart.get(referenceStart) ?? null;
-  if (referenceScope) {
+  if (bindings.length === 1) {
+    const binding = bindings[0]!;
+    let referenceScope =
+      index.referenceScopesByStart.get(referenceStart) ?? null;
+    if (!referenceScope) {
+      return binding.scope.start <= referenceStart &&
+        referenceStart < binding.scope.end
+        ? binding
+        : undefined;
+    }
+
     while (referenceScope) {
-      let binding: Binding | undefined;
+      if (binding.scope === referenceScope) {
+        return binding;
+      }
+      referenceScope = referenceScope.parent;
+    }
+
+    return undefined;
+  }
+
+  // Multiple declarations require a candidate search, so repeated queries
+  // are worth memoizing across analysis consumers.
+  const cache = getResolutionCache(index);
+  const cached = cache.get(referenceStart);
+  if (typeof cached === 'string' ? cached === name : cached?.name === name) {
+    return typeof cached === 'string' ? undefined : cached;
+  }
+  const shouldCache = cached === undefined;
+
+  let referenceScope = index.referenceScopesByStart.get(referenceStart) ?? null;
+  let binding: Binding | undefined;
+  if (referenceScope) {
+    while (referenceScope && !binding) {
       for (
         let candidateIndex = 0;
         candidateIndex < bindings.length;
@@ -57,54 +104,40 @@ export const resolveBindingInIndex = (
           binding = candidate;
         }
       }
-
-      if (binding) {
-        return binding;
-      }
       referenceScope = referenceScope.parent;
     }
+  } else {
+    // Some callers intentionally resolve synthetic offsets which do not point
+    // at an Identifier node. Preserve the range-based resolver for those spans.
+    bindings.forEach((candidate) => {
+      if (
+        candidate.scope.start > referenceStart ||
+        referenceStart >= candidate.scope.end
+      ) {
+        return;
+      }
 
-    return undefined;
+      if (
+        !binding ||
+        shouldPreferBindingAt(candidate, binding, referenceStart)
+      ) {
+        binding = candidate;
+      }
+    });
   }
 
-  // Some callers intentionally resolve synthetic offsets which do not point
-  // at an Identifier node. Preserve the range-based resolver for those spans.
-  let binding: Binding | undefined;
-  bindings.forEach((candidate) => {
-    if (
-      candidate.scope.start > referenceStart ||
-      referenceStart >= candidate.scope.end
-    ) {
-      return;
-    }
-
-    if (!binding || shouldPreferBindingAt(candidate, binding, referenceStart)) {
-      binding = candidate;
-    }
-  });
-
+  if (shouldCache) {
+    cache.set(referenceStart, binding ?? name);
+  }
   return binding;
 };
 
 export const resolveBindingAt = (
-  ctx: Pick<ExtractionContext, 'bindingIndex' | 'bindingResolutionCache'>,
+  ctx: Pick<ExtractionContext, 'bindingIndex'>,
   name: string,
   referenceStart: number
-): Binding | undefined => {
-  const cachedBindings = ctx.bindingResolutionCache.get(name);
-  if (cachedBindings?.has(referenceStart)) {
-    return cachedBindings.get(referenceStart) ?? undefined;
-  }
-
-  const bindingCache = cachedBindings ?? new Map<number, Binding | null>();
-  if (!cachedBindings) {
-    ctx.bindingResolutionCache.set(name, bindingCache);
-  }
-
-  const binding = resolveBindingInIndex(ctx.bindingIndex, name, referenceStart);
-  bindingCache.set(referenceStart, binding ?? null);
-  return binding;
-};
+): Binding | undefined =>
+  resolveBindingInIndex(ctx.bindingIndex, name, referenceStart);
 
 export const createBindingIndex = (
   bindingsByName: ReadonlyMap<string, readonly Binding[]>,
