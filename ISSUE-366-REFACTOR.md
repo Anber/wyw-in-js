@@ -6,9 +6,8 @@
 - Branch: `anber/fix-static-destructuring`
 - Behavioral baseline: `9baff607f6121fc0d33db9119e2ce014d408834b`
 - Refactor/optimization audit base: `30fc5f72`
-- Current implementation checkpoint: `48b8dbe8`
-- Next slice: O5a fail-closed recursion plus completed-proof caching; measure
-  lazy hazard views separately
+- Current implementation checkpoint: `994d184e`
+- Next slice: O5b lazy excluded-hazard views, measured separately against O5a
 
 Issue #366 static destructuring support is behaviorally complete. The remaining
 work reduces repeated analysis and converges duplicated semantic models without
@@ -97,12 +96,14 @@ revertible.
       (`110d386b`).
 - [x] O8 — cache immutable callable syntax facts for one provenance analysis
       (`48b8dbe8`).
+- [x] O5a — fail closed on recursive function evaluation and cache only
+      completed static-call purity proofs (`994d184e`).
 
 ### Open
 
 | ID  | Change                                                                                                                  | Required guard                                                                                                   |
 | --- | ----------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| O5  | Cache completed static-call purity proofs and avoid cloning the full hazard map per proof.                              | Use an explicit in-progress state; recursion and context-sensitive partial results fail closed.                  |
+| O5b | Replace the full hazard-map clone on proof misses with a lazy excluded-node view.                                       | Preserve lookup semantics; nested partial proofs exclude every active hazard and remain uncached.                |
 | O9  | Index callable result paths by structured root/prefix.                                                                  | Preserve collision-free path equality and descendant semantics.                                                  |
 | O10 | Add canonical `BindingId`s, resolved-reference indexes, and cached mutation identities.                                 | Build on O6's query API; this is a broad semantic foundation.                                                    |
 | O11 | Convert recursive set-returning provenance collectors to caller-owned sinks and share policy-neutral forwarding syntax. | Keep assignment, projection, alias, and abruptness policy consumer-owned.                                        |
@@ -113,8 +114,8 @@ revertible.
 
 ### Order
 
-1. Split O5 into completed-proof caching and a separately measured lazy
-   excluded-hazard view. Add fail-closed direct/mutual recursion guards first.
+1. Measure O5b independently against O5a; retain it only if miss-heavy or
+   low-reuse proofs improve without a general-path regression.
 2. Use O10 as the typed base for O9 and later `PatternProgram` work.
 3. Revisit O15 on real wide destructuring/assignment profiles, not the
    synthetic stress case alone.
@@ -217,9 +218,24 @@ revertible.
   8,540 CSS bytes, and every method count; every median/trimmed regression was
   at most 2.6%. Final verification: 1,423 pass, one skip, one existing todo;
   type build, full lint, formatting, diff check, and size guard pass.
-- O5 preflight exposed direct and mutual recursive purity proofs overflowing the
-  stack. O5a must make cycles fail closed and memoize only completed proofs;
-  context-partial results cannot enter the cache.
+- O5a (`994d184e`) adds function-node recursion guards and an analysis-local
+  completed-proof cache. Direct and mutual cycles now fail closed, same-named
+  nested functions still evaluate, and partial/cyclic/throwing proofs cannot
+  populate the completed cache. Production code grew by 55 lines; tests grew
+  by 157 lines.
+- O5a focused ABBA (24 fresh processes per side, 1,024 hazards and 1,024
+  repeated proofs) preserved source/result hashes and improved the median
+  `287.958 → 22.446 ms` (-92.20%). The matched no-proof control was +0.55%,
+  the one-proof case +1.04%, completed-false proofs -74.37%, and the
+  distinct-node/low-reuse control -46.66%.
+- O5a's 2,048-proof peak-RSS median decreased 13.29%. Post-GC 100/500/1,000
+  context companions showed no candidate retention slope: RSS medians changed
+  -2.32%/-2.34%/-1.58%, with exact aggregate source/result hashes.
+- O5a's large gate used 10 fresh processes per side and two measured runs per
+  process. All 40 runs preserved 60 transformed files, 56 CSS files, 8,540 CSS
+  bytes, and every method count; all tracked median/trimmed regressions stayed
+  below 5%. Final verification: 1,432 pass, one skip, one existing todo; type
+  build, full lint, formatting, diff check, and size guard pass.
 
 ## Non-goals
 
