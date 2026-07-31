@@ -34,7 +34,7 @@ import {
   isStaticSerializableValue,
   literalCode,
 } from './staticValues';
-import { toOxcBindingIdentity } from './bindingIdentity';
+import { memoizeBindingFact, toOxcBindingIdentity } from './bindingIdentity';
 import {
   addHoistedCode,
   addHoistedSnapshotReplay,
@@ -351,6 +351,9 @@ const extractExpression = (
 ): ExtractedExpression => {
   const source = ctx.code.slice(expression.start, expression.end);
   const expressionReferences = findReferences(expression, ctx.referencesByNode);
+  const requiresSnapshotReplayForExpression = memoizeBindingFact((binding) =>
+    requiresSnapshotReplay(binding, ctx)
+  );
   const eagerNodeStarts = collectEagerNodeStarts(expression);
   const eagerMutationTargetStarts = new Set(
     collectEagerIdentifierMutationTargets(expression).map(
@@ -361,7 +364,7 @@ const extractExpression = (
     expression
   ).filter((target) => {
     const binding = resolveBindingAt(ctx, target.name, target.start);
-    return !!binding && requiresSnapshotReplay(binding, ctx);
+    return !!binding && requiresSnapshotReplayForExpression(binding);
   });
   if (
     snapshotMutationTargets.some(
@@ -394,7 +397,7 @@ const extractExpression = (
   const snapshotBindings = expressionReferences.flatMap(({ name, start }) => {
     const binding = resolveBindingAt(ctx, name, start);
     return binding &&
-      requiresSnapshotReplay(binding, ctx) &&
+      requiresSnapshotReplayForExpression(binding) &&
       !snapshotWriteFallbackBindings.has(binding)
       ? [binding]
       : [];
@@ -553,7 +556,7 @@ const extractExpression = (
 
     if (!isProcessorManagedLocal) {
       if (
-        requiresSnapshotReplay(binding, ctx) &&
+        requiresSnapshotReplayForExpression(binding) &&
         !snapshotWriteFallbackBindings.has(binding)
       ) {
         if (!staticLocalExpression) {

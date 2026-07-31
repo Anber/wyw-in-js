@@ -327,14 +327,6 @@ export const shakeOxcToESM = (
     const component =
       callableProvenance.aliasComponents.get(binding) ?? new Set([binding]);
     component.forEach((alias) => {
-      statements.forEach((effect) => {
-        if (
-          effect.node.start < statement.node.start &&
-          effect.mutations.has(alias)
-        ) {
-          effects.add(effect);
-        }
-      });
       effectsByBinding.get(alias)?.forEach((effect) => {
         if (effect.node.start < statement.node.start) {
           effects.add(effect);
@@ -567,12 +559,19 @@ export const shakeOxcToESM = (
     }
   });
 
-  while (queue.length > 0 || bindingQueue.length > 0) {
-    if (queue.length > 0) {
-      const current = queue.shift()!;
+  let statementQueueCursor = 0;
+  let bindingQueueCursor = 0;
+  while (
+    statementQueueCursor < queue.length ||
+    bindingQueueCursor < bindingQueue.length
+  ) {
+    if (statementQueueCursor < queue.length) {
+      const current = queue[statementQueueCursor]!;
+      statementQueueCursor += 1;
       current.references.forEach(markBinding);
     } else {
-      const binding = bindingQueue.shift()!;
+      const binding = bindingQueue[bindingQueueCursor]!;
+      bindingQueueCursor += 1;
       effectsByBinding.get(binding)?.forEach((effect) => {
         mark(effect);
       });

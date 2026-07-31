@@ -368,9 +368,15 @@ const collectSnapshotStatements = (
   includeStatement(targetOwner);
   includeBinding(binding);
 
-  while (pendingStatements.length > 0 || pendingBindings.length > 0) {
-    while (pendingStatements.length > 0) {
-      const statement = pendingStatements.shift()!;
+  let pendingStatementCursor = 0;
+  let pendingBindingCursor = 0;
+  while (
+    pendingStatementCursor < pendingStatements.length ||
+    pendingBindingCursor < pendingBindings.length
+  ) {
+    while (pendingStatementCursor < pendingStatements.length) {
+      const statement = pendingStatements[pendingStatementCursor]!;
+      pendingStatementCursor += 1;
       findReferences(statement, ctx.referencesByNode).forEach(
         ({ name, start }) => {
           const dependency = resolveBindingAt(ctx, name, start);
@@ -387,8 +393,9 @@ const collectSnapshotStatements = (
       );
     }
 
-    while (pendingBindings.length > 0) {
-      const dependency = pendingBindings.shift()!;
+    while (pendingBindingCursor < pendingBindings.length) {
+      const dependency = pendingBindings[pendingBindingCursor]!;
+      pendingBindingCursor += 1;
       const dependencyKey = toMutationBindingKey(dependency);
       const changes: Node[] = [
         ...(ctx.rootMutationsByBinding.get(dependencyKey) ?? []),
