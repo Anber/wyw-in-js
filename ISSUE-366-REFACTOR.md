@@ -6,8 +6,8 @@
 - Branch: `anber/fix-static-destructuring`
 - Behavioral baseline: `9baff607f6121fc0d33db9119e2ce014d408834b`
 - Refactor/optimization audit base: `30fc5f72`
-- Current implementation checkpoint: `56e64a45`
-- Next slices: O6 (range queries), then O7 (indexed alias worklist)
+- Current implementation checkpoint: `110d386b`
+- Next slices: measure O5/O8; take O15 only if real profiles justify it
 
 Issue #366 static destructuring support is behaviorally complete. The remaining
 work reduces repeated analysis and converges duplicated semantic models without
@@ -90,27 +90,33 @@ revertible.
       (`9da559b3`).
 - [x] O13 — reuse one analysis-local cache of raw references
       (`56e64a45`).
+- [x] O6 — seal mutation/hazard timelines and use binary-search range queries
+      (`4acf460d`).
+- [x] O7 — replace alias fixed-point rescans with indexed monotone worklists
+      (`110d386b`).
 
 ### Open
 
-| ID  | Change                                                                                                                  | Required guard                                                                                  |
-| --- | ----------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| O5  | Cache completed static-call purity proofs and avoid cloning the full hazard map per proof.                              | Use an explicit in-progress state; recursion and context-sensitive partial results fail closed. |
-| O6  | Store sorted mutation/hazard timelines with allocation-free binary-search range queries.                                | Preserve distinct start-based and end-based predicates with characterization tests.             |
-| O7  | Replace whole-graph alias fixed-point rescans with a worklist and reverse adjacency.                                    | Publish canonical timeline facts first; process each newly discovered fact once.                |
-| O8  | Cache immutable callable syntax facts: assignments, mutations, callee candidates, and local catalogs.                   | Caller aliases and invocation-sensitive facts remain per invocation.                            |
-| O9  | Index callable result paths by structured root/prefix.                                                                  | Preserve collision-free path equality and descendant semantics.                                 |
-| O10 | Add canonical `BindingId`s, resolved-reference indexes, and cached mutation identities.                                 | Land after O6 establishes the query API; this is a broad semantic foundation.                   |
-| O11 | Convert recursive set-returning provenance collectors to caller-owned sinks and share policy-neutral forwarding syntax. | Keep assignment, projection, alias, and abruptness policy consumer-owned.                       |
-| O12 | Pre-index exports by top-level statement.                                                                               | Preserve re-export, default, and source-span ownership behavior.                                |
-| O14 | Replace copied recursion-guard sets with backtracking or visit epochs.                                                  | Sibling branches must not leak visited state.                                                   |
+| ID  | Change                                                                                                                  | Required guard                                                                                                   |
+| --- | ----------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| O5  | Cache completed static-call purity proofs and avoid cloning the full hazard map per proof.                              | Use an explicit in-progress state; recursion and context-sensitive partial results fail closed.                  |
+| O8  | Cache immutable callable syntax facts: assignments, mutations, callee candidates, and local catalogs.                   | Caller aliases and invocation-sensitive facts remain per invocation.                                             |
+| O9  | Index callable result paths by structured root/prefix.                                                                  | Preserve collision-free path equality and descendant semantics.                                                  |
+| O10 | Add canonical `BindingId`s, resolved-reference indexes, and cached mutation identities.                                 | Build on O6's query API; this is a broad semantic foundation.                                                    |
+| O11 | Convert recursive set-returning provenance collectors to caller-owned sinks and share policy-neutral forwarding syntax. | Keep assignment, projection, alias, and abruptness policy consumer-owned.                                        |
+| O12 | Pre-index exports by top-level statement.                                                                               | Preserve re-export, default, and source-span ownership behavior.                                                 |
+| O14 | Replace copied recursion-guard sets with backtracking or visit epochs.                                                  | Sibling branches must not leak visited state.                                                                    |
+| O15 | Deduplicate wide-link delivery by `(link, node, direction, strength)`.                                                  | Preserve weak-to-strong promotion; land only if real high-arity profiles justify the extra state.                |
+| O16 | Merge published/strong fact bookkeeping into explicit bit flags and build import indexes once.                          | Keep mutation seeds unpublished and final imported `UNKNOWN` facts non-reentrant; require a code/allocation win. |
 
 ### Order
 
-1. O6 before O7.
-2. Measure O5 and O8 independently on hazard-heavy and callable-fanout cases.
-3. Use O10 as the typed base for O9 and later `PatternProgram` work.
-4. Attempt O11, O12, and O14 only when profiles show material cost.
+1. Measure O5 and O8 independently on hazard-heavy and callable-fanout cases.
+2. Use O10 as the typed base for O9 and later `PatternProgram` work.
+3. Revisit O15 on real wide destructuring/assignment profiles, not the
+   synthetic stress case alone.
+4. Take O16 only when it shrinks production code and allocations together.
+5. Attempt O11, O12, and O14 only when profiles show material cost.
 
 ## Acceptance gates
 
@@ -169,8 +175,28 @@ revertible.
   samples per side showed no increase. Immediate-parent large gates preserved
   CSS bytes, file/evaluation counts, and method counts; attributable
   evaluator/preevaluation medians stayed within 1.5%.
-- Final verification: 1,398 pass, one skip, one existing todo, zero failures;
-  type build, full lint, formatting, diff check, and size guard pass.
+- O6 (`4acf460d`) publishes separate immutable start/end timelines and
+  allocation-free binary-search queries. Focused ABBA (24 processes per side)
+  improved `258.805 → 11.627 ms` (-95.51% median) with the same checksum.
+  Immediate-parent analysis-build median was +3.70% (paired +2.41%); peak RSS
+  was +0.28%. The attempted shared-index follow-up had no benefit and was
+  reverted.
+- O7 (`110d386b`) uses reverse adjacency and a monotone weak/strong worklist.
+  A 10,000-program differential check found zero membership or per-binding
+  `byStart`/`byEnd` differences. Focused chain ABBA (24 processes per side)
+  improved `1057.586 → 21.734 ms` (-97.94% median); 2,048→4,096 scaling was
+  2.08x. Import fan-out improved `71.402 → 13.338 ms` (-81.32%).
+- The wide-link stress case improved `147.564 → 65.981 ms` (-55.29%) but
+  remains quadratic; O15 owns any further complexity. Chain peak RSS
+  decreased `151,166,976 → 129,859,584` bytes (-14.10%, eight samples/side).
+- O7's 20-sample large gate preserved 60 transformed files, 56 CSS files,
+  8,540 CSS bytes, CSS SHA-256
+  `eabb50e564b307716cb7cf089887d4f6bc23d3b55f0f7880e0621634f2e17d23`,
+  and every method count. Wall median/trimmed mean changed -7.40%/-4.78%;
+  evaluator trimmed mean +0.68%, preevaluation -7.00%, and `evalFile` -6.05%.
+- Final verification: 1,421 pass, one skip, one existing todo, zero failures
+  (20-second timeout avoids the existing five-second eval-runner flake); type
+  build, full lint, formatting, diff check, and size guard pass.
 
 ## Non-goals
 
