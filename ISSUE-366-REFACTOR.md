@@ -6,8 +6,8 @@
 - Branch: `anber/fix-static-destructuring`
 - Behavioral baseline: `9baff607f6121fc0d33db9119e2ce014d408834b`
 - Refactor/optimization audit base: `30fc5f72`
-- Current implementation checkpoint: `31c63f67`
-- Next slice: O10c scoped mutation-identity cache, if its focused benchmark wins
+- Current implementation checkpoint: `625d236e`
+- Next slice: re-profile the remaining backlog; O10d stays deferred
 
 Issue #366 static destructuring support is behaviorally complete. The remaining
 work reduces repeated analysis and converges duplicated semantic models without
@@ -104,13 +104,14 @@ revertible.
       (`8507cced`).
 - [x] O10b — share policy-parameterized scoped-reference collection and cache
       resolved reference attachments (`cdcf2990`, `31c63f67`).
+- [x] O10c — cache only repeated scoped mutation keys by weak binding identity;
+      root and unresolved names keep their direct shared namespace (`625d236e`).
 
 ### Open
 
 | ID   | Change                                                                                                                  | Required guard                                                                                                   |
 | ---- | ----------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
 | O9   | Index callable result paths by structured root/prefix.                                                                  | Preserve collision-free path equality and descendant semantics.                                                  |
-| O10c | Cache scoped mutation-identity derivation at the binding/reference boundary.                                            | Preserve root bare-name grouping and the conservative unresolved/root namespace; require a focused win.          |
 | O10d | Introduce canonical lexical-slot IDs only when resolved-reference or mutation consumers can adopt them together.        | Do not equate declaration-version `Binding` records with canonical lexical slots.                                |
 | O11  | Convert recursive set-returning provenance collectors to caller-owned sinks and share policy-neutral forwarding syntax. | Keep assignment, projection, alias, and abruptness policy consumer-owned.                                        |
 | O12  | Pre-index exports by top-level statement.                                                                               | Preserve re-export, default, and source-span ownership behavior.                                                 |
@@ -120,8 +121,7 @@ revertible.
 
 ### Order
 
-1. Attempt O10c only with its prepared scoped/root key benchmark. Defer O10d
-   until an adopting consumer proves the required identity boundary.
+1. Defer O10d until an adopting consumer proves the required identity boundary.
 2. Revisit O15 on real wide destructuring/assignment profiles, not the
    synthetic stress case alone.
 3. Take O16 only when it shrinks production code and allocations together.
@@ -304,6 +304,22 @@ revertible.
   and `evalFile` median/trimmed deltas were +1.20%/+1.64%, +0.29%/+1.79%,
   +0.43%/+0.27%, and +6.61%/+4.91%. All runs preserved the exact 60-file,
   56-CSS-file, 8,540-byte signature and every method count.
+- O10c (`625d236e`) lets the existing binding-fact memoizer accept an explicit
+  Map or WeakMap backend while preserving its Map default. Mutation keys use a
+  module-lifetime WeakMap only for non-root bindings; root and unresolved names
+  remain bare and share their existing conservative namespace. The production
+  change is +5 lines; independent semantic review passed.
+- The direct repeated scoped-key ABBA improved 66.57% trimmed mean while its
+  root bypass was +0.50%. A mutation-analysis workload with eight references
+  per scoped binding improved 4.53%; the one-reference control changed +0.13%
+  median and +1.81% trimmed mean. Every key and hazard signature matched.
+- The eight-sample RSS gate changed -1.47% peak RSS, -1.51% post-GC RSS, and
+  +0.53% post-GC heap. The first large run contained baseline process spikes
+  and showed no candidate regression; an independent clean ten-sample gate was
+  +2.39% wall median and +2.28% trimmed mean, with every attributable trimmed
+  delta within 3.02% and the exact 60/56/8,540 signature and method counts.
+- O10c verification: 1,446 pass, one skip, one existing todo, zero failures;
+  type build, lint, formatting, diff check, and size guard pass.
 
 ## Non-goals
 
