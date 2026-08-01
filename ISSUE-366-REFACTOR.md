@@ -97,9 +97,28 @@ output, and retained-import goldens. In the worst tracked case (256 rest copies
 followed by 256 ordered nested mutations), median shaker time moved from about
 2.40 s to roughly 0.12–0.14 s while preserving the exact output.
 
-On the complete current stack, the final ten-sample production ABBA against bare
-`main` measured `464.25 -> 441.10 ms` median (-4.99%) with the same 60 files, 56
-CSS files, and 8,540 CSS bytes.
+A later profile showed that repeated shakes of one cached `Program` still rebuilt
+the option-invariant statement graph. The current slice now caches those facts by
+`Program`, source, and module mode while rebuilding requested-export liveness and
+side-effect policy for every call. Plain Identifiers also bypass the generic OXC
+visitor-key loop and share one frozen empty child list; typed and decorated
+Identifiers stay on the authoritative visitor-key path.
+
+On the complete current stack, a 14-sample focused ABBA against bare `main`
+measured evaluator `25.05 -> 11.45 ms` (-54.29%), preevaluation
+`26.70 -> 24.30 ms` (-8.99%), template processing `13.35 -> 10.95 ms`
+(-17.98%), and dangerous-code removal `11.85 -> 11.75 ms` (-0.84%). The same 60
+files produced 56 CSS files and 8,540 CSS bytes. The VM-heavy wall and `evalFile`
+medians improved by 14.55% and 13.44%, respectively, but remain high-variance.
+
+The full production matrix preserved all 12 output signatures. Larger targeted
+reruns eliminated the two apparent regressions from the first six-sample pass:
+small overlap reexports measured -13.80% over 20 samples, medium wildcard fanout
+-18.11% over 14 samples, and small functional fanout -28.32% over 14 samples.
+The new slice itself measured evaluator -69.80% and dangerous-code removal -4.41%
+against its immediate parent. Peak RSS on the large static case was effectively
+flat against that parent (`227.61 -> 226.84 MiB`, -0.34%); the complete branch is
+about 4 MiB above bare `main` (`222.55 -> 226.63 MiB`, +1.83%).
 
 The remaining quadratic shape is output-sensitive: that fixture has a
 quadratic number of exact prior-effect relationships. A future lower-constant
@@ -146,6 +165,8 @@ also preserved their declared output/signature gates.
 | O11   | `04ec7a7d`             | Append alias provenance into one caller-owned set.                           | -76.96% nested path; -7.41% focused shaker.       |
 | O9    | `11ee6a15`             | Lazily bucket callable result paths by canonical root.                       | -92.01% resolver; -48.28% dynamic shaker.         |
 | Graph | this commit            | Virtual imported cohort and directed, cutoff-aware receiver history.         | About 20x at 256 ordered nested mutations.        |
+| Cache | this commit            | Reuse option-invariant shaker facts for one parsed Program.                  | -69.80% evaluator versus the immediate parent.    |
+| Walk  | this commit            | Fast-path plain Identifiers and share their empty child list.                | Removes the remaining dangerous-code regression.  |
 
 ## Open optimization backlog
 
@@ -189,10 +210,11 @@ wide profiles; attempt O12 and O14 only when profiles show material cost.
 - For the graph slice, run the direct and chained/cyclic scaling gates before
   making any final timing, golden, or stability claim.
 
-Final evidence: 214 focused shaker tests and the full transform suite (1,511
-passed, one pre-existing skip, one todo) are green; types, lint, TypeScript size,
-Prettier, and `git diff --check` pass. All 39 scaling goldens match, and the
-production ABBA result is recorded above.
+Final evidence: all 226 focused tests pass. The full transform run reached 1,513
+passes, one pre-existing skip, and one todo; `issue-99.symbol-identity` hit its
+5-second parallel-suite timeout but passed alone in 0.68 seconds. Types, lint,
+TypeScript size, Prettier, and `git diff --check` pass. All 39 scaling goldens
+match, and the production ABBA results are recorded above.
 
 ## Non-goals
 

@@ -71,42 +71,74 @@ const firstDeclarator = (
   return declarator;
 };
 
+const firstMethodParameter = (
+  code: string
+): Extract<Node, { type: 'Identifier' }> => {
+  const declaration = parseOxcProgram(code, filename).body[0];
+  if (declaration?.type !== 'ClassDeclaration') {
+    throw new Error('Expected a class declaration');
+  }
+  const method = declaration.body.body[0];
+  if (method?.type !== 'MethodDefinition') {
+    throw new Error('Expected a method definition');
+  }
+  const parameter = method.value.params[0];
+  if (parameter?.type !== 'Identifier') {
+    throw new Error('Expected an Identifier parameter');
+  }
+  return parameter;
+};
+
 describe('shared OXC analysis primitives', () => {
-  it('discovers TS-only Identifier children after traversing a JS shape', () => {
+  it('keeps Identifier traversal correct across mixed JS and TS shapes', () => {
     const jsIdentifier = firstDeclarator(
       'const value = source;',
       '/source.js'
     ).id;
     expect(jsIdentifier.type).toBe('Identifier');
     expect('decorators' in jsIdentifier).toBe(false);
-    expect(getOxcNodeChildren(jsIdentifier)).toEqual([]);
-
-    const program = parseOxcProgram(
-      'class Live { method(@decorator value: TypeOnly) {} }',
-      filename
+    const tsIdentifier = firstMethodParameter(
+      'class Live { method(value) {} }'
     );
-    const declaration = program.body[0];
-    if (declaration?.type !== 'ClassDeclaration') {
-      throw new Error('Expected a class declaration');
-    }
-    const method = declaration.body.body[0];
-    if (method?.type !== 'MethodDefinition') {
-      throw new Error('Expected a method definition');
-    }
-    const parameter = method.value.params[0];
-    if (parameter?.type !== 'Identifier') {
-      throw new Error('Expected an Identifier parameter');
-    }
-    expect('decorators' in parameter).toBe(true);
+    expect(tsIdentifier.decorators).toEqual([]);
+    expect(tsIdentifier.typeAnnotation).toBeNull();
 
-    expect(getOxcNodeChildren(parameter).map(({ type }) => type)).toEqual([
-      'Decorator',
-      'TSTypeAnnotation',
-    ]);
+    const typedIdentifier = firstMethodParameter(
+      'class Live { method(value: TypeOnly) {} }'
+    );
+    const decoratedIdentifier = firstMethodParameter(
+      'class Live { method(@decorator value) {} }'
+    );
+    const decoratedTypedIdentifier = firstMethodParameter(
+      'class Live { method(@decorator value: TypeOnly) {} }'
+    );
+
+    const cases: Array<[Node, string[]]> = [
+      [jsIdentifier, []],
+      [tsIdentifier, []],
+      [typedIdentifier, ['TSTypeAnnotation']],
+      [decoratedIdentifier, ['Decorator']],
+      [decoratedTypedIdentifier, ['Decorator', 'TSTypeAnnotation']],
+    ];
+
+    const emptyIdentifierChildren = getOxcNodeChildren(jsIdentifier);
+    expect(emptyIdentifierChildren).toBe(getOxcNodeChildren(tsIdentifier));
+    expect(Object.isFrozen(emptyIdentifierChildren)).toBe(true);
+
+    // Exercise both plain-first and rich-first orderings. Traversal must depend
+    // only on the current node shape, never on an earlier Identifier instance.
+    for (const orderedCases of [cases, [...cases].reverse()]) {
+      for (const [identifier, expectedTypes] of orderedCases) {
+        expect(getOxcNodeChildren(identifier).map(({ type }) => type)).toEqual(
+          expectedTypes
+        );
+      }
+    }
 
     const visited: string[] = [];
-    walkOxc(parameter, (node) => visited.push(node.type));
+    walkOxc(decoratedTypedIdentifier, (node) => visited.push(node.type));
     expect(visited).toContain('Decorator');
+    expect(visited).toContain('TSTypeAnnotation');
   });
 
   it('preserves duplicate bindings and runtime pattern evaluation order', () => {

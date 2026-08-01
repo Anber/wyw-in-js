@@ -8,6 +8,7 @@ import type { Node } from 'oxc-parser';
 import { emitOxcCommonJS } from '../utils/oxcEmit';
 import { createCallableProvenanceIndex } from '../utils/oxcShaker/callableProvenanceIndex';
 import { createNormalizedCatalogResolver } from '../utils/oxcShaker/provenanceClosure';
+import { createShakerProgramFactsCache } from '../utils/oxcShaker/programFactsCache';
 import { shakeOxcToESM } from '../utils/oxcShaker';
 import {
   appendOxcRuntimePropertyPath,
@@ -61,6 +62,81 @@ const runSourceWidth = (input: string): { code: string; width: number } => {
 };
 
 describe('shakeOxcToESM', () => {
+  it('reuses facts only for the same Program source and module mode', () => {
+    const source = 'export const value = 1;';
+    const program = parseOxcProgramCached(filename, source, 'module');
+    let buildCount = 0;
+    const getFacts = createShakerProgramFactsCache(
+      (_program, code, isEsModule) => {
+        buildCount += 1;
+        return { build: buildCount, code, isEsModule };
+      }
+    );
+
+    const first = getFacts(program, source, true);
+    const second = getFacts(program, source, true);
+    const changedSource = getFacts(program, `${source}\n`, true);
+    const changedMode = getFacts(program, `${source}\n`, false);
+    const changedModeAgain = getFacts(program, `${source}\n`, false);
+
+    expect(second).toBe(first);
+    expect(changedSource).not.toBe(first);
+    expect(changedSource.code).toBe(`${source}\n`);
+    expect(changedMode).not.toBe(changedSource);
+    expect(changedMode.isEsModule).toBe(false);
+    expect(changedModeAgain).toBe(changedMode);
+    expect(buildCount).toBe(3);
+  });
+
+  it('isolates liveness while reusing facts for repeated shakes', () => {
+    const source = dedent(`
+      const leftDependency = 'left';
+      const rightDependency = 'right';
+      export const left = () => leftDependency;
+      export const right = () => rightDependency;
+    `);
+
+    const firstLeft = shakeOxcToESM(source, filename, {
+      onlyExports: ['left'],
+    }).code;
+    const right = shakeOxcToESM(source, filename, {
+      onlyExports: ['right'],
+    }).code;
+    const secondLeft = shakeOxcToESM(source, filename, {
+      onlyExports: ['left'],
+    }).code;
+
+    expect(firstLeft).toContain("const leftDependency = 'left'");
+    expect(firstLeft).not.toContain('rightDependency');
+    expect(right).toContain("const rightDependency = 'right'");
+    expect(right).not.toContain('leftDependency');
+    expect(secondLeft).toBe(firstLeft);
+  });
+
+  it('isolates option-sensitive seeds while reusing facts', () => {
+    const source = dedent(`
+      import 'side-effect-dependency';
+      export const value = 1;
+    `);
+
+    const withoutSideEffects = shakeOxcToESM(source, filename, {
+      keepSideEffects: false,
+      onlyExports: ['value'],
+    }).code;
+    const withSideEffects = shakeOxcToESM(source, filename, {
+      keepSideEffects: true,
+      onlyExports: ['value'],
+    }).code;
+    const withoutSideEffectsAgain = shakeOxcToESM(source, filename, {
+      keepSideEffects: false,
+      onlyExports: ['value'],
+    }).code;
+
+    expect(withoutSideEffects).not.toContain('side-effect-dependency');
+    expect(withSideEffects).toContain("import 'side-effect-dependency'");
+    expect(withoutSideEffectsAgain).toBe(withoutSideEffects);
+  });
+
   it('keeps transitive dependencies of __wywPreval and strips dead exports', () => {
     const { code } = run(
       ['__wywPreval'],

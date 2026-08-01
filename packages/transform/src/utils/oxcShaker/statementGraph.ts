@@ -33,6 +33,7 @@ import {
   isReceiverOperationProvenInert as proveReceiverOperationInert,
   type PatternInitializerResolver,
 } from './patternEffects';
+import { createShakerProgramFactsCache } from './programFactsCache';
 
 type AnyNode = Node & Record<string, unknown>;
 
@@ -218,17 +219,15 @@ const buildStatementInfo = (
   });
 };
 
-export const shakeOxcToESM = (
+const buildShakerProgramFacts = (
+  program: Program,
   code: string,
-  filename: string,
-  options: OxcShakerOptions
-): OxcShakerResult => {
-  const parsed = parseShakerModule(code, filename);
-  const { program } = parsed;
+  isEsModule: boolean
+) => {
   const collected = collectOxcExportsAndImportsFromProgram(
     program,
     code,
-    parsed.isEsModule
+    isEsModule
   );
   const statements = buildStatementInfo(program, collected);
   const bindingOwners = new Map<string, StatementInfo>();
@@ -289,13 +288,6 @@ export const shakeOxcToESM = (
     });
   });
 
-  const requested = new Set(options.onlyExports);
-  const keepAllExports = requested.has('*');
-  const liveStatements = new Set<StatementInfo>();
-  const liveExportStatements = new Set<StatementInfo>();
-  const queue: StatementInfo[] = [];
-  const bindingQueue: string[] = [];
-  const liveBindings = new Set<string>();
   const effectsByBinding = new Map<string, Set<StatementInfo>>();
   const receiverEffectsByBinding = new Map<string, Set<StatementInfo>>();
   const nestedReceiverEffectsByBinding = new Map<string, Set<StatementInfo>>();
@@ -692,6 +684,56 @@ export const shakeOxcToESM = (
     });
   });
 
+  const potentiallyAbruptStatements = statements.filter((statement) =>
+    hasPotentiallyAbruptPatternEvaluation(statement.node, (name) =>
+      resolveStableInitializer(statement, name, 'evaluation')
+    )
+  );
+
+  return Object.freeze({
+    bindingOwners: bindingOwners as ReadonlyMap<string, StatementInfo>,
+    callableProvenance,
+    callableResultEffects: callableResultEffects as ReadonlyMap<
+      string,
+      ReadonlySet<StatementInfo>
+    >,
+    effectsByBinding: effectsByBinding as ReadonlyMap<
+      string,
+      ReadonlySet<StatementInfo>
+    >,
+    potentiallyAbruptStatements: Object.freeze(potentiallyAbruptStatements),
+    statements: Object.freeze(statements),
+  });
+};
+
+type ShakerProgramFacts = ReturnType<typeof buildShakerProgramFacts>;
+
+const getShakerProgramFacts = createShakerProgramFactsCache<ShakerProgramFacts>(
+  buildShakerProgramFacts
+);
+
+export const shakeOxcToESM = (
+  code: string,
+  filename: string,
+  options: OxcShakerOptions
+): OxcShakerResult => {
+  const parsed = parseShakerModule(code, filename);
+  const {
+    bindingOwners,
+    callableProvenance,
+    callableResultEffects,
+    effectsByBinding,
+    potentiallyAbruptStatements,
+    statements,
+  } = getShakerProgramFacts(parsed.program, code, parsed.isEsModule);
+  const requested = new Set(options.onlyExports);
+  const keepAllExports = requested.has('*');
+  const liveStatements = new Set<StatementInfo>();
+  const liveExportStatements = new Set<StatementInfo>();
+  const queue: StatementInfo[] = [];
+  const bindingQueue: string[] = [];
+  const liveBindings = new Set<string>();
+
   const mark = (statement: StatementInfo, exported = false): void => {
     if (!liveStatements.has(statement)) {
       liveStatements.add(statement);
@@ -721,13 +763,7 @@ export const shakeOxcToESM = (
     );
   };
 
-  statements
-    .filter((statement) =>
-      hasPotentiallyAbruptPatternEvaluation(statement.node, (name) =>
-        resolveStableInitializer(statement, name, 'evaluation')
-      )
-    )
-    .forEach((statement) => mark(statement));
+  potentiallyAbruptStatements.forEach((statement) => mark(statement));
 
   statements.forEach((statement) => {
     const hasWildcardReexport = statement.exportNames.has('*');
