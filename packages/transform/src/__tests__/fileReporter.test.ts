@@ -57,6 +57,8 @@ describe('createFileReporter', () => {
     try {
       expect(EventEmitter.dummy.enabled).toBe(false);
       expect(reporter.emitter.enabled).toBe(true);
+      expect(EventEmitter.dummy.hasEventListener('staticPlan')).toBe(false);
+      expect(reporter.emitter.hasEventListener('staticPlan')).toBe(true);
     } finally {
       reporter.onDone(dir);
       await waitFor(() => existsSync(join(dir, 'actions.jsonl')));

@@ -58,7 +58,9 @@ export { withDefaultServices } from './transform/helpers/withDefaultServices';
 export type { Services } from './transform/types';
 export { EventEmitter } from './utils/EventEmitter';
 export type {
+  DebugEventType,
   EntrypointEvent,
+  EventEmitterOptions,
   OnEvent,
   OnActionStartArgs,
   OnActionFinishArgs,

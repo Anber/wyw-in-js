@@ -25,43 +25,26 @@ import type {
   VariableDeclarator,
 } from 'oxc-parser';
 
+import {
+  cacheOxcCollection,
+  cacheOxcProcessorImports,
+  getCachedOxcCollection,
+  getCachedOxcProcessorImports,
+  type ImportKind,
+  type OxcCollectedImport,
+  type OxcCollectedReexport,
+  type OxcCollectedState,
+  type OxcLocal,
+} from './collectOxcExportsAndImportsCache';
 import { parseOxcCached } from './parseOxc';
 
-type ImportKind = 'cjs' | 'dynamic' | 'esm';
-
-export type OxcLocal = {
-  code: string;
-  end: number;
-  name?: string;
-  start: number;
-};
-
-export type OxcCollectedImport = {
-  imported: string | 'default' | '*' | 'side-effect';
-  local: OxcLocal;
-  source: string;
-  type: ImportKind;
-};
-
-export type OxcCollectedExport = {
-  exported: string | 'default' | '*';
-  local: OxcLocal;
-};
-
-export type OxcCollectedReexport = {
-  exported: string | 'default' | '*';
-  imported: string | 'default' | '*';
-  local: OxcLocal;
-  source: string;
-};
-
-export type OxcCollectedState = {
-  deadExports: string[];
-  exports: Record<string | 'default' | '*', OxcLocal>;
-  imports: OxcCollectedImport[];
-  isEsModule: boolean;
-  reexports: OxcCollectedReexport[];
-};
+export type {
+  OxcCollectedExport,
+  OxcCollectedImport,
+  OxcCollectedReexport,
+  OxcCollectedState,
+  OxcLocal,
+} from './collectOxcExportsAndImportsCache';
 
 type VisitMode = 'all' | 'importsOnly';
 
@@ -1376,6 +1359,11 @@ export function collectOxcExportsAndImportsFromProgram(
   code: string,
   isEsModule: boolean
 ): OxcCollectedState {
+  const cached = getCachedOxcCollection(program, code, isEsModule);
+  if (cached) {
+    return cached;
+  }
+
   const rootScope = createScope(null);
   const state: AnalyzerState = {
     code,
@@ -1399,13 +1387,18 @@ export function collectOxcExportsAndImportsFromProgram(
   );
   addUnusedNamespaceSideEffects(state);
 
-  return state.result;
+  return cacheOxcCollection(program, code, isEsModule, state.result);
 }
 
 export function collectOxcProcessorImportsFromProgram(
   program: Program,
   code: string
 ): OxcCollectedImport[] {
+  const cached = getCachedOxcProcessorImports(program, code);
+  if (cached) {
+    return cached;
+  }
+
   const rootScope = createScope(null);
   const state: AnalyzerState = {
     code,
@@ -1428,7 +1421,7 @@ export function collectOxcProcessorImportsFromProgram(
     'importsOnly'
   );
 
-  return state.result.imports;
+  return cacheOxcProcessorImports(program, code, state.result.imports);
 }
 
 export function collectOxcExportsAndImports(

@@ -4,6 +4,18 @@ export type OnEvent = (
   event?: unknown
 ) => void;
 
+export type DebugEventType = 'staticPlan';
+
+export interface EventEmitterOptions {
+  /**
+   * Lazily produced debug events consumed by `onEvent`. This is a producer
+   * hint and does not filter events passed directly to `single()`. Omit it to
+   * preserve the legacy behavior, where every debug event is assumed to have
+   * a listener.
+   */
+  debugEvents?: readonly DebugEventType[];
+}
+
 export interface IActionCreated {
   actionIdx: string;
   actionType: string;
@@ -108,12 +120,18 @@ export class EventEmitter {
 
   private perfSpanId = 0;
 
+  private readonly debugEvents: ReadonlySet<DebugEventType> | null;
+
   constructor(
     protected onEvent: OnEvent,
     protected onAction: OnAction,
     protected onEntrypointEvent: OnEntrypointEvent,
-    public readonly enabled = true
-  ) {}
+    public readonly enabled = true,
+    options: EventEmitterOptions = {}
+  ) {
+    this.debugEvents =
+      options.debugEvents === undefined ? null : new Set(options.debugEvents);
+  }
 
   public action<TRes>(
     actonType: string,
@@ -156,6 +174,12 @@ export class EventEmitter {
 
   public entrypointEvent(sequenceId: number, event: EntrypointEvent) {
     this.onEntrypointEvent(sequenceId, performance.now(), event);
+  }
+
+  public hasEventListener(type: DebugEventType): boolean {
+    return (
+      this.enabled && (this.debugEvents === null || this.debugEvents.has(type))
+    );
   }
 
   public perf<TRes>(method: string, fn: () => TRes): TRes {

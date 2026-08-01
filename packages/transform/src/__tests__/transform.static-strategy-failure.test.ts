@@ -49,6 +49,70 @@ const runStatic = (root: string, entryFile: string) =>
   );
 
 describe('eval.strategy "static" failure diagnostics', () => {
+  it('reports the standard strategy failure for snapshot-local writes', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-static-fail-'));
+    const entryFile = join(root, 'entry.js');
+
+    writeFileSync(
+      entryFile,
+      [
+        `import { css } from 'test-css-processor';`,
+        `export function Component() {`,
+        `  let { width } = { width: 1 };`,
+        '  const className = css`--widths: ${width}:${(width = 2)}:${width};`;',
+        `  return [className, width];`,
+        `}`,
+      ].join('\n')
+    );
+
+    try {
+      await runStatic(root, entryFile);
+      throw new Error('expected static strategy to fail');
+    } catch (error) {
+      const { message } = error as Error;
+      expect(message).toContain('eval.strategy: "static"');
+      expect(message).toContain('could not be resolved at build time');
+      expect(message).not.toContain('local snapshot depends');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ['for-of', '(() => { for (width of [2]) {} return width; })()'],
+    ['for-in', '(() => { for (width in { two: 1 }) {} return width; })()'],
+  ])(
+    'reports the standard strategy failure for an eagerly executed snapshot-local %s target',
+    async (_name, expression) => {
+      const root = mkdtempSync(join(tmpdir(), 'wyw-static-fail-'));
+      const entryFile = join(root, 'entry.js');
+
+      writeFileSync(
+        entryFile,
+        [
+          `import { css } from 'test-css-processor';`,
+          `export function Component() {`,
+          `  let { width } = { width: 1 };`,
+          `  const className = css\`--width: \${${expression}};\`;`,
+          `  return [className, width];`,
+          `}`,
+        ].join('\n')
+      );
+
+      try {
+        await runStatic(root, entryFile);
+        throw new Error('expected static strategy to fail');
+      } catch (error) {
+        const { message } = error as Error;
+        expect(message).toContain('eval.strategy: "static"');
+        expect(message).toContain('could not be resolved at build time');
+        expect(message).not.toContain('local snapshot depends');
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    }
+  );
+
   it('names the original interpolation and its import source instead of bare _exp placeholders', async () => {
     const root = mkdtempSync(join(tmpdir(), 'wyw-static-fail-'));
     const genFile = join(root, 'theme.js');

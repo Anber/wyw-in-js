@@ -1,6 +1,13 @@
-import type { Node } from 'oxc-parser';
+import { visitorKeys, type Node } from 'oxc-parser';
 
 type AnyOxcNode = Node & Record<string, unknown>;
+
+const identifierVisitorKeys = visitorKeys.Identifier ?? [];
+const canFastPathIdentifier =
+  identifierVisitorKeys.length === 2 &&
+  identifierVisitorKeys.includes('decorators') &&
+  identifierVisitorKeys.includes('typeAnnotation');
+const EMPTY_OXC_NODE_CHILDREN: readonly Node[] = Object.freeze([]);
 
 export const isOxcNode = (value: unknown): value is Node =>
   !!value &&
@@ -8,41 +15,30 @@ export const isOxcNode = (value: unknown): value is Node =>
   'type' in value &&
   typeof (value as { type?: unknown }).type === 'string';
 
-// Cache visitor-key lists per node.type. oxc-parser AST nodes have a stable
-// shape per `type` — optional children are present as null/undefined, not
-// omitted — so Object.keys() returns the same key set for every instance of
-// the same kind. First instance pays the discovery cost; the rest do an
-// indexed lookup. getOxcNodeChildren is invoked tens of millions of times
-// on a cold build of a large monorepo, so this matters a lot.
-//
-// An instance-level WeakMap cache of the resulting Node[] was tried and
-// regressed wall time ~20% (WeakMap.get/set per call beat the recompute
-// savings for small children arrays + pinned arrays into older generations
-// and increased GC pressure). Per-type key cache only.
-const META_KEYS = new Set([
-  'comments',
-  'end',
-  'errors',
-  'parent',
-  'range',
-  'span',
-  'start',
-  'type',
-]);
-const VISITOR_KEYS_BY_TYPE = new Map<string, readonly string[]>();
-const visitorKeysFor = (node: AnyOxcNode): readonly string[] => {
-  let keys = VISITOR_KEYS_BY_TYPE.get(node.type);
-  if (keys === undefined) {
-    keys = Object.keys(node).filter((key) => !META_KEYS.has(key));
-    VISITOR_KEYS_BY_TYPE.set(node.type, keys);
-  }
-  return keys;
-};
-
-export const getOxcNodeChildren = (node: Node): Node[] => {
-  const result: Node[] = [];
+export const getOxcNodeChildren = (node: Node): readonly Node[] => {
   const record = node as AnyOxcNode;
-  const keys = visitorKeysFor(record);
+
+  // Identifier is by far the most common OXC node. Its only visitor keys are
+  // the optional decorators and type annotation, so avoid the visitor-key
+  // lookup and loop when both are empty. Keep every non-empty shape on the
+  // authoritative visitorKeys path below: TS and decorated Identifiers must
+  // still expose their children regardless of which shape was seen first. The
+  // optimization disables itself if a future OXC version adds another key.
+  if (
+    canFastPathIdentifier &&
+    node.type === 'Identifier' &&
+    (record.decorators == null ||
+      (Array.isArray(record.decorators) && record.decorators.length === 0)) &&
+    record.typeAnnotation == null
+  ) {
+    return EMPTY_OXC_NODE_CHILDREN;
+  }
+
+  const result: Node[] = [];
+  // OXC exposes the complete visitor-key union for each node type. Unlike
+  // Object.keys(node), it remains stable when JS and TS instances of the same
+  // type have different shapes (for example, decorated TS Identifiers).
+  const keys = visitorKeys[node.type] ?? [];
   for (let i = 0; i < keys.length; i += 1) {
     const value = record[keys[i]];
     if (isOxcNode(value)) {

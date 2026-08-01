@@ -2,7 +2,14 @@
 
 import type { Expression, MemberExpression, Node } from 'oxc-parser';
 
+import {
+  appendOxcAssignmentTargetLeaves,
+  getOxcAssignmentTargetRootIdentifier,
+  type OxcAssignmentTargetLeaf,
+} from '../oxc/assignmentTargets';
 import { getOxcNodeChildren } from '../oxc/ast';
+import { collectOxcPatternBindingNames } from '../oxc/patterns';
+import { getOxcSyntacticPropertyKey } from '../oxc/projections';
 import {
   isBindingPosition,
   isInTypeContext,
@@ -10,7 +17,8 @@ import {
   isPropertyOnlyIdentifier,
   resolveBindingAt,
 } from './scopeAnalysis';
-import { evaluateStatic, literalCode } from './staticEvaluator';
+import { evaluateStatic } from './staticEvaluator';
+import { literalCode } from './staticValues';
 import type {
   Binding,
   ExtractionContext,
@@ -23,7 +31,7 @@ export const getConstantReplacement = (
   ctx: ExtractionContext
 ): string | null => {
   const init = binding?.declarator?.init;
-  if (!init) {
+  if (!init || binding.declarator?.id.type !== 'Identifier') {
     return null;
   }
 
@@ -43,23 +51,311 @@ export const getConstantReplacement = (
   return null;
 };
 
+type ReplacementScope = {
+  activeFrom: number;
+  bindings: Set<string>;
+  functionScope: ReplacementScope;
+  parent: ReplacementScope | null;
+};
+
+const createReplacementScope = (
+  parent: ReplacementScope | null,
+  functionBoundary = false,
+  activeFrom = Number.NEGATIVE_INFINITY
+): ReplacementScope => {
+  const scope = {
+    activeFrom,
+    bindings: new Set<string>(),
+    functionScope: null as unknown as ReplacementScope,
+    parent,
+  };
+  scope.functionScope =
+    functionBoundary || !parent ? scope : parent.functionScope;
+  return scope;
+};
+
+type OxcIdentifier = Extract<Node, { type: 'Identifier' }>;
+
+const appendMutationTargetRoots = (
+  node: Node,
+  roots: OxcIdentifier[]
+): void => {
+  const targets: OxcAssignmentTargetLeaf[] = [];
+  appendOxcAssignmentTargetLeaves(node, targets);
+  for (let i = 0; i < targets.length; i += 1) {
+    const root = getOxcAssignmentTargetRootIdentifier(targets[i]!);
+    if (root) {
+      roots.push(root);
+    }
+  }
+};
+
+const isDeferredMutationBoundary = (node: Node): boolean =>
+  node.type === 'FunctionDeclaration' ||
+  node.type === 'FunctionExpression' ||
+  node.type === 'ArrowFunctionExpression' ||
+  node.type === 'ClassDeclaration' ||
+  node.type === 'ClassExpression';
+
+const immediateFunctionCallee = (node: Node): Node | null => {
+  let current = node;
+  while (
+    current.type === 'ParenthesizedExpression' ||
+    current.type === 'ChainExpression' ||
+    current.type === 'TSAsExpression' ||
+    current.type === 'TSSatisfiesExpression' ||
+    current.type === 'TSTypeAssertion' ||
+    current.type === 'TSNonNullExpression' ||
+    current.type === 'TSInstantiationExpression'
+  ) {
+    current = current.expression;
+  }
+
+  if (current.type === 'SequenceExpression') {
+    current = current.expressions[current.expressions.length - 1] ?? current;
+  }
+
+  if (current.type === 'FunctionExpression') {
+    return current.async || current.generator ? null : current;
+  }
+
+  if (current.type === 'ArrowFunctionExpression') {
+    return current.async ? null : current;
+  }
+
+  return null;
+};
+
+const walkExpressionByExecution = (
+  expression: Expression,
+  includeDeferred: boolean,
+  visit: (node: Node) => void
+): void => {
+  const eagerlyInvokedFunctions = new WeakSet<Node>();
+
+  const walk = (node: Node): void => {
+    if (
+      !includeDeferred &&
+      isDeferredMutationBoundary(node) &&
+      !eagerlyInvokedFunctions.has(node)
+    ) {
+      return;
+    }
+
+    if (!includeDeferred && node.type === 'CallExpression') {
+      const immediateFunction = immediateFunctionCallee(node.callee);
+      if (immediateFunction) {
+        eagerlyInvokedFunctions.add(immediateFunction);
+      }
+    }
+
+    visit(node);
+    getOxcNodeChildren(node).forEach(walk);
+  };
+
+  walk(expression);
+};
+
+const collectIdentifierMutationTargetsImpl = (
+  expression: Expression,
+  includeDeferred: boolean
+): OxcIdentifier[] => {
+  const targets: OxcIdentifier[] = [];
+  walkExpressionByExecution(expression, includeDeferred, (node) => {
+    if (node.type === 'AssignmentExpression') {
+      appendMutationTargetRoots(node.left, targets);
+    } else if (node.type === 'UpdateExpression') {
+      appendMutationTargetRoots(node.argument, targets);
+    } else if (node.type === 'UnaryExpression' && node.operator === 'delete') {
+      appendMutationTargetRoots(node.argument, targets);
+    } else if (
+      (node.type === 'ForInStatement' || node.type === 'ForOfStatement') &&
+      node.left.type !== 'VariableDeclaration'
+    ) {
+      appendMutationTargetRoots(node.left, targets);
+    }
+  });
+  return targets;
+};
+
+export const collectIdentifierMutationTargets = (
+  expression: Expression
+): OxcIdentifier[] => collectIdentifierMutationTargetsImpl(expression, true);
+
+export const collectEagerIdentifierMutationTargets = (
+  expression: Expression
+): OxcIdentifier[] => collectIdentifierMutationTargetsImpl(expression, false);
+
+export const collectEagerNodeStarts = (
+  expression: Expression
+): ReadonlySet<number> => {
+  const starts = new Set<number>();
+  walkExpressionByExecution(expression, false, (node) => {
+    starts.add(node.start);
+  });
+  return starts;
+};
+
+const createNestedReplacementScope = (
+  node: Node,
+  scope: ReplacementScope,
+  parent: Node | null
+): ReplacementScope => {
+  if (
+    node.type === 'FunctionDeclaration' ||
+    node.type === 'FunctionExpression' ||
+    node.type === 'ArrowFunctionExpression'
+  ) {
+    if (node.type === 'FunctionDeclaration' && node.id) {
+      scope.bindings.add(node.id.name);
+    }
+
+    const functionScope = createReplacementScope(scope, true);
+    if (node.type === 'FunctionExpression' && node.id) {
+      functionScope.bindings.add(node.id.name);
+    }
+    node.params.forEach((param) =>
+      collectOxcPatternBindingNames(param).forEach((name) =>
+        functionScope.bindings.add(name)
+      )
+    );
+    return functionScope;
+  }
+
+  if (node.type === 'ClassDeclaration' || node.type === 'ClassExpression') {
+    if (node.type === 'ClassDeclaration' && node.id) {
+      scope.bindings.add(node.id.name);
+    }
+
+    const classScope = createReplacementScope(scope);
+    if (node.id) {
+      classScope.bindings.add(node.id.name);
+    }
+    return classScope;
+  }
+
+  if (node.type === 'CatchClause') {
+    const catchScope = createReplacementScope(scope);
+    if (node.param) {
+      collectOxcPatternBindingNames(node.param).forEach((name) =>
+        catchScope.bindings.add(name)
+      );
+    }
+    return catchScope;
+  }
+
+  if (node.type === 'StaticBlock') {
+    return createReplacementScope(scope, true);
+  }
+
+  if (
+    node.type === 'BlockStatement' &&
+    !!parent &&
+    (parent.type === 'FunctionDeclaration' ||
+      parent.type === 'FunctionExpression' ||
+      parent.type === 'ArrowFunctionExpression') &&
+    parent.body === node
+  ) {
+    // Parameter defaults run before the function body var environment exists.
+    // Keep body `var` bindings out of the parameter scope while still making
+    // them visible throughout the body.
+    return createReplacementScope(scope, true);
+  }
+
+  if (
+    node.type === 'BlockStatement' ||
+    node.type === 'ForStatement' ||
+    node.type === 'ForInStatement' ||
+    node.type === 'ForOfStatement'
+  ) {
+    return createReplacementScope(scope);
+  }
+
+  if (node.type === 'SwitchStatement') {
+    return createReplacementScope(
+      scope,
+      false,
+      node.cases[0]?.start ?? node.end
+    );
+  }
+
+  return scope;
+};
+
+const collectReplacementScopes = (
+  node: Node,
+  scope: ReplacementScope,
+  scopes: WeakMap<Node, ReplacementScope>,
+  parent: Node | null = null
+): void => {
+  const currentScope = createNestedReplacementScope(node, scope, parent);
+  scopes.set(node, currentScope);
+
+  if (node.type === 'VariableDeclaration') {
+    const declarationScope =
+      node.kind === 'var' ? currentScope.functionScope : currentScope;
+    node.declarations.forEach((declarator) =>
+      collectOxcPatternBindingNames(declarator.id).forEach((name) =>
+        declarationScope.bindings.add(name)
+      )
+    );
+  }
+
+  getOxcNodeChildren(node).forEach((child) =>
+    collectReplacementScopes(child, currentScope, scopes, node)
+  );
+};
+
+const hasReplacementShadow = (
+  scope: ReplacementScope,
+  name: string,
+  referenceStart: number
+): boolean => {
+  let current: ReplacementScope | null = scope;
+  while (current) {
+    if (referenceStart >= current.activeFrom && current.bindings.has(name)) {
+      return true;
+    }
+    current = current.parent;
+  }
+  return false;
+};
+
+const isNonReferenceIdentifier = (node: Node, parent: Node | null): boolean =>
+  !!parent &&
+  ((parent.type === 'LabeledStatement' && parent.label === node) ||
+    (parent.type === 'BreakStatement' && parent.label === node) ||
+    (parent.type === 'ContinueStatement' && parent.label === node) ||
+    parent.type === 'MetaProperty');
+
 export const collectIdentifierReferenceReplacements = (
   expression: Expression,
-  replacements: Map<string, string>
+  replacements: ReadonlyMap<string, string>,
+  exactReplacements?: ReadonlyMap<number, string>
 ): Replacement[] => {
   const localReplacements: Replacement[] = [];
   const ancestors: Node[] = [];
+  const rootScope = createReplacementScope(null, true);
+  const scopes = new WeakMap<Node, ReplacementScope>();
+  collectReplacementScopes(expression, rootScope, scopes);
 
   const walk = (current: Node, parent: Node | null) => {
+    const exactReplacement = exactReplacements?.get(current.start);
     if (
       current.type === 'Identifier' &&
-      replacements.has(current.name) &&
+      (exactReplacement !== undefined || replacements.has(current.name)) &&
+      !hasReplacementShadow(
+        scopes.get(current) ?? rootScope,
+        current.name,
+        current.start
+      ) &&
       !isInTypeContext(ancestors) &&
       !isBindingPosition(current, parent) &&
       !isPropertyOnlyIdentifier(current, parent) &&
-      !isObjectPropertyKey(current, parent)
+      !isObjectPropertyKey(current, parent) &&
+      !isNonReferenceIdentifier(current, parent)
     ) {
-      const replacement = replacements.get(current.name)!;
+      const replacement = exactReplacement ?? replacements.get(current.name)!;
       // Shorthand property `{ width }` → `{ width: 500 }` when the
       // identifier is the value side of a shorthand ObjectProperty.
       const isShorthandValue =
@@ -86,7 +382,7 @@ export const collectIdentifierReferenceReplacements = (
 };
 
 export const applyExpressionReplacements = (
-  expression: Expression,
+  expression: Pick<Node, 'end' | 'start'>,
   replacements: Replacement[],
   code: string
 ): string => {
@@ -103,12 +399,17 @@ export const applyExpressionReplacements = (
 
 export const replaceIdentifierReferences = (
   expression: Expression,
-  replacements: Map<string, string>,
-  code: string
+  replacements: ReadonlyMap<string, string>,
+  code: string,
+  exactReplacements?: ReadonlyMap<number, string>
 ): string => {
   return applyExpressionReplacements(
     expression,
-    collectIdentifierReferenceReplacements(expression, replacements),
+    collectIdentifierReferenceReplacements(
+      expression,
+      replacements,
+      exactReplacements
+    ),
     code
   );
 };
@@ -144,19 +445,11 @@ const allocateStaticImportAlias = (
 const staticMemberPropertyName = (
   expression: MemberExpression
 ): string | null => {
-  if (!expression.computed && expression.property.type === 'Identifier') {
-    return expression.property.name;
-  }
-
-  if (
-    expression.computed &&
-    expression.property.type === 'Literal' &&
-    typeof expression.property.value === 'string'
-  ) {
-    return expression.property.value;
-  }
-
-  return null;
+  const key = getOxcSyntacticPropertyKey(
+    expression.property,
+    expression.computed
+  );
+  return typeof key === 'string' ? key : null;
 };
 
 export const collectStaticNamespaceMemberReferences = (

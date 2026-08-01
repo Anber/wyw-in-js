@@ -3,6 +3,7 @@ import type {
   AssignmentExpression,
   Expression,
   Node,
+  Program,
   TemplateLiteral,
   UpdateExpression,
   VariableDeclaration,
@@ -10,14 +11,11 @@ import type {
 } from 'oxc-parser';
 
 import type { OxcValueReplacement } from '../oxc/replacements';
+import type { OxcFunctionLike } from '../oxc/runtimeSemantics';
 import type { OxcLocationLookup } from '../oxc/sourceLocations';
+import type { RecursiveProofState } from './recursiveProof';
 
-export type OxcFunctionLikeNode = Node & {
-  async: boolean;
-  body: Node | null;
-  id?: { name: string } | null;
-  params: Node[];
-};
+export type OxcFunctionLikeNode = OxcFunctionLike;
 export type BindingKind = 'function' | 'import' | 'param' | 'variable';
 export type ScopedDeclarationKind = 'const' | 'let' | 'var';
 
@@ -29,10 +27,16 @@ export type Binding = {
   functionNode?: OxcFunctionLikeNode | null;
   imported?: 'default' | '*' | string;
   importedFrom?: string;
+  isIteration?: boolean;
   isRoot: boolean;
   kind: BindingKind;
   name: string;
   scope: Scope;
+};
+
+export type BindingIndex = {
+  readonly bindingsByName: ReadonlyMap<string, readonly Binding[]>;
+  readonly referenceScopesByStart: ReadonlyMap<number, Scope>;
 };
 
 export type Replacement = OxcValueReplacement;
@@ -45,6 +49,23 @@ export type ExpressionSpan = {
   end: number;
   start: number;
 };
+
+export type MutationSpan = Pick<Node, 'end' | 'start'>;
+
+export type MutationTimeline<T extends MutationSpan = Node> = {
+  readonly byEnd: readonly T[];
+  readonly byStart: readonly T[];
+};
+
+export type MutationTimelineMap<T extends MutationSpan = Node> = ReadonlyMap<
+  string,
+  MutationTimeline<T>
+>;
+
+export type MutationTimelineLookup<T extends MutationSpan = Node> = Pick<
+  MutationTimelineMap<T>,
+  'get' | 'size'
+>;
 
 export type Scope = {
   bindings: Map<string, Binding>;
@@ -62,6 +83,10 @@ export type ReferenceIdentifier = {
   name: string;
   start: number;
 };
+
+export type ResolvedReference = Readonly<
+  ReferenceIdentifier & { binding: Binding | null }
+>;
 
 export type OxcStaticImportReference = {
   imported: 'default' | string;
@@ -109,10 +134,10 @@ export type StaticLocalExpression = {
 };
 
 export type ProgramAnalysis = {
-  bindingsByName: Map<string, Binding[]>;
-  rootMutationsByBinding: Map<
-    string,
-    Array<AssignmentExpression | UpdateExpression>
+  bindingIndex: BindingIndex;
+  rootMutationHazardsByBinding: MutationTimelineMap;
+  rootMutationsByBinding: MutationTimelineMap<
+    AssignmentExpression | UpdateExpression
   >;
   targetExpressions: Expression[];
   templateLiterals: TemplateLiteral[];
@@ -120,8 +145,7 @@ export type ProgramAnalysis = {
 };
 
 export type ExtractionContext = {
-  bindingResolutionCache: Map<string, Map<number, Binding | null>>;
-  bindingsByName: Map<string, Binding[]>;
+  bindingIndex: BindingIndex;
   code: string;
   currentInsertionPoint: number;
   currentExpressionStart: number;
@@ -133,14 +157,15 @@ export type ExtractionContext = {
   hoistedDeclarationsByInsertionPoint: Map<number, string[]>;
   loc: LocationLookup;
   processorManagedExpressionSpans: Set<string>;
-  referencesByNode: WeakMap<Node, ReferenceIdentifier[]>;
+  program: Program;
   replacements: Replacement[];
-  rootMutationsByBinding: Map<
-    string,
-    Array<AssignmentExpression | UpdateExpression>
+  rootMutationHazardsByBinding: MutationTimelineLookup;
+  rootMutationsByBinding: MutationTimelineMap<
+    AssignmentExpression | UpdateExpression
   >;
   staticBindings?: StaticBindings;
   staticImportAliases: Map<string, string>;
+  staticCallProof: RecursiveProofState<Node>;
   staticValueCandidates: OxcStaticValueCandidate[];
   staticValues: OxcStaticValue[];
   usedNames: Set<string>;

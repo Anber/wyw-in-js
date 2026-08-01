@@ -4,6 +4,10 @@ import type { ExpressionValue, StrictOptions } from '@wyw-in-js/shared';
 import { collectOxcProcessorImportsFromProgram } from '../collectOxcExportsAndImports';
 import { collectOxcExpressionDependencies } from '../collectOxcTemplateDependencies';
 import type { OxcStaticValue } from '../collectOxcTemplateDependencies';
+import {
+  collectOxcExpressionDependenciesForEvalFallback,
+  OxcSnapshotWriteUnsupportedError,
+} from '../collectOxcTemplateDependencies/expressionExtraction';
 import { EventEmitter } from '../EventEmitter';
 import type { AddedImport } from '../oxcAstService';
 import { isOxcNode } from '../oxc/ast';
@@ -155,18 +159,34 @@ export const applyOxcProcessors = (
     end: usage.target.end,
     start: usage.target.start,
   }));
+  const extractDependencies = () => {
+    try {
+      return collectOxcExpressionDependencies(
+        workingCode,
+        filename,
+        collectStaticExpressionValues,
+        targetExpressionSpans,
+        options.staticBindings,
+        processorManagedExpressionSpans
+      );
+    } catch (error) {
+      if (!(error instanceof OxcSnapshotWriteUnsupportedError)) {
+        throw error;
+      }
+
+      return collectOxcExpressionDependenciesForEvalFallback(
+        workingCode,
+        filename,
+        targetExpressionSpans,
+        processorManagedExpressionSpans
+      );
+    }
+  };
 
   const extracted =
     targetExpressionSpans.length > 0
       ? eventEmitter.perf('transform:preeval:processTemplate:deps', () =>
-          collectOxcExpressionDependencies(
-            workingCode,
-            filename,
-            collectStaticExpressionValues,
-            targetExpressionSpans,
-            options.staticBindings,
-            processorManagedExpressionSpans
-          )
+          extractDependencies()
         )
       : {
           code: workingCode,

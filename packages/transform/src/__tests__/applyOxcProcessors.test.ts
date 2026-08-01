@@ -56,6 +56,8 @@ const fileContext = {
   filename: path.join(__dirname, 'source.js'),
   root: __dirname,
 };
+const unsafeSnapshotMessage =
+  'local snapshot depends on executed side effects that cannot be safely hoisted';
 
 const options = (
   resolvedProcessorPath: string,
@@ -335,6 +337,195 @@ describe('applyOxcProcessors', () => {
     ]);
   });
 
+  it('uses a private eval cell instead of redirecting snapshot-local writes', () => {
+    const result = applyOxcProcessors(
+      `
+        import { css } from 'test-package';
+        function Component() {
+          let { width } = { width: 1 };
+          const className = css\`${'${width}:${(width = 2)}:${width}'}\`;
+          return width;
+        }
+      `,
+      fileContext,
+      {
+        ...options(processorPath),
+        eval: { strategy: 'hybrid' },
+      },
+      () => {}
+    );
+
+    expect(result.code).toContain('let { width: _width } = { width: 1 };');
+    expect(result.code).toContain('const _exp = () => (_width);');
+    expect(result.code).toContain('const _exp2 = () => ((_width = 2));');
+    expect(result.code).toContain('const _exp3 = () => (_width);');
+    expect(result.code).not.toContain('_snapshot');
+    expect(result.staticValues).toEqual([]);
+    expect(result.staticValueCandidates).toEqual([]);
+    expect(
+      result.processors[0]?.dependencies.map((dependency) =>
+        dependency.ex.type === 'Identifier' ? dependency.ex.name : null
+      )
+    ).toEqual(['_exp', '_exp2', '_exp3']);
+  });
+
+  it.each([
+    ['returned callback', '() => (width = 2)'],
+    ['nested callback', '(() => () => (width = 2))()'],
+    ['async IIFE', '(async () => (width = 2))()'],
+    ['generator IIFE', '(function* () { width = 2; })()'],
+    ['deferred for-of loop', '() => { for (width of [2]) {} }'],
+    ['deferred for-in loop', '() => { for (width in { two: 1 }) {} }'],
+  ])('does not use the eval-cell fallback for a %s', (_name, expression) => {
+    expect(() =>
+      applyOxcProcessors(
+        `
+            import { css } from 'test-package';
+            function Component() {
+              let { width } = { width: 1 };
+              const className = css\`${'${'}${expression}}\`;
+              return width;
+            }
+          `,
+        fileContext,
+        {
+          ...options(processorPath),
+          eval: { strategy: 'hybrid' },
+        },
+        () => {}
+      )
+    ).toThrow(unsafeSnapshotMessage);
+  });
+
+  it.each([
+    [
+      'a returned callback in a later interpolation',
+      '${(width = 2)}:${() => width}',
+    ],
+    [
+      'a returned callback in the write interpolation',
+      '${(width = 2, () => width)}',
+    ],
+    ['a nested returned callback', '${(width = 2)}:${(() => () => width)()}'],
+    ['an async IIFE', '${(width = 2)}:${(async () => width)()}'],
+    [
+      'a generator IIFE',
+      '${(width = 2)}:${(function* () { return width; })()}',
+    ],
+  ])(
+    'does not rebind a deferred snapshot-local read from %s to the eval cell',
+    (_name, templateExpressions) => {
+      expect(() =>
+        applyOxcProcessors(
+          `
+            import { css } from 'test-package';
+            function Component() {
+              let { width } = { width: 1 };
+              const className = css\`${templateExpressions}\`;
+              return width;
+            }
+          `,
+          fileContext,
+          {
+            ...options(processorPath),
+            eval: { strategy: 'hybrid' },
+          },
+          () => {}
+        )
+      ).toThrow(unsafeSnapshotMessage);
+    }
+  );
+
+  it('keeps reads inside a synchronous IIFE on the private eval cell', () => {
+    const result = applyOxcProcessors(
+      `
+        import { css } from 'test-package';
+        function Component() {
+          let { width } = { width: 1 };
+          const className = css\`${'${(width = 2)}:${(() => width)()}'}\`;
+          return width;
+        }
+      `,
+      fileContext,
+      {
+        ...options(processorPath),
+        eval: { strategy: 'hybrid' },
+      },
+      () => {}
+    );
+
+    expect(result.code).toContain('let { width: _width } = { width: 1 };');
+    expect(result.code).toContain('const _exp = () => ((_width = 2));');
+    expect(result.code).toContain('const _exp2 = () => ((() => _width)());');
+    expect(result.code).not.toContain('_snapshot');
+    expect(result.staticValues).toEqual([]);
+    expect(result.staticValueCandidates).toEqual([]);
+  });
+
+  it.each([
+    [
+      'for-of',
+      '(() => { for (width of [2]) {} return width; })()',
+      'for (_width of [2])',
+    ],
+    [
+      'for-in',
+      '(() => { for (width in { two: 1 }) {} return width; })()',
+      'for (_width in { two: 1 })',
+    ],
+  ])(
+    'uses the private eval cell for an eagerly executed %s assignment target',
+    (_name, expression, expectedLoop) => {
+      const result = applyOxcProcessors(
+        `
+          import { css } from 'test-package';
+          function Component() {
+            let { width } = { width: 1 };
+            const className = css\`${'${'}${expression}}\`;
+            return width;
+          }
+        `,
+        fileContext,
+        {
+          ...options(processorPath),
+          eval: { strategy: 'hybrid' },
+        },
+        () => {}
+      );
+
+      expect(result.code).toContain('let { width: _width } = { width: 1 };');
+      expect(result.code).toContain(expectedLoop);
+      expect(result.code).not.toContain('_snapshot');
+      expect(result.staticValues).toEqual([]);
+      expect(result.staticValueCandidates).toEqual([]);
+      expect(
+        result.processors[0]?.dependencies.map((dependency) =>
+          dependency.ex.type === 'Identifier' ? dependency.ex.name : null
+        )
+      ).toEqual(['_exp']);
+    }
+  );
+
+  it('does not apply the snapshot-write fallback to other snapshot errors', () => {
+    expect(() =>
+      applyOxcProcessors(
+        `
+          import { css } from 'test-package';
+          function Component() {
+            const { value } = { value: { width: 1 } };
+            return css\`${'${value}'}\`;
+          }
+        `,
+        fileContext,
+        {
+          ...options(processorPath),
+          eval: { strategy: 'hybrid' },
+        },
+        () => {}
+      )
+    ).toThrow(unsafeSnapshotMessage);
+  });
+
   it('preserves sibling declarators when hoisting nested template dependencies', () => {
     const result = applyOxcProcessors(
       `
@@ -459,9 +650,15 @@ describe('applyOxcProcessors', () => {
       name: '_exp',
       type: 'Identifier',
     });
-    expect(direct.code).toContain(
-      'const _exp = () => (({"root":{"color":"red"}}));'
-    );
+    expect(direct.code).toContain('const styles = { root: { color } };');
+    expect(direct.code).toContain('const _exp = () => (styles);');
+    expect(direct.staticValues).toEqual([
+      {
+        name: '_exp',
+        value: { root: { color: 'red' } },
+      },
+    ]);
+    expect(direct.staticValueCandidates).toEqual([]);
     expect(direct.code).toContain('export const useStyles = null;');
     expect(namespace.processors[0]?.toString()).toBe('pkg.makeStyles(…)');
   });

@@ -1,35 +1,66 @@
-/* eslint-disable no-restricted-syntax,no-continue */
+/* eslint-disable no-restricted-syntax,no-continue,@typescript-eslint/no-use-before-define */
 
 import type { ExpressionValue } from '@wyw-in-js/shared';
 import { ValueType } from '@wyw-in-js/shared';
 import type { Expression, Program } from 'oxc-parser';
 
-import { getOxcNodeChildren } from '../oxc/ast';
+import { collectOxcPatternRuntimeExpressions } from '../oxc/patterns';
 import { applyOxcReplacements } from '../oxc/replacements';
 import { createOxcLocationLookup } from '../oxc/sourceLocations';
+import { findResolvedReferences as getReferences } from './bindingResolution';
+import * as timeline from './mutationTimeline';
 import {
   analyzeProgram,
   containsTaggedTemplateExpression,
   createSpanLookup,
-  findReferences,
   getSourceLocation,
   isBindingDeclaredWithin,
   parseOxc,
   resolveBindingAt,
+  toMutationBindingKey,
+  unknownAliasMutationBinding,
 } from './scopeAnalysis';
 import {
   applyExpressionReplacements,
-  collectIdentifierReferenceReplacements,
+  collectEagerIdentifierMutationTargets,
+  collectEagerNodeStarts,
+  collectIdentifierMutationTargets,
   collectStaticNamespaceMemberReferences,
   getConstantReplacement,
   replaceIdentifierReferences,
 } from './expressionReplacements';
+import { evaluateStatic } from './staticEvaluator';
 import {
   cloneStaticValue,
-  evaluateStatic,
   isStaticSerializableValue,
   literalCode,
-} from './staticEvaluator';
+} from './staticValues';
+import { memoizeBindingFact, toOxcBindingIdentity } from './bindingIdentity';
+import {
+  addHoistedCode,
+  addHoistedSnapshotReplay,
+  countPatternBindingNames,
+  expressionSpanKey,
+  hasDestructuringIntrinsicMutationBefore,
+  OxcSnapshotWriteUnsupportedError,
+  snapshotReplayError,
+} from './snapshotReplay';
+import {
+  allocateExpressionName,
+  collectStaticBindingExpression,
+  containsProcessorManagedExpression,
+  declarationInitCode,
+  declarationPatternCode,
+  expressionHasNestedCallTimeUncertainty,
+  getHoistedBindingName,
+  hasBindingMutationBefore,
+  hasOpaqueDestructuringHazardBefore,
+  hasReferencedRootMutationBefore,
+  nestedDestructuringHasCallTimeUncertainty,
+  replaceStaticLocalReferences,
+} from './staticLocalPlanning';
+import { inferSnapshotExpressionKind } from './snapshotValueAnalysis';
+import * as recursiveProof from './recursiveProof';
 import type {
   Binding,
   ExtractedExpression,
@@ -37,232 +68,11 @@ import type {
   ExtractionContext,
   OxcStaticImportReference,
   ProgramAnalysis,
-  Replacement,
   StaticBindings,
-  StaticLocalExpression,
   TemplateExtractionResult,
 } from './types';
 
-const allocateExpressionName = (ctx: ExtractionContext): string => {
-  let base = '_exp';
-  let idx = 1;
-  while (ctx.usedNames.has(base)) {
-    idx += 1;
-    base = `_exp${idx}`;
-  }
-
-  ctx.usedNames.add(base);
-  return base;
-};
-
-const hoistedBindingKey = (binding: Binding): string =>
-  `${binding.scope.start}:${binding.scope.end}:${binding.declaredAt}:${binding.name}`;
-
-const allocateHoistedBindingName = (
-  originalName: string,
-  ctx: ExtractionContext
-): string => {
-  const sanitized = originalName.replace(/[^A-Za-z0-9_$]/g, '_') || 'hoisted';
-  const base = /^[A-Za-z_$]/.test(sanitized) ? `_${sanitized}` : '_hoisted';
-  let candidate = base;
-  let idx = 2;
-
-  while (ctx.usedNames.has(candidate)) {
-    candidate = `${base}${idx}`;
-    idx += 1;
-  }
-
-  ctx.usedNames.add(candidate);
-  return candidate;
-};
-
-const getHoistedBindingName = (
-  binding: Binding,
-  ctx: ExtractionContext
-): string => {
-  const key = hoistedBindingKey(binding);
-  const existing = ctx.hoistedBindingNames.get(key);
-  if (existing) {
-    return existing;
-  }
-
-  const next = allocateHoistedBindingName(binding.name, ctx);
-  ctx.hoistedBindingNames.set(key, next);
-  return next;
-};
-
-const parenthesizeStaticReplacement = (source: string): string => `(${source})`;
-
-const replaceStaticLocalReferences = (
-  expression: Expression,
-  replacements: Map<string, string>,
-  ctx: ExtractionContext,
-  extraReplacements: Replacement[] = []
-): string => {
-  if (expression.type === 'Identifier' && extraReplacements.length === 0) {
-    return (
-      replacements.get(expression.name) ??
-      ctx.code.slice(expression.start, expression.end)
-    );
-  }
-
-  const parenthesized = new Map<string, string>();
-  replacements.forEach((value, key) => {
-    parenthesized.set(key, parenthesizeStaticReplacement(value));
-  });
-
-  return applyExpressionReplacements(
-    expression,
-    [
-      ...extraReplacements,
-      ...collectIdentifierReferenceReplacements(expression, parenthesized),
-    ],
-    ctx.code
-  );
-};
-
-const collectStaticLocalExpression = (
-  expression: Expression,
-  ctx: ExtractionContext,
-  stack: string[] = []
-): StaticLocalExpression | null => {
-  const replacements = new Map<string, string>();
-  const importedFrom = new Set<string>();
-  const imports: OxcStaticImportReference[] = [];
-
-  for (const { name, start } of findReferences(
-    expression,
-    ctx.referencesByNode
-  )) {
-    const binding = resolveBindingAt(ctx, name, start);
-    if (!binding) {
-      return null;
-    }
-
-    if (binding.importedFrom) {
-      importedFrom.add(binding.importedFrom);
-      if (binding.imported && binding.imported !== '*') {
-        imports.push({
-          imported: binding.imported,
-          local: binding.name,
-          source: binding.importedFrom,
-        });
-        continue;
-      }
-
-      return null;
-    }
-
-    const replacement = getConstantReplacement(binding, ctx);
-    if (replacement) {
-      replacements.set(name, replacement);
-      continue;
-    }
-
-    if (
-      binding.kind === 'param' ||
-      binding.declarationKind !== 'const' ||
-      !binding.declarator?.init ||
-      binding.declarator.id.type !== 'Identifier'
-    ) {
-      return null;
-    }
-
-    // Processor-managed bindings (const x = css``) carry their value
-    // (the generated className string) via inlineConstants at candidate
-    // evaluation time. Walking the TaggedTemplateExpression here would
-    // pull the processor's tag import (e.g. `css` from '@linaria/core')
-    // into the candidate's static imports, where it fails to resolve.
-    // Leave the identifier as a free reference; the candidate-side env
-    // supplies the className.
-    if (binding.declarator.init.type === 'TaggedTemplateExpression') {
-      continue;
-    }
-
-    const key = hoistedBindingKey(binding);
-    if (stack.includes(key)) {
-      return null;
-    }
-
-    const nested = collectStaticLocalExpression(binding.declarator.init, ctx, [
-      ...stack,
-      key,
-    ]);
-    if (!nested) {
-      return null;
-    }
-
-    replacements.set(name, nested.source);
-    nested.importedFrom.forEach((source) => importedFrom.add(source));
-    imports.push(...nested.imports);
-  }
-
-  return {
-    importedFrom: [...importedFrom],
-    imports,
-    source:
-      replacements.size > 0
-        ? replaceStaticLocalReferences(expression, replacements, ctx)
-        : ctx.code.slice(expression.start, expression.end),
-  };
-};
-
-const expressionSpanKey = (
-  node: Pick<ExpressionSpan, 'end' | 'start'>
-): string => `${node.start}:${node.end}`;
-
-const containsProcessorManagedExpression = (
-  node: Expression,
-  ctx: ExtractionContext
-): boolean =>
-  ctx.processorManagedExpressionSpans.has(expressionSpanKey(node)) ||
-  getOxcNodeChildren(node).some((child) =>
-    containsProcessorManagedExpression(child as Expression, ctx)
-  );
-
-const declarationInitCode = (
-  init: Expression,
-  ctx: ExtractionContext
-): string => {
-  const renamedDependencies = new Map<string, string>();
-  findReferences(init, ctx.referencesByNode).forEach(({ name, start }) => {
-    const dependency = resolveBindingAt(ctx, name, start);
-    if (
-      !dependency ||
-      dependency.importedFrom ||
-      dependency.isRoot ||
-      dependency.declarator?.id.type !== 'Identifier'
-    ) {
-      return;
-    }
-
-    renamedDependencies.set(name, getHoistedBindingName(dependency, ctx));
-  });
-
-  return renamedDependencies.size > 0
-    ? replaceIdentifierReferences(init, renamedDependencies, ctx.code)
-    : ctx.code.slice(init.start, init.end);
-};
-
-const addHoistedCode = (
-  key: string,
-  code: string,
-  ctx: ExtractionContext
-): void => {
-  if (ctx.hoistedDeclarations.has(key)) {
-    return;
-  }
-
-  ctx.hoistedDeclarations.set(key, code);
-  const declarations =
-    ctx.hoistedDeclarationsByInsertionPoint.get(ctx.currentInsertionPoint) ??
-    [];
-  declarations.push(code);
-  ctx.hoistedDeclarationsByInsertionPoint.set(
-    ctx.currentInsertionPoint,
-    declarations
-  );
-};
+export { OxcSnapshotWriteUnsupportedError };
 
 const declarationCode = (binding: Binding, ctx: ExtractionContext): string => {
   const { declarator } = binding;
@@ -272,7 +82,7 @@ const declarationCode = (binding: Binding, ctx: ExtractionContext): string => {
 
   const { id } = declarator;
   if (id.type !== 'Identifier') {
-    const idCode = ctx.code.slice(id.start, id.end);
+    const idCode = declarationPatternCode(binding, ctx);
     if (!declarator.init) {
       return `let ${idCode};`;
     }
@@ -288,6 +98,132 @@ const declarationCode = (binding: Binding, ctx: ExtractionContext): string => {
   return `let ${hoistedName} = ${declarationInitCode(declarator.init, ctx)};`;
 };
 
+const dependsOnLocalDestructuring = (
+  binding: Binding,
+  ctx: ExtractionContext,
+  visited = new Set<string>()
+): boolean => {
+  const { declarator } = binding;
+  if (!declarator || binding.importedFrom || binding.isRoot) {
+    return false;
+  }
+
+  const bindingKey = toOxcBindingIdentity(binding);
+  if (visited.has(bindingKey)) {
+    return false;
+  }
+  visited.add(bindingKey);
+
+  if (
+    declarator.id.type === 'ObjectPattern' ||
+    declarator.id.type === 'ArrayPattern'
+  ) {
+    return true;
+  }
+
+  if (!declarator.init) {
+    return false;
+  }
+
+  return getReferences(declarator.init, ctx.bindingIndex).some(
+    ({ binding: dependency }) => {
+      return (
+        !!dependency &&
+        dependency.declarator !== declarator &&
+        dependsOnLocalDestructuring(dependency, ctx, visited)
+      );
+    }
+  );
+};
+
+const requiresSnapshotReplay = (
+  binding: Binding,
+  ctx: ExtractionContext
+): boolean => {
+  const { declarator } = binding;
+  if (!declarator || binding.importedFrom || binding.isRoot) {
+    return false;
+  }
+
+  // A destructuring declaration can execute user code or throw even when its
+  // initializer looks static (nullish object patterns, custom iterators,
+  // getters, defaults, and computed keys). Keep it, and aliases derived from
+  // it, dormant until the original local expression is reached.
+  if (dependsOnLocalDestructuring(binding, ctx)) {
+    return true;
+  }
+
+  if (nestedDestructuringHasCallTimeUncertainty(binding, ctx)) {
+    return true;
+  }
+
+  const bindingKey = toMutationBindingKey(binding);
+  if (
+    timeline.hasTimelineStartBefore(
+      timeline.getMutationTimeline(ctx.rootMutationsByBinding, bindingKey),
+      ctx.currentExpressionStart
+    ) ||
+    hasOpaqueDestructuringHazardBefore(
+      bindingKey,
+      ctx.currentExpressionStart,
+      ctx
+    )
+  ) {
+    return true;
+  }
+
+  if (!declarator.init) {
+    return false;
+  }
+
+  const localBindingNames = new Set(
+    countPatternBindingNames(declarator.id).keys()
+  );
+  if (
+    hasReferencedRootMutationBefore(
+      declarator.init,
+      ctx.currentExpressionStart,
+      ctx,
+      localBindingNames,
+      declarator
+    )
+  ) {
+    return true;
+  }
+
+  if (
+    declarator.id.type !== 'ObjectPattern' &&
+    declarator.id.type !== 'ArrayPattern'
+  ) {
+    return false;
+  }
+
+  return (
+    hasDestructuringIntrinsicMutationBefore(
+      declarator.id,
+      declarator.start,
+      ctx
+    ) ||
+    hasOpaqueDestructuringHazardBefore(
+      unknownAliasMutationBinding,
+      ctx.currentExpressionStart,
+      ctx
+    ) ||
+    getReferences(declarator.init, ctx.bindingIndex).some(
+      ({ binding: dependency }) => {
+        return (
+          !!dependency &&
+          hasOpaqueDestructuringHazardBefore(
+            toMutationBindingKey(dependency),
+            declarator.start,
+            ctx
+          )
+        );
+      }
+    )
+  );
+};
+
 const assertHoistable = (
   binding: Binding,
   ctx: ExtractionContext,
@@ -297,24 +233,31 @@ const assertHoistable = (
     return;
   }
 
-  if (stack.includes(binding.name)) {
+  const bindingKey = toOxcBindingIdentity(binding);
+  if (stack.includes(bindingKey)) {
     return;
   }
 
-  const refs = findReferences(binding.declarator.init, ctx.referencesByNode);
-  refs.forEach(({ name, start }) => {
-    const nextBinding = resolveBindingAt(ctx, name, start);
-    if (!nextBinding) {
-      return;
-    }
+  const hoistSources = [
+    binding.declarator.init,
+    ...collectOxcPatternRuntimeExpressions(binding.declarator.id),
+  ];
+  hoistSources.forEach((source) => {
+    getReferences(source, ctx.bindingIndex).forEach(
+      ({ binding: nextBinding }) => {
+        if (!nextBinding || nextBinding.declarator === binding.declarator) {
+          return;
+        }
 
-    if (nextBinding.kind === 'param') {
-      throw new Error(
-        `This identifier cannot be used in the template, because it is a function parameter.`
-      );
-    }
+        if (nextBinding.kind === 'param') {
+          throw new Error(
+            `This identifier cannot be used in the template, because it is a function parameter.`
+          );
+        }
 
-    assertHoistable(nextBinding, ctx, [...stack, binding.name]);
+        assertHoistable(nextBinding, ctx, [...stack, bindingKey]);
+      }
+    );
   });
 };
 
@@ -323,28 +266,33 @@ const addHoistedDeclaration = (
   ctx: ExtractionContext,
   stack: string[] = []
 ): void => {
+  const bindingKey = toOxcBindingIdentity(binding);
   if (
     !binding.declaration ||
     !binding.declarator ||
     binding.importedFrom ||
     binding.isRoot ||
-    stack.includes(binding.name)
+    stack.includes(bindingKey)
   ) {
     return;
   }
 
-  const hoistSource = binding.declarator.init ?? binding.declarator;
-  findReferences(hoistSource, ctx.referencesByNode).forEach(
-    ({ name, start }) => {
-      const dependency = resolveBindingAt(ctx, name, start);
-      if (dependency) {
-        addHoistedDeclaration(dependency, ctx, [...stack, binding.name]);
+  const hoistSources = [
+    ...(binding.declarator.init ? [binding.declarator.init] : []),
+    ...collectOxcPatternRuntimeExpressions(binding.declarator.id),
+  ];
+  hoistSources.forEach((source) => {
+    getReferences(source, ctx.bindingIndex).forEach(
+      ({ binding: dependency }) => {
+        if (dependency && dependency.declarator !== binding.declarator) {
+          addHoistedDeclaration(dependency, ctx, [...stack, bindingKey]);
+        }
       }
-    }
-  );
+    );
+  });
 
-  if (!ctx.hoistedDeclarations.has(binding.name)) {
-    addHoistedCode(binding.name, declarationCode(binding, ctx), ctx);
+  if (!ctx.hoistedDeclarations.has(bindingKey)) {
+    addHoistedCode(bindingKey, declarationCode(binding, ctx), ctx);
   }
 };
 
@@ -401,9 +349,74 @@ const literalExpressionValue = (
 const extractExpression = (
   expression: Expression,
   ctx: ExtractionContext,
-  evaluate: boolean
+  evaluate: boolean,
+  snapshotWriteFallbackBindings: ReadonlySet<Binding>
 ): ExtractedExpression => {
   const source = ctx.code.slice(expression.start, expression.end);
+  const expressionReferences = getReferences(expression, ctx.bindingIndex);
+  const requiresSnapshotReplayForExpression = memoizeBindingFact((binding) =>
+    requiresSnapshotReplay(binding, ctx)
+  );
+  const eagerNodeStarts = collectEagerNodeStarts(expression);
+  const eagerMutationTargetStarts = new Set(
+    collectEagerIdentifierMutationTargets(expression).map(
+      (target) => target.start
+    )
+  );
+  const snapshotMutationTargets = collectIdentifierMutationTargets(
+    expression
+  ).filter((target) => {
+    const binding = resolveBindingAt(ctx, target.name, target.start);
+    return !!binding && requiresSnapshotReplayForExpression(binding);
+  });
+  if (
+    snapshotMutationTargets.some(
+      (target) => !eagerMutationTargetStarts.has(target.start)
+    )
+  ) {
+    throw snapshotReplayError();
+  }
+  if (
+    expressionReferences.some(({ binding, start }) => {
+      if (eagerNodeStarts.has(start)) {
+        return false;
+      }
+
+      return !!binding && snapshotWriteFallbackBindings.has(binding);
+    })
+  ) {
+    throw snapshotReplayError();
+  }
+  if (
+    snapshotMutationTargets.some((target) => {
+      const binding = resolveBindingAt(ctx, target.name, target.start);
+      return !!binding && !snapshotWriteFallbackBindings.has(binding);
+    })
+  ) {
+    throw new OxcSnapshotWriteUnsupportedError();
+  }
+
+  const snapshotBindings = expressionReferences.flatMap(({ binding }) => {
+    return binding &&
+      requiresSnapshotReplayForExpression(binding) &&
+      !snapshotWriteFallbackBindings.has(binding)
+      ? [binding]
+      : [];
+  });
+  if (snapshotBindings.length > 0) {
+    const snapshotKind = inferSnapshotExpressionKind(expression, ctx);
+    if (snapshotKind === 'identity' || snapshotKind === 'unknown') {
+      throw snapshotReplayError();
+    }
+  }
+
+  const identityReferencesAreRootVisible =
+    expressionReferences.length > 0 &&
+    expressionReferences.every(({ binding }) => {
+      return !binding || !!binding.importedFrom || binding.isRoot;
+    });
+  let preserveRuntimeIdentity = false;
+  let preservedStaticValue: unknown;
   // Only inline function expressions are function-valued here. A bare
   // identifier that points to a local function may be a styled runtime
   // component, so it has to stay as a lazy `_exp()` reference.
@@ -411,13 +424,19 @@ const extractExpression = (
     expression.type === 'FunctionExpression' ||
     expression.type === 'ArrowFunctionExpression';
 
-  if (evaluate) {
+  if (evaluate && !expressionHasNestedCallTimeUncertainty(expression, ctx)) {
     const evaluated = evaluateStatic(expression, ctx);
     const literal = literalCode(evaluated);
-    if (literal) {
-      findReferences(expression, ctx.referencesByNode).forEach(({ name }) =>
-        ctx.dependencyNames.add(name)
-      );
+    preserveRuntimeIdentity =
+      evaluated !== null &&
+      ((typeof evaluated === 'object' && evaluated !== null) ||
+        typeof evaluated === 'function') &&
+      identityReferencesAreRootVisible;
+    if (preserveRuntimeIdentity && isStaticSerializableValue(evaluated)) {
+      preservedStaticValue = cloneStaticValue(evaluated);
+    }
+    if (literal && !preserveRuntimeIdentity) {
+      expressionReferences.forEach(({ name }) => ctx.dependencyNames.add(name));
       return {
         expressionCode: literal,
         importedFrom: [],
@@ -430,93 +449,135 @@ const extractExpression = (
     }
   }
 
-  const identifierReplacements = new Map<string, string>();
+  const identifierReplacements = new Map<number, string>();
   const importedFrom: string[] = [];
   const namespaceStatic = collectStaticNamespaceMemberReferences(
     expression,
     ctx
   );
-  const staticIdentifierReplacements = new Map<string, string>();
+  const staticIdentifierReplacements = new Map<number, string>();
   const staticImports: OxcStaticImportReference[] = [
     ...namespaceStatic.imports,
   ];
-  let hasNonStaticLocalReference = false;
+  let hasNonStaticLocalReference = preserveRuntimeIdentity;
   let hasInlinableLocalReference = false;
+  let hasSnapshotReplay = preserveRuntimeIdentity;
 
-  findReferences(expression, ctx.referencesByNode).forEach(
-    ({ name, start }) => {
-      const binding = resolveBindingAt(ctx, name, start);
-      if (!binding) {
+  expressionReferences.forEach(({ binding, name, start }) => {
+    if (!binding) {
+      return;
+    }
+
+    if (isFunction && isBindingDeclaredWithin(binding, expression)) {
+      return;
+    }
+
+    if (binding.kind === 'param') {
+      throw new Error(
+        `This identifier cannot be used in the template, because it is a function parameter.`
+      );
+    }
+
+    const isIterationBinding = binding.isIteration === true;
+    const isDynamicScopedBinding =
+      !binding.isRoot &&
+      !binding.importedFrom &&
+      !binding.declarator &&
+      !binding.functionNode;
+    if (isIterationBinding || isDynamicScopedBinding) {
+      throw snapshotReplayError();
+    }
+
+    ctx.dependencyNames.add(name);
+
+    if (binding.importedFrom) {
+      importedFrom.push(binding.importedFrom);
+      if (hasBindingMutationBefore(binding, start, ctx)) {
+        hasNonStaticLocalReference = true;
         return;
       }
 
-      if (isFunction && isBindingDeclaredWithin(binding, expression)) {
-        return;
-      }
-
-      ctx.dependencyNames.add(name);
-
-      if (binding.importedFrom) {
-        importedFrom.push(binding.importedFrom);
-        if (binding.imported && binding.imported !== '*') {
-          staticImports.push({
-            imported: binding.imported,
-            local: binding.name,
-            source: binding.importedFrom,
-          });
-        } else if (
-          binding.imported === '*' &&
-          namespaceStatic.coveredReferenceStarts.has(start)
-        ) {
-          // The static candidate source gets a synthetic named import alias,
-          // while the eval fallback keeps the original namespace expression.
-        } else {
-          hasNonStaticLocalReference = true;
-        }
-        return;
-      }
-
-      const replacement = getConstantReplacement(binding, ctx);
-      if (evaluate && replacement) {
-        identifierReplacements.set(name, replacement);
-        return;
-      }
-
-      const init = binding.declarator?.init;
-      // Processor-managed bindings (`const x = css```, or object literals
-      // containing processor tags) carry values that only become known after
-      // processors run. Leave the identifier free in the candidate source so
-      // the resolver can supply it via inlineConstants at evaluation time.
-      const isProcessorManagedLocal =
-        !!evaluate &&
-        !!init &&
-        (containsTaggedTemplateExpression(init) ||
-          containsProcessorManagedExpression(init, ctx));
-      const staticLocalExpression =
-        evaluate && init && !isProcessorManagedLocal
-          ? collectStaticLocalExpression(init, ctx, [
-              hoistedBindingKey(binding),
-            ])
-          : null;
-      if (staticLocalExpression) {
-        staticIdentifierReplacements.set(name, staticLocalExpression.source);
-        importedFrom.push(...staticLocalExpression.importedFrom);
-        staticImports.push(...staticLocalExpression.imports);
-      } else if (isProcessorManagedLocal) {
-        hasInlinableLocalReference = true;
+      if (binding.imported && binding.imported !== '*') {
+        staticImports.push({
+          imported: binding.imported,
+          local: binding.name,
+          source: binding.importedFrom,
+        });
+      } else if (
+        binding.imported === '*' &&
+        namespaceStatic.coveredReferenceStarts.has(start)
+      ) {
+        // The static candidate source gets a synthetic named import alias,
+        // while the eval fallback keeps the original namespace expression.
       } else {
         hasNonStaticLocalReference = true;
       }
+      return;
+    }
 
-      if (!isProcessorManagedLocal) {
+    if (preserveRuntimeIdentity && binding.isRoot) {
+      hasNonStaticLocalReference = true;
+      return;
+    }
+
+    const replacement =
+      binding.declarationKind === 'const'
+        ? getConstantReplacement(binding, ctx)
+        : null;
+    if (evaluate && replacement) {
+      identifierReplacements.set(start, replacement);
+      return;
+    }
+
+    const init = binding.declarator?.init;
+    // Processor-managed bindings (`const x = css```, or object literals
+    // containing processor tags) carry values that only become known after
+    // processors run. Leave the identifier free in the candidate source so
+    // the resolver can supply it via inlineConstants at evaluation time.
+    const isProcessorManagedLocal =
+      !!evaluate &&
+      !!init &&
+      (containsTaggedTemplateExpression(init) ||
+        containsProcessorManagedExpression(init, ctx));
+    const staticLocalExpression =
+      evaluate && init && !isProcessorManagedLocal
+        ? collectStaticBindingExpression(binding, start, ctx)
+        : null;
+    if (staticLocalExpression) {
+      staticIdentifierReplacements.set(start, staticLocalExpression.source);
+      importedFrom.push(...staticLocalExpression.importedFrom);
+      staticImports.push(...staticLocalExpression.imports);
+    } else if (isProcessorManagedLocal) {
+      hasInlinableLocalReference = true;
+    } else {
+      hasNonStaticLocalReference = true;
+    }
+
+    if (!isProcessorManagedLocal) {
+      if (
+        requiresSnapshotReplayForExpression(binding) &&
+        !snapshotWriteFallbackBindings.has(binding)
+      ) {
+        if (!staticLocalExpression) {
+          hasSnapshotReplay = true;
+          hasNonStaticLocalReference = true;
+        }
+        identifierReplacements.set(
+          start,
+          addHoistedSnapshotReplay(binding, ctx)
+        );
+      } else {
         assertHoistable(binding, ctx);
         addHoistedDeclaration(binding, ctx);
-        if (!binding.isRoot && binding.declarator?.id.type === 'Identifier') {
-          identifierReplacements.set(name, getHoistedBindingName(binding, ctx));
+        if (!binding.isRoot && binding.declarator) {
+          identifierReplacements.set(
+            start,
+            getHoistedBindingName(binding, ctx)
+          );
         }
       }
     }
-  );
+  });
 
   // Merge literal-const inlines (e.g. `const A = 32` -> "32") with
   // local-to-imported substitutions (e.g. `const X = imp.y` -> "imp.y").
@@ -531,14 +592,15 @@ const extractExpression = (
   });
 
   let staticExpressionCode: string | undefined;
-  if (mergedReplacements.size > 0) {
+  if (!hasSnapshotReplay && mergedReplacements.size > 0) {
     staticExpressionCode = replaceStaticLocalReferences(
       expression,
-      mergedReplacements,
+      new Map(),
       ctx,
-      namespaceStatic.replacements
+      namespaceStatic.replacements,
+      mergedReplacements
     );
-  } else if (namespaceStatic.replacements.length > 0) {
+  } else if (!hasSnapshotReplay && namespaceStatic.replacements.length > 0) {
     staticExpressionCode = applyExpressionReplacements(
       expression,
       namespaceStatic.replacements,
@@ -551,8 +613,9 @@ const extractExpression = (
       identifierReplacements.size > 0
         ? replaceIdentifierReferences(
             expression,
-            identifierReplacements,
-            ctx.code
+            new Map(),
+            ctx.code,
+            identifierReplacements
           )
         : source,
     importedFrom,
@@ -561,6 +624,7 @@ const extractExpression = (
     hasInlinableLocalReference:
       !hasNonStaticLocalReference && hasInlinableLocalReference,
     staticImports: hasNonStaticLocalReference ? [] : staticImports,
+    staticValue: preservedStaticValue,
   };
 };
 
@@ -580,22 +644,18 @@ const getInsertionPoints = (
   let ownerIndex = 0;
 
   expressions.forEach((expression) => {
+    const { end, start } = expression;
     while (
       ownerIndex < program.body.length - 1 &&
-      program.body[ownerIndex]!.end < expression.start
+      program.body[ownerIndex]!.end < start
     ) {
       ownerIndex += 1;
     }
 
     let owner: Program['body'][number] | undefined = program.body[ownerIndex];
-    if (
-      !owner ||
-      owner.start > expression.start ||
-      owner.end < expression.end
-    ) {
+    if (!owner || owner.start > start || owner.end < end) {
       owner = program.body.find(
-        (statement) =>
-          statement.start <= expression.start && statement.end >= expression.end
+        (statement) => statement.start <= start && statement.end >= end
       );
     }
 
@@ -612,11 +672,15 @@ const extractExpressions = (
   program: Program,
   analysis: Pick<
     ProgramAnalysis,
-    'bindingsByName' | 'rootMutationsByBinding' | 'usedNames'
+    | 'bindingIndex'
+    | 'rootMutationHazardsByBinding'
+    | 'rootMutationsByBinding'
+    | 'usedNames'
   >,
   expressions: Expression[],
   staticBindings?: StaticBindings,
-  processorManagedExpressionSpans: ExpressionSpan[] = []
+  processorManagedExpressionSpans: ExpressionSpan[] = [],
+  allowSnapshotWriteFallback = false
 ): TemplateExtractionResult => {
   if (expressions.length === 0) {
     return {
@@ -630,8 +694,7 @@ const extractExpressions = (
 
   const insertionPoints = getInsertionPoints(program, expressions);
   const ctx: ExtractionContext = {
-    bindingResolutionCache: new Map(),
-    bindingsByName: analysis.bindingsByName,
+    bindingIndex: analysis.bindingIndex,
     code,
     currentInsertionPoint: insertionPoints[0] ?? 0,
     currentExpressionStart: expressions[0].start,
@@ -645,15 +708,31 @@ const extractExpressions = (
     processorManagedExpressionSpans: new Set(
       processorManagedExpressionSpans.map(expressionSpanKey)
     ),
-    referencesByNode: new WeakMap(),
+    program,
     replacements: [],
+    rootMutationHazardsByBinding: analysis.rootMutationHazardsByBinding,
     rootMutationsByBinding: analysis.rootMutationsByBinding,
     staticBindings,
+    staticCallProof: recursiveProof.create(),
     staticImportAliases: new Map(),
     staticValueCandidates: [],
     staticValues: [],
     usedNames: new Set(analysis.usedNames),
   };
+
+  const snapshotWriteFallbackBindings = new Set<Binding>();
+  if (allowSnapshotWriteFallback) {
+    expressions.forEach((expression, index) => {
+      ctx.currentInsertionPoint = insertionPoints[index] ?? 0;
+      ctx.currentExpressionStart = expression.start;
+      collectEagerIdentifierMutationTargets(expression).forEach((target) => {
+        const binding = resolveBindingAt(ctx, target.name, target.start);
+        if (binding && requiresSnapshotReplay(binding, ctx)) {
+          snapshotWriteFallbackBindings.add(binding);
+        }
+      });
+    });
+  }
 
   expressions.forEach((expression, index) => {
     ctx.currentInsertionPoint = insertionPoints[index] ?? 0;
@@ -673,7 +752,12 @@ const extractExpressions = (
       staticExpressionCode,
       staticImports,
       staticValue,
-    } = extractExpression(expression, ctx, evaluate);
+    } = extractExpression(
+      expression,
+      ctx,
+      evaluate,
+      snapshotWriteFallbackBindings
+    );
     const expName = allocateExpressionName(ctx);
 
     addHoistedCode(
@@ -762,8 +846,7 @@ export const evaluateOxcStaticExpressionAt = (
   }
 
   const ctx: ExtractionContext = {
-    bindingResolutionCache: new Map(),
-    bindingsByName: analysis.bindingsByName,
+    bindingIndex: analysis.bindingIndex,
     code,
     currentInsertionPoint: 0,
     currentExpressionStart: expression.start,
@@ -775,10 +858,12 @@ export const evaluateOxcStaticExpressionAt = (
     hoistedDeclarationsByInsertionPoint: new Map(),
     loc: createOxcLocationLookup(code),
     processorManagedExpressionSpans: new Set(),
-    referencesByNode: new WeakMap(),
+    program,
     replacements: [],
+    rootMutationHazardsByBinding: analysis.rootMutationHazardsByBinding,
     rootMutationsByBinding: analysis.rootMutationsByBinding,
     staticBindings,
+    staticCallProof: recursiveProof.create(),
     staticImportAliases: new Map(),
     staticValueCandidates: [],
     staticValues: [],
@@ -830,6 +915,9 @@ export const collectOxcExpressionDependencies = (
   const analysis = analyzeProgram(program, {
     collectTargetExpressions: true,
     expressionSpanLookup: createSpanLookup(targetExpressionSpans),
+    mutationHazardIgnoreLookup: createSpanLookup(
+      processorManagedExpressionSpans
+    ),
   });
 
   return extractExpressions(
@@ -842,6 +930,39 @@ export const collectOxcExpressionDependencies = (
     staticBindings,
     processorManagedExpressionSpans
   );
+};
+
+export const collectOxcExpressionDependenciesForEvalFallback = (
+  code: string,
+  filename: string,
+  targetExpressionSpans?: ExpressionSpan[],
+  processorManagedExpressionSpans: ExpressionSpan[] = []
+): TemplateExtractionResult => {
+  const program = parseOxc(code, filename);
+  const analysis = analyzeProgram(program, {
+    collectTargetExpressions: true,
+    expressionSpanLookup: createSpanLookup(targetExpressionSpans),
+    mutationHazardIgnoreLookup: createSpanLookup(
+      processorManagedExpressionSpans
+    ),
+  });
+  const extracted = extractExpressions(
+    code,
+    filename,
+    false,
+    program,
+    analysis,
+    analysis.targetExpressions,
+    undefined,
+    processorManagedExpressionSpans,
+    true
+  );
+
+  return {
+    ...extracted,
+    staticValueCandidates: [],
+    staticValues: [],
+  };
 };
 
 export const collectOxcTemplateDependencies = (

@@ -2,31 +2,62 @@
 
 import type { SourceLocation } from '@wyw-in-js/shared';
 import type {
-  AssignmentExpression,
   Expression,
   ImportDeclaration,
   ImportSpecifier,
   ModuleExportName,
   Node,
   Program,
-  TemplateLiteral,
-  UpdateExpression,
   VariableDeclaration,
 } from 'oxc-parser';
 
 import { getOxcNodeChildren } from '../oxc/ast';
 import { parseOxcProgram } from '../oxc/parse';
+import { collectOxcPatternBindingNames } from '../oxc/patterns';
 import { createOxcSourceLocation } from '../oxc/sourceLocations';
+import { createBindingIndex } from './bindingResolution';
+import {
+  collectProgramMutationAnalysis,
+  isEffectiveMutationHazardSeed,
+  registerMutationHazardNode,
+} from './mutationAnalysis';
+import { visitOxcScopes } from './scopeTraversal';
 import type {
   Binding,
   ExpressionSpan,
   ExtractionContext,
   ProgramAnalysis,
-  ReferenceIdentifier,
   Scope,
   ScopedDeclarationKind,
   SpanLookup,
 } from './types';
+
+export { resolveBindingAt } from './bindingResolution';
+export {
+  getRootMutationHazards,
+  toMutationBindingKey,
+  unknownAliasMutationBinding,
+} from './mutationAnalysis';
+export {
+  forEachMergedTimelineStartBefore,
+  forEachTimelineFullyContained,
+  forEachTimelineStartBefore,
+  getMutationTimeline,
+  hasTimelineEndAtOrBefore,
+  hasTimelineStartBefore,
+  hasTimelineStartInRange,
+  someTimelineEndAtOrBefore,
+  someTimelineFullyContained,
+  someTimelineStartBefore,
+} from './mutationTimeline';
+export {
+  findReferences,
+  isBindingDeclaredWithin,
+  isBindingPosition,
+  isInTypeContext,
+  isObjectPropertyKey,
+  isPropertyOnlyIdentifier,
+} from './scopeTraversal';
 
 export const containsTaggedTemplateExpression = (node: Node): boolean => {
   if (node.type === 'TaggedTemplateExpression') {
@@ -60,22 +91,6 @@ export const getSourceLocation = (
   end: number,
   ctx: Pick<ExtractionContext, 'filename' | 'loc'>
 ): SourceLocation => createOxcSourceLocation(start, end, ctx.loc, ctx.filename);
-
-const createScope = (
-  parent: Scope | null,
-  node: Pick<Node, 'start' | 'end'>,
-  root = false,
-  functionBoundary = false
-): Scope => ({
-  bindings: new Map(),
-  depth: parent ? parent.depth + 1 : 0,
-  end: node.end,
-  functionBoundary,
-  params: new Set(),
-  parent,
-  root,
-  start: node.start,
-});
 
 const normalizeDeclarationKind = (
   declarationKind: VariableDeclaration['kind']
@@ -146,184 +161,235 @@ const getDeclarationScope = (
   return current ?? scope;
 };
 
-const collectBindingNames = (node: Node): string[] => {
-  if (node.type === 'Identifier') {
-    return [node.name];
-  }
-
-  if (node.type === 'RestElement') {
-    return collectBindingNames(node.argument);
-  }
-
-  if (node.type === 'AssignmentPattern') {
-    return collectBindingNames(node.left);
-  }
-
-  if (node.type === 'ObjectPattern') {
-    return node.properties.flatMap((property) =>
-      property.type === 'RestElement'
-        ? collectBindingNames(property.argument)
-        : collectBindingNames(property.value)
-    );
-  }
-
-  if (node.type === 'ArrayPattern') {
-    return node.elements.flatMap((element) =>
-      element ? collectBindingNames(element) : []
-    );
-  }
-
-  if (node.type === 'TSParameterProperty') {
-    return collectBindingNames(node.parameter);
-  }
-
-  return [];
-};
-
-export const isInTypeContext = (ancestors: Node[]): boolean =>
-  ancestors.some(
-    (ancestor) =>
-      ancestor.type.startsWith('TS') || ancestor.type.startsWith('JSDoc')
-  );
-
-export const isPropertyOnlyIdentifier = (
-  node: Node,
-  parent: Node | null
-): boolean =>
-  !!parent &&
-  parent.type === 'MemberExpression' &&
-  parent.property === node &&
-  !parent.computed;
-
-export const isObjectPropertyKey = (node: Node, parent: Node | null): boolean =>
-  !!parent &&
-  parent.type === 'Property' &&
-  parent.key === node &&
-  !parent.computed &&
-  parent.value !== node;
-
-export const isBindingPosition = (node: Node, parent: Node | null): boolean => {
-  if (!parent) {
-    return false;
-  }
-
-  if (parent.type === 'VariableDeclarator' && parent.id === node) {
-    return true;
-  }
-
-  if (
-    (parent.type === 'FunctionDeclaration' ||
-      parent.type === 'FunctionExpression' ||
-      parent.type === 'ClassDeclaration' ||
-      parent.type === 'ClassExpression') &&
-    parent.id === node
-  ) {
-    return true;
-  }
-
-  if (
-    (parent.type === 'ImportSpecifier' ||
-      parent.type === 'ImportDefaultSpecifier' ||
-      parent.type === 'ImportNamespaceSpecifier') &&
-    'local' in parent &&
-    parent.local === node
-  ) {
-    return true;
-  }
-
-  return false;
-};
-
-const visit = (
-  node: Node,
-  scope: Scope | null,
-  enter: (
-    node: Node,
-    scope: Scope,
-    parent: Node | null,
-    ancestors: Node[]
-  ) => void,
-  parent: Node | null = null,
-  ancestors: Node[] = []
-): void => {
-  const visitNode = (
-    currentNode: Node,
-    currentScope: Scope | null,
-    currentParent: Node | null
-  ): void => {
-    let nextScope: Scope;
-    if (currentNode.type === 'Program') {
-      nextScope = createScope(null, currentNode, true, true);
-    } else if (
-      currentNode.type === 'BlockStatement' ||
-      currentNode.type === 'FunctionDeclaration' ||
-      currentNode.type === 'FunctionExpression' ||
-      currentNode.type === 'ArrowFunctionExpression'
+const hasStraightLineVarInitializer = (ancestors: readonly Node[]): boolean => {
+  for (let index = ancestors.length - 1; index >= 0; index -= 1) {
+    const ancestor = ancestors[index]!;
+    if (
+      ancestor.type === 'FunctionDeclaration' ||
+      ancestor.type === 'FunctionExpression' ||
+      ancestor.type === 'ArrowFunctionExpression' ||
+      ancestor.type === 'StaticBlock'
     ) {
-      nextScope = createScope(
-        currentScope,
-        currentNode,
-        false,
-        currentNode.type !== 'BlockStatement'
-      );
-    } else if (currentScope) {
-      nextScope = currentScope;
-    } else {
-      nextScope = createScope(null, currentNode, false, true);
+      return true;
     }
 
     if (
-      currentNode.type === 'FunctionDeclaration' ||
-      currentNode.type === 'FunctionExpression' ||
-      currentNode.type === 'ArrowFunctionExpression'
+      ancestor.type !== 'Program' &&
+      ancestor.type !== 'BlockStatement' &&
+      ancestor.type !== 'ExportNamedDeclaration'
     ) {
-      currentNode.params.forEach((param) => {
-        collectBindingNames(param).forEach((name) => {
-          nextScope.params.add(name);
-          nextScope.bindings.set(name, {
-            declaredAt: param.start,
-            declaration: null,
-            declarator: null,
-            functionNode: null,
-            isRoot: false,
-            kind: 'param',
-            name,
-            scope: nextScope,
-          });
-        });
-      });
+      return false;
+    }
+  }
+
+  return true;
+};
+
+type AnalyzeProgramOptions = {
+  collectTargetExpressions?: boolean;
+  collectTemplateLiterals?: boolean;
+  expressionSpanLookup?: SpanLookup;
+  mutationHazardIgnoreLookup?: SpanLookup;
+  templateSpanLookup?: SpanLookup;
+};
+
+type NormalizedAnalyzeProgramOptions = {
+  collectTargetExpressions: boolean;
+  collectTemplateLiterals: boolean;
+  expressionSpanLookup: SpanLookup;
+  mutationHazardIgnoreLookup: SpanLookup;
+  templateSpanLookup: SpanLookup;
+};
+
+type ProgramScopeFacts = Readonly<
+  Pick<ProgramAnalysis, 'bindingIndex' | 'usedNames'>
+>;
+
+type RequestAnalysis = Pick<
+  ProgramAnalysis,
+  'targetExpressions' | 'templateLiterals'
+> & {
+  hasEffectiveMutationHazardSeed: boolean;
+  ignoredMutationHazardNodes: Set<Node>;
+};
+
+const programScopeFacts = new WeakMap<Program, ProgramScopeFacts>();
+const programRootMutations = new WeakMap<
+  Program,
+  ProgramAnalysis['rootMutationsByBinding']
+>();
+const programDefaultMutationHazards = new WeakMap<
+  Program,
+  ProgramAnalysis['rootMutationHazardsByBinding']
+>();
+const MAX_PROGRAM_ANALYSIS_VARIANTS = 4;
+const programAnalysisVariants = new WeakMap<
+  Program,
+  Map<string, ProgramAnalysis>
+>();
+
+const normalizeSpanLookup = (lookup: SpanLookup | undefined): SpanLookup =>
+  lookup && lookup.size > 0 ? lookup : null;
+
+const normalizeAnalyzeProgramOptions = ({
+  collectTargetExpressions = false,
+  collectTemplateLiterals = false,
+  expressionSpanLookup,
+  mutationHazardIgnoreLookup,
+  templateSpanLookup,
+}: AnalyzeProgramOptions): NormalizedAnalyzeProgramOptions => {
+  const normalizedExpressionSpanLookup =
+    normalizeSpanLookup(expressionSpanLookup);
+  const shouldCollectTargetExpressions =
+    collectTargetExpressions && normalizedExpressionSpanLookup !== null;
+
+  return {
+    collectTargetExpressions: shouldCollectTargetExpressions,
+    collectTemplateLiterals,
+    expressionSpanLookup: shouldCollectTargetExpressions
+      ? normalizedExpressionSpanLookup
+      : null,
+    mutationHazardIgnoreLookup: normalizeSpanLookup(mutationHazardIgnoreLookup),
+    templateSpanLookup: collectTemplateLiterals
+      ? templateSpanLookup ?? null
+      : null,
+  };
+};
+
+const sortedSpanLookup = (lookup: SpanLookup): string[] | null =>
+  lookup ? [...lookup].sort() : null;
+
+const programAnalysisCacheKey = ({
+  collectTargetExpressions,
+  collectTemplateLiterals,
+  expressionSpanLookup,
+  mutationHazardIgnoreLookup,
+  templateSpanLookup,
+}: NormalizedAnalyzeProgramOptions): string =>
+  JSON.stringify([
+    collectTargetExpressions ? '1' : '0',
+    collectTemplateLiterals ? '1' : '0',
+    sortedSpanLookup(expressionSpanLookup),
+    sortedSpanLookup(mutationHazardIgnoreLookup),
+    sortedSpanLookup(templateSpanLookup),
+  ]);
+
+const getCachedProgramAnalysis = (
+  program: Program,
+  key: string
+): ProgramAnalysis | undefined => {
+  const variants = programAnalysisVariants.get(program);
+  const cached = variants?.get(key);
+  if (cached && variants) {
+    variants.delete(key);
+    variants.set(key, cached);
+  }
+
+  return cached;
+};
+
+const cacheProgramAnalysis = (
+  program: Program,
+  key: string,
+  analysis: ProgramAnalysis
+): ProgramAnalysis => {
+  const variants = programAnalysisVariants.get(program) ?? new Map();
+  variants.set(key, analysis);
+  if (variants.size > MAX_PROGRAM_ANALYSIS_VARIANTS) {
+    variants.delete(variants.keys().next().value!);
+  }
+  programAnalysisVariants.set(program, variants);
+  return analysis;
+};
+
+const createImmutableUsedNames = (source: ReadonlySet<string>): Set<string> => {
+  const result = new Set(source);
+  const rejectMutation = (): never => {
+    throw new TypeError('Cached program analysis is immutable');
+  };
+  Object.defineProperties(result, {
+    add: { value: rejectMutation },
+    clear: { value: rejectMutation },
+    delete: { value: rejectMutation },
+  });
+
+  return Object.freeze(result);
+};
+
+const createRequestAnalysis = ({
+  collectTargetExpressions,
+  collectTemplateLiterals,
+  expressionSpanLookup,
+  mutationHazardIgnoreLookup,
+  templateSpanLookup,
+}: NormalizedAnalyzeProgramOptions): {
+  collect: (node: Node, ancestors: Node[]) => void;
+  result: RequestAnalysis;
+} => {
+  const result: RequestAnalysis = {
+    hasEffectiveMutationHazardSeed: false,
+    ignoredMutationHazardNodes: new Set(),
+    targetExpressions: [],
+    templateLiterals: [],
+  };
+
+  const collect = (node: Node, ancestors: Node[]): void => {
+    if (mutationHazardIgnoreLookup) {
+      registerMutationHazardNode(
+        node,
+        mutationHazardIgnoreLookup,
+        result.ignoredMutationHazardNodes
+      );
+    }
+    result.hasEffectiveMutationHazardSeed ||= isEffectiveMutationHazardSeed(
+      node,
+      result.ignoredMutationHazardNodes
+    );
+
+    if (
+      collectTemplateLiterals &&
+      node.type === 'TemplateLiteral' &&
+      node.expressions.length > 0 &&
+      !ancestors.some((ancestor) => ancestor.type === 'TemplateLiteral') &&
+      matchesSpanLookup(node, templateSpanLookup)
+    ) {
+      result.templateLiterals.push(node);
     }
 
-    enter(currentNode, nextScope, currentParent, ancestors);
+    if (
+      collectTargetExpressions &&
+      expressionSpanLookup &&
+      matchesSpanLookup(node, expressionSpanLookup)
+    ) {
+      result.targetExpressions.push(node as Expression);
+    }
+  };
 
-    ancestors.push(currentNode);
-    getOxcNodeChildren(currentNode).forEach((child) =>
-      visitNode(child, nextScope, currentNode)
-    );
+  return { collect, result };
+};
+
+const collectRequestAnalysis = (
+  program: Program,
+  collect: (node: Node, ancestors: Node[]) => void
+): void => {
+  const ancestors: Node[] = [];
+  const visit = (node: Node): void => {
+    collect(node, ancestors);
+    ancestors.push(node);
+    getOxcNodeChildren(node).forEach(visit);
     ancestors.pop();
   };
 
-  visitNode(node, scope, parent);
+  visit(program);
 };
 
-export const analyzeProgram = (
+const buildProgramScopeFacts = (
   program: Program,
-  {
-    collectTargetExpressions = false,
-    collectTemplateLiterals = false,
-    expressionSpanLookup = null,
-    templateSpanLookup = null,
-  }: {
-    collectTargetExpressions?: boolean;
-    collectTemplateLiterals?: boolean;
-    expressionSpanLookup?: SpanLookup;
-    templateSpanLookup?: SpanLookup;
-  } = {}
-): ProgramAnalysis => {
+  collectRequestNode?: (node: Node, ancestors: Node[]) => void
+): ProgramScopeFacts => {
   const bindings = new Map<string, Binding[]>();
   const usedNames = new Set<string>();
-  const templateLiterals: TemplateLiteral[] = [];
-  const targetExpressions: Expression[] = [];
+  const referenceScopesByStart = new Map<number, Scope>();
 
   const addBinding = (scope: Scope, binding: Binding): void => {
     scope.bindings.set(binding.name, binding);
@@ -332,34 +398,25 @@ export const analyzeProgram = (
     bindings.set(binding.name, existing);
   };
 
-  const collectTargets = (node: Node, ancestors: Node[]): void => {
-    if (
-      collectTemplateLiterals &&
-      node.type === 'TemplateLiteral' &&
-      node.expressions.length > 0 &&
-      !ancestors.some((ancestor) => ancestor.type === 'TemplateLiteral') &&
-      matchesSpanLookup(node, templateSpanLookup)
-    ) {
-      templateLiterals.push(node);
-    }
-
-    if (
-      collectTargetExpressions &&
-      expressionSpanLookup &&
-      matchesSpanLookup(node, expressionSpanLookup)
-    ) {
-      targetExpressions.push(node as Expression);
-    }
-  };
-
-  visit(program, null, (node, scope, _parent, ancestors) => {
-    collectTargets(node, ancestors);
+  const collectScopeNode = (
+    node: Node,
+    scope: Scope,
+    parent: Node | null,
+    ancestors: Node[],
+    runtime: boolean,
+    reference: boolean
+  ): void => {
+    collectRequestNode?.(node, ancestors);
 
     if (node.type === 'Identifier') {
       usedNames.add(node.name);
     }
 
-    if (isInTypeContext(ancestors)) {
+    if (reference) {
+      referenceScopesByStart.set(node.start, scope);
+    }
+
+    if (!runtime) {
       return;
     }
 
@@ -368,8 +425,15 @@ export const analyzeProgram = (
       node.type === 'FunctionExpression' ||
       node.type === 'ArrowFunctionExpression'
     ) {
+      if (node.type === 'FunctionExpression' && node.id) {
+        const binding = scope.bindings.get(node.id.name);
+        if (binding) {
+          addBinding(scope, binding);
+        }
+      }
+
       node.params.forEach((param) => {
-        collectBindingNames(param).forEach((name) => {
+        collectOxcPatternBindingNames(param).forEach((name) => {
           const binding = scope.bindings.get(name);
           if (binding) {
             addBinding(scope, binding);
@@ -380,6 +444,14 @@ export const analyzeProgram = (
       if (node.type !== 'FunctionDeclaration') {
         return;
       }
+    }
+
+    if (node.type === 'ClassExpression' && node.id) {
+      const binding = scope.bindings.get(node.id.name);
+      if (binding) {
+        addBinding(scope, binding);
+      }
+      return;
     }
 
     if (node.type === 'ImportDeclaration') {
@@ -406,6 +478,16 @@ export const analyzeProgram = (
       return;
     }
 
+    if (node.type === 'CatchClause' && node.param) {
+      collectOxcPatternBindingNames(node.param).forEach((name) => {
+        const binding = scope.bindings.get(name);
+        if (binding) {
+          addBinding(scope, binding);
+        }
+      });
+      return;
+    }
+
     if (node.type !== 'VariableDeclaration') {
       if (node.type === 'FunctionDeclaration' && node.id) {
         const declarationScope = scope.parent ?? scope;
@@ -422,19 +504,39 @@ export const analyzeProgram = (
         addBinding(declarationScope, binding);
       }
 
+      if (node.type === 'ClassDeclaration' && node.id) {
+        addBinding(scope, {
+          declarationKind: 'let',
+          declaredAt: node.start,
+          declaration: null,
+          declarator: null,
+          functionNode: null,
+          isRoot: scope.root,
+          kind: 'variable',
+          name: node.id.name,
+          scope,
+        });
+      }
+
       return;
     }
 
     node.declarations.forEach((declarator) => {
-      collectBindingNames(declarator.id).forEach((name) => {
+      collectOxcPatternBindingNames(declarator.id).forEach((name) => {
         const declarationKind = normalizeDeclarationKind(node.kind);
         const declarationScope = getDeclarationScope(scope, declarationKind);
+        const preservesInitializer =
+          declarationKind !== 'var' || hasStraightLineVarInitializer(ancestors);
         const binding: Binding = {
           declarationKind,
           declaredAt: declarator.start,
           declaration: node,
-          declarator,
+          declarator: preservesInitializer ? declarator : null,
           functionNode: null,
+          isIteration:
+            (parent?.type === 'ForInStatement' ||
+              parent?.type === 'ForOfStatement') &&
+            parent.left === node,
           isRoot: declarationScope.root,
           kind: 'variable',
           name,
@@ -443,215 +545,89 @@ export const analyzeProgram = (
         addBinding(declarationScope, binding);
       });
     });
-  });
-
-  return {
-    bindingsByName: bindings,
-    rootMutationsByBinding: collectRootMutations(program),
-    targetExpressions: targetExpressions.sort((a, b) => a.start - b.start),
-    templateLiterals,
-    usedNames,
   };
-};
+  visitOxcScopes(program, null, collectScopeNode);
 
-export const resolveBindingAt = (
-  ctx: Pick<ExtractionContext, 'bindingResolutionCache' | 'bindingsByName'>,
-  name: string,
-  referenceStart: number
-): Binding | undefined => {
-  const cachedBindings = ctx.bindingResolutionCache.get(name);
-  if (cachedBindings?.has(referenceStart)) {
-    return cachedBindings.get(referenceStart) ?? undefined;
-  }
-
-  const bindings = ctx.bindingsByName.get(name);
-  const bindingCache = cachedBindings ?? new Map<number, Binding | null>();
-  if (!cachedBindings) {
-    ctx.bindingResolutionCache.set(name, bindingCache);
-  }
-
-  if (!bindings || bindings.length === 0) {
-    bindingCache.set(referenceStart, null);
-    return undefined;
-  }
-
-  let binding: Binding | undefined;
-  bindings.forEach((candidate) => {
-    if (
-      candidate.scope.start > referenceStart ||
-      referenceStart >= candidate.scope.end
-    ) {
-      return;
-    }
-
-    if (
-      !binding ||
-      candidate.scope.depth > binding.scope.depth ||
-      (candidate.scope.depth === binding.scope.depth &&
-        candidate.declaredAt > binding.declaredAt)
-    ) {
-      binding = candidate;
-    }
+  // The contained maps/scopes are completed before publication and exposed
+  // through readonly types. Freeze the shared top-level identity only; deep
+  // snapshots would duplicate the program-sized graph this cache reuses.
+  const bindingIndex = Object.freeze(
+    createBindingIndex(bindings, referenceScopesByStart)
+  );
+  return Object.freeze({
+    bindingIndex,
+    usedNames: createImmutableUsedNames(usedNames),
   });
-
-  bindingCache.set(referenceStart, binding ?? null);
-  return binding;
 };
 
-const collectRootMutations = (
-  program: Program
-): Map<string, Array<AssignmentExpression | UpdateExpression>> => {
-  const mutations = new Map<
-    string,
-    Array<AssignmentExpression | UpdateExpression>
-  >();
+export const analyzeProgram = (
+  program: Program,
+  options: AnalyzeProgramOptions = {}
+): ProgramAnalysis => {
+  const normalizedOptions = normalizeAnalyzeProgramOptions(options);
+  const cacheKey = programAnalysisCacheKey(normalizedOptions);
+  const cached = getCachedProgramAnalysis(program, cacheKey);
+  if (cached) {
+    return cached;
+  }
 
-  const getRootMutationTarget = (
-    node: Node
-  ): { binding: string; path: Array<string | number> } | null => {
-    if (node.type === 'Identifier') {
-      return {
-        binding: node.name,
-        path: [],
-      };
-    }
+  const {
+    collectTargetExpressions = false,
+    collectTemplateLiterals = false,
+    expressionSpanLookup = null,
+    mutationHazardIgnoreLookup = null,
+  } = normalizedOptions;
+  const request = createRequestAnalysis(normalizedOptions);
+  let scopeFacts = programScopeFacts.get(program);
+  const cachedDefaultMutationHazards = mutationHazardIgnoreLookup
+    ? undefined
+    : programDefaultMutationHazards.get(program);
+  const needsRequestTraversal =
+    mutationHazardIgnoreLookup !== null ||
+    cachedDefaultMutationHazards === undefined ||
+    collectTemplateLiterals ||
+    (collectTargetExpressions && expressionSpanLookup !== null);
 
-    if (node.type !== 'MemberExpression') {
-      return null;
-    }
+  if (!scopeFacts) {
+    scopeFacts = buildProgramScopeFacts(program, request.collect);
+    programScopeFacts.set(program, scopeFacts);
+  } else if (needsRequestTraversal) {
+    collectRequestAnalysis(program, request.collect);
+  }
 
-    const parent = getRootMutationTarget(node.object);
-    if (!parent) {
-      return null;
+  let rootMutationHazardsByBinding = cachedDefaultMutationHazards;
+  let rootMutationsByBinding = programRootMutations.get(program);
+  if (!rootMutationHazardsByBinding) {
+    const mutationAnalysis = collectProgramMutationAnalysis(
+      program,
+      scopeFacts.bindingIndex,
+      request.result.ignoredMutationHazardNodes,
+      request.result.hasEffectiveMutationHazardSeed
+    );
+    rootMutationHazardsByBinding =
+      mutationAnalysis.rootMutationHazardsByBinding;
+    rootMutationsByBinding ??= mutationAnalysis.rootMutationsByBinding;
+    if (!programRootMutations.has(program)) {
+      programRootMutations.set(program, rootMutationsByBinding);
     }
+    if (!mutationHazardIgnoreLookup) {
+      programDefaultMutationHazards.set(program, rootMutationHazardsByBinding);
+    }
+  }
 
-    let key: string | number | null = null;
-    if (
-      node.computed &&
-      node.property.type === 'Literal' &&
-      (typeof node.property.value === 'string' ||
-        typeof node.property.value === 'number')
-    ) {
-      key = node.property.value;
-    } else if (!node.computed && node.property.type === 'Identifier') {
-      key = node.property.name;
-    }
-    if (key === null) {
-      return null;
-    }
-
-    return {
-      binding: parent.binding,
-      path: [...parent.path, key],
-    };
+  const targetExpressions = request.result.targetExpressions.sort(
+    (a, b) => a.start - b.start
+  );
+  Object.freeze(targetExpressions);
+  Object.freeze(request.result.templateLiterals);
+  const analysis: ProgramAnalysis = {
+    bindingIndex: scopeFacts.bindingIndex,
+    rootMutationHazardsByBinding,
+    rootMutationsByBinding: rootMutationsByBinding!,
+    targetExpressions,
+    templateLiterals: request.result.templateLiterals,
+    usedNames: scopeFacts.usedNames,
   };
 
-  program.body.forEach((statement) => {
-    if (statement.type !== 'ExpressionStatement') {
-      return;
-    }
-
-    const { expression } = statement;
-    if (expression.type === 'AssignmentExpression') {
-      const target = getRootMutationTarget(expression.left);
-      if (!target || target.path.length === 0) {
-        return;
-      }
-
-      const bucket = mutations.get(target.binding) ?? [];
-      bucket.push(expression);
-      mutations.set(target.binding, bucket);
-      return;
-    }
-
-    if (expression.type === 'UpdateExpression') {
-      const target = getRootMutationTarget(expression.argument);
-      if (!target || target.path.length === 0) {
-        return;
-      }
-
-      const bucket = mutations.get(target.binding) ?? [];
-      bucket.push(expression);
-      mutations.set(target.binding, bucket);
-    }
-  });
-
-  return mutations;
+  return cacheProgramAnalysis(program, cacheKey, Object.freeze(analysis));
 };
-
-const hasLocalBinding = (scope: Scope, name: string): boolean => {
-  let current: Scope | null = scope;
-
-  while (current) {
-    if (current.bindings.has(name)) {
-      return true;
-    }
-
-    current = current.parent;
-  }
-
-  return false;
-};
-
-const hasLocalBindingCached = (
-  scope: Scope,
-  name: string,
-  cache: WeakMap<Scope, Map<string, boolean>>
-): boolean => {
-  const scopeCache = cache.get(scope);
-  if (scopeCache?.has(name)) {
-    return scopeCache.get(name)!;
-  }
-
-  const result = hasLocalBinding(scope, name);
-  const nextScopeCache = scopeCache ?? new Map<string, boolean>();
-  nextScopeCache.set(name, result);
-  if (!scopeCache) {
-    cache.set(scope, nextScopeCache);
-  }
-
-  return result;
-};
-
-export const findReferences = (
-  node: Node,
-  referenceCache?: WeakMap<Node, ReferenceIdentifier[]>
-): ReferenceIdentifier[] => {
-  const cachedReferences = referenceCache?.get(node);
-  if (cachedReferences) {
-    return cachedReferences;
-  }
-
-  const refs = new Map<string, ReferenceIdentifier>();
-  const localBindingCache = new WeakMap<Scope, Map<string, boolean>>();
-
-  visit(node, null, (current, scope, parent, ancestors) => {
-    if (
-      current.type !== 'Identifier' ||
-      isInTypeContext(ancestors) ||
-      isBindingPosition(current, parent) ||
-      isPropertyOnlyIdentifier(current, parent) ||
-      isObjectPropertyKey(current, parent) ||
-      hasLocalBindingCached(scope, current.name, localBindingCache)
-    ) {
-      return;
-    }
-
-    const key = `${current.start}:${current.end}:${current.name}`;
-    refs.set(key, {
-      end: current.end,
-      name: current.name,
-      start: current.start,
-    });
-  });
-
-  const resolvedReferences = [...refs.values()];
-  referenceCache?.set(node, resolvedReferences);
-  return resolvedReferences;
-};
-
-export const isBindingDeclaredWithin = (
-  binding: Binding,
-  container: Node
-): boolean =>
-  container.start <= binding.declaredAt && binding.declaredAt < container.end;

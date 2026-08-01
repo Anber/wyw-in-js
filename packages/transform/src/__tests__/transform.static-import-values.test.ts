@@ -33,6 +33,8 @@ const runtimeStyledProcessorFile = join(
   '__fixtures__',
   'test-runtime-styled-processor.js'
 );
+const unsafeSnapshotMessage =
+  'local snapshot depends on executed side effects that cannot be safely hoisted';
 
 const createResolver =
   (processorPath: string) => async (what: string, importer: string) => {
@@ -717,6 +719,147 @@ const createPerfEventRecorder = () => {
 };
 
 describe('transform static import value inlining', () => {
+  it('falls back to eval for ordered writes to a snapshot-local binding', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
+    const entryFile = join(root, 'entry.js');
+    const cache = new TransformCacheCollection();
+    const perf = createPerfEventRecorder();
+
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { css } from 'test-css-processor';
+
+        export function Component() {
+          let { width } = { width: 1 };
+          const className = css\`
+            --widths: ${'${width}:${(width = 2)}:${width}'};
+          \`;
+          return [className, width];
+        }
+      `
+    );
+
+    try {
+      const result = await runTransform(
+        root,
+        entryFile,
+        cache,
+        perf.eventEmitter
+      );
+
+      expect(result.cssText).toContain('--widths:1:2:2');
+      expect(perf.counts.get('transform:evalFile') ?? 0).toBeGreaterThan(0);
+      expect(result.code).not.toContain('_snapshot');
+    } finally {
+      disposeEvalBroker(cache);
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ['for-of', '(() => { for (width of [2]) {} return width; })()', '2'],
+    [
+      'for-in',
+      '(() => { for (width in { two: 1 }) {} return width; })()',
+      'two',
+    ],
+  ])(
+    'falls back to eval for an eagerly executed snapshot-local %s assignment target',
+    async (_name, expression, expectedWidth) => {
+      const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
+      const entryFile = join(root, 'entry.js');
+      const cache = new TransformCacheCollection();
+      const perf = createPerfEventRecorder();
+      const interpolation = `\${${expression}}`;
+
+      writeFileSync(
+        entryFile,
+        dedent`
+          import { css } from 'test-css-processor';
+
+          export function Component() {
+            let { width } = { width: 1 };
+            const className = css\`
+              --width: ${interpolation};
+            \`;
+            return [className, width];
+          }
+        `
+      );
+
+      try {
+        const result = await runTransform(
+          root,
+          entryFile,
+          cache,
+          perf.eventEmitter
+        );
+
+        expect(result.cssText).toContain(`--width:${expectedWidth}`);
+        expect(perf.counts.get('transform:evalFile') ?? 0).toBeGreaterThan(0);
+        expect(result.code).not.toContain('_snapshot');
+      } finally {
+        disposeEvalBroker(cache);
+        rmSync(root, { recursive: true, force: true });
+      }
+    }
+  );
+
+  it('keeps deferred snapshot-local writes on the strict failure path', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
+    const entryFile = join(root, 'entry.js');
+    const cache = new TransformCacheCollection();
+
+    writeFileSync(
+      entryFile,
+      [
+        `import { css } from 'test-css-processor';`,
+        `export function Component() {`,
+        `  let { width } = { width: 1 };`,
+        '  const className = css`--width: ${() => (width = 2)};`;',
+        `  return [className, width];`,
+        `}`,
+      ].join('\n')
+    );
+
+    try {
+      await expect(runTransform(root, entryFile, cache)).rejects.toThrow(
+        unsafeSnapshotMessage
+      );
+    } finally {
+      disposeEvalBroker(cache);
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps deferred snapshot-local reads strict after an eager write', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
+    const entryFile = join(root, 'entry.js');
+    const cache = new TransformCacheCollection();
+
+    writeFileSync(
+      entryFile,
+      [
+        `import { css } from 'test-css-processor';`,
+        `export function Component() {`,
+        `  let { width } = { width: 1 };`,
+        '  const className = css`--width: ${(width = 2)}; --callback: ${() => width};`;',
+        `  return [className, width];`,
+        `}`,
+      ].join('\n')
+    );
+
+    try {
+      await expect(runTransform(root, entryFile, cache)).rejects.toThrow(
+        unsafeSnapshotMessage
+      );
+    } finally {
+      disposeEvalBroker(cache);
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('inlines a direct imported literal without keeping the runtime import', async () => {
     const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
     const entryFile = join(root, 'entry.js');
@@ -932,6 +1075,599 @@ describe('transform static import value inlining', () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  (['hybrid', 'static'] as const).forEach((strategy) => {
+    it(`resolves complete imported destructuring patterns with ${strategy} evaluation`, async () => {
+      const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
+      const entryFile = join(root, 'entry.js');
+      const depFile = join(root, 'tokens.js');
+      const cache = new TransformCacheCollection();
+      const perf = createPerfEventRecorder();
+
+      writeFileSync(
+        depFile,
+        dedent`
+          export const fallback = 7;
+          export const key = 'height';
+          const shared = { value: 1 };
+          export const theme = {
+            extra: 5,
+            first: shared,
+            second: shared,
+            size: { depth: 9, height: 171, width: 304 },
+            tuple: [4, 8, 16],
+          };
+        `
+      );
+      writeFileSync(
+        entryFile,
+        dedent`
+          import { css } from 'test-css-processor';
+          import { fallback, key, theme } from './tokens.js';
+
+          const {
+            size: { width, [key]: height, ...sizeRest },
+            tuple: [, gap, ...tail],
+            missing = fallback,
+            first,
+            second,
+            ...rest
+          } = theme;
+
+          export const className = css\`
+            width: ${'${width}'}px;
+            height: ${'${height}'}px;
+            depth: ${'${sizeRest.depth}'}px;
+            gap: ${'${gap}'}px;
+            tail: ${'${tail[0]}'}px;
+            missing: ${'${missing}'}px;
+            extra: ${'${rest.extra}'}px;
+            same: ${'${String(first === second)}'};
+          \`;
+        `
+      );
+
+      try {
+        const result = await runTransform(
+          root,
+          entryFile,
+          cache,
+          perf.eventEmitter,
+          {
+            eval: { strategy },
+          }
+        );
+
+        expect(result.cssText).toContain('width:304px');
+        expect(result.cssText).toContain('height:171px');
+        expect(result.cssText).toContain('depth:9px');
+        expect(result.cssText).toContain('gap:8px');
+        expect(result.cssText).toContain('tail:16px');
+        expect(result.cssText).toContain('missing:7px');
+        expect(result.cssText).toContain('extra:5px');
+        expect(result.cssText).toContain('same:true');
+        expect(result.cssText).not.toContain('width:width:');
+        expect(result.dependencies).toContain(depFile);
+        expect(perf.counts.get('transform:evalFile') ?? 0).toBe(0);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+  });
+
+  (['hybrid', 'static'] as const).forEach((strategy) => {
+    it(`does not misfold identity shared across exports with ${strategy} evaluation`, async () => {
+      const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
+      const entryFile = join(root, 'entry.js');
+      const depFile = join(root, 'tokens.js');
+      const cache = new TransformCacheCollection();
+      const perf = createPerfEventRecorder();
+
+      writeFileSync(
+        depFile,
+        dedent`
+          export const shared = { value: 1 };
+          export const source = { selected: shared };
+        `
+      );
+      writeFileSync(
+        entryFile,
+        dedent`
+          import { css } from 'test-css-processor';
+          import { shared, source } from './tokens.js';
+
+          const { selected } = source;
+
+          export const className = css\`
+            same: ${'${String(selected === shared)}'};
+          \`;
+        `
+      );
+
+      try {
+        const transformPromise = runTransform(
+          root,
+          entryFile,
+          cache,
+          perf.eventEmitter,
+          {
+            eval: { strategy },
+          }
+        );
+
+        if (strategy === 'static') {
+          await expect(transformPromise).rejects.toThrow(
+            'eval.strategy: "static"'
+          );
+        } else {
+          const result = await transformPromise;
+          expect(result.cssText).toContain('same:true');
+          expect(result.cssText).not.toContain('same:false');
+          expect(perf.counts.get('transform:evalFile') ?? 0).toBeGreaterThan(0);
+        }
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+  });
+
+  (['hybrid', 'static'] as const).forEach((strategy) => {
+    it(`does not use a stale destructured value after a cross-export alias mutation with ${strategy} evaluation`, async () => {
+      const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
+      const entryFile = join(root, 'entry.js');
+      const depFile = join(root, 'tokens.js');
+      const cache = new TransformCacheCollection();
+      const perf = createPerfEventRecorder();
+
+      writeFileSync(
+        depFile,
+        dedent`
+          export const source = { width: 304 };
+          export const alias = source;
+        `
+      );
+      writeFileSync(
+        entryFile,
+        dedent`
+          import { css } from 'test-css-processor';
+          import { alias, source } from './tokens.js';
+
+          alias.width = 400;
+          const { width } = source;
+
+          export const className = css\`
+            width: ${'${width}'}px;
+          \`;
+        `
+      );
+
+      try {
+        const transformPromise = runTransform(
+          root,
+          entryFile,
+          cache,
+          perf.eventEmitter,
+          {
+            eval: { strategy },
+          }
+        );
+
+        if (strategy === 'static') {
+          await expect(transformPromise).rejects.toThrow(
+            'eval.strategy: "static"'
+          );
+        } else {
+          const result = await transformPromise;
+          expect(result.cssText).toContain('width:400px');
+          expect(result.cssText).not.toContain('width:304px');
+          expect(perf.counts.get('transform:evalFile') ?? 0).toBeGreaterThan(0);
+        }
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+  });
+
+  (['hybrid', 'static'] as const).forEach((strategy) => {
+    it(`does not use a stale value after a destructuring-default alias mutation with ${strategy} evaluation`, async () => {
+      const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
+      const entryFile = join(root, 'entry.js');
+      const depFile = join(root, 'tokens.js');
+      const cache = new TransformCacheCollection();
+      const perf = createPerfEventRecorder();
+
+      writeFileSync(depFile, `export const source = { width: 304 };`);
+      writeFileSync(
+        entryFile,
+        dedent`
+          import { css } from 'test-css-processor';
+          import { source } from './tokens.js';
+
+          const alias = source;
+          const { selected = alias } = {};
+          selected.width = 400;
+          const { width } = source;
+
+          export const className = css\`
+            width: ${'${width}'}px;
+          \`;
+        `
+      );
+
+      try {
+        const transformPromise = runTransform(
+          root,
+          entryFile,
+          cache,
+          perf.eventEmitter,
+          {
+            eval: { strategy },
+          }
+        );
+
+        if (strategy === 'static') {
+          await expect(transformPromise).rejects.toThrow(
+            'eval.strategy: "static"'
+          );
+        } else {
+          const result = await transformPromise;
+          expect(result.cssText).toContain('width:400px');
+          expect(result.cssText).not.toContain('width:304px');
+          expect(perf.counts.get('transform:evalFile') ?? 0).toBeGreaterThan(0);
+        }
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+  });
+
+  (['hybrid', 'static'] as const).forEach((strategy) => {
+    it(`does not use a stale direct import after mutation with ${strategy} evaluation`, async () => {
+      const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
+      const entryFile = join(root, 'entry.js');
+      const depFile = join(root, 'tokens.js');
+      const cache = new TransformCacheCollection();
+      const perf = createPerfEventRecorder();
+
+      writeFileSync(depFile, `export const source = { width: 304 };`);
+      writeFileSync(
+        entryFile,
+        dedent`
+          import { css } from 'test-css-processor';
+          import { source } from './tokens.js';
+
+          source.width = 400;
+
+          export const className = css\`
+            width: ${'${source.width}'}px;
+          \`;
+        `
+      );
+
+      try {
+        const transformPromise = runTransform(
+          root,
+          entryFile,
+          cache,
+          perf.eventEmitter,
+          {
+            eval: { strategy },
+          }
+        );
+
+        if (strategy === 'static') {
+          await expect(transformPromise).rejects.toThrow(
+            'eval.strategy: "static"'
+          );
+        } else {
+          const result = await transformPromise;
+          expect(result.cssText).toContain('width:400px');
+          expect(result.cssText).not.toContain('width:304px');
+          expect(perf.counts.get('transform:evalFile') ?? 0).toBeGreaterThan(0);
+        }
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+  });
+
+  (['hybrid', 'static'] as const).forEach((strategy) => {
+    it(`does not ignore an opaque imported mutation call with ${strategy} evaluation`, async () => {
+      const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
+      const entryFile = join(root, 'entry.js');
+      const depFile = join(root, 'tokens.js');
+      const cache = new TransformCacheCollection();
+      const perf = createPerfEventRecorder();
+
+      writeFileSync(
+        depFile,
+        dedent`
+          export const source = { width: 304 };
+          export function mutate() {
+            source.width = 400;
+          }
+        `
+      );
+      writeFileSync(
+        entryFile,
+        dedent`
+          import { css } from 'test-css-processor';
+          import { mutate, source } from './tokens.js';
+
+          mutate();
+          const { width } = source;
+
+          export const className = css\`
+            width: ${'${width}'}px;
+          \`;
+        `
+      );
+
+      try {
+        const transformPromise = runTransform(
+          root,
+          entryFile,
+          cache,
+          perf.eventEmitter,
+          {
+            eval: { strategy },
+          }
+        );
+
+        if (strategy === 'static') {
+          await expect(transformPromise).rejects.toThrow(
+            'eval.strategy: "static"'
+          );
+        } else {
+          const result = await transformPromise;
+          expect(result.cssText).toContain('width:400px');
+          expect(result.cssText).not.toContain('width:304px');
+          expect(perf.counts.get('transform:evalFile') ?? 0).toBeGreaterThan(0);
+        }
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+  });
+
+  (
+    [
+      {
+        factory: dedent`
+          import { source } from './tokens.js';
+          export function mutate() {
+            source.width = 400;
+          }
+        `,
+        name: 'a mutator imported from another module',
+        setup: dedent`
+          import { mutate } from './factory.js';
+          mutate();
+        `,
+      },
+      {
+        factory: dedent`
+          import { source } from './tokens.js';
+          export function getSource() {
+            return source;
+          }
+        `,
+        name: 'an alias returned from another module',
+        setup: dedent`
+          import { getSource } from './factory.js';
+          const alias = getSource();
+          alias.width = 400;
+        `,
+      },
+      {
+        factory: `export { source as alias } from './tokens.js';`,
+        name: 'an alias re-exported through a barrel',
+        setup: dedent`
+          import { alias } from './factory.js';
+          alias.width = 400;
+        `,
+      },
+    ] as const
+  ).forEach(({ factory, name, setup }) => {
+    (['hybrid', 'static'] as const).forEach((strategy) => {
+      it(`does not detach destructuring from ${name} with ${strategy} evaluation`, async () => {
+        const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
+        const entryFile = join(root, 'entry.js');
+        const factoryFile = join(root, 'factory.js');
+        const tokensFile = join(root, 'tokens.js');
+        const cache = new TransformCacheCollection();
+        const perf = createPerfEventRecorder();
+
+        writeFileSync(tokensFile, `export const source = { width: 304 };`);
+        writeFileSync(factoryFile, factory);
+        writeFileSync(
+          entryFile,
+          dedent`
+            import { css } from 'test-css-processor';
+            import { source } from './tokens.js';
+            ${setup}
+
+            const { width } = source;
+            export const className = css\`
+              width: ${'${width}'}px;
+            \`;
+          `
+        );
+
+        try {
+          const transformPromise = runTransform(
+            root,
+            entryFile,
+            cache,
+            perf.eventEmitter,
+            {
+              eval: { strategy },
+            }
+          );
+
+          if (strategy === 'static') {
+            await expect(transformPromise).rejects.toThrow(
+              'eval.strategy: "static"'
+            );
+          } else {
+            const result = await transformPromise;
+            expect(result.cssText).toContain('width:400px');
+            expect(result.cssText).not.toContain('width:304px');
+            expect(perf.counts.get('transform:evalFile') ?? 0).toBeGreaterThan(
+              0
+            );
+          }
+        } finally {
+          rmSync(root, { recursive: true, force: true });
+        }
+      });
+    });
+  });
+
+  (
+    [
+      {
+        name: 'a direct local alias',
+        setup: dedent`
+          const source = { width: 304 };
+          const alias = source;
+          alias.width = 400;
+        `,
+      },
+      {
+        name: 'a class static field',
+        setup: dedent`
+          const source = { width: 304 };
+          class Holder {
+            static value = source;
+          }
+          Holder.value.width = 400;
+        `,
+      },
+      {
+        name: 'an invoked parameter default',
+        setup: dedent`
+          const source = { width: 304 };
+          ((value = source) => {
+            value.width = 400;
+          })();
+        `,
+      },
+      {
+        name: 'a for-of binding default',
+        setup: dedent`
+          const source = { width: 304 };
+          for (const { value = source } of [{}]) {
+            value.width = 400;
+          }
+        `,
+      },
+    ] as const
+  ).forEach(({ name, setup }) => {
+    (['hybrid', 'static'] as const).forEach((strategy) => {
+      it(`preserves ${name} while extracting from a function with ${strategy} evaluation`, async () => {
+        const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
+        const entryFile = join(root, 'entry.js');
+        const cache = new TransformCacheCollection();
+        const perf = createPerfEventRecorder();
+
+        writeFileSync(
+          entryFile,
+          dedent`
+            import { css } from 'test-css-processor';
+
+            function makeClassName() {
+              ${setup}
+              const { width } = source;
+              return css\`
+                width: ${'${width}'}px;
+              \`;
+            }
+
+            export const className = makeClassName();
+          `
+        );
+
+        try {
+          const transformPromise = runTransform(
+            root,
+            entryFile,
+            cache,
+            perf.eventEmitter,
+            {
+              eval: { strategy },
+            }
+          );
+
+          if (strategy === 'static') {
+            await expect(transformPromise).rejects.toThrow(
+              'eval.strategy: "static"'
+            );
+          } else {
+            const result = await transformPromise;
+            expect(result.cssText).toContain('width:400px');
+            expect(result.cssText).not.toContain('width:304px');
+            expect(perf.counts.get('transform:evalFile') ?? 0).toBeGreaterThan(
+              0
+            );
+          }
+        } finally {
+          rmSync(root, { recursive: true, force: true });
+        }
+      });
+    });
+  });
+
+  (['hybrid', 'static'] as const).forEach((strategy) => {
+    it(`does not use a stale destructuring snapshot after Object.assign with ${strategy} evaluation`, async () => {
+      const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
+      const entryFile = join(root, 'entry.js');
+      const depFile = join(root, 'tokens.js');
+      const cache = new TransformCacheCollection();
+      const perf = createPerfEventRecorder();
+
+      writeFileSync(depFile, `export const theme = { size: { width: 304 } };`);
+      writeFileSync(
+        entryFile,
+        dedent`
+          import { css } from 'test-css-processor';
+          import { theme } from './tokens.js';
+
+          Object.assign(theme.size, { width: 400 });
+          const { size: { width } } = theme;
+
+          export const className = css\`
+            width: ${'${width}'}px;
+          \`;
+        `
+      );
+
+      try {
+        const transformPromise = runTransform(
+          root,
+          entryFile,
+          cache,
+          perf.eventEmitter,
+          {
+            eval: { strategy },
+          }
+        );
+
+        if (strategy === 'static') {
+          await expect(transformPromise).rejects.toThrow(
+            'eval.strategy: "static"'
+          );
+        } else {
+          const result = await transformPromise;
+          expect(result.cssText).toContain('width:400px');
+          expect(result.cssText).not.toContain('width:304px');
+          expect(perf.counts.get('transform:evalFile') ?? 0).toBeGreaterThan(0);
+        }
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
   });
 
   it('keeps local static values in eval when disabled explicitly', async () => {
@@ -1577,7 +2313,7 @@ describe('transform static import value inlining', () => {
         perf.eventEmitter
       );
 
-      expect(result.cssText).toContain('color:red');
+      expect(result.cssText).toContain('color:blue');
       expect(result.dependencies).toContain('./unsafe.js');
       expect(perf.counts.get('transform:evalFile') ?? 0).toBeGreaterThan(0);
     } finally {
