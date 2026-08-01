@@ -43,6 +43,15 @@ describe('withWyw', () => {
     return tsRule.loaders[0].options;
   };
 
+  const getWebpackLoaderForResource = (use: any[], resource: string): any => {
+    const resolvedUse = use.flatMap((item) => {
+      const resolved = typeof item === 'function' ? item({ resource }) : item;
+      return Array.isArray(resolved) ? resolved : [resolved];
+    });
+
+    return resolvedUse.find((item) => item?.loader?.includes('webpack-loader'));
+  };
+
   it('injects Turbopack query CSS rules for Next 16.2+', () => {
     const nextConfig = withFakeNextVersion('16.2.4', () => withWyw());
 
@@ -177,6 +186,7 @@ describe('withWyw', () => {
       module: {
         rules: [
           {
+            issuerLayer: 'app-pages-browser',
             use: [{ loader: 'next-swc-loader' }],
           },
         ],
@@ -189,11 +199,28 @@ describe('withWyw', () => {
     const use = (result.module!.rules![0] as RuleSetRule).use as any[];
 
     expect(use).toHaveLength(2);
-    expect(use[1].loader).toContain('webpack-loader');
-    expect(use[1].options.importOverrides).toMatchObject({
+    const localLoader = getWebpackLoaderForResource(
+      use,
+      '/project/app/page.tsx'
+    );
+    expect(localLoader.loader).toContain('webpack-loader');
+    expect(localLoader.options.importOverrides).toMatchObject({
       react: { mock: 'react' },
     });
-    expect(use[1].options).not.toHaveProperty('babelOptions');
+    expect(localLoader.options).not.toHaveProperty('babelOptions');
+
+    expect(
+      getWebpackLoaderForResource(
+        use,
+        '/project/node_modules/swr/dist/index.mjs'
+      )
+    ).toBeUndefined();
+    expect(
+      getWebpackLoaderForResource(
+        use,
+        'C:\\project\\node_modules\\swr\\dist\\index.mjs'
+      )
+    ).toBeUndefined();
   });
 
   it('merges default React importOverrides with user overrides', () => {
@@ -220,8 +247,12 @@ describe('withWyw', () => {
 
     const result = nextConfig.webpack!(config, { dev: true } as any);
     const use = (result.module!.rules![0] as RuleSetRule).use as any[];
+    const localLoader = getWebpackLoaderForResource(
+      use,
+      '/project/pages/index.tsx'
+    );
 
-    expect(use[1].options.importOverrides).toMatchObject({
+    expect(localLoader.options.importOverrides).toMatchObject({
       react: { mock: 'preact/compat' },
       'react/jsx-runtime': { mock: 'react/jsx-runtime' },
       'react/jsx-dev-runtime': { mock: 'react/jsx-dev-runtime' },
@@ -252,15 +283,34 @@ describe('withWyw', () => {
     expect(rule.use).toHaveLength(2);
     expect(rule.use[0].loader).toContain('next-swc-loader');
     expect(rule.use[0].options).toEqual({ some: 'option' });
-    expect(rule.use[1].loader).toContain('webpack-loader');
+    expect(
+      getWebpackLoaderForResource(rule.use, '/project/pages/index.tsx').loader
+    ).toContain('webpack-loader');
   });
 
-  it('keeps generated class names stable in .wyw-in-js.module.css', () => {
+  it('keeps generated class names stable across App and Pages CSS rules', () => {
     const originalGetLocalIdent = (
       _context: unknown,
       _localIdentName: string,
       localName: string
     ) => `hashed_${localName}`;
+
+    const createCssModuleRule = (issuerLayer: string, appDir: boolean) => ({
+      test: /\.module\.css$/,
+      issuerLayer,
+      use: [
+        ...(appDir ? [{ loader: 'next-flight-css-loader' }] : []),
+        {
+          loader: 'css-loader',
+          options: {
+            modules: {
+              mode: 'pure',
+              getLocalIdent: originalGetLocalIdent,
+            },
+          },
+        },
+      ],
+    });
 
     const config: Configuration = {
       module: {
@@ -270,20 +320,8 @@ describe('withWyw', () => {
               {
                 use: [{ loader: 'next-swc-loader' }],
               },
-              {
-                test: /\.module\.css$/,
-                use: [
-                  {
-                    loader: 'css-loader',
-                    options: {
-                      modules: {
-                        mode: 'pure',
-                        getLocalIdent: originalGetLocalIdent,
-                      },
-                    },
-                  },
-                ],
-              },
+              createCssModuleRule('app-pages-browser', true),
+              createCssModuleRule('pages-dir-browser', false),
             ],
           },
         ],
@@ -294,29 +332,52 @@ describe('withWyw', () => {
     nextConfig.webpack!(config, { dev: true } as any);
 
     const rules = (config.module!.rules![0] as RuleSetRule).oneOf! as any[];
-    expect(rules).toHaveLength(3);
+    expect(rules).toHaveLength(5);
 
-    const wywCssRule = rules[1];
-    expect(String(wywCssRule.test)).toContain('wyw-in-js');
-    expect(wywCssRule.sideEffects).toBe(true);
+    const wywCssRules = rules.filter((rule) =>
+      String(rule.test).includes('wyw-in-js')
+    );
+    expect(wywCssRules).toHaveLength(2);
+    expect(wywCssRules.map((rule) => rule.issuerLayer)).toEqual([
+      'app-pages-browser',
+      'pages-dir-browser',
+    ]);
 
-    const { modules } = wywCssRule.use[0].options;
-    expect(modules.mode).toBe('global');
+    wywCssRules.forEach((wywCssRule) => {
+      expect(wywCssRule.sideEffects).toBe(true);
 
-    const patched = modules.getLocalIdent;
+      const cssLoader = wywCssRule.use.find(
+        (item: any) => item.loader === 'css-loader'
+      );
+      const { modules } = cssLoader.options;
+      expect(modules.mode).toBe('global');
+      expect(
+        modules.getLocalIdent(
+          { resourcePath: '/x/file.wyw-in-js.module.css' },
+          'name',
+          'foo'
+        )
+      ).toBe('foo');
+    });
 
-    expect(
-      patched({ resourcePath: '/x/file.wyw-in-js.module.css' }, 'name', 'foo')
-    ).toBe('foo');
+    const originalCssRules = rules.filter(
+      (rule) => String(rule.test) === String(/\.module\.css$/)
+    );
+    originalCssRules.forEach((originalCssRule) => {
+      const cssLoader = originalCssRule.use.find(
+        (item: any) => item.loader === 'css-loader'
+      );
+      expect(
+        cssLoader.options.modules.getLocalIdent(
+          { resourcePath: '/x/file.module.css' },
+          'name',
+          'foo'
+        )
+      ).toBe('hashed_foo');
+    });
 
-    const originalCssRule = rules[2];
-    expect(
-      originalCssRule.use[0].options.modules.getLocalIdent(
-        { resourcePath: '/x/file.module.css' },
-        'name',
-        'foo'
-      )
-    ).toBe('hashed_foo');
+    nextConfig.webpack!(config, { dev: true } as any);
+    expect(rules).toHaveLength(5);
   });
 
   it('rejects non-JSON turbopack loader options', () => {
