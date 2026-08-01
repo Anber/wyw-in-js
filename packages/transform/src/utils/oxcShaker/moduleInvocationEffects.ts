@@ -8,6 +8,7 @@ import {
   matchesOxcRuntimePropertyPath,
   replaceOxcRuntimePropertyPathRoot,
   type OxcRuntimePropertyPath,
+  type OxcRuntimePropertyPathKey,
 } from '../oxc/projections';
 import {
   getCalleeBinding,
@@ -31,6 +32,8 @@ import type { ReceiverOperation } from './patternEffects';
 
 type ModuleInvocationEffects = {
   bindings: Set<string>;
+  callableResultPaths: Set<OxcRuntimePropertyPathKey>;
+  effectOrigins: Set<string>;
   opaqueImportedCall: boolean;
 };
 
@@ -41,7 +44,12 @@ export const collectModuleInvocationEffects = (
   resolveReceiverOperationRoots: (binding: string) => ReadonlySet<string>
 ): ModuleInvocationEffects => {
   if (!hasModuleInvocationCandidate(node)) {
-    return { bindings: new Set(), opaqueImportedCall: false };
+    return {
+      bindings: new Set(),
+      callableResultPaths: new Set(),
+      effectOrigins: new Set(),
+      opaqueImportedCall: false,
+    };
   }
 
   const {
@@ -49,14 +57,23 @@ export const collectModuleInvocationEffects = (
     collectCallableAliases,
     collectCallableExpressionRoots,
     collectContextualRoots,
+    collectInlineCallableCaptureRoots,
     getCallableSyntaxFacts,
     resolveAliasBinding,
-    resolveCallableResultRoots,
+    resolveCallableCaptureRoots,
+    resolveCallableResultPaths,
     resolveCalleeCallables,
     resolveCalleeClasses,
     resolveMemberAccessors,
+    callableResultPathsMayAliasImport,
   } = provenance;
   const bindings = new Set<string>();
+  const callableResultPaths = new Set<OxcRuntimePropertyPathKey>();
+  const effectOrigins = new Set<string>();
+  const addEffectOrigin = (binding: string): void => {
+    bindings.add(binding);
+    effectOrigins.add(binding);
+  };
   let opaqueImportedCall = false;
   const emptyAliases: AliasEnvironment = new Map();
   const hasImportedCallee = (
@@ -67,13 +84,94 @@ export const collectModuleInvocationEffects = (
       [...resolveAliasBinding(binding, aliases)].some(aliasesImportedRoot)
     );
 
+  const addResultPaths = (
+    binding: OxcRuntimePropertyPathKey,
+    includeDescendants = false
+  ): void => {
+    const paths = resolveCallableResultPaths(binding, includeDescendants);
+    paths.forEach((path) => callableResultPaths.add(path));
+    if (callableResultPathsMayAliasImport(paths)) {
+      opaqueImportedCall = true;
+    }
+  };
   const addRoots = (
     value: Node,
     aliases: AliasEnvironment = emptyAliases
   ): void => {
-    collectContextualRoots(value, aliases).forEach((root) =>
-      bindings.add(root)
-    );
+    const current = unwrapAliasExpression(value);
+    const addValue = (item: Node): void => addRoots(item, aliases);
+    if (current.type === 'Identifier') {
+      resolveAliasBinding(current.name, aliases).forEach((root) => {
+        addEffectOrigin(root);
+        resolveCallableCaptureRoots(root).forEach((capture) =>
+          addEffectOrigin(capture)
+        );
+        addResultPaths(createOxcRuntimePropertyPath(root).key);
+      });
+      return;
+    }
+    if (current.type === 'MemberExpression') {
+      const staticPath = getStaticMemberPath(current);
+      if (staticPath) {
+        resolveAliasBinding(staticPath.root, aliases).forEach((root) => {
+          addEffectOrigin(root);
+          const path = replaceOxcRuntimePropertyPathRoot(staticPath, root).key;
+          resolveCallableCaptureRoots(path).forEach((capture) =>
+            addEffectOrigin(capture)
+          );
+          addResultPaths(path);
+        });
+      } else {
+        collectContextualRoots(current.object, aliases, false).forEach(
+          (root) => {
+            addEffectOrigin(root);
+            addResultPaths(createOxcRuntimePropertyPath(root).key, true);
+          }
+        );
+      }
+      return;
+    }
+    if (
+      current.type === 'FunctionExpression' ||
+      current.type === 'ArrowFunctionExpression'
+    ) {
+      collectInlineCallableCaptureRoots(current as CallableNode).forEach(
+        addEffectOrigin
+      );
+      return;
+    }
+    if (current.type === 'ConditionalExpression') {
+      addValue(current.consequent);
+      addValue(current.alternate);
+    } else if (current.type === 'LogicalExpression') {
+      addValue(current.left);
+      addValue(current.right);
+    } else if (current.type === 'SequenceExpression') {
+      const last = current.expressions[current.expressions.length - 1];
+      if (last) addValue(last);
+    } else if (current.type === 'AssignmentExpression') {
+      addValue(current.right);
+    } else if (current.type === 'ArrayExpression') {
+      current.elements.forEach((element) => {
+        if (element) {
+          addValue(
+            element.type === 'SpreadElement' ? element.argument : element
+          );
+        }
+      });
+    } else if (current.type === 'ObjectExpression') {
+      current.properties.forEach((property) =>
+        addValue(
+          property.type === 'SpreadElement' ? property.argument : property.value
+        )
+      );
+    } else if (current.type === 'AwaitExpression') {
+      addValue(current.argument);
+    } else if (current.type === 'CallExpression') {
+      collectContextualRoots(current, aliases).forEach((root) =>
+        addEffectOrigin(root)
+      );
+    }
   };
 
   const addReceiverOperationEffects = (
@@ -93,7 +191,7 @@ export const collectModuleInvocationEffects = (
       roots.add('Array');
     }
     [...roots].forEach((root) => {
-      bindings.add(root);
+      addEffectOrigin(root);
       resolveReceiverOperationRoots(root).forEach((resolved) =>
         bindings.add(resolved)
       );
@@ -324,14 +422,19 @@ export const collectModuleInvocationEffects = (
     staticPath: OxcRuntimePropertyPath | null
   ): void => {
     resolveAliasBinding(binding, aliases).forEach((root) => {
-      bindings.add(root);
+      addEffectOrigin(root);
       const resultBinding =
         staticPath?.root === binding
           ? replaceOxcRuntimePropertyPathRoot(staticPath, root).key
           : createOxcRuntimePropertyPath(root).key;
-      resolveCallableResultRoots(resultBinding, staticPath === null).forEach(
-        (resultRoot) => bindings.add(resultRoot)
+      const resultPaths = resolveCallableResultPaths(
+        resultBinding,
+        staticPath === null
       );
+      resultPaths.forEach((path) => callableResultPaths.add(path));
+      if (callableResultPathsMayAliasImport(resultPaths)) {
+        opaqueImportedCall = true;
+      }
     });
   };
 
@@ -354,7 +457,7 @@ export const collectModuleInvocationEffects = (
         unwrapAliasExpression(current.object).type === 'CallExpression'
       ) {
         collectCallableExpressionRoots(current.object).forEach((root) =>
-          bindings.add(root)
+          addEffectOrigin(root)
         );
       }
       return;
@@ -379,7 +482,7 @@ export const collectModuleInvocationEffects = (
       addExpression(current.argument);
     } else if (current.type === 'CallExpression') {
       collectCallableExpressionRoots(current).forEach((root) =>
-        bindings.add(root)
+        addEffectOrigin(root)
       );
     }
   };
@@ -423,14 +526,14 @@ export const collectModuleInvocationEffects = (
     callable.params.forEach((parameter) => {
       collectPatternNames(parameter).forEach((binding) => {
         resolveAliasBinding(binding, aliases).forEach((root) =>
-          bindings.add(root)
+          addEffectOrigin(root)
         );
       });
     });
 
     facts.mutationBindings.forEach((binding) => {
       resolveAliasBinding(binding, aliases).forEach((root) =>
-        bindings.add(root)
+        addEffectOrigin(root)
       );
     });
     if (hasImportedCallee(facts.calleeCandidates, aliases)) {
@@ -460,17 +563,17 @@ export const collectModuleInvocationEffects = (
 
       if (current.type === 'CallExpression') {
         addInvokedCalleeBindings(current.callee, aliases);
+        const nestedCallables = resolveCalleeCallables(
+          current.callee,
+          aliases,
+          scopedCallables
+        );
         current.arguments.forEach((argument) => {
           addRoots(
             argument.type === 'SpreadElement' ? argument.argument : argument,
             aliases
           );
         });
-        const nestedCallables = resolveCalleeCallables(
-          current.callee,
-          aliases,
-          scopedCallables
-        );
         nestedCallables.forEach((nestedCallable) => {
           addCallableEffects(
             nestedCallable,
@@ -591,7 +694,7 @@ export const collectModuleInvocationEffects = (
       const facts = getCallableSyntaxFacts(element.value);
       facts.mutationBindings.forEach((binding) => {
         resolveAliasBinding(binding, callerAliases).forEach((root) =>
-          bindings.add(root)
+          addEffectOrigin(root)
         );
       });
       if (hasImportedCallee(facts.calleeCandidates, callerAliases)) {
@@ -623,17 +726,18 @@ export const collectModuleInvocationEffects = (
 
         if (current.type === 'CallExpression') {
           addInvokedCalleeBindings(current.callee, callerAliases);
+          const nestedCallables = resolveCalleeCallables(
+            current.callee,
+            callerAliases,
+            inheritedCallables
+          );
           current.arguments.forEach((argument) =>
             addRoots(
               argument.type === 'SpreadElement' ? argument.argument : argument,
               callerAliases
             )
           );
-          resolveCalleeCallables(
-            current.callee,
-            callerAliases,
-            inheritedCallables
-          ).forEach((callable) =>
+          nestedCallables.forEach((callable) =>
             addCallableEffects(
               callable,
               current.arguments,
@@ -738,17 +842,17 @@ export const collectModuleInvocationEffects = (
 
     if (current.type === 'CallExpression') {
       addInvokedCalleeBindings(current.callee, emptyAliases);
-      current.arguments.forEach((argument) => {
-        addRoots(
-          argument.type === 'SpreadElement' ? argument.argument : argument
-        );
-      });
-
       const callablesForCallee = resolveCalleeCallables(
         current.callee,
         emptyAliases,
         new Map()
       );
+      current.arguments.forEach((argument) => {
+        addRoots(
+          argument.type === 'SpreadElement' ? argument.argument : argument,
+          emptyAliases
+        );
+      });
       callablesForCallee.forEach((callable) => {
         addCallableEffects(
           callable,
@@ -822,5 +926,5 @@ export const collectModuleInvocationEffects = (
     }
   });
 
-  return { bindings, opaqueImportedCall };
+  return { bindings, callableResultPaths, effectOrigins, opaqueImportedCall };
 };

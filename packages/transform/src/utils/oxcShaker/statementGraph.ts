@@ -1,4 +1,4 @@
-/* eslint-disable no-restricted-syntax */
+/* eslint-disable no-continue, no-restricted-syntax */
 
 import type { Node, Program } from 'oxc-parser';
 
@@ -17,6 +17,7 @@ import {
   collectModuleReferences,
   forEachModuleExecutedNode,
 } from './executableIndex';
+import { createStableInitializerResolver } from './initializerStability';
 import {
   finalizeShakenModule,
   hasImportOverride,
@@ -296,16 +297,39 @@ export const shakeOxcToESM = (
   const bindingQueue: string[] = [];
   const liveBindings = new Set<string>();
   const effectsByBinding = new Map<string, Set<StatementInfo>>();
+  const receiverEffectsByBinding = new Map<string, Set<StatementInfo>>();
+  const nestedReceiverEffectsByBinding = new Map<string, Set<StatementInfo>>();
+  const earliestNestedReceiverEffect = new Map<string, number>();
+  const nestedImportedReceiverEffects = new Set<StatementInfo>();
+  const callableResultEffects = new Map<string, Set<StatementInfo>>();
+  let effectVersion = 0;
 
   const addEffect = (binding: string, statement: StatementInfo): void => {
     const bucket = effectsByBinding.get(binding) ?? new Set<StatementInfo>();
-    bucket.add(statement);
+    if (!bucket.has(statement)) {
+      bucket.add(statement);
+      effectVersion += 1;
+    }
     effectsByBinding.set(binding, bucket);
+  };
+
+  const addReceiverEffect = (
+    binding: string,
+    statement: StatementInfo
+  ): void => {
+    addEffect(binding, statement);
+    const bucket =
+      receiverEffectsByBinding.get(binding) ?? new Set<StatementInfo>();
+    if (!bucket.has(statement)) {
+      bucket.add(statement);
+      effectVersion += 1;
+    }
+    receiverEffectsByBinding.set(binding, bucket);
   };
 
   statements.forEach((statement) => {
     statement.mutations.forEach((binding) => {
-      addEffect(binding, statement);
+      addReceiverEffect(binding, statement);
     });
   });
 
@@ -313,6 +337,73 @@ export const shakeOxcToESM = (
     bindingOwners,
     program,
   });
+  const addNestedImportedReceiverEffect = (statement: StatementInfo): void => {
+    if (!nestedImportedReceiverEffects.has(statement)) {
+      nestedImportedReceiverEffects.add(statement);
+      effectVersion += 1;
+    }
+  };
+  const addNestedReceiverEffect = (
+    binding: string,
+    statement: StatementInfo
+  ): void => {
+    const component = callableProvenance.aliasComponentId(binding);
+    const bucket =
+      nestedReceiverEffectsByBinding.get(component) ?? new Set<StatementInfo>();
+    if (!bucket.has(statement)) {
+      bucket.add(statement);
+      effectVersion += 1;
+      const pending = [component];
+      const visited = new Set<string>();
+      while (pending.length > 0) {
+        const current = pending.pop()!;
+        const currentComponent = callableProvenance.aliasComponentId(current);
+        if (visited.has(currentComponent)) {
+          continue;
+        }
+        visited.add(currentComponent);
+        const earliest = earliestNestedReceiverEffect.get(currentComponent);
+        if (earliest !== undefined && earliest <= statement.node.start) {
+          continue;
+        }
+        earliestNestedReceiverEffect.set(
+          currentComponent,
+          statement.node.start
+        );
+        callableProvenance
+          .nestedAliasSources(currentComponent)
+          .forEach((source) => pending.push(source));
+      }
+    }
+    nestedReceiverEffectsByBinding.set(component, bucket);
+    if (callableProvenance.nestedAliasesImportedRoot(component)) {
+      addNestedImportedReceiverEffect(statement);
+    }
+  };
+  const noNestedAliasSources = {
+    mayAliasAnyRootImport: false,
+    sources: new Set<string>(),
+  };
+  const collectNestedAliasSources = (bindings: Iterable<string>) => {
+    const sources = new Set<string>();
+    const visited = new Set<string>();
+    const pending = [...bindings];
+    let mayAliasAnyRootImport = false;
+    for (let cursor = 0; cursor < pending.length; cursor += 1) {
+      const current = pending[cursor]!;
+      const componentId = callableProvenance.aliasComponentId(current);
+      if (!visited.has(componentId)) {
+        visited.add(componentId);
+        mayAliasAnyRootImport ||=
+          callableProvenance.nestedAliasesImportedRoot(current);
+        callableProvenance.nestedAliasSources(current).forEach((source) => {
+          sources.add(source);
+          pending.push(source);
+        });
+      }
+    }
+    return { mayAliasAnyRootImport, sources };
+  };
 
   // Import binding identity is not knowable at the root module boundary.
   // Therefore a module-executed mutation through any imported alias, or an
@@ -336,72 +427,147 @@ export const shakeOxcToESM = (
     return effects;
   };
 
-  const resolveStableInitializer = (
-    statement: StatementInfo,
-    name: string
-  ): Node | null | undefined => {
-    const initializer = patternInitializers.get(name);
-    if (!initializer) {
-      return undefined;
+  const resolveStableInitializer = createStableInitializerResolver({
+    aliasComponents: callableProvenance.aliasComponents,
+    effectsByBinding,
+    getEffectVersion: () => effectVersion,
+    patternInitializers,
+  });
+
+  const receiverReferences = new Map<StatementInfo, Set<string>>();
+  const getReceiverReferences = (statement: StatementInfo): Set<string> => {
+    const cached = receiverReferences.get(statement);
+    if (cached) {
+      return cached;
     }
-    if (
-      initializer.declarationKind !== 'const' ||
-      initializer.owner.node.start > statement.node.start
-    ) {
-      return null;
-    }
-    return bindingEffectsBefore(name, statement).size > 0
-      ? null
-      : initializer.value;
+
+    const references = new Set(statement.references);
+    callableProvenance
+      .getExternalStatementReferences(statement)
+      .forEach((reference) => references.add(reference));
+    receiverReferences.set(statement, references);
+    return references;
+  };
+
+  type ReceiverRootDemand = {
+    effectVersion: number;
+    roots: Set<string>;
   };
 
   const resolveReceiverOperationRoots = (
     binding: string,
-    statement: StatementInfo
+    statement: StatementInfo,
+    demandCache: Map<string, ReceiverRootDemand>
   ): Set<string> => {
-    const roots = new Set<string>();
-    const visited = new Set<string>();
-    const pending = [binding];
+    const rootComponent = callableProvenance.aliasComponentId(binding);
+    const cached = demandCache.get(rootComponent);
+    if (cached?.effectVersion === effectVersion) {
+      return cached.roots;
+    }
 
-    while (pending.length > 0) {
+    const roots = new Set<string>();
+    const visitedComponents = new Set<string>();
+    const visitedNestedHistoryComponents = new Set<string>();
+    const visitedEffects = new Set<StatementInfo>();
+    const pending = [rootComponent];
+    const pendingNestedHistory: string[] = [];
+    let visitedImportedNestedHistory = false;
+
+    const addReferences = (
+      owner: StatementInfo,
+      effect?: StatementInfo
+    ): void => {
+      const references = getReceiverReferences(owner);
+      references.forEach((reference) => {
+        roots.add(reference);
+        if (bindingOwners.has(reference)) {
+          pending.push(callableProvenance.aliasComponentId(reference));
+        }
+        if (effect) {
+          addReceiverEffect(reference, effect);
+        }
+      });
+    };
+
+    const addHistory = (
+      history: ReadonlySet<StatementInfo> | undefined
+    ): void =>
+      history?.forEach((effect) => {
+        if (
+          effect.node.start >= statement.node.start ||
+          visitedEffects.has(effect)
+        ) {
+          return;
+        }
+        visitedEffects.add(effect);
+        addReferences(effect, effect);
+      });
+
+    const addBindingHistory = (
+      current: string,
+      history: ReadonlyMap<string, ReadonlySet<StatementInfo>>
+    ): void => {
+      const component =
+        callableProvenance.aliasComponents.get(current) ?? new Set([current]);
+      component.forEach((alias) => addHistory(history.get(alias)));
+    };
+
+    while (pending.length > 0 || pendingNestedHistory.length > 0) {
+      if (pending.length === 0) {
+        const current = pendingNestedHistory.pop()!;
+        const componentId = callableProvenance.aliasComponentId(current);
+        if (visitedNestedHistoryComponents.has(componentId)) {
+          continue;
+        }
+        visitedNestedHistoryComponents.add(componentId);
+        if (
+          (earliestNestedReceiverEffect.get(componentId) ?? Infinity) >=
+          statement.node.start
+        ) {
+          continue;
+        }
+        addHistory(nestedReceiverEffectsByBinding.get(componentId));
+        callableProvenance
+          .nestedAliasDependents(componentId)
+          .forEach((dependent) => pendingNestedHistory.push(dependent));
+        continue;
+      }
+
       const current = pending.pop()!;
+      const componentId = callableProvenance.aliasComponentId(current);
+      if (visitedComponents.has(componentId)) {
+        continue;
+      }
+      visitedComponents.add(componentId);
+      addBindingHistory(componentId, receiverEffectsByBinding);
+      pendingNestedHistory.push(componentId);
+      if (
+        !visitedImportedNestedHistory &&
+        callableProvenance.aliasesImportedRoot(componentId)
+      ) {
+        visitedImportedNestedHistory = true;
+        addHistory(nestedImportedReceiverEffects);
+      }
       const component =
         callableProvenance.aliasComponents.get(current) ?? new Set([current]);
       component.forEach((alias) => {
-        if (visited.has(alias)) {
-          return;
-        }
-        visited.add(alias);
         roots.add(alias);
-
-        const addReferences = (owner: StatementInfo): Set<string> => {
-          const references = new Set([
-            ...owner.references,
-            ...callableProvenance.getExternalStatementReferences(owner),
-          ]);
-          references.forEach((reference) => {
-            roots.add(reference);
-            if (bindingOwners.has(reference)) {
-              pending.push(reference);
-            }
-          });
-          return references;
-        };
         const owner = bindingOwners.get(alias);
         if (owner) {
           addReferences(owner);
         }
-        bindingEffectsBefore(alias, statement).forEach((effect) => {
-          addReferences(effect).forEach((reference) =>
-            addEffect(reference, effect)
-          );
-        });
-        callableProvenance
-          .nestedAliasSources(alias)
-          .forEach((source) => pending.push(source));
       });
+      callableProvenance
+        .nestedAliasSources(current)
+        .forEach((source) => pending.push(source));
+      if (callableProvenance.nestedAliasesImportedRoot(current)) {
+        callableProvenance.rootImportedBindings.forEach((source) =>
+          pending.push(source)
+        );
+      }
     }
 
+    demandCache.set(rootComponent, { effectVersion, roots });
     return roots;
   };
 
@@ -410,14 +576,36 @@ export const shakeOxcToESM = (
       importedEffects.add(statement);
     }
 
-    collectNestedMutations(statement.node).forEach((binding) => {
-      const sources = callableProvenance.nestedAliasSources(binding);
-      sources.forEach((source) => addEffect(source, statement));
-      if ([...sources].some(callableProvenance.aliasesImportedRoot)) {
-        importedEffects.add(statement);
-      }
-    });
+    const nestedMutations = callableProvenance.hasNestedAliases
+      ? collectNestedMutations(statement.node)
+      : noNestedAliasSources.sources;
+    nestedMutations.forEach((binding) =>
+      addNestedReceiverEffect(binding, statement)
+    );
+    const nestedMutationSources = callableProvenance.hasNestedAliases
+      ? collectNestedAliasSources(nestedMutations)
+      : noNestedAliasSources;
+    if (nestedMutationSources.mayAliasAnyRootImport) {
+      addNestedImportedReceiverEffect(statement);
+    }
+    nestedMutationSources.sources.forEach((source) =>
+      addEffect(source, statement)
+    );
+    if (nestedMutationSources.mayAliasAnyRootImport) {
+      callableProvenance.rootImportedBindings.forEach((binding) =>
+        addEffect(binding, statement)
+      );
+    }
+    if (
+      nestedMutationSources.mayAliasAnyRootImport ||
+      [...nestedMutationSources.sources].some(
+        callableProvenance.aliasesImportedRoot
+      )
+    ) {
+      importedEffects.add(statement);
+    }
 
+    const receiverRootDemands = new Map<string, ReceiverRootDemand>();
     const invocation = collectModuleInvocationEffects(
       statement.node,
       callableProvenance,
@@ -430,27 +618,59 @@ export const shakeOxcToESM = (
           resolveInitializer: (name) =>
             resolveStableInitializer(statement, name),
         }),
-      (binding) => resolveReceiverOperationRoots(binding, statement)
+      (binding) =>
+        resolveReceiverOperationRoots(binding, statement, receiverRootDemands)
     );
     if (invocation.opaqueImportedCall) {
       importedEffects.add(statement);
     }
+    invocation.callableResultPaths.forEach((path) => {
+      const effects = callableResultEffects.get(path) ?? new Set();
+      effects.add(statement);
+      callableResultEffects.set(path, effects);
+    });
     invocation.bindings.forEach((binding) => {
       if (bindingOwners.has(binding)) {
         addEffect(binding, statement);
       }
-
-      const sources = callableProvenance.nestedAliasSources(binding);
-      sources.forEach((source) => addEffect(source, statement));
-
       if (callableProvenance.aliasesImportedRoot(binding)) {
         addEffect(binding, statement);
         importedEffects.add(statement);
       }
-      if ([...sources].some(callableProvenance.aliasesImportedRoot)) {
-        importedEffects.add(statement);
+    });
+    invocation.effectOrigins.forEach((binding) => {
+      if (
+        bindingOwners.has(binding) ||
+        callableProvenance.aliasesImportedRoot(binding)
+      ) {
+        addReceiverEffect(binding, statement);
+      }
+      if (callableProvenance.hasNestedAliases) {
+        addNestedReceiverEffect(binding, statement);
       }
     });
+    const nestedInvocationSources = callableProvenance.hasNestedAliases
+      ? collectNestedAliasSources(invocation.bindings)
+      : noNestedAliasSources;
+    if (nestedInvocationSources.mayAliasAnyRootImport) {
+      addNestedImportedReceiverEffect(statement);
+    }
+    nestedInvocationSources.sources.forEach((source) =>
+      addEffect(source, statement)
+    );
+    if (nestedInvocationSources.mayAliasAnyRootImport) {
+      callableProvenance.rootImportedBindings.forEach((binding) =>
+        addEffect(binding, statement)
+      );
+    }
+    if (
+      nestedInvocationSources.mayAliasAnyRootImport ||
+      [...nestedInvocationSources.sources].some(
+        callableProvenance.aliasesImportedRoot
+      )
+    ) {
+      importedEffects.add(statement);
+    }
   });
   callableProvenance.rootImportedBindings.forEach((binding) => {
     importedEffects.forEach((effect) => addEffect(binding, effect));
@@ -483,6 +703,7 @@ export const shakeOxcToESM = (
     }
   };
 
+  const visitedCallableResultEffects = new Set<string>();
   const markBinding = (binding: string): void => {
     const owner = bindingOwners.get(binding);
     if (!owner || liveBindings.has(binding)) {
@@ -492,31 +713,19 @@ export const shakeOxcToESM = (
     liveBindings.add(binding);
     bindingQueue.push(binding);
     mark(owner);
+    callableProvenance.visitCallableResultDependents(
+      binding,
+      visitedCallableResultEffects,
+      (path) =>
+        callableResultEffects.get(path)?.forEach((effect) => mark(effect))
+    );
   };
 
   statements
     .filter((statement) =>
-      hasPotentiallyAbruptPatternEvaluation(statement.node, (name) => {
-        const initializer = patternInitializers.get(name);
-        if (!initializer) {
-          return undefined;
-        }
-        if (
-          initializer.declarationKind !== 'const' ||
-          initializer.owner.node.start > statement.node.start
-        ) {
-          return null;
-        }
-
-        const mutatedBeforeEvaluation = [
-          ...(effectsByBinding.get(name) ?? []),
-        ].some(
-          (effect) =>
-            effect.node.start > initializer.owner.node.start &&
-            effect.node.start < statement.node.start
-        );
-        return mutatedBeforeEvaluation ? null : initializer.value;
-      })
+      hasPotentiallyAbruptPatternEvaluation(statement.node, (name) =>
+        resolveStableInitializer(statement, name, 'evaluation')
+      )
     )
     .forEach((statement) => mark(statement));
 

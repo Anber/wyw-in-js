@@ -3,9 +3,19 @@ import { join } from 'path';
 import vm from 'vm';
 
 import dedent from 'dedent';
+import type { Node } from 'oxc-parser';
 
 import { emitOxcCommonJS } from '../utils/oxcEmit';
+import { createCallableProvenanceIndex } from '../utils/oxcShaker/callableProvenanceIndex';
+import { createNormalizedCatalogResolver } from '../utils/oxcShaker/provenanceClosure';
 import { shakeOxcToESM } from '../utils/oxcShaker';
+import {
+  appendOxcRuntimePropertyPath,
+  createOxcRuntimePropertyPath,
+  replaceOxcRuntimePropertyPathKeyRoot,
+  type OxcRuntimePropertyPathKey,
+} from '../utils/oxc/projections';
+import { parseOxcProgramCached } from '../utils/parseOxc';
 
 const filename = join(__dirname, 'source.tsx');
 
@@ -13,6 +23,30 @@ const run = (onlyExports: string[], code: string) =>
   shakeOxcToESM(dedent(code), filename, {
     onlyExports,
   });
+
+const createTestProvenance = (code: string) => {
+  const program = parseOxcProgramCached(filename, code, 'module');
+  const bindingOwners = new Map<string, { node: Node }>();
+  program.body.forEach((node) => {
+    if (node.type === 'VariableDeclaration') {
+      node.declarations.forEach((declarator) => {
+        if (declarator.id.type === 'Identifier') {
+          bindingOwners.set(declarator.id.name, { node });
+        }
+      });
+    } else if (
+      (node.type === 'FunctionDeclaration' ||
+        node.type === 'ClassDeclaration') &&
+      node.id
+    ) {
+      bindingOwners.set(node.id.name, { node });
+    }
+  });
+  return {
+    program,
+    provenance: createCallableProvenanceIndex({ bindingOwners, program }),
+  };
+};
 
 const runSourceWidth = (input: string): { code: string; width: number } => {
   const { code } = run(['source'], input);
@@ -829,6 +863,855 @@ describe('shakeOxcToESM', () => {
     expect(imports.get('./factory')).toEqual(['mutate']);
   });
 
+  it('treats direct imports as one identity cohort without an opaque result', () => {
+    const source = `
+      import { a, b } from './dependency';
+      const source = { width: 1 };
+      a.cb = () => {
+        source.width = 2;
+      };
+      b.cb();
+
+      export { source };
+    `;
+    const withUnrelatedOpaqueResult = source.replace(
+      "import { a, b } from './dependency';",
+      "import { a, b, make } from './dependency';\nconst opaque = make();"
+    );
+    const direct = run(['source'], source);
+    const opaque = run(['source'], withUnrelatedOpaqueResult);
+
+    [direct.code, opaque.code].forEach((code) => {
+      expect(code).toContain('a.cb = () =>');
+      expect(code).toContain('source.width = 2');
+      expect(code).toContain('b.cb()');
+    });
+    expect(direct.imports.get('./dependency')).toEqual(['a', 'b']);
+    expect(opaque.imports.get('./dependency')).toEqual(['a', 'b', 'make']);
+  });
+
+  it('unions normalized catalog candidates without collapsing suffixes', () => {
+    const aDeep = appendOxcRuntimePropertyPath(
+      createOxcRuntimePropertyPath('a'),
+      'deep'
+    ).key;
+    const bDeep = appendOxcRuntimePropertyPath(
+      createOxcRuntimePropertyPath('b'),
+      'deep'
+    ).key;
+    const bOther = appendOxcRuntimePropertyPath(
+      createOxcRuntimePropertyPath('b'),
+      'other'
+    ).key;
+    const resolve = createNormalizedCatalogResolver(
+      new Map([
+        [aDeep, 'a.deep'],
+        [bDeep, 'b.deep'],
+        [bOther, 'b.other'],
+      ]),
+      (path) =>
+        replaceOxcRuntimePropertyPathKeyRoot(
+          path as OxcRuntimePropertyPathKey,
+          'cohort'
+        )
+    );
+
+    expect(resolve(aDeep)).toEqual(new Set(['a.deep', 'b.deep']));
+    expect(resolve(bOther)).toEqual(new Set(['b.other']));
+  });
+
+  it('tags opaque imported results without forming dense alias components', () => {
+    const width = 32;
+    const imports = Array.from({ length: width }, (_, index) => `imp${index}`);
+    const results = Array.from(
+      { length: width },
+      (_, index) => `result${index}`
+    );
+    const { provenance } = createTestProvenance(
+      [
+        `import { ${imports.join(', ')} } from './dependency';`,
+        ...results.map((result, index) => `const ${result} = imp${index}();`),
+      ].join('\n')
+    );
+
+    expect(provenance.importedRootAliasBindings).toEqual(new Set(results));
+    expect(provenance.aliasComponents.size).toBe(0);
+    results.forEach((result) => {
+      expect(provenance.aliasesImportedRoot(result)).toBe(true);
+      const resultProvenance = provenance.resolveCallableResultRoots(
+        createOxcRuntimePropertyPath(result).key
+      );
+      expect(resultProvenance.bindings.size).toBe(0);
+      expect(resultProvenance.mayAliasAnyRootImport).toBe(true);
+    });
+  });
+
+  it('coalesces chained opaque result arguments into one tagged cohort', () => {
+    const width = 128;
+    const imports = Array.from({ length: 16 }, (_, index) => `imp${index}`);
+    const results = Array.from(
+      { length: width },
+      (_, index) => `result${index}`
+    );
+    const { provenance } = createTestProvenance(
+      [
+        `import { ${imports.join(', ')} } from './dependency';`,
+        `const result0 = imp0();`,
+        ...results
+          .slice(1)
+          .map(
+            (result, index) =>
+              `const ${result} = imp${(index + 1) % imports.length}(` +
+              `result${index});`
+          ),
+        ...results.map((result) => `${result}();`),
+      ].join('\n')
+    );
+
+    results.forEach((result) => {
+      const resolved = provenance.resolveCallableResultRoots(
+        createOxcRuntimePropertyPath(result).key
+      );
+      expect(resolved.bindings.size).toBe(0);
+      expect(resolved.mayAliasAnyRootImport).toBe(true);
+    });
+  });
+
+  it('reuses one DSU component for a long alias chain with a back edge', () => {
+    const width = 512;
+    const aliases = Array.from(
+      { length: width },
+      (_, index) => `alias${index}`
+    );
+    const { provenance } = createTestProvenance(
+      [
+        `import { imported } from './dependency';`,
+        `let alias0 = imported;`,
+        ...aliases
+          .slice(1)
+          .map((alias, index) => `let ${alias} = alias${index};`),
+        `alias0 = alias${width - 1};`,
+      ].join('\n')
+    );
+
+    const component = provenance.aliasComponents.get('alias0');
+    expect(component?.size).toBe(width + 1);
+    expect(provenance.aliasComponents.get(`alias${width - 1}`)).toBe(component);
+    expect(provenance.aliasesImportedRoot(`alias${width - 1}`)).toBe(true);
+    expect(provenance.nestedAliasSources('alias0')).toEqual(
+      provenance.nestedAliasSources(`alias${width - 1}`)
+    );
+  });
+
+  it('exposes isolated direct nested-alias component edges', () => {
+    const { provenance } = createTestProvenance(`
+      const source = { nested: { width: 304 } };
+      const { ...rest0 } = source;
+      const { ...rest1 } = rest0;
+    `);
+
+    expect(provenance.nestedAliasSources('rest1')).toEqual(new Set(['rest0']));
+    expect(provenance.nestedAliasSources('rest0')).toEqual(new Set(['source']));
+
+    const poisoned = provenance.nestedAliasSources('rest1');
+    poisoned.clear();
+    poisoned.add('poison');
+    expect(provenance.nestedAliasSources('rest1')).toEqual(new Set(['rest0']));
+  });
+
+  it('keeps sibling object-rest provenance as directional direct edges', () => {
+    const { provenance } = createTestProvenance(`
+      const source = { nested: { width: 304 } };
+      const { ...left } = source;
+      const { ...right } = source;
+    `);
+
+    expect(provenance.nestedAliasSources('left')).toEqual(new Set(['source']));
+    expect(provenance.nestedAliasSources('right')).toEqual(new Set(['source']));
+    expect(provenance.nestedAliasDependents('source')).toEqual(
+      new Set(['left', 'right'])
+    );
+  });
+
+  it('keeps multi-source object-rest joins directional', () => {
+    const { provenance } = createTestProvenance(`
+      const left = { nested: { width: 304 } };
+      const right = { nested: { width: 400 } };
+      const chooseLeft = false;
+      const { ...joined } = chooseLeft ? left : right;
+    `);
+
+    expect(provenance.nestedAliasSources('joined')).toEqual(
+      new Set(['left', 'right'])
+    );
+    expect(provenance.nestedAliasDependents('left')).toEqual(
+      new Set(['joined'])
+    );
+    expect(provenance.nestedAliasDependents('right')).toEqual(
+      new Set(['joined'])
+    );
+    expect(provenance.aliasComponentId('left')).not.toBe(
+      provenance.aliasComponentId('right')
+    );
+  });
+
+  it('keeps imported object-rest edges separate from opaque cohorts', () => {
+    const { provenance } = createTestProvenance(`
+      import { first, make, second } from './dependency';
+      const { ...left } = first;
+      const { ...right } = second;
+      const opaque = make();
+      const { ...indirect } = opaque;
+    `);
+
+    expect(provenance.nestedAliasDependents('first')).toEqual(
+      new Set(['left'])
+    );
+    expect(provenance.nestedAliasDependents('second')).toEqual(
+      new Set(['right'])
+    );
+    expect(provenance.nestedAliasesImportedRoot('left')).toBe(false);
+    expect(provenance.nestedAliasesImportedRoot('right')).toBe(false);
+    expect(provenance.nestedAliasesImportedRoot('indirect')).toBe(true);
+    expect(provenance.nestedAliasSources('indirect')).toEqual(
+      new Set(['opaque'])
+    );
+    expect(provenance.aliasesImportedRoot('first')).toBe(true);
+    expect(provenance.aliasesImportedRoot('second')).toBe(true);
+    expect(provenance.aliasesImportedRoot('opaque')).toBe(true);
+  });
+
+  it('closes callable-result cycles without poisoning sibling facts', () => {
+    const width = 128;
+    const { provenance } = createTestProvenance(
+      [
+        `import { importedMake } from './dependency';`,
+        `const source = {};`,
+        `function make(value) { return () => value; }`,
+        `const opaque = importedMake(source);`,
+        `const bridged = make(opaque);`,
+        `const result0 = make(source);`,
+        ...Array.from(
+          { length: width - 1 },
+          (_, index) => `const result${index + 1} = make(result${index});`
+        ),
+        `const cycleSource = {};`,
+        `let cycleA, cycleB, emptyCycleA, emptyCycleB;`,
+        `cycleA = make([cycleB, cycleSource]);`,
+        `cycleB = make(cycleA);`,
+        `emptyCycleA = make(emptyCycleB);`,
+        `emptyCycleB = make(emptyCycleA);`,
+      ].join('\n')
+    );
+
+    const chain = provenance.resolveCallableResultRoots(
+      createOxcRuntimePropertyPath(`result${width - 1}`).key
+    );
+    expect(chain.bindings).toEqual(new Set(['source']));
+    expect(provenance.aliasesImportedRoot('bridged')).toBe(false);
+    expect(
+      provenance.resolveCallableResultRoots(
+        createOxcRuntimePropertyPath('bridged').key
+      )
+    ).toEqual({
+      bindings: new Set(['source']),
+      mayAliasAnyRootImport: true,
+    });
+    expect(
+      provenance.resolveCallableResultRoots(
+        createOxcRuntimePropertyPath('cycleA').key
+      ).bindings
+    ).toEqual(new Set(['cycleSource']));
+    expect(
+      provenance.resolveCallableResultRoots(
+        createOxcRuntimePropertyPath('emptyCycleA').key
+      ).bindings
+    ).toEqual(new Set());
+  });
+
+  it('resolves distinct local facts without caching transitive result sets', () => {
+    const width = 128;
+    const sources = Array.from(
+      { length: width },
+      (_, index) => `source${index}`
+    );
+    const { provenance } = createTestProvenance(
+      [
+        ...sources.map((source) => `const ${source} = {};`),
+        `function make(value) { return () => value; }`,
+        `const result0 = make(source0);`,
+        ...sources
+          .slice(1)
+          .map(
+            (source, index) =>
+              `const result${index + 1} = make([result${index}, ${source}]);`
+          ),
+      ].join('\n')
+    );
+
+    const binding = createOxcRuntimePropertyPath(`result${width - 1}`).key;
+    const resolved = provenance.resolveCallableResultRoots(binding);
+    expect(resolved.bindings).toEqual(new Set(sources));
+    expect(resolved.mayAliasAnyRootImport).toBe(false);
+
+    resolved.bindings.clear();
+    resolved.bindings.add('poison');
+    resolved.mayAliasAnyRootImport = true;
+    expect(provenance.resolveCallableResultRoots(binding)).toEqual({
+      bindings: new Set(sources),
+      mayAliasAnyRootImport: false,
+    });
+  });
+
+  it('keeps mutations through a long directed object-rest chain', () => {
+    const width = 128;
+    const { code } = run(
+      ['source'],
+      [
+        `const source = { nested: { width: 304 } };`,
+        `const { ...rest0 } = source;`,
+        ...Array.from(
+          { length: width - 1 },
+          (_, index) => `const { ...rest${index + 1} } = rest${index};`
+        ),
+        `rest${width - 1}.nested.width = 400;`,
+        `export { source };`,
+      ].join('\n')
+    );
+
+    expect(code).toContain('const { ...rest0 } = source');
+    expect(code).toContain(`const { ...rest${width - 1} } = rest${width - 2}`);
+    expect(code).toContain(`rest${width - 1}.nested.width = 400`);
+  });
+
+  it('keeps every ordered mutation through a directed object-rest chain', () => {
+    const width = 64;
+    const source = [
+      `const source = { nested: { width: 0 } };`,
+      ...Array.from(
+        { length: width },
+        (_, index) =>
+          `const { ...rest${index} } = ${
+            index === 0 ? 'source' : `rest${index - 1}`
+          };`
+      ),
+      ...Array.from(
+        { length: width },
+        (_, index) => `rest${index}.nested.width = ${index + 1};`
+      ),
+      `export { source };`,
+    ].join('\n');
+    const { code } = shakeOxcToESM(source, filename, {
+      keepSideEffects: true,
+      onlyExports: ['source'],
+    });
+    const emitted = emitOxcCommonJS(code, filename);
+    const module = { exports: {} as Record<string, unknown> };
+    vm.runInNewContext(emitted.code, { exports: module.exports, module });
+
+    expect(code).toContain('const { ...rest0 } = source');
+    expect(code).toContain(`const { ...rest${width - 1} } = rest${width - 2}`);
+    expect(code).toContain('rest0.nested.width = 1');
+    expect(code).toContain(`rest${width - 1}.nested.width = ${width}`);
+    expect(
+      (module.exports.source as { nested: { width: number } }).nested.width
+    ).toBe(width);
+  });
+
+  it('closes nested sources reached through an ownerless var reference', () => {
+    const { code } = run(
+      ['source'],
+      `
+        const source = { nested: { width: 0 }, keep: 0 };
+        {
+          var ghost;
+          ({ ...ghost } = source);
+          source.keep = 1;
+        }
+        const receiver = ghost;
+        receiver.nested.width = 400;
+        export { source };
+      `
+    );
+
+    expect(code).toContain('({ ...ghost } = source)');
+    expect(code).toContain('receiver.nested.width = 400');
+  });
+
+  it('keeps nested receiver history shared by sibling object-rest copies', () => {
+    const source = `
+      const source = { nested: { width: 0 }, observed: 0 };
+      const { ...left } = source;
+      const { ...right } = source;
+      Object.defineProperty(left.nested, 'width', {
+        configurable: true,
+        set(value) {
+          source.observed = value;
+        },
+      });
+      right.nested.width = 400;
+      export { source };
+    `;
+    const { code } = run(['source'], source);
+    const emitted = emitOxcCommonJS(code, filename);
+    const module = { exports: {} as Record<string, unknown> };
+    vm.runInNewContext(emitted.code, { exports: module.exports, module });
+
+    expect(code).toContain("Object.defineProperty(left.nested, 'width'");
+    expect(code).toContain('right.nested.width = 400');
+    expect((module.exports.source as { observed: number }).observed).toBe(400);
+  });
+
+  const configuratorFactory = `
+    function makeConfigure(target) {
+      return () => Object.defineProperty(target.nested, 'width', {
+        configurable: true,
+        get() {
+          return 40;
+        },
+      });
+    }
+  `;
+
+  it.each([
+    [
+      'a returned closure',
+      `${configuratorFactory}
+       const configure = makeConfigure(left);
+       configure();`,
+      'configure()',
+    ],
+    [
+      'a bound callable',
+      `function configure(target) {
+         Object.defineProperty(target.nested, 'width', {
+           configurable: true,
+           get() { return 40; },
+         });
+       }
+       const bound = configure.bind(null, left);
+       bound();`,
+      'bound()',
+    ],
+    [
+      'a conditional result',
+      `${configuratorFactory}
+       const configure = true ? makeConfigure(left) : () => {};
+       configure();`,
+      'configure()',
+    ],
+    [
+      'a result stored in an object',
+      `${configuratorFactory}
+       const holder = { configure: makeConfigure(left) };
+       holder.configure();`,
+      'holder.configure()',
+    ],
+  ])('keeps %s invoked across sibling rest copies', (_name, setup, marker) => {
+    const source = `
+      const source = { nested: { width: 1 } };
+      const { ...left } = source;
+      const { ...right } = source;
+      ${setup}
+      const result = right.nested.width;
+      export { result };
+    `;
+    const { code } = run(['result'], source);
+    const emitted = emitOxcCommonJS(code, filename);
+    const module = { exports: {} as Record<string, unknown> };
+    vm.runInNewContext(emitted.code, { exports: module.exports, module });
+
+    expect(code).toContain(marker);
+    expect(module.exports.result).toBe(40);
+  });
+
+  it('keeps nested sibling effects but prunes a shallow replacement', () => {
+    const { code } = run(
+      ['source'],
+      `
+        const source = { nested: { width: 0 } };
+        const { ...left } = source;
+        const { ...right } = source;
+        left.nested = { width: 200 };
+        right.nested.width = 400;
+        export { source };
+      `
+    );
+
+    expect(code).not.toContain('left.nested =');
+    expect(code).toContain('right.nested.width = 400');
+  });
+
+  it('shares receiver history across transitive opaque rest copies', () => {
+    const { code } = run(
+      ['result'],
+      `
+        import { make } from './dependency';
+        const opaque = make();
+        const { ...left } = opaque;
+        const { ...leftChild } = left;
+        const { ...right } = opaque;
+        const { ...rightChild } = right;
+        Object.defineProperty(leftChild.nested, 'width', {
+          configurable: true,
+          get() {
+            return 40;
+          },
+        });
+        const result = rightChild.nested.width;
+        export { result };
+      `
+    );
+    const emitted = emitOxcCommonJS(code, filename);
+    const module = { exports: {} as Record<string, unknown> };
+    vm.runInNewContext(emitted.code, {
+      exports: module.exports,
+      module,
+      require: () => ({ make: () => ({ nested: { width: 1 } }) }),
+    });
+
+    expect(code).toContain("Object.defineProperty(leftChild.nested, 'width'");
+    expect(code).toContain('rightChild.nested.width');
+    expect(module.exports.result).toBe(40);
+  });
+
+  it('bridges transitive opaque receiver history back to a local sibling', () => {
+    const { code } = run(
+      ['result'],
+      `
+        import { make } from './dependency';
+        const source = { nested: { width: 1 } };
+        const { ...sibling } = source;
+        const opaque = make(source);
+        const { ...rest0 } = opaque;
+        const { ...rest1 } = rest0;
+        Object.defineProperty(rest1.nested, 'width', {
+          configurable: true,
+          get() {
+            return 40;
+          },
+        });
+        const result = sibling.nested.width;
+        export { result };
+      `
+    );
+    const emitted = emitOxcCommonJS(code, filename);
+    const module = { exports: {} as Record<string, unknown> };
+    vm.runInNewContext(emitted.code, {
+      exports: module.exports,
+      module,
+      require: () => ({ make: (value: unknown) => value }),
+    });
+
+    expect(code).toContain("Object.defineProperty(rest1.nested, 'width'");
+    expect(code).toContain('sibling.nested.width');
+    expect(module.exports.result).toBe(40);
+  });
+
+  it('honors object-rest initializer mutation cutoffs', () => {
+    const mutationBefore = run(
+      ['selected'],
+      `
+        const selected = {};
+        const source = {};
+        const alias = source;
+        alias.value = 1;
+        const { ...rest } = alias;
+
+        export { selected };
+      `
+    ).code;
+    const mutationAfter = run(
+      ['selected'],
+      `
+        const selected = {};
+        const source = {};
+        const alias = source;
+        const { ...rest } = alias;
+        alias.value = 1;
+
+        export { selected };
+      `
+    ).code;
+
+    expect(mutationBefore).toContain('const { ...rest } = alias');
+    expect(mutationAfter).not.toContain('const { ...rest } = alias');
+  });
+
+  it('honors mutations from an object-rest initializer alias component', () => {
+    const { code } = run(
+      ['selected'],
+      `
+        const selected = {};
+        const source = {};
+        const alias = source;
+        const sibling = alias;
+        sibling.value = 1;
+        const { ...rest } = alias;
+
+        export { selected };
+      `
+    );
+
+    expect(code).toContain('sibling.value = 1');
+    expect(code).toContain('const { ...rest } = alias');
+  });
+
+  it('keeps an object-rest pattern behind an initializer cycle', () => {
+    const { code } = run(
+      ['selected'],
+      `
+        const selected = {};
+        const left = right;
+        const right = left;
+        const { ...rest } = left;
+
+        export { selected };
+      `
+    );
+
+    expect(code).toContain('const { ...rest } = left');
+  });
+
+  it('keeps a local mutation reached through a tagged result dependency', () => {
+    const { code, imports } = run(
+      ['source'],
+      `
+        import { importedMake } from './dependency';
+
+        const source = { width: 304 };
+        const opaque = importedMake(source);
+        function localFactory(value) {
+          return () => {
+            value.width = 400;
+          };
+        }
+        const bridged = localFactory(opaque);
+        bridged();
+
+        export { source };
+      `
+    );
+
+    expect(code).toContain('function localFactory(value)');
+    expect(code).toContain('value.width = 400');
+    expect(code).toContain('const bridged = localFactory(opaque)');
+    expect(code).toContain('bridged()');
+    expect(imports.get('./dependency')).toEqual(['importedMake']);
+  });
+
+  it('preserves callable-result lookup across opaque imported identities', () => {
+    const { code, imports } = run(
+      ['__wywPreval'],
+      `
+        import { source } from './tokens';
+        import { getA, getB } from './factory';
+
+        const a = getA();
+        const b = getB();
+        a.method = () => {
+          source.width = 400;
+        };
+        b.method();
+
+        const { width } = source;
+        const _exp = () => width;
+        export const __wywPreval = { _exp };
+      `
+    );
+
+    expect(code).toContain('source.width = 400');
+    expect(code).toContain('b.method()');
+    expect(imports.get('./tokens')).toEqual(['source']);
+    expect(imports.get('./factory')).toEqual(['getA', 'getB']);
+  });
+
+  it.each([
+    [
+      'a callable',
+      `let owner = { run() { source.width = 401; } };
+       owner = getA();
+       const other = getB();
+       other.run();`,
+      'source.width = 401',
+    ],
+    [
+      'an accessor',
+      `let owner = { get value() { source.width = 402; return 1; } };
+       owner = getA();
+       const other = getB();
+       other.value;`,
+      'source.width = 402',
+    ],
+    [
+      'a class',
+      `let owner = class { constructor() { source.width = 403; } };
+       owner = getA();
+       const other = getB();
+       new other();`,
+      'source.width = 403',
+    ],
+  ])('preserves cohort-wide lookup for %s', (_name, setup, expected) => {
+    const { code } = run(
+      ['source'],
+      `
+        import { getA, getB } from './factory';
+        const source = { width: 304 };
+        ${setup}
+        export { source };
+      `
+    );
+
+    expect(code).toContain(expected);
+  });
+
+  it.each([
+    [
+      'callables with the same suffix',
+      `
+        let first = { deep: { run() { source.width = 411; } } };
+        first = getA();
+        let second = { deep: { run() { source.height = 412; } } };
+        second = getB();
+        second.deep.run();
+      `,
+      ['source.width = 411', 'source.height = 412'],
+    ],
+    [
+      'accessors with the same suffix',
+      `
+        let first = {
+          deep: { get value() { source.width = 421; return 1; } },
+        };
+        first = getA();
+        let second = {
+          deep: { get value() { source.height = 422; return 1; } },
+        };
+        second = getB();
+        second.deep.value;
+      `,
+      ['source.width = 421', 'source.height = 422'],
+    ],
+    [
+      'classes from distinct roots',
+      `
+        let First = class { constructor() { source.width = 431; } };
+        First = getA();
+        let Second = class { constructor() { source.height = 432; } };
+        Second = getB();
+        new Second();
+      `,
+      ['source.width = 431', 'source.height = 432'],
+    ],
+  ])('unions imported-cohort %s', (_name, setup, expected) => {
+    const { code } = run(
+      ['source'],
+      `
+          import { getA, getB } from './factory';
+          const source = { width: 304 };
+          ${setup}
+          export { source };
+        `
+    );
+
+    expected.forEach((marker) => expect(code).toContain(marker));
+  });
+
+  it.each([
+    [
+      'a conditional',
+      'const alias = true ? getSource() : getSource();\nalias.width = 400;',
+      'alias.width = 400',
+    ],
+    [
+      'a logical expression',
+      'const alias = getSource() || getSource();\nalias.width = 400;',
+      'alias.width = 400',
+    ],
+    [
+      'a sequence',
+      'const alias = (0, getSource());\nalias.width = 400;',
+      'alias.width = 400',
+    ],
+    [
+      'an assignment',
+      'let slot;\nconst alias = (slot = getSource());\nalias.width = 400;',
+      'alias.width = 400',
+    ],
+    [
+      'an imported callable alias',
+      'const factory = getSource;\nconst alias = factory();\nalias.width = 400;',
+      'alias.width = 400',
+    ],
+    [
+      'await',
+      'const alias = await getSource();\nalias.width = 400;',
+      'alias.width = 400',
+    ],
+    [
+      'an object value',
+      'const { alias } = { alias: getSource() };\nalias.width = 400;',
+      'alias.width = 400',
+    ],
+    [
+      'an array value',
+      'const [alias] = [getSource()];\nalias.width = 400;',
+      'alias.width = 400',
+    ],
+    [
+      'a destructuring default',
+      'const { alias = getSource() } = {};\nalias.width = 400;',
+      'alias.width = 400',
+    ],
+    [
+      'a nested destructuring target',
+      'const { nested: alias } = getSource();\nalias.width = 400;',
+      'alias.width = 400',
+    ],
+    [
+      'an object rest nested value',
+      'const { ...rest } = getSource();\nrest.nested.width = 400;',
+      'rest.nested.width = 400',
+    ],
+    [
+      'a for-of binding',
+      'for (const alias of [getSource()]) { alias.width = 400; }',
+      'alias.width = 400',
+    ],
+    [
+      'a catch binding',
+      'try { throw getSource(); } catch (alias) { alias.width = 400; }',
+      'alias.width = 400',
+    ],
+    [
+      'a class static field',
+      'class Holder { static value = getSource(); }\nHolder.width = 400;',
+      'Holder.width = 400',
+    ],
+    [
+      'an IIFE parameter',
+      '((alias) => { alias.width = 400; })(getSource());',
+      'alias.width = 400',
+    ],
+  ])('keeps the imported-result cohort through %s', (_name, setup, effect) => {
+    const { code, imports } = run(
+      ['__wywPreval'],
+      `
+        import { source } from './tokens';
+        import { getSource } from './factory';
+
+        ${setup}
+        const { width } = source;
+        const _exp = () => width;
+        export const __wywPreval = { _exp };
+      `
+    );
+
+    expect(code).toContain(effect);
+    expect(imports.get('./tokens')).toEqual(['source']);
+    expect(imports.get('./factory')).toEqual(['getSource']);
+  });
+
   it('keeps an opaque imported call through a top-level callable alias', () => {
     const { code, imports } = run(
       ['__wywPreval'],
@@ -1432,6 +2315,118 @@ describe('shakeOxcToESM', () => {
     expect(code).toContain('callback()');
     expect(code).toContain('invoke(() =>');
     expect(code).toContain('source.width = 400');
+  });
+
+  it('expands a deferred factory result when a local invoker calls it', () => {
+    const { code } = run(
+      ['source'],
+      `
+        const source = { width: 304 };
+
+        function make() {
+          return () => {
+            source.width = 400;
+          };
+        }
+        function invoke(factory) {
+          const callback = factory();
+          callback();
+        }
+        invoke(make);
+
+        export { source };
+      `
+    );
+
+    expect(code).toContain('function make()');
+    expect(code).toContain('source.width = 400');
+    expect(code).toContain('function invoke(factory)');
+    expect(code).toContain('const callback = factory()');
+    expect(code).toContain('callback()');
+    expect(code).toContain('invoke(make)');
+  });
+
+  it.each([
+    [
+      'a reassigned member callee',
+      `
+        const owner = { run(callback) {} };
+        owner.run = (callback) => callback();
+        owner.run(result);
+      `,
+      ['owner.run = (callback) => callback()', 'owner.run(result)'],
+    ],
+    [
+      'a conditional callee',
+      `
+        function dormant(callback) {}
+        function invoke(callback) {
+          callback();
+        }
+        const fn = false ? dormant : invoke;
+        fn(result);
+      `,
+      ['const fn = false ? dormant : invoke', 'fn(result)'],
+    ],
+  ])(
+    'retains callable-result arguments passed to %s',
+    (_name, invocation, markers) => {
+      const result = runSourceWidth(`
+        const source = { width: 1 };
+        function make(value) {
+          return () => {
+            value.width = 2;
+          };
+        }
+        const result = make(source);
+        ${invocation}
+
+        export { source };
+      `);
+
+      expect(result.width).toBe(2);
+      expect(result.code).toContain('const result = make(source)');
+      markers.forEach((marker) => expect(result.code).toContain(marker));
+    }
+  );
+
+  it.each([
+    [
+      'a direct member alias',
+      `
+        const callback = box.callback;
+        callback();
+      `,
+      ['const callback = box.callback', 'callback()'],
+    ],
+    [
+      'a local wrapper',
+      `
+        function wrap(callback) {
+          return () => callback();
+        }
+        const wrapped = wrap(box.callback);
+        wrapped();
+      `,
+      ['const wrapped = wrap(box.callback)', 'wrapped()'],
+    ],
+  ])('preserves callable-result paths through %s', (_name, use, markers) => {
+    const result = runSourceWidth(`
+      const source = { width: 1 };
+      function make(value) {
+        return () => {
+          value.width = 2;
+        };
+      }
+      const box = { callback: make(source) };
+      ${use}
+
+      export { source };
+    `);
+
+    expect(result.width).toBe(2);
+    expect(result.code).toContain('const box = { callback: make(source) }');
+    markers.forEach((marker) => expect(result.code).toContain(marker));
   });
 
   it('keeps a captured callback passed through an inline invoker', () => {

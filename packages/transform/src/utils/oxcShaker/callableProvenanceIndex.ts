@@ -15,11 +15,14 @@ import {
   type OxcRuntimePropertyPathKey,
 } from '../oxc/projections';
 import {
+  aliasesImportedRootInState,
   collectAssignedAliasRoots,
   collectTopLevelAccessors,
   collectTopLevelAliases,
   collectTopLevelCallables,
   collectTopLevelClasses,
+  getAliasComponentId,
+  getAliasComponentMembers,
   getCalleeBinding,
   getStaticMemberPath,
   type ClassNode,
@@ -32,11 +35,22 @@ import {
   type CallableNode,
 } from './executableIndex';
 import { createCallableSyntaxFactsCache } from './callableSyntaxFacts';
+import {
+  createMutableProvenanceClosureNode,
+  createNormalizedCatalogResolver,
+  createProvenanceClosureIndex,
+  mergeProvenanceClosureNode,
+  resolveProvenanceAliases,
+  type MutableProvenanceClosureNode,
+  type TaggedBindingProvenance,
+} from './provenanceClosure';
 
 type AnyNode = Node & Record<string, unknown>;
 type StatementOwner = { node: Node };
 
 export type AliasEnvironment = ReadonlyMap<string, ReadonlySet<string>>;
+
+const IMPORTED_ROOT_COHORT = '\0wyw-imported-root-cohort';
 
 export const createCallableProvenanceIndex = ({
   bindingOwners,
@@ -62,127 +76,91 @@ export const createCallableProvenanceIndex = ({
     });
   });
 
-  // Alias declarations themselves stay dead unless an effect through that
-  // alias matters. Only the effects are shared across each alias component;
-  // marking one later pulls in the declaration chain via ordinary references.
-  const { aliases: topLevelAliases, nestedAliases: topLevelNestedAliases } =
-    collectTopLevelAliases(program, rootImportedBindings);
+  // Component effects pull otherwise-dead alias declarations into liveness.
+  const topLevelAliasState = collectTopLevelAliases(
+    program,
+    rootImportedBindings
+  );
+  const {
+    aliases: topLevelAliases,
+    importedRootAliasBindings,
+    nestedAliases: topLevelNestedAliases,
+    nestedImportedRootAliasBindings,
+  } = topLevelAliasState;
+  const aliasComponentId = (binding: string): string =>
+    getAliasComponentId(topLevelAliasState, binding);
+  const aliasesImportedRoot = (binding: string): boolean =>
+    aliasesImportedRootInState(topLevelAliasState, binding);
+  const getProvenanceComponentRoot = (binding: string): string =>
+    aliasesImportedRoot(binding)
+      ? IMPORTED_ROOT_COHORT
+      : aliasComponentId(binding);
+  const normalizeProvenancePath = (
+    path: OxcRuntimePropertyPathKey
+  ): OxcRuntimePropertyPathKey =>
+    replaceOxcRuntimePropertyPathKeyRoot(
+      path,
+      getProvenanceComponentRoot(getOxcRuntimePropertyPathKeyRoot(path))
+    );
   const aliasComponents = new Map<string, Set<string>>();
-  const visitedAliases = new Set<string>();
+  const indexedAliasComponents = new Set<string>();
   topLevelAliases.forEach((_directAliases, binding) => {
-    if (visitedAliases.has(binding)) {
+    const componentId = aliasComponentId(binding);
+    if (indexedAliasComponents.has(componentId)) {
       return;
     }
-
-    const component = new Set<string>();
-    const pending = [binding];
-    while (pending.length > 0) {
-      const current = pending.pop()!;
-      if (!component.has(current)) {
-        component.add(current);
-        visitedAliases.add(current);
-        aliasComponents.set(current, component);
-        topLevelAliases.get(current)?.forEach((alias) => pending.push(alias));
-      }
-    }
+    indexedAliasComponents.add(componentId);
+    const component = getAliasComponentMembers(topLevelAliasState, binding);
+    component.forEach((member) =>
+      aliasComponents.set(member, component as Set<string>)
+    );
   });
 
-  const aliasesImportedRoot = (binding: string): boolean => {
-    if (rootImportedBindings.has(binding)) {
-      return true;
-    }
-
-    return [...(aliasComponents.get(binding) ?? [])].some((alias) =>
-      rootImportedBindings.has(alias)
-    );
-  };
-
-  const nestedAliasSources = (binding: string): Set<string> => {
-    const sources = new Set<string>();
-    const visited = new Set<string>();
-    const pending = [binding];
-
-    while (pending.length > 0) {
-      const current = pending.pop()!;
-      const component = aliasComponents.get(current) ?? new Set([current]);
-      component.forEach((alias) => {
-        if (visited.has(alias)) {
-          return;
-        }
-
-        visited.add(alias);
-        topLevelNestedAliases.get(alias)?.forEach((source) => {
-          sources.add(source);
-          pending.push(source);
-        });
-      });
-    }
-
-    return sources;
-  };
+  const directNestedAliasSources = new Map<string, Set<string>>();
+  const directNestedAliasDependents = new Map<string, Set<string>>();
+  topLevelNestedAliases.forEach((sources, nestedCopy) => {
+    const componentId = aliasComponentId(nestedCopy);
+    const directSources =
+      directNestedAliasSources.get(componentId) ?? new Set();
+    sources.forEach((source) => {
+      const sourceComponent = aliasComponentId(source);
+      directSources.add(sourceComponent);
+      const directDependents =
+        directNestedAliasDependents.get(sourceComponent) ?? new Set();
+      directDependents.add(componentId);
+      directNestedAliasDependents.set(sourceComponent, directDependents);
+    });
+    directNestedAliasSources.set(componentId, directSources);
+  });
+  const nestedImportedRootComponents = new Set(
+    [...nestedImportedRootAliasBindings].map(aliasComponentId)
+  );
+  const nestedAliasSources = (binding: string): Set<string> =>
+    new Set(directNestedAliasSources.get(aliasComponentId(binding)));
+  const nestedAliasDependents = (binding: string): Set<string> =>
+    new Set(directNestedAliasDependents.get(aliasComponentId(binding)));
+  const nestedAliasesImportedRoot = (binding: string): boolean =>
+    nestedImportedRootComponents.has(aliasComponentId(binding));
+  const hasNestedAliases =
+    directNestedAliasSources.size > 0 || nestedImportedRootComponents.size > 0;
   const callables = collectTopLevelCallables(program);
   const accessors = collectTopLevelAccessors(program);
   const classes = collectTopLevelClasses(program);
-  const resolveCallable = (binding: string): CallableNode | undefined => {
-    const direct = callables.get(binding);
-    if (direct) {
-      return direct;
-    }
-    const bindingPath = binding as OxcRuntimePropertyPathKey;
-    const root = getOxcRuntimePropertyPathKeyRoot(bindingPath);
-    if (root !== binding) {
-      const throughObjectAlias = [...(aliasComponents.get(root) ?? [])]
-        .map((alias) =>
-          callables.get(
-            replaceOxcRuntimePropertyPathKeyRoot(bindingPath, alias)
-          )
-        )
-        .find((callable) => callable !== undefined);
-      if (throughObjectAlias) {
-        return throughObjectAlias;
-      }
-    }
-    return [...(aliasComponents.get(binding) ?? [])]
-      .map((alias) => callables.get(alias))
-      .find((callable) => callable !== undefined);
-  };
-  const resolveAccessor = (binding: string): CallableNode | undefined => {
-    const direct = accessors.get(binding);
-    if (direct) {
-      return direct;
-    }
-    const bindingPath = binding as OxcRuntimePropertyPathKey;
-    const root = getOxcRuntimePropertyPathKeyRoot(bindingPath);
-    if (root !== binding) {
-      const throughObjectAlias = [...(aliasComponents.get(root) ?? [])]
-        .map((alias) =>
-          accessors.get(
-            replaceOxcRuntimePropertyPathKeyRoot(bindingPath, alias)
-          )
-        )
-        .find((accessor) => accessor !== undefined);
-      if (throughObjectAlias) {
-        return throughObjectAlias;
-      }
-    }
-    return [...(aliasComponents.get(binding) ?? [])]
-      .map((alias) => accessors.get(alias))
-      .find((accessor) => accessor !== undefined);
-  };
-  const resolveClass = (binding: string): ClassNode | undefined => {
-    const direct = classes.get(binding);
-    if (direct) {
-      return direct;
-    }
-    return [...(aliasComponents.get(binding) ?? [])]
-      .map((alias) => classes.get(alias))
-      .find((classNode) => classNode !== undefined);
-  };
-  // A separately invoked call result can close over arguments passed while it
-  // was created or over bindings reachable from its factory. Keep this
-  // fail-closed provenance distinct from object aliases: it becomes an effect
-  // only when the result (or one of its aliases) is actually invoked.
-  const callableResultRoots = new Map<OxcRuntimePropertyPathKey, Set<string>>();
+  const createCatalogResolver = <T>(
+    catalog: ReadonlyMap<string, T>
+  ): ((binding: string) => Set<T>) =>
+    createNormalizedCatalogResolver(catalog, (path) =>
+      normalizeProvenancePath(path as OxcRuntimePropertyPathKey)
+    );
+  const resolveCallable = createCatalogResolver<CallableNode>(callables);
+  const resolveAccessor = createCatalogResolver<CallableNode>(accessors);
+  const resolveClass = createCatalogResolver<ClassNode>(classes);
+  // Keep fail-closed call-result captures separate from object aliases; they
+  // become effects only when a result or one of its aliases is invoked.
+  const callableResultRoots = new Map<
+    OxcRuntimePropertyPathKey,
+    MutableProvenanceClosureNode
+  >();
   const externalReferencesByStatement = new Map<StatementOwner, Set<string>>();
   const getExternalStatementReferences = (
     statement: StatementOwner
@@ -239,75 +217,114 @@ export const createCallableProvenanceIndex = ({
     return roots;
   };
   const resolveCallableCaptureRoots = (binding: string): Set<string> => {
-    const callable = resolveCallable(binding);
-    return callable
-      ? collectInlineCallableCaptureRoots(callable)
-      : new Set<string>();
+    const roots = new Set<string>();
+    resolveCallable(binding).forEach((callable) =>
+      collectInlineCallableCaptureRoots(callable).forEach((root) =>
+        roots.add(root)
+      )
+    );
+    return roots;
   };
   const addCallableResultRoots = (
     binding: OxcRuntimePropertyPathKey,
-    roots: ReadonlySet<string>
+    roots: MutableProvenanceClosureNode
   ): void => {
-    if (roots.size === 0) {
+    if (
+      roots.bindings.size === 0 &&
+      roots.dependencies.size === 0 &&
+      !roots.mayAliasAnyRootImport
+    ) {
       return;
     }
-    const bucket = callableResultRoots.get(binding) ?? new Set<string>();
-    roots.forEach((root) => bucket.add(root));
+    const bucket =
+      callableResultRoots.get(binding) ?? createMutableProvenanceClosureNode();
+    mergeProvenanceClosureNode(bucket, roots);
     callableResultRoots.set(binding, bucket);
   };
-  const collectCallResultRoots = (initializer: Node): Set<string> => {
-    const current = unwrapAliasExpression(initializer);
-    if (current.type !== 'CallExpression') {
-      return new Set();
-    }
-    const roots = new Set<string>();
-    const inlineFactory = getImmediatelyInvokedFunction(current.callee);
-    if (inlineFactory) {
-      collectInlineCallableCaptureRoots(inlineFactory).forEach((root) =>
-        roots.add(root)
-      );
-    }
-    const factoryBinding = getCalleeBinding(current.callee);
-    if (factoryBinding) {
-      collectReachableFactoryReferences(factoryBinding).forEach((root) =>
-        roots.add(root)
-      );
-    }
-    current.arguments.forEach((argument) => {
-      collectAssignedAliasRoots(
-        argument.type === 'SpreadElement' ? argument.argument : argument,
-        rootImportedBindings,
-        topLevelAliases,
-        topLevelNestedAliases
-      ).forEach((root) => roots.add(root));
+  const appendAssignedRoots = (
+    target: MutableProvenanceClosureNode,
+    assigned: ReturnType<typeof collectAssignedAliasRoots>
+  ): void => {
+    const roots = target;
+    assigned.bindings.forEach((binding) => {
+      // The virtual cohort already represents every imported-root alias. Keep
+      // only independent local alternatives as concrete result edges.
+      if (!assigned.mayAliasAnyRootImport || !aliasesImportedRoot(binding)) {
+        roots.bindings.add(binding);
+      } else {
+        roots.dependencies.add(binding);
+      }
     });
-    return roots;
+    roots.mayAliasAnyRootImport ||= assigned.mayAliasAnyRootImport;
   };
-  const collectCallableExpressionRoots = (value: Node): Set<string> => {
+  function collectCallableExpressionProvenance(
+    value: Node
+  ): MutableProvenanceClosureNode {
     const current = unwrapAliasExpression(value);
     if (
       current.type === 'FunctionExpression' ||
       current.type === 'ArrowFunctionExpression'
     ) {
-      return new Set(
+      return createMutableProvenanceClosureNode(
         collectInlineCallableCaptureRoots(current as CallableNode)
       );
     }
     if (current.type === 'CallExpression') {
-      return collectCallResultRoots(current);
+      const roots = createMutableProvenanceClosureNode();
+      appendAssignedRoots(
+        roots,
+        collectAssignedAliasRoots(current, topLevelAliasState)
+      );
+      const inlineFactory = getImmediatelyInvokedFunction(current.callee);
+      if (inlineFactory) {
+        collectInlineCallableCaptureRoots(inlineFactory).forEach((root) =>
+          roots.bindings.add(root)
+        );
+      }
+      const factoryBinding = getCalleeBinding(current.callee);
+      if (factoryBinding) {
+        collectReachableFactoryReferences(factoryBinding).forEach((root) =>
+          roots.bindings.add(root)
+        );
+      }
+      current.arguments.forEach((argument) => {
+        const argumentValue =
+          argument.type === 'SpreadElement' ? argument.argument : argument;
+        appendAssignedRoots(
+          roots,
+          collectAssignedAliasRoots(argumentValue, topLevelAliasState)
+        );
+        mergeProvenanceClosureNode(
+          roots,
+          collectCallableExpressionProvenance(argumentValue)
+        );
+      });
+      return roots;
     }
     if (current.type === 'Identifier') {
-      return new Set(resolveCallableCaptureRoots(current.name));
+      const roots = createMutableProvenanceClosureNode(
+        resolveCallableCaptureRoots(current.name)
+      );
+      roots.dependencies.add(createOxcRuntimePropertyPath(current.name).key);
+      return roots;
     }
     if (current.type === 'MemberExpression') {
       const staticPath = getStaticMemberPath(current);
-      return staticPath
-        ? new Set(resolveCallableCaptureRoots(staticPath.key))
-        : collectCallableExpressionRoots(current.object);
+      if (!staticPath) {
+        return collectCallableExpressionProvenance(current.object);
+      }
+      const roots = createMutableProvenanceClosureNode(
+        resolveCallableCaptureRoots(staticPath.key)
+      );
+      roots.dependencies.add(staticPath.key);
+      return roots;
     }
-    const roots = new Set<string>();
+    const roots = createMutableProvenanceClosureNode();
     const addValue = (item: Node): void => {
-      collectCallableExpressionRoots(item).forEach((root) => roots.add(root));
+      mergeProvenanceClosureNode(
+        roots,
+        collectCallableExpressionProvenance(item)
+      );
     };
     if (current.type === 'ArrayExpression') {
       current.elements.forEach((element) => {
@@ -340,7 +357,9 @@ export const createCallableProvenanceIndex = ({
       addValue(current.argument);
     }
     return roots;
-  };
+  }
+  const collectCallableExpressionRoots = (value: Node): Set<string> =>
+    collectCallableExpressionProvenance(value).bindings;
   const getObjectPropertyName = (property: Node): string | null => {
     if (property.type === 'SpreadElement') {
       return null;
@@ -370,7 +389,7 @@ export const createCallableProvenanceIndex = ({
     ) {
       addCallableResultRoots(
         bindingPath,
-        collectCallableExpressionRoots(current)
+        collectCallableExpressionProvenance(current)
       );
       return;
     }
@@ -414,6 +433,11 @@ export const createCallableProvenanceIndex = ({
       recordCallableResultValue(current.right, bindingPath);
     } else if (current.type === 'AwaitExpression') {
       recordCallableResultValue(current.argument, bindingPath);
+    } else if (current.type === 'MemberExpression') {
+      addCallableResultRoots(
+        bindingPath,
+        collectCallableExpressionProvenance(current)
+      );
     }
   };
   program.body.forEach((statement) => {
@@ -430,7 +454,7 @@ export const createCallableProvenanceIndex = ({
             );
             return;
           }
-          const roots = collectCallableExpressionRoots(declarator.init);
+          const roots = collectCallableExpressionProvenance(declarator.init);
           collectPatternNames(declarator.id).forEach((binding) =>
             addCallableResultRoots(
               createOxcRuntimePropertyPath(binding).key,
@@ -448,152 +472,158 @@ export const createCallableProvenanceIndex = ({
         recordCallableResultValue(current.right, staticPath.key);
         return;
       }
-      const roots = collectCallableExpressionRoots(current.right);
+      const roots = collectCallableExpressionProvenance(current.right);
       collectPatternNames(current.left).forEach((binding) =>
         addCallableResultRoots(createOxcRuntimePropertyPath(binding).key, roots)
       );
     });
   });
-  const callableResultRootsByComponentCache = new Map<
-    Set<string>,
-    Map<string, Set<string>>
-  >();
-  const callableResultRootsByBindingCache = new Map<
+  const callableResultNodes = new Map<string, MutableProvenanceClosureNode>();
+  const callableResultPathsByRoot = new Map<
     string,
-    Map<string, Set<string>>
+    Set<OxcRuntimePropertyPathKey>
   >();
-  let callableResultPathsByRoot:
-    | Map<string, OxcRuntimePropertyPathKey[]>
-    | undefined;
+  const callableResultPaths = new Set(
+    [...callableResultRoots.keys()].map(normalizeProvenancePath)
+  );
+  type ResultNode = MutableProvenanceClosureNode;
+  const normalizeDependency = (dependency: string) =>
+    normalizeProvenancePath(
+      dependency.includes('#')
+        ? (dependency as OxcRuntimePropertyPathKey)
+        : createOxcRuntimePropertyPath(dependency).key
+    );
+  const addResultDependency = (node: ResultNode, dependency: string): void => {
+    const normalized = normalizeDependency(dependency);
+    if (callableResultPaths.has(normalized)) {
+      node.dependencies.add(normalized);
+      return;
+    }
+    const rawPath = dependency as OxcRuntimePropertyPathKey;
+    node.bindings.add(getOxcRuntimePropertyPathKeyRoot(rawPath));
+  };
+  callableResultRoots.forEach((provenance, path) => {
+    const normalizedPath = normalizeProvenancePath(path);
+    const node = callableResultNodes.get(normalizedPath) ?? {
+      bindings: new Set<string>(),
+      dependencies: new Set<string>(),
+      mayAliasAnyRootImport: false,
+    };
+    node.mayAliasAnyRootImport ||= provenance.mayAliasAnyRootImport;
+    provenance.bindings.forEach((binding) =>
+      addResultDependency(node, binding)
+    );
+    provenance.dependencies.forEach((dependency) =>
+      addResultDependency(node, dependency)
+    );
+    callableResultNodes.set(normalizedPath, node);
+    const root = getOxcRuntimePropertyPathKeyRoot(normalizedPath);
+    const paths = callableResultPathsByRoot.get(root) ?? new Set();
+    paths.add(normalizedPath);
+    callableResultPathsByRoot.set(root, paths);
+  });
+  const resolveCallableResultPaths = (
+    binding: OxcRuntimePropertyPathKey,
+    includeDescendants = false
+  ): Set<OxcRuntimePropertyPathKey> => {
+    const normalized = normalizeProvenancePath(binding);
+    if (!includeDescendants) {
+      return callableResultNodes.has(normalized)
+        ? new Set([normalized])
+        : new Set();
+    }
+    return new Set(
+      [
+        ...(callableResultPathsByRoot.get(
+          getOxcRuntimePropertyPathKeyRoot(normalized)
+        ) ?? []),
+      ].filter((candidate) =>
+        isOxcRuntimePropertyPathKeyEqualOrDescendant(candidate, normalized)
+      )
+    );
+  };
+  const callableResultClosure = createProvenanceClosureIndex(
+    callableResultNodes,
+    getProvenanceComponentRoot
+  );
   const resolveCallableResultRoots = (
     binding: OxcRuntimePropertyPathKey,
     includeDescendants = false
-  ): Set<string> => {
-    const bindingRoot = getOxcRuntimePropertyPathKeyRoot(binding);
-    const bindingSuffix = binding.slice(bindingRoot.length);
-    const bindingComponent = aliasComponents.get(bindingRoot);
-    const cacheKey = `${includeDescendants ? '1' : '0'}${bindingSuffix}`;
-    const cache =
-      bindingComponent === undefined
-        ? callableResultRootsByBindingCache.get(bindingRoot)
-        : callableResultRootsByComponentCache.get(bindingComponent);
-    const cached = cache?.get(cacheKey);
-    if (cached) {
-      return cached;
-    }
-    const roots = new Set<string>();
-    const visited = new Set<string>();
-    const pending: Array<{
-      binding: OxcRuntimePropertyPathKey;
-      includeDescendants: boolean;
-    }> = [{ binding, includeDescendants }];
-    while (pending.length > 0) {
-      const currentItem = pending.pop()!;
-      const current = currentItem.binding;
-      const root = getOxcRuntimePropertyPathKeyRoot(current);
-      const component = aliasComponents.get(root) ?? new Set([root]);
-      if (currentItem.includeDescendants && !callableResultPathsByRoot) {
-        callableResultPathsByRoot = new Map();
-        for (const path of callableResultRoots.keys()) {
-          const pathRoot = getOxcRuntimePropertyPathKeyRoot(path);
-          const paths = callableResultPathsByRoot.get(pathRoot) ?? [];
-          paths.push(path);
-          callableResultPathsByRoot.set(pathRoot, paths);
-        }
-      }
-      const pathsByRoot = callableResultPathsByRoot;
-      component.forEach((aliasRoot) => {
-        const alias = replaceOxcRuntimePropertyPathKeyRoot(current, aliasRoot);
-        if (visited.has(alias)) {
-          return;
-        }
-        visited.add(alias);
-        const candidates = currentItem.includeDescendants
-          ? pathsByRoot?.get(aliasRoot) ?? []
-          : [alias];
-        candidates.forEach((candidate) => {
-          if (
-            currentItem.includeDescendants &&
-            !isOxcRuntimePropertyPathKeyEqualOrDescendant(candidate, alias)
-          ) {
-            return;
-          }
-          callableResultRoots.get(candidate)?.forEach((resultRoot) => {
-            roots.add(resultRoot);
-            pending.push({
-              binding: createOxcRuntimePropertyPath(resultRoot).key,
-              includeDescendants: false,
-            });
-          });
-        });
-      });
-    }
-    const nextCache = cache ?? new Map<string, Set<string>>();
-    nextCache.set(cacheKey, roots);
-    if (bindingComponent === undefined) {
-      callableResultRootsByBindingCache.set(bindingRoot, nextCache);
-    } else {
-      callableResultRootsByComponentCache.set(bindingComponent, nextCache);
-    }
-    return roots;
-  };
-  const resolveAliasBinding = (
+  ): TaggedBindingProvenance =>
+    callableResultClosure.resolve(
+      resolveCallableResultPaths(binding, includeDescendants)
+    );
+  const callableResultPathsMayAliasImport = (
+    paths: ReadonlySet<OxcRuntimePropertyPathKey>
+  ): boolean => callableResultClosure.pathsMayAliasAnyRootImport(paths);
+  const visitCallableResultDependents = (
     binding: string,
-    aliases: AliasEnvironment,
-    resolving = new Set<string>()
-  ): Set<string> => {
-    const mapped = aliases.get(binding);
-    if (!mapped) {
-      return new Set([binding]);
+    visited: Set<string>,
+    visit: (path: OxcRuntimePropertyPathKey) => void
+  ): void =>
+    callableResultClosure.visitDependents(binding, visited, (path) =>
+      visit(path as OxcRuntimePropertyPathKey)
+    );
+  const resolveAliasBinding = resolveProvenanceAliases;
+  const addCallableResultEffects = (
+    roots: Set<string>,
+    provenance: TaggedBindingProvenance
+  ): void => {
+    provenance.bindings.forEach((binding) => roots.add(binding));
+    if (provenance.mayAliasAnyRootImport) {
+      // This is the liveness boundary: the virtual cohort becomes concrete
+      // only while computing effects of code that is actually reached.
+      rootImportedBindings.forEach((binding) => roots.add(binding));
     }
-    if (mapped.size === 0 || resolving.has(binding)) {
-      return new Set();
-    }
-
-    const roots = new Set<string>();
-    const nextResolving = new Set(resolving);
-    nextResolving.add(binding);
-    mapped.forEach((alias) => {
-      resolveAliasBinding(alias, aliases, nextResolving).forEach((root) =>
-        roots.add(root)
-      );
-    });
-    return roots;
   };
   const collectContextualRoots = (
     value: Node,
-    aliases: AliasEnvironment
+    aliases: AliasEnvironment,
+    expandCallableResults = true
   ): Set<string> => {
     const current = unwrapAliasExpression(value);
+    const collect = (node: Node): Set<string> =>
+      collectContextualRoots(node, aliases, expandCallableResults);
     if (current.type === 'Identifier') {
       const roots = resolveAliasBinding(current.name, aliases);
+      if (!expandCallableResults) {
+        return roots;
+      }
       [...roots].forEach((root) => {
         resolveCallableCaptureRoots(root).forEach((capture) =>
           roots.add(capture)
         );
-        resolveCallableResultRoots(
-          createOxcRuntimePropertyPath(root).key
-        ).forEach((capture) => roots.add(capture));
+        addCallableResultEffects(
+          roots,
+          resolveCallableResultRoots(createOxcRuntimePropertyPath(root).key)
+        );
       });
       return roots;
     }
 
     if (current.type === 'MemberExpression') {
-      const roots = collectContextualRoots(current.object, aliases);
+      const roots = collect(current.object);
+      if (!expandCallableResults) {
+        return roots;
+      }
       const staticPath = getStaticMemberPath(current);
       if (staticPath) {
         resolveCallableCaptureRoots(staticPath.key).forEach((capture) =>
           roots.add(capture)
         );
-        resolveCallableResultRoots(staticPath.key).forEach((capture) =>
-          roots.add(capture)
+        addCallableResultEffects(
+          roots,
+          resolveCallableResultRoots(staticPath.key)
         );
       } else {
         [...roots].forEach((root) => {
-          resolveCallableResultRoots(
-            createOxcRuntimePropertyPath(root).key,
-            true
-          ).forEach((capture) => roots.add(capture));
+          addCallableResultEffects(
+            roots,
+            resolveCallableResultRoots(
+              createOxcRuntimePropertyPath(root).key,
+              true
+            )
+          );
         });
       }
       return roots;
@@ -610,25 +640,22 @@ export const createCallableProvenanceIndex = ({
 
     if (current.type === 'ConditionalExpression') {
       return new Set([
-        ...collectContextualRoots(current.consequent, aliases),
-        ...collectContextualRoots(current.alternate, aliases),
+        ...collect(current.consequent),
+        ...collect(current.alternate),
       ]);
     }
 
     if (current.type === 'LogicalExpression') {
-      return new Set([
-        ...collectContextualRoots(current.left, aliases),
-        ...collectContextualRoots(current.right, aliases),
-      ]);
+      return new Set([...collect(current.left), ...collect(current.right)]);
     }
 
     if (current.type === 'SequenceExpression') {
       const last = current.expressions[current.expressions.length - 1];
-      return last ? collectContextualRoots(last, aliases) : new Set();
+      return last ? collect(last) : new Set();
     }
 
     if (current.type === 'AssignmentExpression') {
-      return collectContextualRoots(current.right, aliases);
+      return collect(current.right);
     }
 
     if (current.type === 'ArrayExpression') {
@@ -637,9 +664,7 @@ export const createCallableProvenanceIndex = ({
         if (element) {
           const item =
             element.type === 'SpreadElement' ? element.argument : element;
-          collectContextualRoots(item, aliases).forEach((root) =>
-            roots.add(root)
-          );
+          collect(item).forEach((root) => roots.add(root));
         }
       });
       return roots;
@@ -652,15 +677,13 @@ export const createCallableProvenanceIndex = ({
           property.type === 'SpreadElement'
             ? property.argument
             : property.value;
-        collectContextualRoots(item, aliases).forEach((root) =>
-          roots.add(root)
-        );
+        collect(item).forEach((root) => roots.add(root));
       });
       return roots;
     }
 
     if (current.type === 'AwaitExpression') {
-      return collectContextualRoots(current.argument, aliases);
+      return collect(current.argument);
     }
 
     if (current.type === 'CallExpression') {
@@ -711,7 +734,7 @@ export const createCallableProvenanceIndex = ({
       const argument = args[index];
       const roots =
         argument && argument.type !== 'SpreadElement'
-          ? collectContextualRoots(argument, callerAliases)
+          ? collectContextualRoots(argument, callerAliases, false)
           : new Set<string>();
       if (parameter.type === 'AssignmentPattern') {
         collectContextualRoots(parameter.right, aliases).forEach((root) =>
@@ -745,9 +768,11 @@ export const createCallableProvenanceIndex = ({
     const resolved = new Set<CallableNode>();
     const addBinding = (binding: string): void => {
       resolveAliasBinding(binding, aliases).forEach((alias) => {
-        const callable = scopedCallables.get(alias) ?? resolveCallable(alias);
-        if (callable) {
-          resolved.add(callable);
+        const scoped = scopedCallables.get(alias);
+        if (scoped) {
+          resolved.add(scoped);
+        } else {
+          resolveCallable(alias).forEach((callable) => resolved.add(callable));
         }
       });
     };
@@ -868,9 +893,11 @@ export const createCallableProvenanceIndex = ({
     const resolved = new Set<ClassNode>();
     const addBinding = (binding: string): void => {
       resolveAliasBinding(binding, aliases).forEach((alias) => {
-        const classNode = scopedClasses.get(alias) ?? resolveClass(alias);
-        if (classNode) {
-          resolved.add(classNode);
+        const scoped = scopedClasses.get(alias);
+        if (scoped) {
+          resolved.add(scoped);
+        } else {
+          resolveClass(alias).forEach((classNode) => resolved.add(classNode));
         }
       });
     };
@@ -928,16 +955,20 @@ export const createCallableProvenanceIndex = ({
         staticPath,
         alias
       ).key;
-      const accessor =
-        scopedAccessors.get(accessorPath) ?? resolveAccessor(accessorPath);
-      if (accessor) {
-        resolved.add(accessor);
+      const scoped = scopedAccessors.get(accessorPath);
+      if (scoped) {
+        resolved.add(scoped);
+      } else {
+        resolveAccessor(accessorPath).forEach((accessor) =>
+          resolved.add(accessor)
+        );
       }
     });
     return resolved;
   };
 
   return {
+    aliasComponentId,
     aliasComponents,
     aliasesImportedRoot,
     collectCallableAliases,
@@ -946,14 +977,21 @@ export const createCallableProvenanceIndex = ({
     collectInlineCallableCaptureRoots,
     getCallableSyntaxFacts,
     getExternalStatementReferences,
+    hasNestedAliases,
+    importedRootAliasBindings,
+    nestedAliasDependents,
+    nestedAliasesImportedRoot,
     nestedAliasSources,
     resolveAliasBinding,
     resolveCallableCaptureRoots,
+    resolveCallableResultPaths,
     resolveCallableResultRoots,
     resolveCalleeCallables,
     resolveCalleeClasses,
     resolveMemberAccessors,
     rootImportedBindings,
+    callableResultPathsMayAliasImport,
+    visitCallableResultDependents,
   };
 };
 

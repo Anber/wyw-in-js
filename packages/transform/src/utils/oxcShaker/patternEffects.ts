@@ -122,13 +122,16 @@ const resolveReceiverPropertyName = (
   if (!initializer || resolving.has(initializer)) {
     return null;
   }
-  const nextResolving = new Set(resolving);
-  nextResolving.add(initializer);
-  return resolveReceiverPropertyName(
-    { computed: true, key: initializer },
-    context,
-    nextResolving
-  );
+  resolving.add(initializer);
+  try {
+    return resolveReceiverPropertyName(
+      { computed: true, key: initializer },
+      context,
+      resolving
+    );
+  } finally {
+    resolving.delete(initializer);
+  }
 };
 
 type PlainReceiver =
@@ -205,9 +208,12 @@ const resolvePlainReceiver = (
     if (!initializer || resolving.has(initializer)) {
       return null;
     }
-    const nextResolving = new Set(resolving);
-    nextResolving.add(initializer);
-    return resolvePlainReceiver(initializer, context, nextResolving);
+    resolving.add(initializer);
+    try {
+      return resolvePlainReceiver(initializer, context, resolving);
+    } finally {
+      resolving.delete(initializer);
+    }
   }
 
   if (current.type !== 'MemberExpression') {
@@ -247,9 +253,12 @@ const resolvePlainReceiver = (
   if (resolving.has(propertyValue)) {
     return null;
   }
-  const nextResolving = new Set(resolving);
-  nextResolving.add(propertyValue);
-  return resolvePlainReceiver(propertyValue, context, nextResolving);
+  resolving.add(propertyValue);
+  try {
+    return resolvePlainReceiver(propertyValue, context, resolving);
+  } finally {
+    resolving.delete(propertyValue);
+  }
 };
 
 export const isReceiverOperationProvenInert = (
@@ -333,7 +342,7 @@ export function isProvenNonAbruptPatternEvaluation(
   pattern: Node,
   value: Node,
   resolveInitializer: PatternInitializerResolver,
-  resolving: ReadonlySet<Node> = new Set()
+  resolving: Set<Node> = new Set()
 ): boolean {
   const currentPattern = unwrapAliasExpression(pattern);
   const currentValue = unwrapAliasExpression(value);
@@ -365,14 +374,17 @@ export function isProvenNonAbruptPatternEvaluation(
     if (!resolved || resolving.has(resolved)) {
       return false;
     }
-    const nextResolving = new Set(resolving);
-    nextResolving.add(resolved);
-    return isProvenNonAbruptPatternEvaluation(
-      currentPattern,
-      resolved,
-      resolveInitializer,
-      nextResolving
-    );
+    resolving.add(resolved);
+    try {
+      return isProvenNonAbruptPatternEvaluation(
+        currentPattern,
+        resolved,
+        resolveInitializer,
+        resolving
+      );
+    } finally {
+      resolving.delete(resolved);
+    }
   }
 
   if (!isLiteralConstructionSideEffectFree(currentValue)) {

@@ -45,235 +45,353 @@ const getDirectCallBinding = (node: Node): string | null => {
     : null;
 };
 
+export type AssignedAliasRoots = {
+  bindings: Set<string>;
+  mayAliasAnyRootImport: boolean;
+};
+
+type AliasComponentMetadata = {
+  aliasesImportedRoot: boolean;
+  importedRootCohort: boolean;
+};
+
+export type AliasProvenanceState = {
+  aliases: Map<string, Set<string>>;
+  componentMembers: Map<string, Set<string>>;
+  componentMetadata: Map<string, AliasComponentMetadata>;
+  componentParents: Map<string, string>;
+  componentRanks: Map<string, number>;
+  importedRootAliasBindings: Set<string>;
+  nestedAliases: Map<string, Set<string>>;
+  nestedImportedRootAliasBindings: Set<string>;
+  rootImportedBindings: ReadonlySet<string>;
+};
+
+const createAssignedAliasRoots = (): AssignedAliasRoots => ({
+  bindings: new Set<string>(),
+  mayAliasAnyRootImport: false,
+});
+
+const createAliasProvenanceState = (
+  rootImportedBindings: ReadonlySet<string>
+): AliasProvenanceState => ({
+  aliases: new Map<string, Set<string>>(),
+  componentMembers: new Map<string, Set<string>>(),
+  componentMetadata: new Map<string, AliasComponentMetadata>(),
+  componentParents: new Map<string, string>(),
+  componentRanks: new Map<string, number>(),
+  importedRootAliasBindings: new Set<string>(),
+  nestedAliases: new Map<string, Set<string>>(),
+  nestedImportedRootAliasBindings: new Set<string>(),
+  rootImportedBindings,
+});
+
+const ensureAliasComponent = (
+  state: AliasProvenanceState,
+  binding: string
+): void => {
+  if (state.componentParents.has(binding)) {
+    return;
+  }
+  state.componentParents.set(binding, binding);
+  state.componentRanks.set(binding, 0);
+  state.componentMembers.set(binding, new Set([binding]));
+  state.componentMetadata.set(binding, {
+    aliasesImportedRoot: state.rootImportedBindings.has(binding),
+    importedRootCohort: false,
+  });
+};
+
+const findAliasComponent = (
+  state: AliasProvenanceState,
+  binding: string
+): string => {
+  ensureAliasComponent(state, binding);
+  let root = binding;
+  while (state.componentParents.get(root) !== root) {
+    root = state.componentParents.get(root)!;
+  }
+  let current = binding;
+  while (current !== root) {
+    const parent = state.componentParents.get(current)!;
+    state.componentParents.set(current, root);
+    current = parent;
+  }
+  return root;
+};
+
+const unionAliasComponents = (
+  state: AliasProvenanceState,
+  left: string,
+  right: string
+): void => {
+  let leftRoot = findAliasComponent(state, left);
+  let rightRoot = findAliasComponent(state, right);
+  if (leftRoot === rightRoot) {
+    return;
+  }
+  const leftRank = state.componentRanks.get(leftRoot)!;
+  const rightRank = state.componentRanks.get(rightRoot)!;
+  if (leftRank < rightRank) {
+    [leftRoot, rightRoot] = [rightRoot, leftRoot];
+  }
+  const leftMetadata = state.componentMetadata.get(leftRoot)!;
+  const rightMetadata = state.componentMetadata.get(rightRoot)!;
+  const leftMembers = state.componentMembers.get(leftRoot)!;
+  const rightMembers = state.componentMembers.get(rightRoot)!;
+  state.componentParents.set(rightRoot, leftRoot);
+  rightMembers.forEach((member) => leftMembers.add(member));
+  state.componentMembers.delete(rightRoot);
+  state.componentMetadata.set(leftRoot, {
+    aliasesImportedRoot:
+      leftMetadata.aliasesImportedRoot || rightMetadata.aliasesImportedRoot,
+    importedRootCohort:
+      leftMetadata.importedRootCohort || rightMetadata.importedRootCohort,
+  });
+  state.componentMetadata.delete(rightRoot);
+  if (leftRank === rightRank) {
+    state.componentRanks.set(leftRoot, leftRank + 1);
+  }
+};
+
+export const getAliasComponentId = (
+  state: AliasProvenanceState,
+  binding: string
+): string => findAliasComponent(state, binding);
+
+export const getAliasComponentMembers = (
+  state: AliasProvenanceState,
+  binding: string
+): ReadonlySet<string> =>
+  state.componentMembers.get(findAliasComponent(state, binding))!;
+
+const markImportedRootCohort = (
+  state: AliasProvenanceState,
+  binding: string
+): void => {
+  state.importedRootAliasBindings.add(binding);
+  const root = findAliasComponent(state, binding);
+  const metadata = state.componentMetadata.get(root)!;
+  metadata.aliasesImportedRoot = true;
+  metadata.importedRootCohort = true;
+};
+
+const aliasesImportedRootCohort = (
+  state: AliasProvenanceState,
+  binding: string
+): boolean =>
+  state.componentMetadata.get(findAliasComponent(state, binding))!
+    .importedRootCohort;
+
+export const aliasesImportedRootInState = (
+  state: AliasProvenanceState,
+  binding: string
+): boolean =>
+  state.componentMetadata.get(findAliasComponent(state, binding))!
+    .aliasesImportedRoot;
+
 const appendAliasRoots = (
   node: Node,
-  rootImportedBindings: ReadonlySet<string>,
-  roots: Set<string>
-): void => {
+  state: AliasProvenanceState,
+  bindings: Set<string>
+): boolean => {
   const current = unwrapAliasExpression(node);
   switch (current.type) {
     case 'Identifier':
-      roots.add(current.name);
-      return;
+      bindings.add(current.name);
+      return aliasesImportedRootCohort(state, current.name);
     case 'MemberExpression':
-      appendAliasRoots(current.object, rootImportedBindings, roots);
-      return;
-    case 'ConditionalExpression':
-      appendAliasRoots(current.consequent, rootImportedBindings, roots);
-      appendAliasRoots(current.alternate, rootImportedBindings, roots);
-      return;
-    case 'LogicalExpression':
-      appendAliasRoots(current.left, rootImportedBindings, roots);
-      appendAliasRoots(current.right, rootImportedBindings, roots);
-      return;
+      return appendAliasRoots(current.object, state, bindings);
+    case 'ConditionalExpression': {
+      const consequent = appendAliasRoots(current.consequent, state, bindings);
+      const alternate = appendAliasRoots(current.alternate, state, bindings);
+      return consequent || alternate;
+    }
+    case 'LogicalExpression': {
+      const left = appendAliasRoots(current.left, state, bindings);
+      const right = appendAliasRoots(current.right, state, bindings);
+      return left || right;
+    }
     case 'SequenceExpression': {
       const last = current.expressions[current.expressions.length - 1];
-      if (last) {
-        appendAliasRoots(last, rootImportedBindings, roots);
-      }
-      return;
+      return last ? appendAliasRoots(last, state, bindings) : false;
     }
     case 'AssignmentExpression':
-      appendAliasRoots(current.right, rootImportedBindings, roots);
-      return;
-    case 'ArrayExpression':
-      for (const element of current.elements) {
+      return appendAliasRoots(current.right, state, bindings);
+    case 'ArrayExpression': {
+      let mayAliasAnyRootImport = false;
+      current.elements.forEach((element) => {
         if (element) {
-          appendAliasRoots(
-            element.type === 'SpreadElement' ? element.argument : element,
-            rootImportedBindings,
-            roots
-          );
+          mayAliasAnyRootImport =
+            appendAliasRoots(
+              element.type === 'SpreadElement' ? element.argument : element,
+              state,
+              bindings
+            ) || mayAliasAnyRootImport;
         }
-      }
-      return;
-    case 'ObjectExpression':
-      for (const property of current.properties) {
-        appendAliasRoots(
-          property.type === 'SpreadElement'
-            ? property.argument
-            : property.value,
-          rootImportedBindings,
-          roots
-        );
-      }
-      return;
+      });
+      return mayAliasAnyRootImport;
+    }
+    case 'ObjectExpression': {
+      let mayAliasAnyRootImport = false;
+      current.properties.forEach((property) => {
+        mayAliasAnyRootImport =
+          appendAliasRoots(
+            property.type === 'SpreadElement'
+              ? property.argument
+              : property.value,
+            state,
+            bindings
+          ) || mayAliasAnyRootImport;
+      });
+      return mayAliasAnyRootImport;
+    }
     case 'AwaitExpression':
-      appendAliasRoots(current.argument, rootImportedBindings, roots);
-      return;
+      return appendAliasRoots(current.argument, state, bindings);
     default: {
       const importedCallee = getDirectCallBinding(current);
-      if (importedCallee && rootImportedBindings.has(importedCallee)) {
-        // The return identity of imported code is unknowable in this module.
-        for (const binding of rootImportedBindings) {
-          roots.add(binding);
-        }
-      }
+      // The return identity of imported code is unknowable in this module.
+      // Keep that uncertainty as a virtual cohort instead of materializing
+      // pairwise aliases to every root import.
+      return Boolean(
+        importedCallee && aliasesImportedRootInState(state, importedCallee)
+      );
     }
   }
 };
 
 const addAlias = (
-  aliases: Map<string, Set<string>>,
+  state: AliasProvenanceState,
   left: string,
   right: string
 ): void => {
   if (left === right) {
     return;
   }
-
-  const leftAliases = aliases.get(left) ?? new Set<string>();
+  const leftAliases = state.aliases.get(left) ?? new Set<string>();
   leftAliases.add(right);
-  aliases.set(left, leftAliases);
-
-  const rightAliases = aliases.get(right) ?? new Set<string>();
+  state.aliases.set(left, leftAliases);
+  const rightAliases = state.aliases.get(right) ?? new Set<string>();
   rightAliases.add(left);
-  aliases.set(right, rightAliases);
+  state.aliases.set(right, rightAliases);
+  unionAliasComponents(state, left, right);
 };
 
 const addNestedAlias = (
-  nestedAliases: Map<string, Set<string>>,
+  state: AliasProvenanceState,
   nestedCopy: string,
   source: string
 ): void => {
-  const sources = nestedAliases.get(nestedCopy) ?? new Set<string>();
+  const sources = state.nestedAliases.get(nestedCopy) ?? new Set<string>();
   sources.add(source);
-  nestedAliases.set(nestedCopy, sources);
+  state.nestedAliases.set(nestedCopy, sources);
 };
 
 const expandNestedValueAliases = (
-  valueAliases: ReadonlySet<string>,
-  aliases: ReadonlyMap<string, Set<string>>,
-  nestedAliases: ReadonlyMap<string, Set<string>>
-): Set<string> => {
-  const expanded = new Set<string>();
-
-  valueAliases.forEach((valueAlias) => {
+  valueAliases: AssignedAliasRoots,
+  state: AliasProvenanceState
+): AssignedAliasRoots => {
+  const expanded: AssignedAliasRoots = {
+    bindings: new Set<string>(),
+    mayAliasAnyRootImport: valueAliases.mayAliasAnyRootImport,
+  };
+  valueAliases.bindings.forEach((valueAlias) => {
     const visited = new Set<string>();
     const pending = [valueAlias];
     let foundNestedSource = false;
-
     while (pending.length > 0) {
       const current = pending.pop()!;
       if (!visited.has(current)) {
         visited.add(current);
-
-        const currentNestedSources = nestedAliases.get(current);
+        if (state.nestedImportedRootAliasBindings.has(current)) {
+          foundNestedSource = true;
+          expanded.mayAliasAnyRootImport = true;
+        }
+        const currentNestedSources = state.nestedAliases.get(current);
         if (currentNestedSources && currentNestedSources.size > 0) {
           foundNestedSource = true;
           currentNestedSources.forEach((source) => {
-            expanded.add(source);
+            expanded.bindings.add(source);
           });
         }
-        aliases.get(current)?.forEach((alias) => pending.push(alias));
+        state.aliases.get(current)?.forEach((alias) => pending.push(alias));
       }
     }
-
     if (!foundNestedSource) {
-      expanded.add(valueAlias);
+      expanded.bindings.add(valueAlias);
     }
   });
-
   return expanded;
 };
 
 export const collectAssignedAliasRoots = (
   node: Node,
-  rootImportedBindings: ReadonlySet<string>,
-  aliases: ReadonlyMap<string, Set<string>>,
-  nestedAliases: ReadonlyMap<string, Set<string>>
-): Set<string> => {
-  const roots = new Set<string>();
-  appendAliasRoots(node, rootImportedBindings, roots);
+  state: AliasProvenanceState
+): AssignedAliasRoots => {
+  const roots = createAssignedAliasRoots();
+  roots.mayAliasAnyRootImport = appendAliasRoots(node, state, roots.bindings);
   return unwrapAliasExpression(node).type === 'MemberExpression'
-    ? expandNestedValueAliases(roots, aliases, nestedAliases)
+    ? expandNestedValueAliases(roots, state)
     : roots;
 };
 
 const collectPatternAliases = (
   pattern: Node,
-  valueAliases: ReadonlySet<string>,
-  aliases: Map<string, Set<string>>,
-  nestedAliases: Map<string, Set<string>>,
-  rootImportedBindings: ReadonlySet<string>
+  valueAliases: AssignedAliasRoots,
+  state: AliasProvenanceState
 ): void => {
   if (pattern.type === 'Identifier') {
-    valueAliases.forEach((source) => addAlias(aliases, pattern.name, source));
+    valueAliases.bindings.forEach((source) =>
+      addAlias(state, pattern.name, source)
+    );
+    if (valueAliases.mayAliasAnyRootImport) {
+      markImportedRootCohort(state, pattern.name);
+    }
     return;
   }
-
   if (pattern.type === 'AssignmentPattern') {
-    collectPatternAliases(
-      pattern.left,
-      valueAliases,
-      aliases,
-      nestedAliases,
-      rootImportedBindings
-    );
-    const defaultAliases = collectAssignedAliasRoots(
-      pattern.right,
-      rootImportedBindings,
-      aliases,
-      nestedAliases
-    );
+    collectPatternAliases(pattern.left, valueAliases, state);
+    const defaultAliases = collectAssignedAliasRoots(pattern.right, state);
     collectPatternNames(pattern.left).forEach((binding) => {
-      defaultAliases.forEach((source) => addAlias(aliases, binding, source));
-    });
-    return;
-  }
-
-  if (pattern.type === 'RestElement') {
-    collectPatternNames(pattern.argument).forEach((binding) => {
-      valueAliases.forEach((source) =>
-        addNestedAlias(nestedAliases, binding, source)
+      defaultAliases.bindings.forEach((source) =>
+        addAlias(state, binding, source)
       );
-    });
-    return;
-  }
-
-  if (pattern.type === 'ObjectPattern') {
-    const propertyAliases = expandNestedValueAliases(
-      valueAliases,
-      aliases,
-      nestedAliases
-    );
-    pattern.properties.forEach((property) => {
-      if (property.type !== 'RestElement') {
-        collectPatternAliases(
-          property.value,
-          propertyAliases,
-          aliases,
-          nestedAliases,
-          rootImportedBindings
-        );
-      } else {
-        collectPatternAliases(
-          property,
-          valueAliases,
-          aliases,
-          nestedAliases,
-          rootImportedBindings
-        );
+      if (defaultAliases.mayAliasAnyRootImport) {
+        markImportedRootCohort(state, binding);
       }
     });
     return;
   }
-
+  if (pattern.type === 'RestElement') {
+    collectPatternNames(pattern.argument).forEach((binding) => {
+      valueAliases.bindings.forEach((source) =>
+        addNestedAlias(state, binding, source)
+      );
+      if (valueAliases.mayAliasAnyRootImport) {
+        state.nestedImportedRootAliasBindings.add(binding);
+      }
+    });
+    return;
+  }
+  if (pattern.type === 'ObjectPattern') {
+    let propertyAliases: AssignedAliasRoots | undefined;
+    pattern.properties.forEach((property) => {
+      if (property.type !== 'RestElement' && !propertyAliases) {
+        propertyAliases = expandNestedValueAliases(valueAliases, state);
+      }
+      collectPatternAliases(
+        property.type === 'RestElement' ? property : property.value,
+        property.type === 'RestElement' ? valueAliases : propertyAliases!,
+        state
+      );
+    });
+    return;
+  }
   if (pattern.type === 'ArrayPattern') {
-    const elementAliases = expandNestedValueAliases(
-      valueAliases,
-      aliases,
-      nestedAliases
-    );
+    const elementAliases = expandNestedValueAliases(valueAliases, state);
     pattern.elements.forEach((element) => {
       if (element) {
-        collectPatternAliases(
-          element,
-          elementAliases,
-          aliases,
-          nestedAliases,
-          rootImportedBindings
-        );
+        collectPatternAliases(element, elementAliases, state);
       }
     });
   }
@@ -282,39 +400,34 @@ const collectPatternAliases = (
 export const collectTopLevelAliases = (
   program: Program,
   rootImportedBindings: ReadonlySet<string>
-): {
-  aliases: Map<string, Set<string>>;
-  nestedAliases: Map<string, Set<string>>;
-} => {
-  const aliases = new Map<string, Set<string>>();
-  const nestedAliases = new Map<string, Set<string>>();
+): AliasProvenanceState => {
+  const state = createAliasProvenanceState(rootImportedBindings);
 
   const recordMemberValueProvenance = (
     pattern: Node,
     value: Node,
-    valueAliases: ReadonlySet<string>
+    valueAliases: AssignedAliasRoots
   ): void => {
     if (unwrapAliasExpression(value).type !== 'MemberExpression') {
       return;
     }
-
     collectPatternNames(pattern).forEach((binding) => {
-      valueAliases.forEach((source) =>
-        addNestedAlias(nestedAliases, binding, source)
+      valueAliases.bindings.forEach((source) =>
+        addNestedAlias(state, binding, source)
       );
+      if (valueAliases.mayAliasAnyRootImport) {
+        state.nestedImportedRootAliasBindings.add(binding);
+      }
     });
   };
 
-  const collectThrownAliases = (node: Node): Set<string> => {
-    const roots = new Set<string>();
+  const collectThrownAliases = (node: Node): AssignedAliasRoots => {
+    const roots = createAssignedAliasRoots();
     forEachModuleExecutedNode(node, (current) => {
       if (current.type === 'ThrowStatement' && current.argument) {
-        collectAssignedAliasRoots(
-          current.argument,
-          rootImportedBindings,
-          aliases,
-          nestedAliases
-        ).forEach((root) => roots.add(root));
+        const thrown = collectAssignedAliasRoots(current.argument, state);
+        thrown.bindings.forEach((root) => roots.bindings.add(root));
+        roots.mayAliasAnyRootImport ||= thrown.mayAliasAnyRootImport;
       }
     });
     return roots;
@@ -327,17 +440,9 @@ export const collectTopLevelAliases = (
           if (declarator.init) {
             const valueAliases = collectAssignedAliasRoots(
               declarator.init,
-              rootImportedBindings,
-              aliases,
-              nestedAliases
+              state
             );
-            collectPatternAliases(
-              declarator.id,
-              valueAliases,
-              aliases,
-              nestedAliases,
-              rootImportedBindings
-            );
+            collectPatternAliases(declarator.id, valueAliases, state);
             recordMemberValueProvenance(
               declarator.id,
               declarator.init,
@@ -349,48 +454,20 @@ export const collectTopLevelAliases = (
       }
 
       if (current.type === 'AssignmentExpression' && current.operator === '=') {
-        const valueAliases = collectAssignedAliasRoots(
-          current.right,
-          rootImportedBindings,
-          aliases,
-          nestedAliases
-        );
-        collectPatternAliases(
-          current.left,
-          valueAliases,
-          aliases,
-          nestedAliases,
-          rootImportedBindings
-        );
+        const valueAliases = collectAssignedAliasRoots(current.right, state);
+        collectPatternAliases(current.left, valueAliases, state);
         recordMemberValueProvenance(current.left, current.right, valueAliases);
         return;
       }
 
       if (current.type === 'ForOfStatement') {
-        const valueAliases = collectAssignedAliasRoots(
-          current.right,
-          rootImportedBindings,
-          aliases,
-          nestedAliases
-        );
+        const valueAliases = collectAssignedAliasRoots(current.right, state);
         if (current.left.type === 'VariableDeclaration') {
-          current.left.declarations.forEach((declarator) => {
-            collectPatternAliases(
-              declarator.id,
-              valueAliases,
-              aliases,
-              nestedAliases,
-              rootImportedBindings
-            );
-          });
-        } else {
-          collectPatternAliases(
-            current.left,
-            valueAliases,
-            aliases,
-            nestedAliases,
-            rootImportedBindings
+          current.left.declarations.forEach((declarator) =>
+            collectPatternAliases(declarator.id, valueAliases, state)
           );
+        } else {
+          collectPatternAliases(current.left, valueAliases, state);
         }
         return;
       }
@@ -399,9 +476,7 @@ export const collectTopLevelAliases = (
         collectPatternAliases(
           current.handler.param,
           collectThrownAliases(current.block),
-          aliases,
-          nestedAliases,
-          rootImportedBindings
+          state
         );
         return;
       }
@@ -411,6 +486,7 @@ export const collectTopLevelAliases = (
           current.type === 'ClassExpression') &&
         current.id
       ) {
+        const className = current.id.name;
         current.body.body.forEach((element) => {
           const elementNode = element as AnyNode;
           const { value } = elementNode;
@@ -419,12 +495,13 @@ export const collectTopLevelAliases = (
             element.type === 'PropertyDefinition' &&
             isNode(value)
           ) {
-            collectAssignedAliasRoots(
-              value,
-              rootImportedBindings,
-              aliases,
-              nestedAliases
-            ).forEach((source) => addAlias(aliases, current.id!.name, source));
+            const valueAliases = collectAssignedAliasRoots(value, state);
+            valueAliases.bindings.forEach((source) =>
+              addAlias(state, className, source)
+            );
+            if (valueAliases.mayAliasAnyRootImport) {
+              markImportedRootCohort(state, className);
+            }
           }
         });
         return;
@@ -435,25 +512,13 @@ export const collectTopLevelAliases = (
         if (!invoked) {
           return;
         }
-
         invoked.params.forEach((parameter, index) => {
           const argument = current.arguments[index];
           const valueAliases =
             argument && argument.type !== 'SpreadElement'
-              ? collectAssignedAliasRoots(
-                  argument,
-                  rootImportedBindings,
-                  aliases,
-                  nestedAliases
-                )
-              : new Set<string>();
-          collectPatternAliases(
-            parameter,
-            valueAliases,
-            aliases,
-            nestedAliases,
-            rootImportedBindings
-          );
+              ? collectAssignedAliasRoots(argument, state)
+              : createAssignedAliasRoots();
+          collectPatternAliases(parameter, valueAliases, state);
           if (argument && argument.type !== 'SpreadElement') {
             recordMemberValueProvenance(parameter, argument, valueAliases);
           }
@@ -462,7 +527,7 @@ export const collectTopLevelAliases = (
     });
   });
 
-  return { aliases, nestedAliases };
+  return state;
 };
 
 export const collectObjectCallables = (
