@@ -1,5 +1,5 @@
 ---
-'@wyw-in-js/transform': patch
+'@wyw-in-js/transform': minor
 ---
 
 Resolve statically imported values through complete object and array destructuring patterns.
