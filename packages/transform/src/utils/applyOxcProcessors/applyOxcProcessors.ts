@@ -341,6 +341,13 @@ export const applyOxcProcessors = (
     byLocal: Map<string, unknown>;
     values: OxcStaticValue[];
   } => {
+    if (!collectStaticExpressionValues) {
+      return {
+        byLocal: new Map(),
+        values: [],
+      };
+    }
+
     const availableStaticValues =
       collectAvailableStaticValues(staticValueCache);
     const byLocal = collectSameFileProcessorStaticValuesByLocal(

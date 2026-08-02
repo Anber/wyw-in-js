@@ -407,6 +407,7 @@ export const whiteColor = '#fff';`);
           prevalPayload: createPrevalPayload({
             evalValues: new Map([['_exp', 'red']]),
             filename,
+            strategy: 'hybrid',
           }),
         },
         null
@@ -491,6 +492,7 @@ export const whiteColor = '#fff';`);
           prevalPayload: createPrevalPayload({
             evalValues: new Map([['_exp', 'red']]),
             filename,
+            strategy: 'hybrid',
           }),
         },
         null

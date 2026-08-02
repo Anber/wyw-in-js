@@ -5198,6 +5198,60 @@ describe('transform static import value inlining', () => {
     }
   });
 
+  it('evaluates same-file styled selector chains with eval.strategy execute', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
+    const entryFile = join(root, 'entry.js');
+    const cache = new TransformCacheCollection();
+    const perf = createPerfEventRecorder();
+
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'app' }));
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { styled } from 'test-styled-processor';
+
+        const Base = styled.div\`
+          color: red;
+        \`;
+
+        export const Root = styled(Base)\`
+          font-size: 12px;
+        \`;
+
+        export const Wrapper = styled.div\`
+          & > ${'${Root}'} {
+            color: blue;
+          }
+        \`;
+      `
+    );
+
+    try {
+      const result = await runTransform(
+        root,
+        entryFile,
+        cache,
+        perf.eventEmitter,
+        {
+          eval: { strategy: 'execute' },
+        }
+      );
+
+      expect(result.cssText).toContain('color:red');
+      expect(result.cssText).toContain('font-size:12px');
+      expect(result.cssText).toContain('color:blue');
+      expect(result.cssText).toMatch(
+        /\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\s*\{[^}]*font-size:12px;[^}]*\}/s
+      );
+      expect(result.cssText).toMatch(
+        />\s*\.[A-Za-z0-9_-]+\s*\{[^}]*color:blue;[^}]*\}/s
+      );
+      expect(perf.counts.get('transform:evalFile') ?? 0).toBeGreaterThan(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('inlines same-file styled base metadata without eval', async () => {
     const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
     const entryFile = join(root, 'entry.js');
