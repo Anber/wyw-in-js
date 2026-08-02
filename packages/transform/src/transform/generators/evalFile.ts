@@ -18,11 +18,14 @@ export async function* evalFile(
     entrypoint.loadedAndParsed.evaluator === 'ignored'
       ? entrypoint.name
       : entrypoint.loadedAndParsed.evalConfig.filename ?? entrypoint.name;
+  const strategy =
+    this.services.options.pluginOptions.eval?.strategy ?? 'hybrid';
 
   if (preevalResult && (preevalResult.dependencyNames?.length ?? 0) === 0) {
     const prevalPayload = createPrevalPayload({
       emitWarning: this.services.emitWarning,
       filename,
+      strategy,
       staticDependencies: preevalResult.staticDependencies,
       staticValues: preevalResult.staticValueCache,
     });
@@ -63,6 +66,7 @@ export async function* evalFile(
     evalDependencies: evaluated.dependencies,
     evalValues: evaluated.values,
     filename,
+    strategy,
     staticDependencies: preevalResult?.staticDependencies,
     staticValues: preevalResult?.staticValueCache,
   });

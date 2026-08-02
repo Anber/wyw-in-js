@@ -1,4 +1,5 @@
 import type { ValueCache } from '@wyw-in-js/processor-utils';
+import type { EvalStrategy } from '@wyw-in-js/shared';
 import { isDeepStrictEqual } from 'util';
 
 export type PrevalPayloadSource = 'eval' | 'static';
@@ -14,6 +15,7 @@ export type CreatePrevalPayloadInput = {
   evalDependencies?: readonly string[];
   evalValues?: Map<string, unknown> | null;
   filename: string;
+  strategy: EvalStrategy;
   staticDependencies?: readonly string[];
   staticValues?: Map<string, unknown> | null;
 };
@@ -64,6 +66,7 @@ export const createPrevalPayload = ({
   evalDependencies = [],
   evalValues,
   filename,
+  strategy,
   staticDependencies = [],
   staticValues,
 }: CreatePrevalPayloadInput): PrevalPayload => {
@@ -71,30 +74,35 @@ export const createPrevalPayload = ({
   const sources = new Map<string, PrevalPayloadSource>();
   const values: ValueCache = new Map();
 
-  evalDependencies.forEach((dependency) => addUnique(dependencies, dependency));
-  staticDependencies.forEach((dependency) =>
-    addUnique(dependencies, dependency)
-  );
+  if (strategy !== 'static') {
+    evalDependencies.forEach((dependency) =>
+      addUnique(dependencies, dependency)
+    );
+    evalValues?.forEach((value, name) => {
+      values.set(name, value);
+      sources.set(String(name), 'eval');
+    });
+  }
 
-  evalValues?.forEach((value, name) => {
-    values.set(name, value);
-    sources.set(String(name), 'eval');
-  });
+  if (strategy !== 'execute') {
+    staticDependencies.forEach((dependency) =>
+      addUnique(dependencies, dependency)
+    );
+    staticValues?.forEach((value, name) => {
+      if (values.has(name) && !isDeepStrictEqual(values.get(name), value)) {
+        handleDisagreement(
+          filename,
+          String(name),
+          values.get(name),
+          value,
+          emitWarning
+        );
+      }
 
-  staticValues?.forEach((value, name) => {
-    if (values.has(name) && !isDeepStrictEqual(values.get(name), value)) {
-      handleDisagreement(
-        filename,
-        String(name),
-        values.get(name),
-        value,
-        emitWarning
-      );
-    }
-
-    values.set(name, value);
-    sources.set(String(name), 'static');
-  });
+      values.set(name, value);
+      sources.set(String(name), 'static');
+    });
+  }
 
   return {
     dependencies,

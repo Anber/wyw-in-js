@@ -94,7 +94,7 @@ describe('runOxcPreevalStage', () => {
     expect(result.code).not.toContain('__wywPreval = { _exp: _exp }');
   });
 
-  it('keeps static local values in __wywPreval when eval.strategy uses execute', () => {
+  it('keeps execute dependencies evaluator-owned after finalization', () => {
     const result = runOxcPreevalStage(
       `
         import { css } from 'test-package';
@@ -114,6 +114,13 @@ describe('runOxcPreevalStage', () => {
     );
 
     expect(result.staticValueCache.has('_exp')).toBe(false);
+    expect(result.dependencyNames).toEqual(['_exp']);
+    expect(result.code).toContain('__wywPreval = { _exp: _exp }');
+
+    result.finalizeEvaltimeReplacements?.(result.staticValueCache);
+
+    expect(result.staticValueCache).toEqual(new Map());
+    expect(result.staticValueCandidates).toEqual([]);
     expect(result.dependencyNames).toEqual(['_exp']);
     expect(result.code).toContain('__wywPreval = { _exp: _exp }');
   });

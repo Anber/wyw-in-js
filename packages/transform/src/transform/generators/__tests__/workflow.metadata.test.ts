@@ -16,6 +16,7 @@ const evalPayload = createPrevalPayload({
   evalDependencies: ['/dep.ts'],
   evalValues: new Map(),
   filename: '/src/entry.tsx',
+  strategy: 'hybrid',
 });
 
 describe('workflow metadata output', () => {
