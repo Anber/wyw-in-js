@@ -915,7 +915,8 @@ export const collectOxcExpressionDependencies = (
   evaluate = false,
   targetExpressionSpans?: ExpressionSpan[],
   staticBindings?: StaticBindings,
-  processorManagedExpressionSpans: ExpressionSpan[] = []
+  processorManagedExpressionSpans: ExpressionSpan[] = [],
+  removedExpressionSpans: ExpressionSpan[] = []
 ): TemplateExtractionResult => {
   const program = parseOxc(code, filename);
   const analysis = analyzeProgram(program, {
@@ -924,6 +925,7 @@ export const collectOxcExpressionDependencies = (
     mutationHazardIgnoreLookup: createSpanLookup(
       processorManagedExpressionSpans
     ),
+    mutationHazardIgnoreTreeLookup: createSpanLookup(removedExpressionSpans),
   });
 
   return extractExpressions(
@@ -942,7 +944,8 @@ export const collectOxcExpressionDependenciesForEvalFallback = (
   code: string,
   filename: string,
   targetExpressionSpans?: ExpressionSpan[],
-  processorManagedExpressionSpans: ExpressionSpan[] = []
+  processorManagedExpressionSpans: ExpressionSpan[] = [],
+  removedExpressionSpans: ExpressionSpan[] = []
 ): TemplateExtractionResult => {
   const program = parseOxc(code, filename);
   const analysis = analyzeProgram(program, {
@@ -951,6 +954,7 @@ export const collectOxcExpressionDependenciesForEvalFallback = (
     mutationHazardIgnoreLookup: createSpanLookup(
       processorManagedExpressionSpans
     ),
+    mutationHazardIgnoreTreeLookup: createSpanLookup(removedExpressionSpans),
   });
   const extracted = extractExpressions(
     code,

@@ -190,6 +190,7 @@ type AnalyzeProgramOptions = {
   collectTemplateLiterals?: boolean;
   expressionSpanLookup?: SpanLookup;
   mutationHazardIgnoreLookup?: SpanLookup;
+  mutationHazardIgnoreTreeLookup?: SpanLookup;
   templateSpanLookup?: SpanLookup;
 };
 
@@ -198,6 +199,7 @@ type NormalizedAnalyzeProgramOptions = {
   collectTemplateLiterals: boolean;
   expressionSpanLookup: SpanLookup;
   mutationHazardIgnoreLookup: SpanLookup;
+  mutationHazardIgnoreTreeLookup: SpanLookup;
   templateSpanLookup: SpanLookup;
 };
 
@@ -211,6 +213,7 @@ type RequestAnalysis = Pick<
 > & {
   hasEffectiveMutationHazardSeed: boolean;
   ignoredMutationHazardNodes: Set<Node>;
+  ignoredMutationHazardTreeNodes: Set<Node>;
 };
 
 const programScopeFacts = new WeakMap<Program, ProgramScopeFacts>();
@@ -236,6 +239,7 @@ const normalizeAnalyzeProgramOptions = ({
   collectTemplateLiterals = false,
   expressionSpanLookup,
   mutationHazardIgnoreLookup,
+  mutationHazardIgnoreTreeLookup,
   templateSpanLookup,
 }: AnalyzeProgramOptions): NormalizedAnalyzeProgramOptions => {
   const normalizedExpressionSpanLookup =
@@ -250,6 +254,9 @@ const normalizeAnalyzeProgramOptions = ({
       ? normalizedExpressionSpanLookup
       : null,
     mutationHazardIgnoreLookup: normalizeSpanLookup(mutationHazardIgnoreLookup),
+    mutationHazardIgnoreTreeLookup: normalizeSpanLookup(
+      mutationHazardIgnoreTreeLookup
+    ),
     templateSpanLookup: collectTemplateLiterals
       ? templateSpanLookup ?? null
       : null,
@@ -264,6 +271,7 @@ const programAnalysisCacheKey = ({
   collectTemplateLiterals,
   expressionSpanLookup,
   mutationHazardIgnoreLookup,
+  mutationHazardIgnoreTreeLookup,
   templateSpanLookup,
 }: NormalizedAnalyzeProgramOptions): string =>
   JSON.stringify([
@@ -271,6 +279,7 @@ const programAnalysisCacheKey = ({
     collectTemplateLiterals ? '1' : '0',
     sortedSpanLookup(expressionSpanLookup),
     sortedSpanLookup(mutationHazardIgnoreLookup),
+    sortedSpanLookup(mutationHazardIgnoreTreeLookup),
     sortedSpanLookup(templateSpanLookup),
   ]);
 
@@ -321,6 +330,7 @@ const createRequestAnalysis = ({
   collectTemplateLiterals,
   expressionSpanLookup,
   mutationHazardIgnoreLookup,
+  mutationHazardIgnoreTreeLookup,
   templateSpanLookup,
 }: NormalizedAnalyzeProgramOptions): {
   collect: (node: Node, ancestors: Node[]) => void;
@@ -329,6 +339,7 @@ const createRequestAnalysis = ({
   const result: RequestAnalysis = {
     hasEffectiveMutationHazardSeed: false,
     ignoredMutationHazardNodes: new Set(),
+    ignoredMutationHazardTreeNodes: new Set(),
     targetExpressions: [],
     templateLiterals: [],
   };
@@ -338,7 +349,17 @@ const createRequestAnalysis = ({
       registerMutationHazardNode(
         node,
         mutationHazardIgnoreLookup,
-        result.ignoredMutationHazardNodes
+        mutationHazardIgnoreTreeLookup,
+        result.ignoredMutationHazardNodes,
+        result.ignoredMutationHazardTreeNodes
+      );
+    } else if (mutationHazardIgnoreTreeLookup) {
+      registerMutationHazardNode(
+        node,
+        null,
+        mutationHazardIgnoreTreeLookup,
+        result.ignoredMutationHazardNodes,
+        result.ignoredMutationHazardTreeNodes
       );
     }
     result.hasEffectiveMutationHazardSeed ||= isEffectiveMutationHazardSeed(
@@ -576,14 +597,17 @@ export const analyzeProgram = (
     collectTemplateLiterals = false,
     expressionSpanLookup = null,
     mutationHazardIgnoreLookup = null,
+    mutationHazardIgnoreTreeLookup = null,
   } = normalizedOptions;
   const request = createRequestAnalysis(normalizedOptions);
   let scopeFacts = programScopeFacts.get(program);
-  const cachedDefaultMutationHazards = mutationHazardIgnoreLookup
-    ? undefined
-    : programDefaultMutationHazards.get(program);
+  const cachedDefaultMutationHazards =
+    mutationHazardIgnoreLookup || mutationHazardIgnoreTreeLookup
+      ? undefined
+      : programDefaultMutationHazards.get(program);
   const needsRequestTraversal =
     mutationHazardIgnoreLookup !== null ||
+    mutationHazardIgnoreTreeLookup !== null ||
     cachedDefaultMutationHazards === undefined ||
     collectTemplateLiterals ||
     (collectTargetExpressions && expressionSpanLookup !== null);
@@ -602,6 +626,7 @@ export const analyzeProgram = (
       program,
       scopeFacts.bindingIndex,
       request.result.ignoredMutationHazardNodes,
+      request.result.ignoredMutationHazardTreeNodes,
       request.result.hasEffectiveMutationHazardSeed
     );
     rootMutationHazardsByBinding =
@@ -610,7 +635,7 @@ export const analyzeProgram = (
     if (!programRootMutations.has(program)) {
       programRootMutations.set(program, rootMutationsByBinding);
     }
-    if (!mutationHazardIgnoreLookup) {
+    if (!mutationHazardIgnoreLookup && !mutationHazardIgnoreTreeLookup) {
       programDefaultMutationHazards.set(program, rootMutationHazardsByBinding);
     }
   }

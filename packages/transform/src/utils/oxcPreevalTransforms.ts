@@ -1565,11 +1565,11 @@ const normalizeReplacements = (replacements: Replacement[]): Replacement[] => {
   return result;
 };
 
-export const removeDangerousCodeWithOxc = (
+const collectDangerousCodeReplacementsWithOxc = (
   code: string,
   filename: string,
   options?: CodeRemoverOptions
-): string => {
+): Replacement[] => {
   const replacements: Replacement[] = [];
   const derivedForbiddenBindings = new Set<string>();
   const program = parseOxc(code, filename);
@@ -1803,5 +1803,24 @@ export const removeDangerousCodeWithOxc = (
     }
   );
 
-  return applyReplacements(code, normalizeReplacements(replacements));
+  return normalizeReplacements(replacements);
 };
+
+export const collectDangerousCodeRemovalSpansWithOxc = (
+  code: string,
+  filename: string,
+  options?: CodeRemoverOptions
+): Array<Pick<Replacement, 'end' | 'start'>> =>
+  collectDangerousCodeReplacementsWithOxc(code, filename, options).map(
+    ({ end, start }) => ({ end, start })
+  );
+
+export const removeDangerousCodeWithOxc = (
+  code: string,
+  filename: string,
+  options?: CodeRemoverOptions
+): string =>
+  applyReplacements(
+    code,
+    collectDangerousCodeReplacementsWithOxc(code, filename, options)
+  );

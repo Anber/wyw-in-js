@@ -65,6 +65,10 @@ export const applyOxcProcessors = (
     | 'tagResolver'
   > & {
     eventEmitter?: EventEmitter;
+    getMutationHazardIgnoreTreeSpans?: () => Array<{
+      end: number;
+      start: number;
+    }>;
     preserveSideEffectImportOrderLocals?: Set<string>;
     preserveSideEffectImportLocals?: Set<string>;
   },
@@ -161,6 +165,8 @@ export const applyOxcProcessors = (
     end: usage.target.end,
     start: usage.target.start,
   }));
+  const mutationHazardIgnoreTreeSpans =
+    options.getMutationHazardIgnoreTreeSpans?.() ?? [];
   const extractDependencies = () => {
     try {
       return collectOxcExpressionDependencies(
@@ -169,7 +175,8 @@ export const applyOxcProcessors = (
         collectStaticExpressionValues,
         targetExpressionSpans,
         options.staticBindings,
-        processorManagedExpressionSpans
+        processorManagedExpressionSpans,
+        mutationHazardIgnoreTreeSpans
       );
     } catch (error) {
       if (!(error instanceof OxcSnapshotWriteUnsupportedError)) {
@@ -180,7 +187,8 @@ export const applyOxcProcessors = (
         workingCode,
         filename,
         targetExpressionSpans,
-        processorManagedExpressionSpans
+        processorManagedExpressionSpans,
+        mutationHazardIgnoreTreeSpans
       );
     }
   };

@@ -50,8 +50,16 @@ const markIgnoredMutationHazardTree = (
 export const registerMutationHazardNode = (
   node: Node,
   ignoreLookup: SpanLookup,
-  ignoredHazardNodes: Set<Node>
+  ignoreTreeLookup: SpanLookup,
+  ignoredHazardNodes: Set<Node>,
+  ignoredHazardTreeNodes: Set<Node>
 ): void => {
+  if (ignoreTreeLookup?.has(toSpanKey(node.start, node.end))) {
+    markIgnoredMutationHazardTree(node, ignoredHazardNodes);
+    markIgnoredMutationHazardTree(node, ignoredHazardTreeNodes);
+    return;
+  }
+
   if (!ignoreLookup?.has(toSpanKey(node.start, node.end))) {
     return;
   }
@@ -240,32 +248,63 @@ export const getRootMutationHazards = (
 
 const containsOpaqueAliasConstruct = (
   node: Node,
-  bindingIndex: BindingIndex
-): boolean =>
-  node.type === 'CallExpression' ||
-  node.type === 'NewExpression' ||
-  node.type === 'TaggedTemplateExpression' ||
-  node.type === 'ImportExpression' ||
-  node.type === 'ThisExpression' ||
-  node.type === 'Super' ||
-  (node.type === 'MemberExpression' &&
-    getReferences(node, bindingIndex).length === 0) ||
-  getOxcNodeChildren(node).some((child) =>
-    containsOpaqueAliasConstruct(child, bindingIndex)
+  bindingIndex: BindingIndex,
+  ignoredTreeNodes: ReadonlySet<Node>,
+  ignoredReferenceStarts: ReadonlySet<number>
+): boolean => {
+  if (ignoredTreeNodes.has(node)) {
+    return false;
+  }
+
+  return (
+    node.type === 'CallExpression' ||
+    node.type === 'NewExpression' ||
+    node.type === 'TaggedTemplateExpression' ||
+    node.type === 'ImportExpression' ||
+    node.type === 'ThisExpression' ||
+    node.type === 'Super' ||
+    (node.type === 'MemberExpression' &&
+      getReferences(node, bindingIndex).every((reference) =>
+        ignoredReferenceStarts.has(reference.start)
+      )) ||
+    getOxcNodeChildren(node).some((child) =>
+      containsOpaqueAliasConstruct(
+        child,
+        bindingIndex,
+        ignoredTreeNodes,
+        ignoredReferenceStarts
+      )
+    )
   );
+};
 
 const containsUnprovenAliasSource = (
   node: Node,
-  bindingIndex: BindingIndex
+  bindingIndex: BindingIndex,
+  ignoredTreeNodes: ReadonlySet<Node>,
+  ignoredReferenceStarts: ReadonlySet<number>
 ): boolean =>
-  getReferences(node, bindingIndex).some(
-    (reference) => reference.binding === null
-  ) || containsOpaqueAliasConstruct(node, bindingIndex);
+  !ignoredTreeNodes.has(node) &&
+  (getReferences(node, bindingIndex).some(
+    (reference) =>
+      !ignoredReferenceStarts.has(reference.start) && reference.binding === null
+  ) ||
+    containsOpaqueAliasConstruct(
+      node,
+      bindingIndex,
+      ignoredTreeNodes,
+      ignoredReferenceStarts
+    ));
 
 const collectThrownExpressions = (
   node: Node,
+  ignoredTreeNodes: ReadonlySet<Node>,
   expressions: Expression[] = []
 ): Expression[] => {
+  if (ignoredTreeNodes.has(node)) {
+    return expressions;
+  }
+
   if (
     node.type === 'FunctionDeclaration' ||
     node.type === 'FunctionExpression' ||
@@ -280,7 +319,7 @@ const collectThrownExpressions = (
   }
 
   getOxcNodeChildren(node).forEach((child) =>
-    collectThrownExpressions(child, expressions)
+    collectThrownExpressions(child, ignoredTreeNodes, expressions)
   );
   return expressions;
 };
@@ -289,7 +328,8 @@ const collectRootMutationHazards = (
   program: Program,
   mutations: Map<string, Array<AssignmentExpression | UpdateExpression>>,
   bindingIndex: BindingIndex,
-  ignoredHazardNodes: ReadonlySet<Node>
+  ignoredHazardNodes: ReadonlySet<Node>,
+  ignoredHazardTreeNodes: ReadonlySet<Node>
 ): Map<string, Node[]> => {
   const { bindingsByName } = bindingIndex;
   const hazards = new Map<string, Node[]>();
@@ -330,11 +370,22 @@ const collectRootMutationHazards = (
   ): Binding | undefined =>
     resolveBindingInIndex(bindingIndex, name, referenceStart);
 
+  const ignoredHazardTreeReferenceStarts = new Set<number>();
+  ignoredHazardTreeNodes.forEach((node) => {
+    if (node.type === 'Identifier') {
+      ignoredHazardTreeReferenceStarts.add(node.start);
+    }
+  });
+
   const collectReferenceKeys = (node: Node): string[] => [
     ...new Set(
-      getReferences(node, bindingIndex).map(({ binding, name }) =>
-        binding ? toMutationBindingKey(binding) : name
-      )
+      getReferences(node, bindingIndex)
+        .filter(
+          (reference) => !ignoredHazardTreeReferenceStarts.has(reference.start)
+        )
+        .map(({ binding, name }) =>
+          binding ? toMutationBindingKey(binding) : name
+        )
     ),
   ];
 
@@ -352,7 +403,8 @@ const collectRootMutationHazards = (
       getReferences(node, bindingIndex)
         .filter(
           (reference) =>
-            !processorManagedAliasReferenceStarts.has(reference.start)
+            !processorManagedAliasReferenceStarts.has(reference.start) &&
+            !ignoredHazardTreeReferenceStarts.has(reference.start)
         )
         .map(({ binding, name }) =>
           binding ? toMutationBindingKey(binding) : name
@@ -361,7 +413,12 @@ const collectRootMutationHazards = (
   ];
 
   const containsUnprovenAlias = (node: Node): boolean =>
-    containsUnprovenAliasSource(node, bindingIndex);
+    containsUnprovenAliasSource(
+      node,
+      bindingIndex,
+      ignoredHazardTreeNodes,
+      ignoredHazardTreeReferenceStarts
+    );
 
   const shallowCopyChangeCanAffectBindings = (
     bindings: readonly string[],
@@ -555,12 +612,19 @@ const collectRootMutationHazards = (
     unprovenResult: boolean;
   }> = [];
   visitOxcScopes(program, null, (node, scope, parent) => {
+    if (ignoredHazardTreeNodes.has(node)) {
+      return;
+    }
+
     if (
       node.type === 'CatchClause' &&
       node.param &&
       parent?.type === 'TryStatement'
     ) {
-      const thrownExpressions = collectThrownExpressions(parent.block);
+      const thrownExpressions = collectThrownExpressions(
+        parent.block,
+        ignoredHazardTreeNodes
+      );
       const sourceExpressions = [
         ...thrownExpressions,
         ...collectPatternDefaultExpressions(node.param),
@@ -957,6 +1021,7 @@ export const collectProgramMutationAnalysis = (
   program: Program,
   bindingIndex: BindingIndex,
   ignoredMutationHazardNodes: ReadonlySet<Node>,
+  ignoredMutationHazardTreeNodes: ReadonlySet<Node>,
   hasEffectiveMutationHazardSeed: boolean
 ): Pick<
   ProgramAnalysis,
@@ -970,7 +1035,8 @@ export const collectProgramMutationAnalysis = (
           program,
           rootMutationsByBinding,
           bindingIndex,
-          ignoredMutationHazardNodes
+          ignoredMutationHazardNodes,
+          ignoredMutationHazardTreeNodes
         );
 
   return {
