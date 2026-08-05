@@ -496,7 +496,8 @@ export function* resolveStaticExport(
       start: target.expression.start,
     },
     env,
-    getStaticBindings(action)
+    getStaticBindings(action),
+    sourcePreevalForExpression?.processorManagedExpressionSpans
   );
   if (!isOxcStaticSerializableValue(value)) {
     const metadataResult = yield* resolveProcessorStaticExport(

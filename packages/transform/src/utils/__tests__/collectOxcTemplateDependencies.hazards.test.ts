@@ -4,6 +4,7 @@ import dedent from 'dedent';
 import {
   collectOxcExpressionDependencies,
   collectOxcTemplateDependencies,
+  evaluateOxcStaticExpressionAt,
 } from '../collectOxcTemplateDependencies';
 import {
   analyzeProgram,
@@ -762,6 +763,68 @@ describe('collectOxcTemplateDependencies mutation provenance', () => {
     expect(result.staticValues).toEqual([]);
     expect(result.staticValueCandidates).toHaveLength(1);
     expect(result.staticValueCandidates[0]?.source).toContain('=> width');
+  });
+
+  it('evaluates a later imported member after a processor-managed scalar interpolation', () => {
+    const code = dedent`
+      import { source } from './tokens';
+
+      processor\`${'${source.height}'}\`;
+      source.width;
+    `;
+    const processorStart = code.indexOf('processor`');
+    const processorEnd = code.indexOf('`;', processorStart) + 1;
+    const expressionStart = code.lastIndexOf('source.width');
+
+    expect(
+      evaluateOxcStaticExpressionAt(
+        code,
+        filename,
+        {
+          end: expressionStart + 'source.width'.length,
+          start: expressionStart,
+        },
+        new Map([['source', { height: 16, width: 304 }]]),
+        undefined,
+        [
+          {
+            end: processorEnd,
+            start: processorStart,
+          },
+        ]
+      )
+    ).toBe(304);
+  });
+
+  it('keeps a nested call hazardous while evaluating after a processor-managed interpolation', () => {
+    const code = dedent`
+      import { mutate, source } from './tokens';
+
+      processor\`${'${mutate(source)}'}\`;
+      source.width;
+    `;
+    const processorStart = code.indexOf('processor`');
+    const processorEnd = code.indexOf('`;', processorStart) + 1;
+    const expressionStart = code.lastIndexOf('source.width');
+
+    expect(
+      evaluateOxcStaticExpressionAt(
+        code,
+        filename,
+        {
+          end: expressionStart + 'source.width'.length,
+          start: expressionStart,
+        },
+        new Map([['source', { width: 304 }]]),
+        undefined,
+        [
+          {
+            end: processorEnd,
+            start: processorStart,
+          },
+        ]
+      )
+    ).toBeUndefined();
   });
 
   it('preserves a nested call hazard seed inside a processor-managed interpolation', () => {

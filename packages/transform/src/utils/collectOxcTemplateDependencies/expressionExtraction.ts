@@ -833,12 +833,16 @@ export const evaluateOxcStaticExpressionAt = (
   filename: string,
   expressionSpan: ExpressionSpan,
   env: Map<string, unknown> = new Map(),
-  staticBindings?: StaticBindings
+  staticBindings?: StaticBindings,
+  processorManagedExpressionSpans: ExpressionSpan[] = []
 ): unknown | undefined => {
   const program = parseOxc(code, filename);
   const analysis = analyzeProgram(program, {
     collectTargetExpressions: true,
     expressionSpanLookup: createSpanLookup([expressionSpan]),
+    mutationHazardIgnoreLookup: createSpanLookup(
+      processorManagedExpressionSpans
+    ),
   });
   const [expression] = analysis.targetExpressions;
   if (!expression) {
@@ -857,7 +861,9 @@ export const evaluateOxcStaticExpressionAt = (
     hoistedDeclarations: new Map(),
     hoistedDeclarationsByInsertionPoint: new Map(),
     loc: createOxcLocationLookup(code),
-    processorManagedExpressionSpans: new Set(),
+    processorManagedExpressionSpans: new Set(
+      processorManagedExpressionSpans.map(expressionSpanKey)
+    ),
     program,
     replacements: [],
     rootMutationHazardsByBinding: analysis.rootMutationHazardsByBinding,

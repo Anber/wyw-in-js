@@ -131,6 +131,7 @@ export const applyOxcProcessors = (
   if (definedProcessors.size === 0) {
     return {
       code: workingCode,
+      processorManagedExpressionSpans: [],
       processorClassNamesByLocal: new Map(),
       processors: [],
       staticValueCandidates: [],
@@ -145,6 +146,7 @@ export const applyOxcProcessors = (
   if (processorUsages.length === 0) {
     return {
       code: workingCode,
+      processorManagedExpressionSpans: [],
       processorClassNamesByLocal: new Map(),
       processors: [],
       staticValueCandidates: [],
@@ -413,6 +415,7 @@ export const applyOxcProcessors = (
 
   const result: ApplyOxcProcessorsResult = {
     code: buildCode(),
+    processorManagedExpressionSpans,
     processorClassNamesByLocal,
     processors,
     staticValueCandidates: addCandidateInlineConstants(

@@ -29,6 +29,7 @@ export type ApplyOxcProcessorsResult = {
   finalizeProcessorCallbacks?: (
     staticValueCache?: Map<string, unknown>
   ) => ApplyOxcProcessorsResult;
+  processorManagedExpressionSpans: ExpressionSpan[];
   // Selector-only processor class names (css`...`-style). Safe to use as
   // a class-name fallback in cross-file static-export resolution because
   // the runtime value of the binding IS this string.

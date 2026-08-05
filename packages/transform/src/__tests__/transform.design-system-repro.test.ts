@@ -160,7 +160,9 @@ describe('design-system chain repro for static eval strategy', () => {
         export const space = {
           s0: 0,
           s6: 6,
+          s10: 10,
           s12: 12,
+          s16: 16,
         } as const;
       `
     );
@@ -531,6 +533,107 @@ describe('design-system chain repro for static eval strategy', () => {
       expect(result.cssText).toContain('padding-left:24px');
       expect(result.cssText).toContain('margin-top:36px');
       expect(result.code).not.toContain('./design-system');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('inlines a cross-file scalar derived from a token re-exported by the design-system barrel', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-ds-board-card-repro-'));
+    const dsDir = join(root, 'design-system');
+    const boardCellDir = join(root, 'board-cell');
+    const boardCardDir = join(root, 'board-card');
+    const cache = new TransformCacheCollection();
+    const perf = createPerfEventRecorder();
+    const boardCellFile = join(boardCellDir, 'styles.ts');
+    const entryFile = join(boardCardDir, 'styles.ts');
+
+    require('fs').mkdirSync(dsDir, { recursive: true });
+    require('fs').mkdirSync(boardCellDir, { recursive: true });
+    require('fs').mkdirSync(boardCardDir, { recursive: true });
+    const { barrelFile } = writeBarrelChain(root);
+
+    writeFileSync(
+      boardCellFile,
+      dedent`
+        import { space } from '@fibery/ui-kit/src/design-system';
+        import { css } from 'test-css-processor';
+
+        export const galleryModeStyle = css\`
+          gap: ${'${space.s16}'}px;
+        \`;
+
+        export const CARDS_GAP = space.s10;
+
+        export const style = css\`
+          display: flex;
+          gap: ${'${CARDS_GAP}'}px;
+        \`;
+      `
+    );
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { css } from 'test-css-processor';
+        import { CARDS_GAP } from '../board-cell/styles';
+
+        export const className = css\`
+          padding-top: ${'${CARDS_GAP / 2}'}px;
+          padding-right: ${'${CARDS_GAP / 2}'}px;
+          padding-bottom: ${'${CARDS_GAP / 2}'}px;
+          padding-left: ${'${CARDS_GAP / 2}'}px;
+        \`;
+      `
+    );
+
+    const resolver = async (what: string, importer: string) => {
+      if (what === 'test-css-processor') {
+        return processorFile;
+      }
+      if (what === '@fibery/ui-kit/src/design-system') {
+        return barrelFile;
+      }
+      if (what.startsWith('.')) {
+        const base = resolve(dirname(importer), what);
+        for (const ext of ['.ts', '.tsx', '.js']) {
+          const candidate = `${base}${ext}`;
+          if (existsSync(candidate) && statSync(candidate).isFile()) {
+            return candidate;
+          }
+        }
+        return base;
+      }
+      return null;
+    };
+
+    try {
+      const result = await transform(
+        {
+          cache,
+          eventEmitter: perf.eventEmitter,
+          options: {
+            filename: entryFile,
+            root,
+            pluginOptions: {
+              configFile: false,
+              eval: { strategy: 'static' },
+              tagResolver: (source, tag) =>
+                source === 'test-css-processor' && tag === 'css'
+                  ? processorFile
+                  : null,
+            },
+          },
+        },
+        readFileSync(entryFile, 'utf8'),
+        resolver
+      );
+
+      expect(perf.counts.get('transform:evalFile') ?? 0).toBe(0);
+      expect(
+        result.cssText.match(/padding-(?:top|right|bottom|left):5px/g)
+      ).toHaveLength(4);
+      expect(result.code).not.toContain('CARDS_GAP');
+      expect(result.code).not.toContain('../board-cell/styles');
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
