@@ -796,6 +796,91 @@ describe('collectOxcTemplateDependencies mutation provenance', () => {
     ).toBe(304);
   });
 
+  it('does not propagate a processor result escape back to its interpolation', () => {
+    const code = dedent`
+      import runtime from 'runtime-only';
+      import { source } from './tokens';
+
+      const className = processor\`${'${source.height}'}\`;
+      runtime(className);
+      source.width;
+    `;
+    const processorStart = code.indexOf('processor`');
+    const processorEnd = code.indexOf('`;', processorStart) + 1;
+    const expressionStart = code.lastIndexOf('source.width');
+
+    expect(
+      evaluateOxcStaticExpressionAt(
+        code,
+        filename,
+        {
+          end: expressionStart + 'source.width'.length,
+          start: expressionStart,
+        },
+        new Map([['source', { height: 16, width: 304 }]]),
+        undefined,
+        [
+          {
+            end: processorEnd,
+            start: processorStart,
+          },
+        ]
+      )
+    ).toBe(304);
+  });
+
+  it('uses resolved scalar imports to prove a local helper call pure', () => {
+    const code = dedent`
+      import { tokens } from './tokens';
+
+      function withAlpha(value, alpha) {
+        return value + ' ' + Math.round(alpha * 100) + '%';
+      }
+
+      withAlpha(tokens.accent, 0.7);
+      tokens.border;
+    `;
+    const expressionStart = code.lastIndexOf('tokens.border');
+
+    expect(
+      evaluateOxcStaticExpressionAt(
+        code,
+        filename,
+        {
+          end: expressionStart + 'tokens.border'.length,
+          start: expressionStart,
+        },
+        new Map([['tokens', { accent: 'purple', border: 'gray' }]])
+      )
+    ).toBe('gray');
+  });
+
+  it('classifies a referenced local function without evaluating its body', () => {
+    const code = dedent`
+      const resolve = (props) => runtime(props.value);
+      const callback = (props) => resolve(props);
+      processor\`${'${callback}'}\`;
+    `;
+    const processorStart = code.indexOf('processor`');
+    const templateStart = processorStart + 'processor'.length;
+    const processorEnd = code.indexOf('`;', processorStart) + 1;
+    const result = collectOxcTemplateDependencies(
+      code,
+      filename,
+      true,
+      [{ end: processorEnd, start: templateStart }],
+      undefined,
+      [{ end: processorEnd, start: processorStart }]
+    );
+
+    expect(result.staticValueCandidates).toEqual([
+      expect.objectContaining({
+        imports: [],
+        source: '(props) => resolve(props)',
+      }),
+    ]);
+  });
+
   it('keeps a nested call hazardous while evaluating after a processor-managed interpolation', () => {
     const code = dedent`
       import { mutate, source } from './tokens';

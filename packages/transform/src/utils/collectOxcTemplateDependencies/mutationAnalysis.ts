@@ -16,6 +16,7 @@ import {
 import { getOxcNodeChildren } from '../oxc/ast';
 import { collectOxcPatternBindingNames } from '../oxc/patterns';
 import { getOxcSyntacticPropertyKey } from '../oxc/projections';
+import { isOxcFunctionLike } from '../oxc/runtimeSemantics';
 import {
   findResolvedReferences as getReferences,
   resolveBindingInIndex,
@@ -337,6 +338,28 @@ const collectRootMutationHazards = (
     ),
   ];
 
+  const processorManagedAliasReferenceStarts = new Set<number>();
+  ignoredHazardNodes.forEach((node) => {
+    if (node.type !== 'TaggedTemplateExpression') {
+      return;
+    }
+    getReferences(node, bindingIndex).forEach(({ start }) =>
+      processorManagedAliasReferenceStarts.add(start)
+    );
+  });
+  const collectAliasReferenceKeys = (node: Node): string[] => [
+    ...new Set(
+      getReferences(node, bindingIndex)
+        .filter(
+          (reference) =>
+            !processorManagedAliasReferenceStarts.has(reference.start)
+        )
+        .map(({ binding, name }) =>
+          binding ? toMutationBindingKey(binding) : name
+        )
+    ),
+  ];
+
   const containsUnprovenAlias = (node: Node): boolean =>
     containsUnprovenAliasSource(node, bindingIndex);
 
@@ -547,7 +570,7 @@ const collectRootMutationHazards = (
         sources: [
           ...new Set(
             sourceExpressions.flatMap((expression) =>
-              collectReferenceKeys(expression)
+              collectAliasReferenceKeys(expression)
             )
           ),
         ],
@@ -579,7 +602,7 @@ const collectRootMutationHazards = (
             sources: [
               ...new Set(
                 sourceExpressions.flatMap((expression) =>
-                  collectReferenceKeys(expression)
+                  collectAliasReferenceKeys(expression)
                 )
               ),
             ],
@@ -600,7 +623,7 @@ const collectRootMutationHazards = (
           sources: [
             ...new Set(
               sourceExpressions.flatMap((expression) =>
-                collectReferenceKeys(expression)
+                collectAliasReferenceKeys(expression)
               )
             ),
           ],
@@ -615,7 +638,7 @@ const collectRootMutationHazards = (
       aliasLinks.push({
         declaredAt: scope.parent?.start ?? 0,
         sourceChangesAffectTargets: false,
-        sources: collectReferenceKeys(node),
+        sources: collectAliasReferenceKeys(node),
         targetChangeCanAffectSources: (change) =>
           change.type === 'CallExpression' ||
           change.type === 'NewExpression' ||
@@ -644,7 +667,7 @@ const collectRootMutationHazards = (
           sources: [
             ...new Set(
               defaultExpressions.flatMap((expression) =>
-                collectReferenceKeys(expression)
+                collectAliasReferenceKeys(expression)
               )
             ),
           ],
@@ -662,7 +685,7 @@ const collectRootMutationHazards = (
     if (node.type === 'ClassDeclaration' && node.id) {
       aliasLinks.push({
         declaredAt: node.end,
-        sources: collectReferenceKeys(node),
+        sources: collectAliasReferenceKeys(node),
         targets: collectDeclaredBindingKeys(
           [node.id.name],
           (binding) =>
@@ -680,7 +703,7 @@ const collectRootMutationHazards = (
     if (node.type === 'AssignmentExpression') {
       aliasLinks.push({
         declaredAt: node.end,
-        sources: collectReferenceKeys(node.right),
+        sources: collectAliasReferenceKeys(node.right),
         targets: collectReferenceKeys(node.left),
         unprovenResult: containsUnprovenAlias(node.right),
       });
@@ -703,7 +726,7 @@ const collectRootMutationHazards = (
     const sources = [
       ...new Set(
         sourceExpressions.flatMap((expression) =>
-          collectReferenceKeys(expression)
+          collectAliasReferenceKeys(expression)
         )
       ),
     ];
@@ -725,11 +748,19 @@ const collectRootMutationHazards = (
     const unprovenResult = sourceExpressions.some(containsUnprovenAlias);
 
     if (directTargets.length > 0) {
+      const isFunctionValue = !!node.init && isOxcFunctionLike(node.init);
       aliasLinks.push({
         declaredAt: node.end,
+        sourceChangesAffectTargets: isFunctionValue ? false : undefined,
         sources,
+        targetChangeCanAffectSources: isFunctionValue
+          ? (change) =>
+              change.type === 'CallExpression' ||
+              change.type === 'NewExpression' ||
+              change.type === 'TaggedTemplateExpression'
+          : undefined,
         targets: directTargets,
-        unprovenResult,
+        unprovenResult: isFunctionValue ? false : unprovenResult,
       });
     }
     if (restTargets.length > 0) {

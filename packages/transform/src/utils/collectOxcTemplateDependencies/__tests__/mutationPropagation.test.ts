@@ -205,6 +205,19 @@ describe('indexed mutation propagation', () => {
     ]);
   });
 
+  it('keeps function-valued declarator links dormant until invocation', () => {
+    const code = [
+      'const source = {};',
+      'const captures = () => source;',
+      'source.value = 1;',
+      'captures();',
+    ].join('\n');
+    const analysis = analyze(code);
+
+    expect(labels(code, analysis, 'source')).toEqual(['captures()']);
+    expect(labels(code, analysis, 'captures')).toEqual(['captures()']);
+  });
+
   it('preserves shallow-copy directionality in both rest-link directions', () => {
     const code = [
       'const source = { nested: {} };',

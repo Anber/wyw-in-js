@@ -8,6 +8,7 @@ import {
   collectOxcPatternRuntimeExpressions,
   collectOxcPatternShorthandProperties,
 } from '../oxc/patterns';
+import { isOxcFunctionLike } from '../oxc/runtimeSemantics';
 import { toOxcBindingIdentity } from './bindingIdentity';
 import { findResolvedReferences as getReferences } from './bindingResolution';
 import {
@@ -564,6 +565,14 @@ export function collectStaticBindingExpression(
   }
 
   const nextStack = [...stack, key];
+  if (isOxcFunctionLike(declarator.init)) {
+    return {
+      importedFrom: [],
+      imports: [],
+      source: ctx.code.slice(declarator.init.start, declarator.init.end),
+    };
+  }
+
   if (
     hasReferencedRootMutationBefore(
       declarator.init,
