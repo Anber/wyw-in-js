@@ -69,7 +69,7 @@ export type MutationTimelineLookup<T extends MutationSpan = Node> = Pick<
 
 export type Scope = {
   bindings: Map<string, Binding>;
-  deferredFunction?: boolean;
+  deferredFunctionNode?: Node;
   depth: number;
   end: number;
   functionBoundary: boolean;

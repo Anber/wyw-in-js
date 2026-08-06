@@ -1,8 +1,8 @@
 import { isFeatureEnabled } from '@wyw-in-js/shared';
 
 import type { EventEmitter } from '../EventEmitter';
+import { removeDangerousCodeWithOxc } from '../dangerousCodeRemoval';
 import {
-  removeDangerousCodeWithOxc,
   replaceImportMetaEnvWithOxc,
   rewriteDynamicImportsAndAddRequireFallbackWithOxc,
 } from '../oxcPreevalTransforms';

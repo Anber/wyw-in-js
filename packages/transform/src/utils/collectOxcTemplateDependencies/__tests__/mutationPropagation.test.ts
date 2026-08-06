@@ -5,8 +5,11 @@ import {
   analyzeProgram,
   getRootMutationHazards,
   parseOxc,
+  resolveBindingAt,
+  toMutationBindingKey,
   unknownAliasMutationBinding,
 } from '../scopeAnalysis';
+import { getExecutionVisibleMutationTimeline } from '../mutationExecution';
 
 const filename = '/mutation-propagation.ts';
 
@@ -30,6 +33,18 @@ const labels = (
   getRootMutationHazards(analysis.rootMutationHazardsByBinding, binding).map(
     (node) => code.slice(node.start, node.end)
   );
+
+const visibleLabels = (
+  code: string,
+  analysis: ProgramAnalysis,
+  binding: string,
+  targetStart = code.length
+): string[] =>
+  getExecutionVisibleMutationTimeline(
+    analysis.bindingIndex,
+    timeline(analysis, binding),
+    targetStart
+  ).byStart.map((node) => code.slice(node.start, node.end));
 
 describe('indexed mutation propagation', () => {
   it('promotes a late weak hazard to sibling-capable and wakes its import group', () => {
@@ -216,6 +231,94 @@ describe('indexed mutation propagation', () => {
 
     expect(labels(code, analysis, 'source')).toEqual(['captures()']);
     expect(labels(code, analysis, 'captures')).toEqual(['captures()']);
+  });
+
+  it('publishes dormant function effects at the invocation site', () => {
+    const code = [
+      'import { source, sibling } from "./tokens";',
+      'function render() { mutate(source); }',
+      'render();',
+    ].join('\n');
+    const analysis = analyze(code);
+
+    expect(visibleLabels(code, analysis, 'source')).toEqual(['render()']);
+    expect(visibleLabels(code, analysis, 'sibling')).toEqual(['render()']);
+  });
+
+  it('does not publish invocation summaries into function locals', () => {
+    const code = [
+      'function run() {',
+      '  const local = {};',
+      '  mutate(local);',
+      '}',
+      'run();',
+    ].join('\n');
+    const analysis = analyze(code);
+    const referenceStart = code.indexOf('local);');
+    const binding = resolveBindingAt(
+      { bindingIndex: analysis.bindingIndex },
+      'local',
+      referenceStart
+    );
+
+    expect(binding).toBeDefined();
+    expect(labels(code, analysis, toMutationBindingKey(binding!))).toEqual([
+      'mutate(local)',
+    ]);
+  });
+
+  it('keeps dormant alias effects inside their execution container', () => {
+    const code = [
+      'import { source, sibling } from "./tokens";',
+      'function dormant() {',
+      '  const alias = source;',
+      '  mutate(alias);',
+      '}',
+      'const value = source.width;',
+    ].join('\n');
+    const analysis = analyze(code);
+
+    expect(labels(code, analysis, 'source')).toContain('mutate(alias)');
+    expect(visibleLabels(code, analysis, 'source')).toEqual([]);
+    expect(visibleLabels(code, analysis, 'sibling')).toEqual([]);
+  });
+
+  it('publishes invoked unproven alias effects at the call site', () => {
+    const code = [
+      'function mutate() {',
+      '  const alias = registry.source;',
+      '  alias.width = 400;',
+      '}',
+      'mutate();',
+    ].join('\n');
+    const analysis = analyze(code);
+
+    expect(visibleLabels(code, analysis, unknownAliasMutationBinding)).toEqual([
+      'mutate()',
+    ]);
+  });
+
+  it.each([
+    [
+      'inline callback',
+      [
+        'import { source, sibling } from "./tokens";',
+        'wrap(() => source.value);',
+      ].join('\n'),
+    ],
+    [
+      'named callback',
+      [
+        'import { source, sibling } from "./tokens";',
+        'function callback() { return source.value; }',
+        'wrap(callback);',
+      ].join('\n'),
+    ],
+  ])('does not execute captures when passing a %s', (_name, code) => {
+    const analysis = analyze(code);
+
+    expect(labels(code, analysis, 'source')).toEqual([]);
+    expect(labels(code, analysis, 'sibling')).toEqual([]);
   });
 
   it('preserves shallow-copy directionality in both rest-link directions', () => {

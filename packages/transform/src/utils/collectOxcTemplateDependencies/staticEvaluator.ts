@@ -6,10 +6,15 @@ import {
   collectOxcPatternBindingNames,
   collectOxcPatternRuntimeExpressions,
 } from '../oxc/patterns';
-import { getOxcNodeChildren } from '../oxc/ast';
 import { isOxcFunctionLike } from '../oxc/runtimeSemantics';
-import { findResolvedReferences as getReferences } from './bindingResolution';
 import { lookupStaticBinding } from './staticBindings';
+import { isReadOnlyOpaqueFunction } from './staticFunctionPurity';
+import {
+  hasBindingMutationBefore,
+  hasBindingMutationHazardBetween,
+  hasReferencedRootMutationBetween,
+  hasReferencedRootMutationHazardBefore,
+} from './staticMutationChecks';
 import * as timeline from './mutationTimeline';
 import * as recursiveProof from './recursiveProof';
 import { resolveBindingAt } from './scopeAnalysis';
@@ -53,97 +58,9 @@ import {
   type EvalEnv,
   type EvaluationStack,
 } from './staticEvaluationRuntime';
-import type { Binding, ExtractionContext } from './types';
+import type { ExtractionContext } from './types';
 
 export { createOxcStaticCallableValue } from './staticEvaluationRuntime';
-
-const isDirectReadOnlyExpression = (node: Node): boolean => {
-  if (
-    node.type === 'TSAsExpression' ||
-    node.type === 'TSSatisfiesExpression' ||
-    node.type === 'TSNonNullExpression' ||
-    node.type === 'TSInstantiationExpression' ||
-    node.type === 'TSTypeAssertion' ||
-    node.type === 'ParenthesizedExpression'
-  ) {
-    return isDirectReadOnlyExpression(node.expression);
-  }
-
-  return node.type === 'Identifier' || node.type === 'Literal';
-};
-
-const readOnlyOpaqueFunctionCache = new WeakMap<Node, boolean>();
-
-const isReadOnlyOpaqueFunction = (node: Node): boolean => {
-  const cached = readOnlyOpaqueFunctionCache.get(node);
-  if (cached !== undefined) {
-    return cached;
-  }
-
-  if (!isOxcFunctionLike(node)) {
-    readOnlyOpaqueFunctionCache.set(node, false);
-    return false;
-  }
-
-  if (
-    node.params.some(
-      (param) => collectOxcPatternRuntimeExpressions(param).length > 0
-    )
-  ) {
-    readOnlyOpaqueFunctionCache.set(node, false);
-    return false;
-  }
-
-  const { body } = node;
-  if (!body) {
-    readOnlyOpaqueFunctionCache.set(node, false);
-    return false;
-  }
-  if (body.type !== 'BlockStatement') {
-    const result = isDirectReadOnlyExpression(body);
-    readOnlyOpaqueFunctionCache.set(node, result);
-    return result;
-  }
-
-  const result = getOxcNodeChildren(body).every(
-    (statement) =>
-      statement.type === 'EmptyStatement' ||
-      (statement.type === 'ExpressionStatement' &&
-        statement.expression.type === 'Literal' &&
-        typeof statement.expression.value === 'string') ||
-      (statement.type === 'ReturnStatement' &&
-        (!statement.argument || isDirectReadOnlyExpression(statement.argument)))
-  );
-  readOnlyOpaqueFunctionCache.set(node, result);
-  return result;
-};
-
-const hasReferencedRootMutationBetween = (
-  expression: Expression,
-  start: number,
-  end: number,
-  ctx: ExtractionContext,
-  env: EvalEnv
-): boolean =>
-  getReferences(expression, ctx.bindingIndex).some(({ binding }) => {
-    if (!binding) {
-      return false;
-    }
-
-    return (
-      timeline.hasTimelineStartInRange(
-        getBindingDirectTimeline(binding, ctx),
-        start,
-        end
-      ) ||
-      timeline.someTimelineFullyContained(
-        getBindingHazardTimeline(binding, ctx),
-        start,
-        end,
-        (hazard) => !isKnownPureStaticCall(hazard, ctx, env)
-      )
-    );
-  });
 
 export const isKnownPureStaticCall = (
   node: Node,
@@ -188,10 +105,8 @@ export const isKnownPureStaticCall = (
     return false;
   }
 
-  // A helper that only returns a direct binding/literal read cannot mutate
-  // unrelated state even when that binding is intentionally unavailable to
-  // the static evaluator. This distinction matters for sibling imports: an
-  // opaque return value is not the same thing as an impure invocation.
+  // An opaque return value is distinct from an impure invocation. A helper
+  // that only returns a direct read cannot mutate sibling imports.
   if (isReadOnlyOpaqueFunction(fn)) {
     return true;
   }
@@ -228,64 +143,6 @@ export const isKnownPureStaticCall = (
     );
   });
 };
-
-const hasReferencedRootMutationHazardBefore = (
-  expression: Expression,
-  end: number,
-  ctx: ExtractionContext,
-  ignoredHazard: Node | undefined,
-  env: EvalEnv
-): boolean => {
-  if (ctx.rootMutationHazardsByBinding.size === 0) {
-    return false;
-  }
-
-  return getReferences(expression, ctx.bindingIndex).some(({ binding }) => {
-    if (!binding) {
-      return false;
-    }
-
-    return timeline.someTimelineEndAtOrBefore(
-      getBindingHazardTimeline(binding, ctx),
-      end,
-      (hazard) =>
-        !isKnownPureStaticCall(hazard, ctx, env) &&
-        (!ignoredHazard ||
-          hazard.start < ignoredHazard.start ||
-          ignoredHazard.end < hazard.end)
-    );
-  });
-};
-
-const hasBindingMutationHazardBetween = (
-  binding: Binding,
-  start: number,
-  end: number,
-  ctx: ExtractionContext,
-  env: EvalEnv
-): boolean =>
-  timeline.someTimelineFullyContained(
-    getBindingHazardTimeline(binding, ctx),
-    start,
-    end,
-    (hazard) => !isKnownPureStaticCall(hazard, ctx, env)
-  );
-
-const hasBindingMutationBefore = (
-  binding: Binding,
-  end: number,
-  ctx: ExtractionContext,
-  env: EvalEnv
-): boolean =>
-  timeline.hasTimelineStartBefore(
-    getBindingDirectTimeline(binding, ctx),
-    end
-  ) ||
-  timeline.someTimelineEndAtOrBefore(
-    getBindingHazardTimeline(binding, ctx),
-    end,
-    (hazard) => !isKnownPureStaticCall(hazard, ctx, env)
-  );
 
 export const evaluateStatic = (
   expression: Expression,
@@ -452,7 +309,13 @@ export const evaluateStatic = (
 
       if (
         binding?.importedFrom &&
-        hasBindingMutationBefore(binding, ctx.currentExpressionStart, ctx, env)
+        hasBindingMutationBefore(
+          binding,
+          ctx.currentExpressionStart,
+          ctx,
+          env,
+          isKnownPureStaticCall
+        )
       ) {
         return undefined;
       }
@@ -462,7 +325,13 @@ export const evaluateStatic = (
 
     if (binding?.importedFrom) {
       if (
-        hasBindingMutationBefore(binding, ctx.currentExpressionStart, ctx, env)
+        hasBindingMutationBefore(
+          binding,
+          ctx.currentExpressionStart,
+          ctx,
+          env,
+          isKnownPureStaticCall
+        )
       ) {
         return undefined;
       }
@@ -535,7 +404,8 @@ export const evaluateStatic = (
             ctx.currentExpressionStart,
             ctx,
             declarator,
-            env
+            env,
+            isKnownPureStaticCall
           )
         ) {
           return undefined;
@@ -550,7 +420,8 @@ export const evaluateStatic = (
             declarator.start,
             ctx,
             undefined,
-            env
+            env,
+            isKnownPureStaticCall
           )
         ) {
           return undefined;
@@ -577,7 +448,8 @@ export const evaluateStatic = (
                 declarator.start,
                 ctx,
                 undefined,
-                env
+                env,
+                isKnownPureStaticCall
               )
           )
         ) {
@@ -617,7 +489,8 @@ export const evaluateStatic = (
             declarator.end,
             ctx.currentExpressionStart,
             ctx,
-            env
+            env,
+            isKnownPureStaticCall
           ) ||
           patternRuntimeExpressions.some((runtimeExpression) =>
             hasReferencedRootMutationBetween(
@@ -625,7 +498,8 @@ export const evaluateStatic = (
               declarator.end,
               ctx.currentExpressionStart,
               ctx,
-              env
+              env,
+              isKnownPureStaticCall
             )
           );
         if (
@@ -637,7 +511,8 @@ export const evaluateStatic = (
               declarator.end,
               ctx.currentExpressionStart,
               ctx,
-              env
+              env,
+              isKnownPureStaticCall
             ))
         ) {
           return undefined;

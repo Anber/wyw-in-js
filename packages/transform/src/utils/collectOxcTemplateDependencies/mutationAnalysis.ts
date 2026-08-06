@@ -15,7 +15,6 @@ import {
 } from '../oxc/assignmentTargets';
 import { getOxcNodeChildren } from '../oxc/ast';
 import { collectOxcPatternBindingNames } from '../oxc/patterns';
-import { getOxcSyntacticPropertyKey } from '../oxc/projections';
 import { isOxcFunctionLike } from '../oxc/runtimeSemantics';
 import {
   findResolvedReferences as getReferences,
@@ -26,6 +25,21 @@ import {
   getMutationTimeline,
   sealMutationTimelineMap,
 } from './mutationTimeline';
+import {
+  collectInvocationTargetKeys,
+  collectMutationReferenceKeys,
+  collectRootMutations,
+  collectThrownExpressions,
+  containsUnprovenAliasSource,
+  createDeferredReferencePolicyCollector,
+  findContainingClass,
+  getExecutionOwner,
+  isImmediatelyInvokedFunction,
+  publishDeferredUnknownAliasSources,
+  registerExecutionFunction,
+  registerExecutionNode,
+  type MutationAliasLink,
+} from './mutationExecution';
 import { visitOxcScopes } from './scopeTraversal';
 import type {
   Binding,
@@ -158,77 +172,6 @@ const collectRestContainerBindingNames = (
   return names;
 };
 
-const collectRootMutations = (
-  program: Program
-): Map<string, Array<AssignmentExpression | UpdateExpression>> => {
-  const mutations = new Map<
-    string,
-    Array<AssignmentExpression | UpdateExpression>
-  >();
-
-  const getRootMutationTarget = (
-    node: Node
-  ): { binding: string; path: Array<string | number> } | null => {
-    if (node.type === 'Identifier') {
-      return {
-        binding: node.name,
-        path: [],
-      };
-    }
-
-    if (node.type !== 'MemberExpression') {
-      return null;
-    }
-
-    const parent = getRootMutationTarget(node.object);
-    if (!parent) {
-      return null;
-    }
-
-    const key = getOxcSyntacticPropertyKey(node.property, node.computed);
-    if (key === null) {
-      return null;
-    }
-
-    return {
-      binding: parent.binding,
-      path: [...parent.path, key],
-    };
-  };
-
-  program.body.forEach((statement) => {
-    if (statement.type !== 'ExpressionStatement') {
-      return;
-    }
-
-    const { expression } = statement;
-    if (expression.type === 'AssignmentExpression') {
-      const target = getRootMutationTarget(expression.left);
-      if (expression.operator !== '=' || !target || target.path.length === 0) {
-        return;
-      }
-
-      const bucket = mutations.get(target.binding) ?? [];
-      bucket.push(expression);
-      mutations.set(target.binding, bucket);
-      return;
-    }
-
-    if (expression.type === 'UpdateExpression') {
-      const target = getRootMutationTarget(expression.argument);
-      if (!target || target.path.length === 0) {
-        return;
-      }
-
-      const bucket = mutations.get(target.binding) ?? [];
-      bucket.push(expression);
-      mutations.set(target.binding, bucket);
-    }
-  });
-
-  return mutations;
-};
-
 export const unknownAliasMutationBinding =
   '\0wyw-static-unknown-alias-mutation';
 
@@ -245,118 +188,6 @@ export const getRootMutationHazards = (
   hazards: ReadonlyMap<string, MutationTimeline<Node>>,
   binding: string
 ): readonly Node[] => getMutationTimeline(hazards, binding).byStart;
-
-const containsOpaqueAliasConstruct = (
-  node: Node,
-  bindingIndex: BindingIndex,
-  ignoredTreeNodes: ReadonlySet<Node>,
-  ignoredReferenceStarts: ReadonlySet<number>
-): boolean => {
-  if (ignoredTreeNodes.has(node)) {
-    return false;
-  }
-
-  return (
-    node.type === 'CallExpression' ||
-    node.type === 'NewExpression' ||
-    node.type === 'TaggedTemplateExpression' ||
-    node.type === 'ImportExpression' ||
-    node.type === 'ThisExpression' ||
-    node.type === 'Super' ||
-    (node.type === 'MemberExpression' &&
-      getReferences(node, bindingIndex).every((reference) =>
-        ignoredReferenceStarts.has(reference.start)
-      )) ||
-    getOxcNodeChildren(node).some((child) =>
-      containsOpaqueAliasConstruct(
-        child,
-        bindingIndex,
-        ignoredTreeNodes,
-        ignoredReferenceStarts
-      )
-    )
-  );
-};
-
-const containsUnprovenAliasSource = (
-  node: Node,
-  bindingIndex: BindingIndex,
-  ignoredTreeNodes: ReadonlySet<Node>,
-  ignoredReferenceStarts: ReadonlySet<number>
-): boolean =>
-  !ignoredTreeNodes.has(node) &&
-  (getReferences(node, bindingIndex).some(
-    (reference) =>
-      !ignoredReferenceStarts.has(reference.start) && reference.binding === null
-  ) ||
-    containsOpaqueAliasConstruct(
-      node,
-      bindingIndex,
-      ignoredTreeNodes,
-      ignoredReferenceStarts
-    ));
-
-const collectThrownExpressions = (
-  node: Node,
-  ignoredTreeNodes: ReadonlySet<Node>,
-  expressions: Expression[] = []
-): Expression[] => {
-  if (ignoredTreeNodes.has(node)) {
-    return expressions;
-  }
-
-  if (
-    node.type === 'FunctionDeclaration' ||
-    node.type === 'FunctionExpression' ||
-    node.type === 'ArrowFunctionExpression'
-  ) {
-    return expressions;
-  }
-
-  if (node.type === 'ThrowStatement') {
-    expressions.push(node.argument);
-    return expressions;
-  }
-
-  getOxcNodeChildren(node).forEach((child) =>
-    collectThrownExpressions(child, ignoredTreeNodes, expressions)
-  );
-  return expressions;
-};
-
-const isImmediatelyInvokedFunction = (
-  functionNode: Node,
-  ancestors: readonly Node[]
-): boolean => {
-  let child = functionNode;
-  for (let index = ancestors.length - 1; index >= 0; index -= 1) {
-    const ancestor = ancestors[index]!;
-    if (
-      ancestor.type === 'ParenthesizedExpression' &&
-      ancestor.expression === child
-    ) {
-      child = ancestor;
-      continue;
-    }
-    if (
-      ancestor.type === 'SequenceExpression' &&
-      ancestor.expressions[ancestor.expressions.length - 1] === child
-    ) {
-      child = ancestor;
-      continue;
-    }
-
-    return (
-      ((ancestor.type === 'CallExpression' ||
-        ancestor.type === 'NewExpression') &&
-        ancestor.callee === child) ||
-      (ancestor.type === 'TaggedTemplateExpression' && ancestor.tag === child)
-    );
-  }
-
-  return false;
-};
-
 const collectRootMutationHazards = (
   program: Program,
   mutations: Map<string, Array<AssignmentExpression | UpdateExpression>>,
@@ -410,17 +241,31 @@ const collectRootMutationHazards = (
     }
   });
 
-  const collectReferenceKeys = (node: Node): string[] => [
-    ...new Set(
-      getReferences(node, bindingIndex)
-        .filter(
-          (reference) => !ignoredHazardTreeReferenceStarts.has(reference.start)
-        )
-        .map(({ binding, name }) =>
-          binding ? toMutationBindingKey(binding) : name
-        )
-    ),
-  ];
+  const toReferenceKey = (binding: Binding | null, name: string): string =>
+    binding ? toMutationBindingKey(binding) : name;
+  const collectReferenceKeys = (node: Node): string[] =>
+    collectMutationReferenceKeys(
+      node,
+      bindingIndex,
+      [ignoredHazardTreeReferenceStarts],
+      toReferenceKey
+    );
+
+  const collectDeferredReferencePolicy =
+    createDeferredReferencePolicyCollector(bindingIndex);
+  const collectEagerReferenceKeys = (
+    node: Node,
+    includeBinding: (binding: Binding | null) => boolean = () => true
+  ): string[] => {
+    const { ignoredStarts } = collectDeferredReferencePolicy(node);
+    return collectMutationReferenceKeys(
+      node,
+      bindingIndex,
+      [ignoredHazardTreeReferenceStarts, ignoredStarts],
+      toReferenceKey,
+      includeBinding
+    );
+  };
 
   const processorManagedAliasReferenceStarts = new Set<number>();
   ignoredHazardNodes.forEach((node) => {
@@ -431,19 +276,25 @@ const collectRootMutationHazards = (
       processorManagedAliasReferenceStarts.add(start)
     );
   });
-  const collectAliasReferenceKeys = (node: Node): string[] => [
-    ...new Set(
-      getReferences(node, bindingIndex)
-        .filter(
-          (reference) =>
-            !processorManagedAliasReferenceStarts.has(reference.start) &&
-            !ignoredHazardTreeReferenceStarts.has(reference.start)
-        )
-        .map(({ binding, name }) =>
-          binding ? toMutationBindingKey(binding) : name
-        )
-    ),
-  ];
+  const collectAliasReferenceKeys = (
+    node: Node,
+    includeBinding: (binding: Binding | null) => boolean = () => true
+  ): string[] =>
+    collectMutationReferenceKeys(
+      node,
+      bindingIndex,
+      [processorManagedAliasReferenceStarts, ignoredHazardTreeReferenceStarts],
+      toReferenceKey,
+      includeBinding
+    );
+  const collectCapturedAliasReferenceKeys = (node: Node): string[] =>
+    collectAliasReferenceKeys(
+      node,
+      (binding) =>
+        !binding ||
+        binding.declaredAt < node.start ||
+        node.end <= binding.declaredAt
+    );
 
   const containsUnprovenAlias = (node: Node): boolean =>
     containsUnprovenAliasSource(
@@ -452,6 +303,18 @@ const collectRootMutationHazards = (
       ignoredHazardTreeNodes,
       ignoredHazardTreeReferenceStarts
     );
+  const containsEagerUnprovenAlias = (node: Node): boolean => {
+    const { ignoredRoots, ignoredStarts } =
+      collectDeferredReferencePolicy(node);
+    return containsUnprovenAliasSource(
+      node,
+      bindingIndex,
+      ignoredHazardTreeNodes,
+      ignoredHazardTreeReferenceStarts,
+      ignoredRoots,
+      ignoredStarts
+    );
+  };
 
   const shallowCopyChangeCanAffectBindings = (
     bindings: readonly string[],
@@ -551,60 +414,73 @@ const collectRootMutationHazards = (
     hazard: Node,
     canAffectSiblingImport = false
   ): void => {
-    collectReferenceKeys(node).forEach((key) => {
+    collectEagerReferenceKeys(node).forEach((key) => {
       addHazard(key, hazard, canAffectSiblingImport);
     });
   };
 
   const addUnknownAliasHazard = (node: Node, hazard: Node): void => {
-    if (containsUnprovenAlias(node)) {
+    if (containsEagerUnprovenAlias(node)) {
       addHazard(unknownAliasMutationBinding, hazard);
     }
   };
 
+  const deferredFunctionsWithUnknownAlias = new Set<Node>();
+  const containingClassByDeferredFunction = new Map<Node, Node>();
   visitOxcScopes(program, null, (node, scope, _parent, ancestors) => {
+    const executionOwner = scope.deferredFunctionNode ?? null;
+    registerExecutionNode(bindingIndex, node, executionOwner);
     if (
       isOxcFunctionLike(node) &&
       !isImmediatelyInvokedFunction(node, ancestors)
     ) {
+      registerExecutionFunction(bindingIndex, node, executionOwner);
+      const containingClass = findContainingClass(ancestors);
+      if (containingClass) {
+        containingClassByDeferredFunction.set(node, containingClass);
+      }
       // Scope state is intentionally inherited by scopes created below it.
       // eslint-disable-next-line no-param-reassign
-      scope.deferredFunction = true;
+      scope.deferredFunctionNode = node;
     }
 
     if (!isEffectiveMutationHazardSeed(node, ignoredHazardNodes)) {
       return;
     }
 
-    // A dormant function body is not executed while the module's static
-    // exports are collected. Keep its direct binding hazard, but do not let
-    // that hazard poison sibling exports from the same imported module. If
-    // the function is invoked, its function alias link below promotes the
-    // captured bindings from the invocation site instead.
-    const canAffectSiblingImport = scope.deferredFunction !== true;
+    const deferredFunction = scope.deferredFunctionNode;
+    const addExecutionUnknownAliasHazard = (
+      referenceNode: Node,
+      hazard: Node
+    ): void => {
+      if (deferredFunction && containsEagerUnprovenAlias(referenceNode)) {
+        deferredFunctionsWithUnknownAlias.add(deferredFunction);
+      }
+      addUnknownAliasHazard(referenceNode, hazard);
+    };
 
     if (node.type === 'AssignmentExpression') {
       // The RHS can similarly create an alias even when the LHS write itself
       // is one of the simple statically modeled root mutations.
       addReferences(node.right, node);
       if (!modeledMutations.has(node)) {
-        addReferences(node.left, node, canAffectSiblingImport);
-        addUnknownAliasHazard(node.left, node);
+        addReferences(node.left, node, true);
+        addExecutionUnknownAliasHazard(node.left, node);
       }
       return;
     }
 
     if (node.type === 'UpdateExpression') {
       if (!modeledMutations.has(node)) {
-        addReferences(node.argument, node, canAffectSiblingImport);
-        addUnknownAliasHazard(node.argument, node);
+        addReferences(node.argument, node, true);
+        addExecutionUnknownAliasHazard(node.argument, node);
       }
       return;
     }
 
     if (node.type === 'UnaryExpression' && node.operator === 'delete') {
-      addReferences(node.argument, node, canAffectSiblingImport);
-      addUnknownAliasHazard(node.argument, node);
+      addReferences(node.argument, node, true);
+      addExecutionUnknownAliasHazard(node.argument, node);
       return;
     }
 
@@ -612,21 +488,21 @@ const collectRootMutationHazards = (
       // Any object passed to unknown code, or used as a method receiver, can
       // be mutated. Pure calls are intentionally rejected here rather than
       // risking a stale static snapshot.
-      addReferences(node.callee, node, canAffectSiblingImport);
-      addUnknownAliasHazard(node.callee, node);
+      // Starting at the invocation keeps an inline IIFE body eager while the
+      // deferred-reference policy still skips callback arguments.
+      addReferences(node, node, true);
+      addExecutionUnknownAliasHazard(node.callee, node);
       node.arguments.forEach((argument) => {
-        addReferences(argument, node, canAffectSiblingImport);
-        addUnknownAliasHazard(argument, node);
+        addExecutionUnknownAliasHazard(argument, node);
       });
       return;
     }
 
     if (node.type === 'NewExpression') {
-      addReferences(node.callee, node, canAffectSiblingImport);
-      addUnknownAliasHazard(node.callee, node);
+      addReferences(node, node, true);
+      addExecutionUnknownAliasHazard(node.callee, node);
       node.arguments.forEach((argument) => {
-        addReferences(argument, node, canAffectSiblingImport);
-        addUnknownAliasHazard(argument, node);
+        addExecutionUnknownAliasHazard(argument, node);
       });
       return;
     }
@@ -636,8 +512,8 @@ const collectRootMutationHazards = (
       // hazard lets known static processor calls remain classifiable, while a
       // direct/aliased tag still represents an opaque invocation.
       if (node.tag.type !== 'CallExpression') {
-        addReferences(node.tag, node, canAffectSiblingImport);
-        addUnknownAliasHazard(node.tag, node);
+        addReferences(node.tag, node, true);
+        addExecutionUnknownAliasHazard(node.tag, node);
       }
       node.quasi.expressions.forEach((expression) => {
         // The escape occurs when the tag is invoked, after interpolation
@@ -645,21 +521,13 @@ const collectRootMutationHazards = (
         // interpolation from invalidating its own pre-call snapshot, while
         // later destructuring still observes an opaque (non-call-classified)
         // escape.
-        addReferences(expression, node.quasi, canAffectSiblingImport);
-        addUnknownAliasHazard(expression, node.quasi);
+        addReferences(expression, node.quasi, true);
+        addExecutionUnknownAliasHazard(expression, node.quasi);
       });
     }
   });
 
-  const aliasLinks: Array<{
-    declaredAt: number;
-    sourceChangeCanAffectTargets?: (change: Node) => boolean;
-    sourceChangesAffectTargets?: boolean;
-    sources: string[];
-    targetChangeCanAffectSources?: (change: Node) => boolean;
-    targets: string[];
-    unprovenResult: boolean;
-  }> = [];
+  const aliasLinks: MutationAliasLink[] = [];
   visitOxcScopes(program, null, (node, scope, parent) => {
     if (ignoredHazardTreeNodes.has(node)) {
       return;
@@ -680,10 +548,11 @@ const collectRootMutationHazards = (
       ];
       aliasLinks.push({
         declaredAt: node.param.end,
+        executionOwner: getExecutionOwner(bindingIndex, node),
         sources: [
           ...new Set(
             sourceExpressions.flatMap((expression) =>
-              collectAliasReferenceKeys(expression)
+              collectCapturedAliasReferenceKeys(expression)
             )
           ),
         ],
@@ -712,10 +581,11 @@ const collectRootMutationHazards = (
           ];
           aliasLinks.push({
             declaredAt: node.right.end,
+            executionOwner: getExecutionOwner(bindingIndex, node),
             sources: [
               ...new Set(
                 sourceExpressions.flatMap((expression) =>
-                  collectAliasReferenceKeys(expression)
+                  collectCapturedAliasReferenceKeys(expression)
                 )
               ),
             ],
@@ -733,10 +603,11 @@ const collectRootMutationHazards = (
         ];
         aliasLinks.push({
           declaredAt: node.right.end,
+          executionOwner: getExecutionOwner(bindingIndex, node),
           sources: [
             ...new Set(
               sourceExpressions.flatMap((expression) =>
-                collectAliasReferenceKeys(expression)
+                collectCapturedAliasReferenceKeys(expression)
               )
             ),
           ],
@@ -748,14 +619,20 @@ const collectRootMutationHazards = (
     }
 
     if (node.type === 'FunctionDeclaration' && node.id) {
+      const sources = collectCapturedAliasReferenceKeys(node);
+      if (deferredFunctionsWithUnknownAlias.has(node)) {
+        sources.push(unknownAliasMutationBinding);
+      }
       aliasLinks.push({
+        callableNode: node,
         declaredAt: scope.parent?.start ?? 0,
+        executionOwner: getExecutionOwner(bindingIndex, node),
         sourceChangesAffectTargets: false,
-        sources: collectAliasReferenceKeys(node),
-        targetChangeCanAffectSources: (change) =>
-          change.type === 'CallExpression' ||
-          change.type === 'NewExpression' ||
-          change.type === 'TaggedTemplateExpression',
+        sources: [...new Set(sources)],
+        targetChangeCanAffectSources: (change, target) =>
+          collectInvocationTargetKeys(change, collectReferenceKeys).includes(
+            target
+          ),
         targets: collectDeclaredBindingKeys(
           [node.id.name],
           (binding) => binding.functionNode === node
@@ -777,10 +654,11 @@ const collectRootMutationHazards = (
 
         aliasLinks.push({
           declaredAt: param.end,
+          executionOwner: getExecutionOwner(bindingIndex, node),
           sources: [
             ...new Set(
               defaultExpressions.flatMap((expression) =>
-                collectAliasReferenceKeys(expression)
+                collectCapturedAliasReferenceKeys(expression)
               )
             ),
           ],
@@ -797,8 +675,10 @@ const collectRootMutationHazards = (
 
     if (node.type === 'ClassDeclaration' && node.id) {
       aliasLinks.push({
+        classNode: node,
         declaredAt: node.end,
-        sources: collectAliasReferenceKeys(node),
+        executionOwner: getExecutionOwner(bindingIndex, node),
+        sources: collectCapturedAliasReferenceKeys(node),
         targets: collectDeclaredBindingKeys(
           [node.id.name],
           (binding) =>
@@ -816,7 +696,8 @@ const collectRootMutationHazards = (
     if (node.type === 'AssignmentExpression') {
       aliasLinks.push({
         declaredAt: node.end,
-        sources: collectAliasReferenceKeys(node.right),
+        executionOwner: getExecutionOwner(bindingIndex, node),
+        sources: collectCapturedAliasReferenceKeys(node.right),
         targets: collectReferenceKeys(node.left),
         unprovenResult: containsUnprovenAlias(node.right),
       });
@@ -839,7 +720,7 @@ const collectRootMutationHazards = (
     const sources = [
       ...new Set(
         sourceExpressions.flatMap((expression) =>
-          collectAliasReferenceKeys(expression)
+          collectCapturedAliasReferenceKeys(expression)
         )
       ),
     ];
@@ -862,15 +743,29 @@ const collectRootMutationHazards = (
 
     if (directTargets.length > 0) {
       const isFunctionValue = !!node.init && isOxcFunctionLike(node.init);
+      const directSources =
+        isFunctionValue && node.init
+          ? collectCapturedAliasReferenceKeys(node.init)
+          : sources;
+      if (
+        isFunctionValue &&
+        node.init &&
+        deferredFunctionsWithUnknownAlias.has(node.init)
+      ) {
+        directSources.push(unknownAliasMutationBinding);
+      }
       aliasLinks.push({
+        callableNode: isFunctionValue ? node.init! : undefined,
         declaredAt: node.end,
+        executionOwner: getExecutionOwner(bindingIndex, node),
         sourceChangesAffectTargets: isFunctionValue ? false : undefined,
-        sources,
+        sources: [...new Set(directSources)],
         targetChangeCanAffectSources: isFunctionValue
-          ? (change) =>
-              change.type === 'CallExpression' ||
-              change.type === 'NewExpression' ||
-              change.type === 'TaggedTemplateExpression'
+          ? (change, target) =>
+              collectInvocationTargetKeys(
+                change,
+                collectReferenceKeys
+              ).includes(target)
           : undefined,
         targets: directTargets,
         unprovenResult: isFunctionValue ? false : unprovenResult,
@@ -879,6 +774,7 @@ const collectRootMutationHazards = (
     if (restTargets.length > 0) {
       aliasLinks.push({
         declaredAt: node.end,
+        executionOwner: getExecutionOwner(bindingIndex, node),
         sourceChangeCanAffectTargets: (change) =>
           shallowCopyChangeCanAffectBindings(sources, change),
         sources,
@@ -889,6 +785,13 @@ const collectRootMutationHazards = (
       });
     }
   });
+
+  publishDeferredUnknownAliasSources(
+    aliasLinks,
+    deferredFunctionsWithUnknownAlias,
+    containingClassByDeferredFunction,
+    unknownAliasMutationBinding
+  );
 
   // Propagation capability forms an absent < weak < strong lattice, while
   // published hazard membership is tracked separately from modeled mutation
@@ -997,7 +900,7 @@ const collectRootMutationHazards = (
         if (
           item.change.start < link.declaredAt ||
           (link.targetChangeCanAffectSources &&
-            !link.targetChangeCanAffectSources(item.change))
+            !link.targetChangeCanAffectSources(item.change, item.key))
         ) {
           continue;
         }

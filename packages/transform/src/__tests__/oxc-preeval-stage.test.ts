@@ -229,7 +229,7 @@ describe('runOxcPreevalStage', () => {
     expect(result.code).not.toContain('__wywPreval = { _exp: _exp }');
   });
 
-  it('ignores mutation hazards from component code removed before evaluation', () => {
+  it('ignores deferred component hazards before dangerous code removal', () => {
     const source = `
       import { css } from 'test-package';
       import { observer } from 'mobx-react-lite';
@@ -252,20 +252,19 @@ describe('runOxcPreevalStage', () => {
       },
     });
 
-    expect(enabled.staticValueCandidates).toEqual([
-      expect.objectContaining({
-        imports: [
-          expect.objectContaining({
-            imported: 'color',
-            source: './tokens',
-          }),
-        ],
-        source: expect.stringContaining('_wyw_static_tokens_color'),
-      }),
-    ]);
-    expect(disabled.staticValueCandidates).toEqual([
-      expect.objectContaining({ imports: [] }),
-    ]);
+    [enabled, disabled].forEach((result) => {
+      expect(result.staticValueCandidates).toEqual([
+        expect.objectContaining({
+          imports: [
+            expect.objectContaining({
+              imported: 'color',
+              source: './tokens',
+            }),
+          ],
+          source: expect.stringContaining('_wyw_static_tokens_color'),
+        }),
+      ]);
+    });
   });
 
   it('still applies preeval syntax rewrites when no processors are present', () => {

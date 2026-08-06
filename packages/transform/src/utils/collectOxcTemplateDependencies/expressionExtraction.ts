@@ -827,7 +827,6 @@ const extractExpressions = (
 
 export const isOxcStaticSerializableValue = (value: unknown): boolean =>
   isStaticSerializableValue(value);
-
 export const evaluateOxcStaticExpressionAt = (
   code: string,
   filename: string,

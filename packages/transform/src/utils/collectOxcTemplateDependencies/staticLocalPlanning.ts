@@ -20,7 +20,6 @@ import {
 import {
   getMutationTimeline,
   hasTimelineStartBefore,
-  someTimelineEndAtOrBefore,
   toMutationBindingKey,
   unknownAliasMutationBinding,
 } from './scopeAnalysis';
@@ -33,6 +32,10 @@ import {
   isOpaqueDestructuringHazard,
 } from './snapshotReplay';
 import { isKnownPureStaticCall } from './staticEvaluator';
+import {
+  getHazardTimelineAt,
+  someHazardTimelineEndAtOrBefore,
+} from './staticEvaluationSafety';
 import type {
   Binding,
   ExtractionContext,
@@ -131,9 +134,10 @@ export const hasReferencedRootMutationBefore = (
           getMutationTimeline(ctx.rootMutationsByBinding, dependencyKey),
           referenceStart
         ) ||
-        someTimelineEndAtOrBefore(
-          getMutationTimeline(ctx.rootMutationHazardsByBinding, dependencyKey),
+        someHazardTimelineEndAtOrBefore(
+          getHazardTimelineAt(dependencyKey, referenceStart, ctx),
           referenceStart,
+          ctx,
           (hazard) =>
             !isKnownPureStaticCall(hazard, ctx) &&
             (!ignoredHazard ||
@@ -155,9 +159,10 @@ export const hasBindingMutationBefore = (
       getMutationTimeline(ctx.rootMutationsByBinding, bindingKey),
       referenceStart
     ) ||
-    someTimelineEndAtOrBefore(
-      getMutationTimeline(ctx.rootMutationHazardsByBinding, bindingKey),
+    someHazardTimelineEndAtOrBefore(
+      getHazardTimelineAt(bindingKey, referenceStart, ctx),
       referenceStart,
+      ctx,
       (hazard) => !isKnownPureStaticCall(hazard, ctx)
     )
   );
@@ -168,9 +173,10 @@ export const hasOpaqueDestructuringHazardBefore = (
   referenceStart: number,
   ctx: ExtractionContext
 ): boolean =>
-  someTimelineEndAtOrBefore(
-    getMutationTimeline(ctx.rootMutationHazardsByBinding, bindingKey),
+  someHazardTimelineEndAtOrBefore(
+    getHazardTimelineAt(bindingKey, referenceStart, ctx),
     referenceStart,
+    ctx,
     (hazard) => isOpaqueDestructuringHazard(hazard, ctx)
   );
 
@@ -208,7 +214,8 @@ export const nestedDestructuringHasCallTimeUncertainty = (
     hasDestructuringIntrinsicMutationBefore(
       declarator.id,
       Number.POSITIVE_INFINITY,
-      ctx
+      ctx,
+      ctx.currentExpressionStart
     )
   ) {
     return true;
@@ -435,14 +442,18 @@ function collectStaticDestructuringProjection(
     ctx.rootMutationsByBinding,
     bindingKey
   );
-  const targetMutationHazards = getMutationTimeline(
-    ctx.rootMutationHazardsByBinding,
-    bindingKey
+  const targetMutationHazards = getHazardTimelineAt(
+    bindingKey,
+    referenceStart,
+    ctx
   );
   if (
     hasTimelineStartBefore(targetMutations, referenceStart) ||
-    someTimelineEndAtOrBefore(targetMutationHazards, referenceStart, (hazard) =>
-      isOpaqueDestructuringHazard(hazard, ctx)
+    someHazardTimelineEndAtOrBefore(
+      targetMutationHazards,
+      referenceStart,
+      ctx,
+      (hazard) => isOpaqueDestructuringHazard(hazard, ctx)
     )
   ) {
     return null;

@@ -1,8 +1,8 @@
 /* eslint-env jest */
 import { stripTypesAndJsxWithOxc } from '../utils/oxcEmit';
+import { removeDangerousCodeWithOxc } from '../utils/dangerousCodeRemoval';
 import {
   addRequireFallbackWithOxc,
-  removeDangerousCodeWithOxc,
   replaceImportMetaEnvWithOxc,
   rewriteDynamicImportsWithOxc,
 } from '../utils/oxcPreevalTransforms';

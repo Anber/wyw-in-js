@@ -17,7 +17,7 @@ import { parseOxcProgramCached } from './parseOxc';
 
 type AnyNode = Node & Record<string, unknown>;
 
-type Replacement = {
+export type Replacement = {
   end: number;
   start: number;
   value: string;
@@ -407,7 +407,7 @@ const isLiteralRequireArg = (node: Expression): boolean => {
   return false;
 };
 
-const applyReplacements = (
+export const applyReplacements = (
   code: string,
   replacements: Replacement[]
 ): string => {
@@ -1565,7 +1565,7 @@ const normalizeReplacements = (replacements: Replacement[]): Replacement[] => {
   return result;
 };
 
-const collectDangerousCodeReplacementsWithOxc = (
+export const collectDangerousCodeReplacementsWithOxc = (
   code: string,
   filename: string,
   options?: CodeRemoverOptions
@@ -1805,22 +1805,3 @@ const collectDangerousCodeReplacementsWithOxc = (
 
   return normalizeReplacements(replacements);
 };
-
-export const collectDangerousCodeRemovalSpansWithOxc = (
-  code: string,
-  filename: string,
-  options?: CodeRemoverOptions
-): Array<Pick<Replacement, 'end' | 'start'>> =>
-  collectDangerousCodeReplacementsWithOxc(code, filename, options).map(
-    ({ end, start }) => ({ end, start })
-  );
-
-export const removeDangerousCodeWithOxc = (
-  code: string,
-  filename: string,
-  options?: CodeRemoverOptions
-): string =>
-  applyReplacements(
-    code,
-    collectDangerousCodeReplacementsWithOxc(code, filename, options)
-  );

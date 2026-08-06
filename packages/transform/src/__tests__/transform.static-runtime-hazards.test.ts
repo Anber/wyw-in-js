@@ -280,6 +280,91 @@ describe('static strategy runtime hazard regressions', () => {
     }
   });
 
+  it('ignores same-import reads inside runtime-only function bodies', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-same-import-runtime-repro-'));
+    const entryFile = join(root, 'entry.ts');
+
+    writeFileSync(
+      join(root, 'tokens.ts'),
+      dedent`
+        export const tokens = {
+          runtimeLabel: 'runtime',
+          gap: 8,
+        } as const;
+      `
+    );
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { css } from 'test-css-processor';
+        import runtime from 'runtime-only';
+        import { tokens } from './tokens';
+
+        export function render() {
+          return runtime(tokens.runtimeLabel);
+        }
+
+        export const className = css\`
+          gap: ${'${tokens.gap}'}px;
+        \`;
+      `
+    );
+
+    try {
+      const result = await runStatic(root, entryFile);
+
+      expect(result.cssText).toContain('gap:8px');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('ignores read-only captures passed to a runtime-only top-level wrapper', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-wrapper-capture-repro-'));
+    const entryFile = join(root, 'entry.ts');
+
+    writeFileSync(
+      join(root, 'tokens.ts'),
+      dedent`
+        export const colors = {
+          runtime: 'red',
+          static: 'blue',
+        } as const;
+        export const layout = { gap: 8 } as const;
+      `
+    );
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { css } from 'test-css-processor';
+        import memoize from 'runtime-only';
+        import { colors, layout } from './tokens';
+
+        const getRuntimeStyle = memoize(() => ({
+          color: colors.runtime,
+        }));
+
+        export function render() {
+          return getRuntimeStyle();
+        }
+
+        export const className = css\`
+          color: ${'${colors.static}'};
+          gap: ${'${layout.gap}'}px;
+        \`;
+      `
+    );
+
+    try {
+      const result = await runStatic(root, entryFile);
+
+      expect(result.cssText).toContain('color:blue');
+      expect(result.cssText).toContain('gap:8px');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('keeps transitive styled callbacks as runtime values', async () => {
     const root = mkdtempSync(join(tmpdir(), 'wyw-static-callback-repro-'));
     const entryFile = join(root, 'entry.js');

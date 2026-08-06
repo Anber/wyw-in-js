@@ -4,7 +4,7 @@ import { isFeatureEnabled } from '@wyw-in-js/shared';
 import type { EventEmitter } from '../EventEmitter';
 import { applyOxcProcessors } from '../applyOxcProcessors';
 import type { ApplyOxcProcessorsResult } from '../applyOxcProcessors/types';
-import { collectDangerousCodeRemovalSpansWithOxc } from '../oxcPreevalTransforms';
+import { collectDangerousCodeRemovalSpansWithOxc } from '../dangerousCodeRemoval';
 import type { OxcPreevalOptions } from './types';
 
 type PreevalProcessorCollection = {

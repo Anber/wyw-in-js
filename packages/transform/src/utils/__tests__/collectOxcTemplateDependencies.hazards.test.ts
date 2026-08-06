@@ -651,29 +651,79 @@ describe('collectOxcTemplateDependencies mutation provenance', () => {
     ['a bare unresolved identifier', 'const alias = current;'],
     ['an identifier-free member root', 'const alias = ({}).current;'],
     ['a this member root', 'const alias = this.current;'],
-    [
-      'a super member root',
+  ])('treats %s as unproven alias provenance', (_description, declaration) => {
+    expectWidthFallback(dedent`
+        import { source } from './tokens';
+
+        ${declaration}
+        alias.width = 400;
+        const { width } = source;
+        const template = tag\`${'${width}'}\`;
+      `);
+  });
+
+  it('does not execute uncalled class method provenance', () => {
+    const result = collectOxcTemplateDependencies(
       dedent`
+        import { source } from './tokens';
+
         class Holder extends Base {
           mutate() {
             const alias = super.current;
             alias.width = 400;
           }
         }
-      `,
-    ],
-  ])('treats %s as unproven alias provenance', (_description, declaration) => {
-    const mutation = declaration.includes('class Holder')
-      ? ''
-      : 'alias.width = 400;';
-    expectWidthFallback(dedent`
-        import { source } from './tokens';
-
-        ${declaration}
-        ${mutation}
         const { width } = source;
         const template = tag\`${'${width}'}\`;
-      `);
+      `,
+      filename,
+      true
+    );
+
+    expect(result.staticValueCandidates).toEqual([
+      expect.objectContaining({
+        imports: [
+          {
+            imported: 'source',
+            local: 'source',
+            source: './tokens',
+          },
+        ],
+      }),
+    ]);
+  });
+
+  it('publishes unproven provenance when its function is called', () => {
+    expectWidthFallback(dedent`
+      import { source } from './tokens';
+
+      function mutate() {
+        const alias = registry.source;
+        alias.width = 400;
+      }
+      mutate();
+      const { width } = source;
+      const template = tag\`${'${width}'}\`;
+    `);
+  });
+
+  it('treats parent-container effects as possible before deferred reads', () => {
+    const result = collectOxcTemplateDependencies(
+      dedent`
+        import { source } from './tokens';
+
+        function render() {
+          return tag\`${'${source.width}'}\`;
+        }
+        mutate(source);
+        render();
+      `,
+      filename,
+      true
+    );
+
+    expect(result.staticValueCandidates).toEqual([]);
+    expect(result.dependencyNames).toEqual(['source']);
   });
 
   it.each(['holder.alias', 'holder[0]'])(
