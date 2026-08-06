@@ -324,6 +324,39 @@ const collectThrownExpressions = (
   return expressions;
 };
 
+const isImmediatelyInvokedFunction = (
+  functionNode: Node,
+  ancestors: readonly Node[]
+): boolean => {
+  let child = functionNode;
+  for (let index = ancestors.length - 1; index >= 0; index -= 1) {
+    const ancestor = ancestors[index]!;
+    if (
+      ancestor.type === 'ParenthesizedExpression' &&
+      ancestor.expression === child
+    ) {
+      child = ancestor;
+      continue;
+    }
+    if (
+      ancestor.type === 'SequenceExpression' &&
+      ancestor.expressions[ancestor.expressions.length - 1] === child
+    ) {
+      child = ancestor;
+      continue;
+    }
+
+    return (
+      ((ancestor.type === 'CallExpression' ||
+        ancestor.type === 'NewExpression') &&
+        ancestor.callee === child) ||
+      (ancestor.type === 'TaggedTemplateExpression' && ancestor.tag === child)
+    );
+  }
+
+  return false;
+};
+
 const collectRootMutationHazards = (
   program: Program,
   mutations: Map<string, Array<AssignmentExpression | UpdateExpression>>,
@@ -529,17 +562,33 @@ const collectRootMutationHazards = (
     }
   };
 
-  visitOxcScopes(program, null, (node) => {
+  visitOxcScopes(program, null, (node, scope, _parent, ancestors) => {
+    if (
+      isOxcFunctionLike(node) &&
+      !isImmediatelyInvokedFunction(node, ancestors)
+    ) {
+      // Scope state is intentionally inherited by scopes created below it.
+      // eslint-disable-next-line no-param-reassign
+      scope.deferredFunction = true;
+    }
+
     if (!isEffectiveMutationHazardSeed(node, ignoredHazardNodes)) {
       return;
     }
+
+    // A dormant function body is not executed while the module's static
+    // exports are collected. Keep its direct binding hazard, but do not let
+    // that hazard poison sibling exports from the same imported module. If
+    // the function is invoked, its function alias link below promotes the
+    // captured bindings from the invocation site instead.
+    const canAffectSiblingImport = scope.deferredFunction !== true;
 
     if (node.type === 'AssignmentExpression') {
       // The RHS can similarly create an alias even when the LHS write itself
       // is one of the simple statically modeled root mutations.
       addReferences(node.right, node);
       if (!modeledMutations.has(node)) {
-        addReferences(node.left, node, true);
+        addReferences(node.left, node, canAffectSiblingImport);
         addUnknownAliasHazard(node.left, node);
       }
       return;
@@ -547,14 +596,14 @@ const collectRootMutationHazards = (
 
     if (node.type === 'UpdateExpression') {
       if (!modeledMutations.has(node)) {
-        addReferences(node.argument, node, true);
+        addReferences(node.argument, node, canAffectSiblingImport);
         addUnknownAliasHazard(node.argument, node);
       }
       return;
     }
 
     if (node.type === 'UnaryExpression' && node.operator === 'delete') {
-      addReferences(node.argument, node, true);
+      addReferences(node.argument, node, canAffectSiblingImport);
       addUnknownAliasHazard(node.argument, node);
       return;
     }
@@ -563,20 +612,20 @@ const collectRootMutationHazards = (
       // Any object passed to unknown code, or used as a method receiver, can
       // be mutated. Pure calls are intentionally rejected here rather than
       // risking a stale static snapshot.
-      addReferences(node.callee, node, true);
+      addReferences(node.callee, node, canAffectSiblingImport);
       addUnknownAliasHazard(node.callee, node);
       node.arguments.forEach((argument) => {
-        addReferences(argument, node, true);
+        addReferences(argument, node, canAffectSiblingImport);
         addUnknownAliasHazard(argument, node);
       });
       return;
     }
 
     if (node.type === 'NewExpression') {
-      addReferences(node.callee, node, true);
+      addReferences(node.callee, node, canAffectSiblingImport);
       addUnknownAliasHazard(node.callee, node);
       node.arguments.forEach((argument) => {
-        addReferences(argument, node, true);
+        addReferences(argument, node, canAffectSiblingImport);
         addUnknownAliasHazard(argument, node);
       });
       return;
@@ -587,7 +636,7 @@ const collectRootMutationHazards = (
       // hazard lets known static processor calls remain classifiable, while a
       // direct/aliased tag still represents an opaque invocation.
       if (node.tag.type !== 'CallExpression') {
-        addReferences(node.tag, node, true);
+        addReferences(node.tag, node, canAffectSiblingImport);
         addUnknownAliasHazard(node.tag, node);
       }
       node.quasi.expressions.forEach((expression) => {
@@ -596,7 +645,7 @@ const collectRootMutationHazards = (
         // interpolation from invalidating its own pre-call snapshot, while
         // later destructuring still observes an opaque (non-call-classified)
         // escape.
-        addReferences(expression, node.quasi, true);
+        addReferences(expression, node.quasi, canAffectSiblingImport);
         addUnknownAliasHazard(expression, node.quasi);
       });
     }

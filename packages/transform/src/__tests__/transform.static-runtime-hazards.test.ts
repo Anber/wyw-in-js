@@ -205,6 +205,81 @@ describe('static strategy runtime hazard regressions', () => {
     }
   });
 
+  it('resolves a sibling import after a statically pure helper call', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-sibling-call-repro-'));
+    const entryFile = join(root, 'entry.ts');
+
+    writeFileSync(
+      join(root, 'tokens.ts'),
+      dedent`
+        export const runtimeLabel = 'runtime';
+        export const tokens = { gap: 8 } as const;
+      `
+    );
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { css } from 'test-css-processor';
+        import { runtimeLabel, tokens } from './tokens';
+
+        function getRuntimeLabel() {
+          return runtimeLabel;
+        }
+
+        getRuntimeLabel();
+
+        export const className = css\`
+          gap: ${'${tokens.gap}'}px;
+        \`;
+      `
+    );
+
+    try {
+      const result = await runStatic(root, entryFile);
+
+      expect(result.cssText).toContain('gap:8px');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('ignores sibling-import escapes inside runtime-only function bodies', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-sibling-runtime-repro-'));
+    const entryFile = join(root, 'entry.ts');
+
+    writeFileSync(
+      join(root, 'tokens.ts'),
+      dedent`
+        export const runtimeLabel = 'runtime';
+        export const tokens = { gap: 8 } as const;
+      `
+    );
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { css } from 'test-css-processor';
+        import runtime from 'runtime-only';
+        import { runtimeLabel, tokens } from './tokens';
+
+        export function render() {
+          return runtime(runtimeLabel);
+        }
+
+        export const className = css\`
+          gap: ${'${tokens.gap}'}px;
+        \`;
+      `
+    );
+
+    try {
+      const result = await runStatic(root, entryFile);
+
+      expect(result.cssText).toContain('gap:8px');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('keeps transitive styled callbacks as runtime values', async () => {
     const root = mkdtempSync(join(tmpdir(), 'wyw-static-callback-repro-'));
     const entryFile = join(root, 'entry.js');

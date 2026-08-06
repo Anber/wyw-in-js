@@ -730,6 +730,18 @@ describe('collectOxcTemplateDependencies mutation provenance', () => {
     }
   );
 
+  it('propagates a sibling-import escape from a synchronous IIFE', () => {
+    expectLastWidthTemplateFallback(dedent`
+      import { alias, source } from './tokens';
+
+      (function mutateImmediately() {
+        mutate(alias);
+      })();
+      const { width } = source;
+      const template = tag\`${'${width}'}\`;
+    `);
+  });
+
   it('ignores interpolation provenance inside a processor-managed tag', () => {
     const code = dedent`
       import { alias, source } from './tokens';
