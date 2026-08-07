@@ -38,6 +38,7 @@ import {
   publishDeferredUnknownAliasSources,
   registerExecutionFunction,
   registerExecutionNode,
+  registerPostChildEvaluationEffect,
   type MutationAliasLink,
 } from './mutationExecution';
 import { visitOxcScopes } from './scopeTraversal';
@@ -515,12 +516,14 @@ const collectRootMutationHazards = (
         addReferences(node.tag, node, true);
         addExecutionUnknownAliasHazard(node.tag, node);
       }
+      registerPostChildEvaluationEffect(bindingIndex, node);
+      registerPostChildEvaluationEffect(bindingIndex, node.quasi);
       node.quasi.expressions.forEach((expression) => {
         // The escape occurs when the tag is invoked, after interpolation
-        // evaluation. Anchoring it on the quasi prevents a target
-        // interpolation from invalidating its own pre-call snapshot, while
-        // later destructuring still observes an opaque (non-call-classified)
-        // escape.
+        // evaluation. The explicit phase fence prevents execution-container
+        // ancestry from moving this effect before a deferred reference in its
+        // own interpolation, while later expressions still observe the
+        // opaque (non-call-classified) escape.
         addReferences(expression, node.quasi, true);
         addExecutionUnknownAliasHazard(expression, node.quasi);
       });

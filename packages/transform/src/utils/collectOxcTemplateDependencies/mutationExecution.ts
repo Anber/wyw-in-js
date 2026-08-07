@@ -40,6 +40,7 @@ type ExecutionIndex = {
   >;
   readonly ownerByStart: Map<number, ExecutionOwner>;
   readonly parentByFunction: Map<Node, ExecutionOwner>;
+  readonly postChildEvaluationEffects: WeakSet<Node>;
 };
 
 const executionIndexes = new WeakMap<BindingIndex, ExecutionIndex>();
@@ -54,6 +55,7 @@ const getExecutionIndex = (bindingIndex: BindingIndex): ExecutionIndex => {
     filteredTimelines: new WeakMap(),
     ownerByStart: new Map(),
     parentByFunction: new Map(),
+    postChildEvaluationEffects: new WeakSet(),
   };
   executionIndexes.set(bindingIndex, created);
   return created;
@@ -76,6 +78,13 @@ export const registerExecutionNode = (
   if (!ownerByStart.has(node.start)) {
     ownerByStart.set(node.start, owner);
   }
+};
+
+export const registerPostChildEvaluationEffect = (
+  bindingIndex: BindingIndex,
+  node: Node
+): void => {
+  getExecutionIndex(bindingIndex).postChildEvaluationEffects.add(node);
 };
 
 export const getExecutionOwner = (
@@ -159,6 +168,11 @@ export const someExecutionAncestorEffect = (
     const effectOwner = index.ownerByStart.get(effect.start) ?? null;
     return (
       effectOwner !== targetOwner &&
+      !(
+        index.postChildEvaluationEffects.has(effect) &&
+        effect.start <= targetStart &&
+        targetStart < effect.end
+      ) &&
       isExecutionOwnerVisible(
         effectOwner,
         targetOwner,

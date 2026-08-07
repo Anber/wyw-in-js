@@ -9,7 +9,10 @@ import {
   toMutationBindingKey,
   unknownAliasMutationBinding,
 } from '../scopeAnalysis';
-import { getExecutionVisibleMutationTimeline } from '../mutationExecution';
+import {
+  getExecutionVisibleMutationTimeline,
+  someExecutionAncestorEffect,
+} from '../mutationExecution';
 
 const filename = '/mutation-propagation.ts';
 
@@ -319,6 +322,24 @@ describe('indexed mutation propagation', () => {
 
     expect(labels(code, analysis, 'source')).toEqual([]);
     expect(labels(code, analysis, 'sibling')).toEqual([]);
+  });
+
+  it('keeps post-interpolation effects behind their deferred child reads', () => {
+    const code = [
+      'import { source } from "./tokens";',
+      'tag`${[source, () => source.value]}`;',
+    ].join('\n');
+    const analysis = analyze(code);
+    const targetStart = code.lastIndexOf('source.value');
+
+    expect(
+      someExecutionAncestorEffect(
+        analysis.bindingIndex,
+        timeline(analysis, 'source'),
+        targetStart,
+        () => true
+      )
+    ).toBe(false);
   });
 
   it('preserves shallow-copy directionality in both rest-link directions', () => {
