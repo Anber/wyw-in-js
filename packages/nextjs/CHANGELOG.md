@@ -1,5 +1,19 @@
 # @wyw-in-js/nextjs
 
+## 2.4.0
+
+### Minor Changes
+
+- Bump versions
+
+### Patch Changes
+
+- cf306ed: Fix Next.js webpack builds that combine App and Pages Routers by preserving WyW class names in every CSS issuer layer and skipping direct transforms of `node_modules` dependencies.
+- Updated dependencies
+  - @wyw-in-js/shared@2.4.0
+  - @wyw-in-js/turbopack-loader@2.4.0
+  - @wyw-in-js/webpack-loader@2.4.0
+
 ## 2.3.1
 
 ### Patch Changes

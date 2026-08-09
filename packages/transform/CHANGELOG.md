@@ -1,5 +1,19 @@
 # @wyw-in-js/transform
 
+## 2.4.0
+
+### Minor Changes
+
+- 8eb2759: Resolve statically imported values through complete object and array destructuring patterns.
+
+### Patch Changes
+
+- a41083a: Keep interpolation values evaluator-owned when `eval.strategy` is set to `execute`.
+- 30a7b3b: Preserve static values and processor replacements when runtime-only component code is removed during evaluation. Separate evaltime and runtime processor paths so removed code cannot poison static analysis, and reuse their shared analysis across both phases.
+- Updated dependencies
+  - @wyw-in-js/processor-utils@2.4.0
+  - @wyw-in-js/shared@2.4.0
+
 ## 2.3.1
 
 ### Patch Changes
