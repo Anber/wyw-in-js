@@ -112,6 +112,7 @@ export type TemplateExtractionResult = {
   code: string;
   dependencyNames: string[];
   expressionValues: Omit<ExpressionValue, 'buildCodeFrameError'>[];
+  replacements: OxcValueReplacement[];
   staticValueCandidates: OxcStaticValueCandidate[];
   staticValues: OxcStaticValue[];
 };

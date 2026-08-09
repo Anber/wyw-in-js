@@ -73,6 +73,7 @@ export type ExpressionSpan = {
 
 export type CreatedProcessor = {
   astService: OxcAstService;
+  evaltimeLive: boolean;
   processor: BaseProcessor;
 };
 

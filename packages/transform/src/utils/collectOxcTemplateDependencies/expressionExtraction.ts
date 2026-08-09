@@ -687,6 +687,7 @@ const extractExpressions = (
       code,
       dependencyNames: [],
       expressionValues: [],
+      replacements: [],
       staticValueCandidates: [],
       staticValues: [],
     };
@@ -820,6 +821,7 @@ const extractExpressions = (
     code: applyOxcReplacements(code, ctx.replacements),
     dependencyNames: [...ctx.dependencyNames],
     expressionValues: ctx.expressionValues,
+    replacements: ctx.replacements,
     staticValueCandidates: ctx.staticValueCandidates,
     staticValues: ctx.staticValues,
   };

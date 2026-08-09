@@ -23,6 +23,10 @@ export type Replacement = {
   value: string;
 };
 
+export type DangerousCodeReplacement = Replacement & {
+  kind?: 'component';
+};
+
 type Scope = {
   bindings: Map<string, Expression | null>;
   key: string;
@@ -1070,19 +1074,32 @@ const findPromiseCallbackOwner = (ancestors: Node[]): Node | null => {
   return null;
 };
 
-const containsForbiddenIdentifier = (node: Node): boolean => {
+const containsForbiddenIdentifier = (
+  node: Node,
+  isIgnoredNode: (node: Node) => boolean
+): boolean => {
+  if (isIgnoredNode(node)) {
+    return false;
+  }
+
   if (node.type === 'Identifier' && alwaysForbiddenIdentifiers.has(node.name)) {
     return true;
   }
 
-  return getChildren(node).some(containsForbiddenIdentifier);
+  return getChildren(node).some((child) =>
+    containsForbiddenIdentifier(child, isIgnoredNode)
+  );
 };
 
-const collectWindowScopedNames = (program: Program): Set<string> => {
+const collectWindowScopedNames = (
+  program: Program,
+  isIgnoredNode: (node: Node) => boolean
+): Set<string> => {
   const windowScopedNames = new Set<string>();
 
   visit(program, createScope(null, 'root'), (node, scope) => {
     if (
+      isIgnoredNode(node) ||
       node.type !== 'MemberExpression' ||
       node.object.type !== 'Identifier' ||
       node.object.name !== 'window' ||
@@ -1104,13 +1121,15 @@ const containsForbiddenReference = (
   node: Node,
   scope: Scope,
   windowScopedNames: Set<string>,
-  derivedForbiddenBindings: Set<string> = new Set()
+  derivedForbiddenBindings: Set<string>,
+  isIgnoredNode: (node: Node) => boolean
 ): boolean => {
   let found = false;
 
   visit(node, scope, (child, childScope, parent, ancestors) => {
     if (
       found ||
+      isIgnoredNode(child) ||
       child.type !== 'Identifier' ||
       isTypeContext(ancestors) ||
       isInsideTypeof(ancestors) ||
@@ -1488,7 +1507,9 @@ const isInDeferredFunctionScope = (ancestors: Node[]): boolean => {
   return false;
 };
 
-const findFunctionReplacement = (ancestors: Node[]): Replacement | null => {
+const findFunctionReplacement = (
+  ancestors: Node[]
+): DangerousCodeReplacement | null => {
   const renderMethod = findLastAncestor(
     ancestors,
     (ancestor) =>
@@ -1507,6 +1528,7 @@ const findFunctionReplacement = (ancestors: Node[]): Replacement | null => {
       return {
         start: classDecl.start,
         end: classDecl.end,
+        kind: 'component',
         value: `function ${className}() { return null; }`,
       };
     }
@@ -1522,6 +1544,7 @@ const findFunctionReplacement = (ancestors: Node[]): Replacement | null => {
     return {
       start: functionNode.start,
       end: functionNode.end,
+      kind: 'component',
       value: `${functionNode.async ? 'async ' : ''}() => { return null; }`,
     };
   }
@@ -1530,6 +1553,7 @@ const findFunctionReplacement = (ancestors: Node[]): Replacement | null => {
     return {
       start: functionNode.start,
       end: functionNode.end,
+      kind: 'component',
       value: `${functionNode.async ? 'async ' : ''}function ${
         functionNode.id?.name ?? ''
       }() { return null; }`,
@@ -1539,15 +1563,18 @@ const findFunctionReplacement = (ancestors: Node[]): Replacement | null => {
   return {
     start: functionNode.body.start,
     end: functionNode.body.end,
+    kind: 'component',
     value: '{ return null; }',
   };
 };
 
-const normalizeReplacements = (replacements: Replacement[]): Replacement[] => {
+const normalizeReplacements = (
+  replacements: DangerousCodeReplacement[]
+): DangerousCodeReplacement[] => {
   const sorted = [...replacements].sort((a, b) =>
     a.start === b.start ? b.end - a.end : a.start - b.start
   );
-  const result: Replacement[] = [];
+  const result: DangerousCodeReplacement[] = [];
 
   sorted.forEach((replacement) => {
     const last = result[result.length - 1];
@@ -1568,9 +1595,42 @@ const normalizeReplacements = (replacements: Replacement[]): Replacement[] => {
 export const collectDangerousCodeReplacementsWithOxc = (
   code: string,
   filename: string,
-  options?: CodeRemoverOptions
-): Replacement[] => {
-  const replacements: Replacement[] = [];
+  options?: CodeRemoverOptions,
+  planningOptions?: {
+    ignoredSpans?: Array<{ end: number; start: number }>;
+    preserveImportMetaEnv?: boolean;
+  }
+): DangerousCodeReplacement[] => {
+  const replacements: DangerousCodeReplacement[] = [];
+  const ignoredSpans = [...(planningOptions?.ignoredSpans ?? [])]
+    .sort((a, b) => a.start - b.start)
+    .reduce<Array<{ end: number; start: number }>>((result, span) => {
+      const last = result[result.length - 1];
+      if (last && span.start <= last.end) {
+        last.end = Math.max(last.end, span.end);
+      } else {
+        result.push({ ...span });
+      }
+
+      return result;
+    }, []);
+  const isIgnoredNode = (node: Node): boolean => {
+    let low = 0;
+    let high = ignoredSpans.length - 1;
+    while (low <= high) {
+      const middle = Math.floor((low + high) / 2);
+      const span = ignoredSpans[middle]!;
+      if (node.start < span.start) {
+        high = middle - 1;
+      } else if (node.start >= span.end) {
+        low = middle + 1;
+      } else {
+        return node.end <= span.end;
+      }
+    }
+
+    return false;
+  };
   const derivedForbiddenBindings = new Set<string>();
   const program = parseOxc(code, filename);
   const imports = collectImportBindings(code, filename, program);
@@ -1578,7 +1638,7 @@ export const collectDangerousCodeReplacementsWithOxc = (
   const hocs = getHocs(options);
   const hasHocs = Object.keys(hocs).length > 0;
   const windowScopedNames = windowTokenRe.test(code)
-    ? collectWindowScopedNames(program)
+    ? collectWindowScopedNames(program, isIgnoredNode)
     : new Set<string>();
   const exportedLocalNames = collectExportedLocalNames(program);
 
@@ -1601,12 +1661,13 @@ export const collectDangerousCodeReplacementsWithOxc = (
       }
 
       if (
-        containsForbiddenIdentifier(node.init) ||
+        containsForbiddenIdentifier(node.init, isIgnoredNode) ||
         containsForbiddenReference(
           node.init,
           scope,
           windowScopedNames,
-          derivedForbiddenBindings
+          derivedForbiddenBindings,
+          isIgnoredNode
         )
       ) {
         derivedForbiddenBindings.add(bindingKey);
@@ -1619,11 +1680,16 @@ export const collectDangerousCodeReplacementsWithOxc = (
     program,
     createScope(null, 'root'),
     (node, scope, parent, ancestors) => {
+      if (isIgnoredNode(node)) {
+        return;
+      }
+
       if (node.type === 'JSXElement' || node.type === 'JSXFragment') {
         replacements.push(
           findFunctionReplacement(ancestors) ?? {
             start: node.start,
             end: node.end,
+            kind: 'component',
             value: 'null',
           }
         );
@@ -1644,6 +1710,7 @@ export const collectDangerousCodeReplacementsWithOxc = (
           replacements.push({
             start: node.start,
             end: node.end,
+            kind: 'component',
             value: '() => null',
           });
           return;
@@ -1659,6 +1726,7 @@ export const collectDangerousCodeReplacementsWithOxc = (
         replacements.push({
           start: node.init.start,
           end: node.init.end,
+          kind: 'component',
           value: '() => null',
         });
         return;
@@ -1680,6 +1748,13 @@ export const collectDangerousCodeReplacementsWithOxc = (
       }
 
       if (node.type === 'MetaProperty') {
+        if (
+          planningOptions?.preserveImportMetaEnv &&
+          ancestors.some((ancestor) => isImportMetaEnv(ancestor))
+        ) {
+          return;
+        }
+
         const owner = findRemovableOwner(node, ancestors);
         replacements.push({ start: owner.start, end: owner.end, value: '' });
         return;

@@ -6,14 +6,36 @@ import {
   type Replacement,
 } from './oxcPreevalTransforms';
 
-export const collectDangerousCodeRemovalSpansWithOxc = (
+export type DangerousCodePlan = {
+  runtimeOnlyProcessorSpans: Array<Pick<Replacement, 'end' | 'start'>>;
+  removedSpans: Array<Pick<Replacement, 'end' | 'start'>>;
+  replacements: Replacement[];
+};
+
+export const createDangerousCodePlanWithOxc = (
   code: string,
   filename: string,
-  options?: CodeRemoverOptions
-): Array<Pick<Replacement, 'end' | 'start'>> =>
-  collectDangerousCodeReplacementsWithOxc(code, filename, options).map(
-    ({ end, start }) => ({ end, start })
+  options?: CodeRemoverOptions,
+  planningOptions?: {
+    ignoredSpans?: Array<Pick<Replacement, 'end' | 'start'>>;
+    preserveImportMetaEnv?: boolean;
+  }
+): DangerousCodePlan => {
+  const replacements = collectDangerousCodeReplacementsWithOxc(
+    code,
+    filename,
+    options,
+    planningOptions
   );
+
+  return {
+    removedSpans: replacements.map(({ end, start }) => ({ end, start })),
+    replacements,
+    runtimeOnlyProcessorSpans: replacements
+      .filter((replacement) => replacement.kind === 'component')
+      .map(({ end, start }) => ({ end, start })),
+  };
+};
 
 export const removeDangerousCodeWithOxc = (
   code: string,
@@ -22,5 +44,5 @@ export const removeDangerousCodeWithOxc = (
 ): string =>
   applyReplacements(
     code,
-    collectDangerousCodeReplacementsWithOxc(code, filename, options)
+    createDangerousCodePlanWithOxc(code, filename, options).replacements
   );

@@ -6061,4 +6061,37 @@ describe('transform static import value inlining', () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it('extracts runtime processors from components removed from evaltime', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-static-component-'));
+    const entryFile = join(root, 'entry.js');
+    const cache = new TransformCacheCollection();
+
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { css } from 'test-css-processor';
+        import { jsx as _jsx } from 'react/jsx-runtime';
+
+        const color = 'red';
+        export function Component() {
+          const className = css\`
+            color: ${'${color}'};
+          \`;
+
+          return _jsx('div', { className });
+        }
+      `
+    );
+
+    try {
+      const result = await runTransform(root, entryFile, cache);
+
+      expect(result.cssText).toContain('color:red');
+      expect(result.code).toContain('function Component()');
+      expect(result.code).not.toContain('test-css-processor');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });

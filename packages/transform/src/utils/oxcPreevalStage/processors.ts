@@ -4,7 +4,7 @@ import { isFeatureEnabled } from '@wyw-in-js/shared';
 import type { EventEmitter } from '../EventEmitter';
 import { applyOxcProcessors } from '../applyOxcProcessors';
 import type { ApplyOxcProcessorsResult } from '../applyOxcProcessors/types';
-import { collectDangerousCodeRemovalSpansWithOxc } from '../dangerousCodeRemoval';
+import { createDangerousCodePlanWithOxc } from '../dangerousCodeRemoval';
 import type { OxcPreevalOptions } from './types';
 
 type PreevalProcessorCollection = {
@@ -19,16 +19,17 @@ export const collectPreevalProcessors = (
   eventEmitter: EventEmitter
 ): PreevalProcessorCollection => {
   const filename = fileContext.filename ?? 'unknown.js';
-  const getMutationHazardIgnoreTreeSpans = isFeatureEnabled(
+  const createEvaltimeCodePlan = isFeatureEnabled(
     options.features,
     'dangerousCodeRemover',
     filename
   )
-    ? () =>
-        collectDangerousCodeRemovalSpansWithOxc(
-          code,
-          filename,
-          options.codeRemover
+    ? (processorSpans: Array<{ end: number; start: number }>) =>
+        eventEmitter.perf('transform:preeval:removeDangerousCode', () =>
+          createDangerousCodePlanWithOxc(code, filename, options.codeRemover, {
+            ignoredSpans: processorSpans,
+            preserveImportMetaEnv: true,
+          })
         )
     : undefined;
   const processed = eventEmitter.perf('transform:preeval:processTemplate', () =>
@@ -37,7 +38,7 @@ export const collectPreevalProcessors = (
       fileContext,
       {
         ...options,
-        getMutationHazardIgnoreTreeSpans,
+        createEvaltimeCodePlan,
       },
       (processor) => {
         processor.doEvaltimeReplacement();

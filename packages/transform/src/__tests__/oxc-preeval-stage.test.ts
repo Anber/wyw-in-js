@@ -267,6 +267,39 @@ describe('runOxcPreevalStage', () => {
     });
   });
 
+  it('keeps processors in removed components runtime-only', () => {
+    const result = runOxcPreevalStage(
+      `
+        import { css } from 'test-package';
+        import { jsx as _jsx } from 'react/jsx-runtime';
+
+        const color = 'red';
+        export function Component() {
+          const className = css\`
+            color: ${'${color}'};
+          \`;
+
+          return _jsx('div', { className });
+        }
+      `,
+      fileContext,
+      options
+    );
+    const [processor] = result.metadata?.processors ?? [];
+    let evaltimeReplacementCalled = false;
+
+    expect(processor).toBeDefined();
+    processor!.doEvaltimeReplacement = () => {
+      evaltimeReplacementCalled = true;
+    };
+
+    result.finalizeEvaltimeReplacements?.(result.staticValueCache);
+
+    expect(evaltimeReplacementCalled).toBe(false);
+    expect(result.staticValueCache.get('_exp')).toBe('red');
+    expect(result.code).toContain('function Component() { return null; }');
+  });
+
   it('still applies preeval syntax rewrites when no processors are present', () => {
     const result = runOxcPreevalStage(
       `
@@ -298,7 +331,7 @@ describe('runOxcPreevalStage', () => {
       () => {}
     );
 
-    runOxcPreevalStage(
+    const result = runOxcPreevalStage(
       `
         import { css } from 'test-package';
         const href = window.location.href;
@@ -316,6 +349,7 @@ describe('runOxcPreevalStage', () => {
         eventEmitter,
       }
     );
+    result.finalizeEvaltimeReplacements?.(result.staticValueCache);
 
     expect(methods).toEqual(
       expect.arrayContaining([
@@ -333,6 +367,11 @@ describe('runOxcPreevalStage', () => {
         'transform:preeval:requireFallback',
       ])
     );
+    expect(
+      methods.filter(
+        (method) => method === 'transform:preeval:removeDangerousCode'
+      )
+    ).toHaveLength(1);
   });
 
   it('feeds Oxc shaker with __wywPreval-only prepared code', () => {

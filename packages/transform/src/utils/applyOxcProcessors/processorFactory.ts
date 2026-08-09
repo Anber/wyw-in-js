@@ -46,6 +46,7 @@ export const createProcessor = (
   code: string,
   loc: LocationLookup,
   idx: number,
+  evaltimeLive: boolean,
   isReferenced: boolean,
   usedNames: Set<string>,
   replacements: Replacement[]
@@ -125,6 +126,7 @@ export const createProcessor = (
 
     return {
       astService,
+      evaltimeLive,
       processor,
     };
   } catch (e) {

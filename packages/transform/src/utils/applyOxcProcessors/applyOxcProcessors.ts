@@ -4,6 +4,7 @@ import type { ExpressionValue, StrictOptions } from '@wyw-in-js/shared';
 import { collectOxcProcessorImportsFromProgram } from '../collectOxcExportsAndImports';
 import { collectOxcExpressionDependencies } from '../collectOxcTemplateDependencies';
 import type { OxcStaticValue } from '../collectOxcTemplateDependencies';
+import type { DangerousCodePlan } from '../dangerousCodeRemoval';
 import {
   collectOxcExpressionDependenciesForEvalFallback,
   OxcSnapshotWriteUnsupportedError,
@@ -11,7 +12,7 @@ import {
 import { EventEmitter } from '../EventEmitter';
 import type { AddedImport } from '../oxcAstService';
 import { isOxcNode } from '../oxc/ast';
-import { applyOxcReplacements } from '../oxc/replacements';
+import { applyOxcReplacementLayers } from '../oxc/replacements';
 import {
   buildOxcCodeFrameError,
   createOxcLocationLookup,
@@ -64,11 +65,10 @@ export const applyOxcProcessors = (
     | 'staticBindings'
     | 'tagResolver'
   > & {
+    createEvaltimeCodePlan?: (
+      processorSpans: Array<{ end: number; start: number }>
+    ) => DangerousCodePlan;
     eventEmitter?: EventEmitter;
-    getMutationHazardIgnoreTreeSpans?: () => Array<{
-      end: number;
-      start: number;
-    }>;
     preserveSideEffectImportOrderLocals?: Set<string>;
     preserveSideEffectImportLocals?: Set<string>;
   },
@@ -80,8 +80,24 @@ export const applyOxcProcessors = (
   const eventEmitter = options.eventEmitter ?? EventEmitter.dummy;
   const collectStaticExpressionValues =
     shouldCollectStaticExpressionValues(options);
-  let workingCode = code;
-  let program = parseOxc(workingCode, filename);
+  const workingCode = code;
+  const program = parseOxc(workingCode, filename);
+  let evaltimeCodePlan: DangerousCodePlan | null = null;
+  const getEvaltimeCodePlan = (
+    processorSpans: Array<{ end: number; start: number }> = []
+  ): DangerousCodePlan => {
+    evaltimeCodePlan ??= options.createEvaltimeCodePlan?.(processorSpans) ?? {
+      removedSpans: [],
+      replacements: [],
+      runtimeOnlyProcessorSpans: [],
+    };
+
+    return evaltimeCodePlan;
+  };
+  const buildUnprocessedCode = () =>
+    applyOxcReplacementLayers(workingCode, [
+      getEvaltimeCodePlan().replacements,
+    ]);
   const definedProcessors = new Map<string, DefinedProcessor>();
   const removableImportLocals = new Set<string>();
   const removableExpressionRefs = new Set<string>();
@@ -134,7 +150,7 @@ export const applyOxcProcessors = (
 
   if (definedProcessors.size === 0) {
     return {
-      code: workingCode,
+      code: buildUnprocessedCode(),
       processorManagedExpressionSpans: [],
       processorClassNamesByLocal: new Map(),
       processors: [],
@@ -143,13 +159,13 @@ export const applyOxcProcessors = (
     };
   }
 
-  let processorUsages = eventEmitter.perf(
+  const processorUsages = eventEmitter.perf(
     'transform:preeval:processTemplate:usages',
     () => collectProcessorUsages(program, definedProcessors)
   );
   if (processorUsages.length === 0) {
     return {
-      code: workingCode,
+      code: buildUnprocessedCode(),
       processorManagedExpressionSpans: [],
       processorClassNamesByLocal: new Map(),
       processors: [],
@@ -165,8 +181,11 @@ export const applyOxcProcessors = (
     end: usage.target.end,
     start: usage.target.start,
   }));
-  const mutationHazardIgnoreTreeSpans =
-    options.getMutationHazardIgnoreTreeSpans?.() ?? [];
+  const {
+    removedSpans: evaltimeRemovedSpans,
+    replacements: evaltimeCodeReplacements,
+    runtimeOnlyProcessorSpans,
+  } = getEvaltimeCodePlan(processorManagedExpressionSpans);
   const extractDependencies = () => {
     try {
       return collectOxcExpressionDependencies(
@@ -176,7 +195,7 @@ export const applyOxcProcessors = (
         targetExpressionSpans,
         options.staticBindings,
         processorManagedExpressionSpans,
-        mutationHazardIgnoreTreeSpans
+        evaltimeRemovedSpans
       );
     } catch (error) {
       if (!(error instanceof OxcSnapshotWriteUnsupportedError)) {
@@ -188,7 +207,7 @@ export const applyOxcProcessors = (
         filename,
         targetExpressionSpans,
         processorManagedExpressionSpans,
-        mutationHazardIgnoreTreeSpans
+        evaltimeRemovedSpans
       );
     }
   };
@@ -202,21 +221,10 @@ export const applyOxcProcessors = (
           code: workingCode,
           dependencyNames: [],
           expressionValues: [],
+          replacements: [],
           staticValueCandidates: [],
           staticValues: [],
         };
-
-  if (extracted.code !== workingCode) {
-    workingCode = extracted.code;
-    program = eventEmitter.perf(
-      'transform:preeval:processTemplate:reparse',
-      () => parseOxc(workingCode, filename)
-    );
-    processorUsages = eventEmitter.perf(
-      'transform:preeval:processTemplate:usages',
-      () => collectProcessorUsages(program, definedProcessors)
-    );
-  }
 
   const templateExpressionValues = extracted.expressionValues.map(
     (value) =>
@@ -270,6 +278,11 @@ export const applyOxcProcessors = (
         workingCode,
         loc,
         idx,
+        !runtimeOnlyProcessorSpans.some(
+          (span) =>
+            span.start <= usage.replacementTarget.start &&
+            span.end >= usage.replacementTarget.end
+        ),
         isTagReferenced(program, usage.ancestors),
         usedNames,
         replacements
@@ -329,7 +342,7 @@ export const applyOxcProcessors = (
 
       processors.push(processor);
       createdProcessors.push(created);
-      if (!deferProcessorCallbacks) {
+      if (!deferProcessorCallbacks && created.evaltimeLive) {
         callback(processor);
         addedImports.push(...astService.getAddedImports());
       }
@@ -387,7 +400,11 @@ export const applyOxcProcessors = (
   const currentSameFileProcessorStaticValues =
     collectCurrentSameFileProcessorStaticValues();
 
-  const replacedCode = applyOxcReplacements(workingCode, replacements);
+  const replacedCode = applyOxcReplacementLayers(workingCode, [
+    replacements,
+    evaltimeCodeReplacements,
+    extracted.replacements,
+  ]);
   const metadataExtendsHelperNames =
     collectWYWMetaExtendsHelperNames(replacedCode);
   const staticValueCandidates = extracted.staticValueCandidates.filter(
@@ -398,7 +415,11 @@ export const applyOxcProcessors = (
   let callbacksApplied = !deferProcessorCallbacks;
 
   const buildCode = (): string => {
-    const nextReplacedCode = applyOxcReplacements(workingCode, replacements);
+    const nextReplacedCode = applyOxcReplacementLayers(workingCode, [
+      replacements,
+      evaltimeCodeReplacements,
+      extracted.replacements,
+    ]);
     const codeWithAddedImports = insertAddedImports(
       nextReplacedCode,
       filename,
@@ -455,7 +476,11 @@ export const applyOxcProcessors = (
       staticValues.byLocal
     );
     result.staticValues = [...extracted.staticValues, ...staticValues.values];
-    createdProcessors.forEach(({ astService, processor }) => {
+    createdProcessors.forEach(({ astService, evaltimeLive, processor }) => {
+      if (!evaltimeLive) {
+        return;
+      }
+
       callback(processor);
       addedImports.push(...astService.getAddedImports());
     });
