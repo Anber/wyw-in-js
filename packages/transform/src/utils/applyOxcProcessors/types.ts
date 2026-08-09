@@ -24,6 +24,13 @@ export type DefinedProcessor = [
 
 export type Replacement = OxcValueReplacement;
 
+export type StaticPlanFacts = {
+  importedNeeds: Array<{ name: string; source: string }>;
+  staticValueCount: number;
+  unresolvedCount: number;
+  usageCount: number;
+};
+
 export type ApplyOxcProcessorsResult = {
   code: string;
   finalizeProcessorCallbacks?: (
@@ -35,6 +42,7 @@ export type ApplyOxcProcessorsResult = {
   // the runtime value of the binding IS this string.
   processorClassNamesByLocal: Map<string, string>;
   processors: BaseProcessor[];
+  staticPlanFacts: StaticPlanFacts;
   staticValueCandidates: OxcStaticValueCandidate[];
   staticValues: OxcStaticValue[];
 };

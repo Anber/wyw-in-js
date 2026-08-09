@@ -3,7 +3,10 @@ import type { ExpressionValue, StrictOptions } from '@wyw-in-js/shared';
 
 import { collectOxcProcessorImportsFromProgram } from '../collectOxcExportsAndImports';
 import { collectOxcExpressionDependencies } from '../collectOxcTemplateDependencies';
-import type { OxcStaticValue } from '../collectOxcTemplateDependencies';
+import type {
+  OxcStaticValue,
+  OxcStaticValueCandidate,
+} from '../collectOxcTemplateDependencies';
 import type { DangerousCodePlan } from '../dangerousCodeRemoval';
 import {
   collectOxcExpressionDependenciesForEvalFallback,
@@ -48,9 +51,49 @@ import type {
   ApplyOxcProcessorsResult,
   CreatedProcessor,
   DefinedProcessor,
+  ProcessorUsage,
   Replacement,
   SameFileProcessorObject,
+  StaticPlanFacts,
 } from './types';
+
+const EMPTY_STATIC_PLAN_FACTS: StaticPlanFacts = {
+  importedNeeds: [],
+  staticValueCount: 0,
+  unresolvedCount: 0,
+  usageCount: 0,
+};
+
+const collectStaticPlanFacts = (
+  usages: ProcessorUsage[],
+  staticValueCandidates: OxcStaticValueCandidate[],
+  staticValues: OxcStaticValue[]
+): StaticPlanFacts => {
+  const staticValueNames = new Set(staticValues.map(({ name }) => name));
+  const unresolvedNames = new Set<string>();
+  const importedNeeds: StaticPlanFacts['importedNeeds'] = [];
+
+  staticValueCandidates.forEach((candidate) => {
+    if (candidate.imports.length === 0) {
+      return;
+    }
+
+    if (!staticValueNames.has(candidate.name)) {
+      unresolvedNames.add(candidate.name);
+    }
+
+    candidate.imports.forEach(({ imported: name, source }) => {
+      importedNeeds.push({ name, source });
+    });
+  });
+
+  return {
+    importedNeeds,
+    staticValueCount: staticValueNames.size,
+    unresolvedCount: unresolvedNames.size,
+    usageCount: usages.length,
+  };
+};
 
 export const applyOxcProcessors = (
   code: string,
@@ -154,6 +197,7 @@ export const applyOxcProcessors = (
       processorManagedExpressionSpans: [],
       processorClassNamesByLocal: new Map(),
       processors: [],
+      staticPlanFacts: EMPTY_STATIC_PLAN_FACTS,
       staticValueCandidates: [],
       staticValues: [],
     };
@@ -169,6 +213,7 @@ export const applyOxcProcessors = (
       processorManagedExpressionSpans: [],
       processorClassNamesByLocal: new Map(),
       processors: [],
+      staticPlanFacts: EMPTY_STATIC_PLAN_FACTS,
       staticValueCandidates: [],
       staticValues: [],
     };
@@ -447,6 +492,11 @@ export const applyOxcProcessors = (
     processorManagedExpressionSpans,
     processorClassNamesByLocal,
     processors,
+    staticPlanFacts: collectStaticPlanFacts(
+      processorUsages,
+      extracted.staticValueCandidates,
+      extracted.staticValues
+    ),
     staticValueCandidates: addCandidateInlineConstants(
       staticValueCandidates,
       currentSameFileProcessorStaticValues.byLocal

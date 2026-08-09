@@ -90,6 +90,12 @@ describe('runOxcPreevalStage', () => {
     );
 
     expect(result.staticValueCache.get('_exp')).toBe('red');
+    expect(result.staticPlanFacts).toEqual({
+      importedNeeds: [],
+      staticValueCount: 1,
+      unresolvedCount: 0,
+      usageCount: 1,
+    });
     expect(result.code).toContain('export const __wywPreval = {};');
     expect(result.code).not.toContain('__wywPreval = { _exp: _exp }');
   });

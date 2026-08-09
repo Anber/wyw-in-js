@@ -2,7 +2,11 @@
 import type { ProcessorStaticValue } from '@wyw-in-js/processor-utils';
 
 import { EventEmitter } from '../../../utils/EventEmitter';
-import { buildStaticPlan, emitStaticPlanDebug } from '../buildStaticPlan';
+import {
+  buildStaticPlan,
+  buildStaticPlanAttribution,
+  emitStaticPlanDebug,
+} from '../buildStaticPlan';
 import type { StaticEnv } from '../types';
 
 const filename = '/project/src/entry.tsx';
@@ -25,6 +29,45 @@ const cssTemplateSemantics = {
 };
 
 describe('buildStaticPlan', () => {
+  it('combines cached plan facts with settled static state', () => {
+    const attribution = buildStaticPlanAttribution({
+      filename,
+      preparedImports: new Map([
+        ['./runtime.css', ['side-effect']],
+        ['./runtime.js', ['default']],
+      ]),
+      preevalResult: {
+        dependencyNames: [
+          'resolved',
+          'runtimeOnly',
+          'unresolved',
+          'unresolved',
+        ],
+        runtimeOnlyStaticValueNames: ['runtimeOnly'],
+        staticDependencies: ['./runtime.css'],
+        staticValueCache: new Map([['resolved', 'red']]),
+      },
+      staticPlanFacts: {
+        importedNeeds: [
+          { name: 'color', source: './tokens' },
+          { name: 'color', source: './tokens' },
+        ],
+        staticValueCount: 1,
+        unresolvedCount: 1,
+        usageCount: 2,
+      },
+    });
+
+    expect(attribution).toEqual({
+      needCount: 2,
+      needRequestCount: 2,
+      runtimeDependencyCount: 2,
+      staticValueCount: 1,
+      unresolvedCount: 1,
+      usageCount: 2,
+    });
+  });
+
   it('ignores imports that do not resolve to a processor implementation', () => {
     // Helper modules (e.g. a preeval runtime) import plain functions and call
     // them with values derived from function parameters. Those imports must

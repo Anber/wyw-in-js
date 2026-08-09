@@ -61,6 +61,19 @@ export type BuildStaticPlanInput = {
   staticBindings?: StaticBindings;
 };
 
+export type BuildStaticPlanAttributionInput = {
+  filename: string;
+  preparedImports?: Map<string, string[]> | null;
+  preevalResult: Pick<
+    IPreevalResult,
+    | 'dependencyNames'
+    | 'runtimeOnlyStaticValueNames'
+    | 'staticDependencies'
+    | 'staticValueCache'
+  >;
+  staticPlanFacts: NonNullable<IPreevalResult['staticPlanFacts']>;
+};
+
 const PLAN_ONLY_PROCESSOR =
   class StaticPlanOnlyProcessor {} as unknown as DefinedProcessor[0];
 
@@ -321,9 +334,45 @@ export const buildStaticPlan = ({
   };
 };
 
+export const buildStaticPlanAttribution = ({
+  filename,
+  preparedImports,
+  preevalResult,
+  staticPlanFacts,
+}: BuildStaticPlanAttributionInput): StaticPlan['attribution'] => {
+  const importedNeeds: StaticNeed[] = staticPlanFacts.importedNeeds.map(
+    ({ name, source }) => ({
+      importer: filename,
+      kind: 'export',
+      name,
+      reason: 'processor-static-interpolation',
+      source,
+    })
+  );
+  const evalNeeds = resolveUnmetStaticNeeds({
+    filename,
+    resolvedNames: new Set(preevalResult.staticValueCache?.keys() ?? []),
+    runtimeOnlyNames: new Set(preevalResult.runtimeOnlyStaticValueNames ?? []),
+    unresolvedNames: preevalResult.dependencyNames ?? [],
+  });
+  const needs = dedupeNeeds([...importedNeeds, ...evalNeeds]);
+
+  return {
+    needCount: needs.length,
+    needRequestCount: planStaticNeedRequests(needs).length,
+    runtimeDependencyCount: collectRuntimeDependencies(
+      preparedImports,
+      preevalResult
+    ).size,
+    staticValueCount: staticPlanFacts.staticValueCount,
+    unresolvedCount: staticPlanFacts.unresolvedCount,
+    usageCount: staticPlanFacts.usageCount,
+  };
+};
+
 export const emitStaticPlanDebug = (
   eventEmitter: EventEmitter,
-  plan: StaticPlan
+  plan: Pick<StaticPlan, 'attribution' | 'filename'>
 ): void => {
   if (!eventEmitter.hasEventListener('staticPlan')) {
     return;

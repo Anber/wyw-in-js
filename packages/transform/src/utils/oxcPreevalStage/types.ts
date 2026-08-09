@@ -2,7 +2,10 @@ import type { StrictOptions } from '@wyw-in-js/shared';
 
 import type { EventEmitter } from '../EventEmitter';
 import type { WYWTransformMetadata } from '../TransformMetadata';
-import type { ExpressionSpan } from '../applyOxcProcessors/types';
+import type {
+  ExpressionSpan,
+  StaticPlanFacts,
+} from '../applyOxcProcessors/types';
 import type { OxcStaticValueCandidate } from '../collectOxcTemplateDependencies';
 
 export type OxcPreevalOptions = Pick<
@@ -29,6 +32,7 @@ export type OxcPreevalResult = {
   processorManagedExpressionSpans: ExpressionSpan[];
   processorClassNames: Record<string, string>;
   staticDependencies: string[];
+  staticPlanFacts: StaticPlanFacts;
   staticValueCache: Map<string, unknown>;
   staticValueCandidates: OxcStaticValueCandidate[];
 };

@@ -43,6 +43,7 @@ export const runOxcPreevalStage = (
       processorManagedExpressionSpans: [],
       processorClassNames: {},
       staticDependencies: [],
+      staticPlanFacts: processed.staticPlanFacts,
       staticValueCandidates: [],
       staticValueCache: new Map(),
     };
@@ -67,6 +68,7 @@ export const runOxcPreevalStage = (
       processed.processorClassNamesByLocal
     ),
     staticDependencies: [],
+    staticPlanFacts: processed.staticPlanFacts,
     staticValueCache: staticOverlay.staticValueCache,
     staticValueCandidates: staticOverlay.staticValueCandidates,
   };

@@ -27,7 +27,7 @@ describe('emitCurrentStaticPlanDebug', () => {
     expect(entrypointRead).toBe(false);
   });
 
-  it('builds and emits the plan for a legacy listener', () => {
+  it('emits cached attribution without reparsing the source', () => {
     const events: Record<string, unknown>[] = [];
     const eventEmitter = new EventEmitter(
       (labels, type) => {
@@ -38,12 +38,26 @@ describe('emitCurrentStaticPlanDebug', () => {
       () => 0,
       () => {}
     );
-    const code = `export const color = 'red';`;
     const action = {
       entrypoint: {
-        getPreevalResult: () => ({ ast: null, code, metadata: null }),
+        getPreevalResult: () => ({
+          ast: null,
+          code: '',
+          dependencyNames: ['_exp2'],
+          metadata: null,
+          staticDependencies: ['./runtime.css'],
+          staticPlanFacts: {
+            importedNeeds: [{ name: 'color', source: './tokens' }],
+            staticValueCount: 1,
+            unresolvedCount: 1,
+            usageCount: 2,
+          },
+          staticValueCache: new Map([['_exp', 'red']]),
+        }),
         loadedAndParsed: {
-          code,
+          get code(): never {
+            throw new Error('source should not be reparsed');
+          },
           evalConfig: { filename },
           evaluator: () => {},
         },
@@ -55,10 +69,25 @@ describe('emitCurrentStaticPlanDebug', () => {
       },
     } as unknown as ITransformAction;
 
-    emitCurrentStaticPlanDebug(action, null);
+    emitCurrentStaticPlanDebug(
+      action,
+      new Map([
+        ['./runtime.css', ['side-effect']],
+        ['./runtime.js', ['default']],
+      ])
+    );
 
     expect(events).toEqual([
-      expect.objectContaining({ filename, type: 'staticPlan' }),
+      expect.objectContaining({
+        filename,
+        needCount: 2,
+        needRequestCount: 2,
+        runtimeDependencyCount: 2,
+        staticValueCount: 1,
+        type: 'staticPlan',
+        unresolvedCount: 1,
+        usageCount: 2,
+      }),
     ]);
   });
 });
