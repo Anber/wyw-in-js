@@ -6,7 +6,10 @@ import type {
 
 import type { Services } from './types';
 import type { WYWTransformMetadata } from '../utils/TransformMetadata';
-import type { StaticPlanFacts } from '../utils/applyOxcProcessors/types';
+import type {
+  OxcProcessorAnalysisPlan,
+  StaticPlanFacts,
+} from '../utils/applyOxcProcessors/types';
 
 export type ParsedAst = unknown;
 
@@ -42,6 +45,7 @@ export interface IPreevalResult {
   ) => void;
   metadata: WYWTransformMetadata | null;
   processorClassNames?: Record<string, string>;
+  runtimeProcessorPlan?: OxcProcessorAnalysisPlan;
   staticImportLocals?: string[];
   staticSideEffectImportLocals?: string[];
   staticDependencies?: string[];

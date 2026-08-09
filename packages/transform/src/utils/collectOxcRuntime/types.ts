@@ -1,6 +1,7 @@
 import type { StrictOptions } from '@wyw-in-js/shared';
 import type { RawSourceMap } from 'source-map';
 
+import type { EventEmitter } from '../EventEmitter';
 import type { WYWTransformMetadata } from '../TransformMetadata';
 
 export type OxcCollectOptions = Pick<
@@ -13,6 +14,7 @@ export type OxcCollectOptions = Pick<
   | 'tagResolver'
   | 'variableNameConfig'
 > & {
+  eventEmitter?: EventEmitter;
   preserveSideEffectImportOrderLocals?: Set<string>;
   preserveSideEffectImportLocals?: Set<string>;
 };

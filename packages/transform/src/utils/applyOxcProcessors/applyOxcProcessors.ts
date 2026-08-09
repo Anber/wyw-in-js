@@ -51,6 +51,7 @@ import type {
   ApplyOxcProcessorsResult,
   CreatedProcessor,
   DefinedProcessor,
+  OxcProcessorAnalysisPlan,
   ProcessorUsage,
   Replacement,
   SameFileProcessorObject,
@@ -112,19 +113,28 @@ export const applyOxcProcessors = (
       processorSpans: Array<{ end: number; start: number }>
     ) => DangerousCodePlan;
     eventEmitter?: EventEmitter;
+    perfPrefix?: string;
     preserveSideEffectImportOrderLocals?: Set<string>;
     preserveSideEffectImportLocals?: Set<string>;
   },
   callback: (processor: BaseProcessor) => void,
   cleanupUnused = false,
-  deferProcessorCallbacks = false
+  deferProcessorCallbacks = false,
+  runtimeProcessorPlan?: OxcProcessorAnalysisPlan
 ): ApplyOxcProcessorsResult => {
   const filename = fileContext.filename ?? 'unknown.js';
   const eventEmitter = options.eventEmitter ?? EventEmitter.dummy;
+  const perfPrefix = options.perfPrefix ?? 'transform:preeval:processTemplate';
+  const perfLabel = (suffix: string): string => `${perfPrefix}:${suffix}`;
   const collectStaticExpressionValues =
     shouldCollectStaticExpressionValues(options);
   const workingCode = code;
-  const program = parseOxc(workingCode, filename);
+  const reusablePlan =
+    runtimeProcessorPlan?.code === workingCode &&
+    runtimeProcessorPlan.filename === filename
+      ? runtimeProcessorPlan
+      : undefined;
+  const program = reusablePlan?.program ?? parseOxc(workingCode, filename);
   let evaltimeCodePlan: DangerousCodePlan | null = null;
   const getEvaltimeCodePlan = (
     processorSpans: Array<{ end: number; start: number }> = []
@@ -142,18 +152,18 @@ export const applyOxcProcessors = (
       getEvaltimeCodePlan().replacements,
     ]);
   const definedProcessors = new Map<string, DefinedProcessor>();
-  const removableImportLocals = new Set<string>();
+  const removableImportLocals = new Set(
+    reusablePlan?.removableImportLocals ?? []
+  );
   const removableExpressionRefs = new Set<string>();
 
-  eventEmitter.perf('transform:preeval:processTemplate:imports', () => {
-    const imports = eventEmitter.perf(
-      'transform:preeval:processTemplate:imports:analysis',
-      () => collectOxcProcessorImportsFromProgram(program, workingCode)
-    );
+  if (!reusablePlan) {
+    eventEmitter.perf(perfLabel('imports'), () => {
+      const imports = eventEmitter.perf(perfLabel('imports:analysis'), () =>
+        collectOxcProcessorImportsFromProgram(program, workingCode)
+      );
 
-    eventEmitter.perf(
-      'transform:preeval:processTemplate:imports:lookup',
-      () => {
+      eventEmitter.perf(perfLabel('imports:lookup'), () => {
         imports.forEach((item) => {
           const localName = item.local.name ?? item.local.code;
           if (item.imported === 'side-effect' || !localName) {
@@ -187,11 +197,11 @@ export const applyOxcProcessors = (
             }
           }
         });
-      }
-    );
-  });
+      });
+    });
+  }
 
-  if (definedProcessors.size === 0) {
+  if (!reusablePlan && definedProcessors.size === 0) {
     return {
       code: buildUnprocessedCode(),
       processorManagedExpressionSpans: [],
@@ -203,10 +213,11 @@ export const applyOxcProcessors = (
     };
   }
 
-  const processorUsages = eventEmitter.perf(
-    'transform:preeval:processTemplate:usages',
-    () => collectProcessorUsages(program, definedProcessors)
-  );
+  const processorUsages =
+    reusablePlan?.processorUsages ??
+    eventEmitter.perf(perfLabel('usages'), () =>
+      collectProcessorUsages(program, definedProcessors)
+    );
   if (processorUsages.length === 0) {
     return {
       code: buildUnprocessedCode(),
@@ -258,10 +269,9 @@ export const applyOxcProcessors = (
   };
 
   const extracted =
-    targetExpressionSpans.length > 0
-      ? eventEmitter.perf('transform:preeval:processTemplate:deps', () =>
-          extractDependencies()
-        )
+    reusablePlan?.extracted ??
+    (targetExpressionSpans.length > 0
+      ? eventEmitter.perf(perfLabel('deps'), () => extractDependencies())
       : {
           code: workingCode,
           dependencyNames: [],
@@ -269,7 +279,7 @@ export const applyOxcProcessors = (
           replacements: [],
           staticValueCandidates: [],
           staticValues: [],
-        };
+        });
 
   const templateExpressionValues = extracted.expressionValues.map(
     (value) =>
@@ -280,10 +290,9 @@ export const applyOxcProcessors = (
       }) as ExpressionValue
   );
   const loc = createOxcLocationLookup(workingCode);
-  const usedNames = eventEmitter.perf(
-    'transform:preeval:processTemplate:usedNames',
-    () => collectUsedNames(program)
-  );
+  const usedNames =
+    reusablePlan?.usedNames ??
+    eventEmitter.perf(perfLabel('usedNames'), () => collectUsedNames(program));
   const addedImports: AddedImport[] = [];
   const replacements: Replacement[] = [];
   const createdProcessors: CreatedProcessor[] = [];
@@ -297,8 +306,19 @@ export const applyOxcProcessors = (
   extracted.dependencyNames.forEach((name: string) =>
     removableImportLocals.add(name)
   );
+  const capturedRuntimeProcessorPlan = deferProcessorCallbacks
+    ? {
+        code: workingCode,
+        extracted,
+        filename,
+        processorUsages,
+        program,
+        removableImportLocals: new Set(removableImportLocals),
+        usedNames,
+      }
+    : undefined;
 
-  eventEmitter.perf('transform:preeval:processTemplate:processors', () => {
+  eventEmitter.perf(perfLabel('processors'), () => {
     processorUsages.forEach((usage, idx) => {
       const params = buildParams(
         usage,
@@ -472,7 +492,7 @@ export const applyOxcProcessors = (
     );
 
     return cleanupUnused
-      ? eventEmitter.perf('transform:preeval:processTemplate:cleanup', () =>
+      ? eventEmitter.perf(perfLabel('cleanup'), () =>
           removeUnusedAfterReplacement(
             codeWithAddedImports,
             filename,
@@ -492,6 +512,7 @@ export const applyOxcProcessors = (
     processorManagedExpressionSpans,
     processorClassNamesByLocal,
     processors,
+    runtimeProcessorPlan: capturedRuntimeProcessorPlan,
     staticPlanFacts: collectStaticPlanFacts(
       processorUsages,
       extracted.staticValueCandidates,

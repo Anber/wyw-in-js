@@ -3,6 +3,7 @@ import type {
   CallExpression,
   Expression,
   Node,
+  Program,
   TaggedTemplateExpression,
 } from 'oxc-parser';
 
@@ -10,6 +11,7 @@ import type {
   OxcStaticValue,
   OxcStaticValueCandidate,
 } from '../collectOxcTemplateDependencies';
+import type { TemplateExtractionResult } from '../collectOxcTemplateDependencies/types';
 import type { OxcAstService } from '../oxcAstService';
 import type { OxcValueReplacement } from '../oxc/replacements';
 import type { OxcLocationLookup } from '../oxc/sourceLocations';
@@ -31,6 +33,16 @@ export type StaticPlanFacts = {
   usageCount: number;
 };
 
+export type OxcProcessorAnalysisPlan = {
+  code: string;
+  extracted: TemplateExtractionResult;
+  filename: string;
+  processorUsages: ProcessorUsage[];
+  program: Program;
+  removableImportLocals: Set<string>;
+  usedNames: Set<string>;
+};
+
 export type ApplyOxcProcessorsResult = {
   code: string;
   finalizeProcessorCallbacks?: (
@@ -42,6 +54,7 @@ export type ApplyOxcProcessorsResult = {
   // the runtime value of the binding IS this string.
   processorClassNamesByLocal: Map<string, string>;
   processors: BaseProcessor[];
+  runtimeProcessorPlan?: OxcProcessorAnalysisPlan;
   staticPlanFacts: StaticPlanFacts;
   staticValueCandidates: OxcStaticValueCandidate[];
   staticValues: OxcStaticValue[];

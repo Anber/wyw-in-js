@@ -152,6 +152,7 @@ const ensureOxcPreevalResult = (
       evalCode: result.code,
       metadata: result.metadata,
       processorClassNames: result.processorClassNames,
+      runtimeProcessorPlan: result.runtimeProcessorPlan,
       staticImportLocals: [],
       staticSideEffectImportLocals: [],
       staticDependencies: result.staticDependencies,

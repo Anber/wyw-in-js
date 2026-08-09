@@ -19,6 +19,8 @@ import type {
   SyncScenarioForAction,
 } from '../transform/types';
 import { collectOxcRuntime } from '../utils/collectOxcRuntime';
+import { EventEmitter } from '../utils/EventEmitter';
+import { runOxcPreevalStage } from '../utils/oxcPreevalStage';
 
 const processorFile = join(__dirname, '__fixtures__', 'test-css-processor.js');
 const filename = join(__dirname, 'source.js');
@@ -74,6 +76,99 @@ const getHandlers = <TMode extends 'async' | 'sync'>(
 });
 
 describe('collectOxcRuntime', () => {
+  it('reports the runtime collect phase breakdown', () => {
+    const methods: string[] = [];
+    const eventEmitter = new EventEmitter(
+      (labels, type) => {
+        if (type === 'finish' && typeof labels.method === 'string') {
+          methods.push(labels.method);
+        }
+      },
+      () => 0,
+      () => {}
+    );
+
+    collectOxcRuntime(
+      dedent`
+        import { css } from 'test-css-processor';
+        export const className = css\`color: red;\`;
+      `,
+      filename,
+      __dirname,
+      { ...createOptions(), eventEmitter },
+      new Map()
+    );
+
+    expect(methods).toEqual(
+      expect.arrayContaining([
+        'transform:collect:applyProcessors',
+        'transform:collect:normalize',
+        'transform:collect:processorRuntime',
+        'transform:collect:sourceMap',
+      ])
+    );
+  });
+
+  it('reuses preeval analysis for runtime-only processors', () => {
+    const code = dedent`
+      import { css } from 'test-css-processor';
+      import { jsx as _jsx } from 'react/jsx-runtime';
+
+      const color = 'red';
+      export function Component() {
+        const className = css\`
+          color: ${'${color}'};
+        \`;
+
+        return _jsx('div', { className });
+      }
+    `;
+    const options = createOptions();
+    const preeval = runOxcPreevalStage(
+      code,
+      { filename, root: __dirname },
+      options
+    );
+    const direct = collectOxcRuntime(
+      code,
+      filename,
+      __dirname,
+      options,
+      preeval.staticValueCache
+    );
+    const methods: string[] = [];
+    const eventEmitter = new EventEmitter(
+      (labels, type) => {
+        if (type === 'finish' && typeof labels.method === 'string') {
+          methods.push(labels.method);
+        }
+      },
+      () => 0,
+      () => {}
+    );
+    const reused = collectOxcRuntime(
+      code,
+      filename,
+      __dirname,
+      { ...options, eventEmitter },
+      preeval.staticValueCache,
+      undefined,
+      preeval.runtimeProcessorPlan
+    );
+
+    expect(preeval.runtimeProcessorPlan).toBeDefined();
+    expect(reused.code).toBe(direct.code);
+    expect(reused.metadata?.processors).toHaveLength(1);
+    expect(methods).not.toEqual(
+      expect.arrayContaining([
+        'transform:collect:applyProcessors:deps',
+        'transform:collect:applyProcessors:imports',
+        'transform:collect:applyProcessors:usages',
+        'transform:collect:applyProcessors:usedNames',
+      ])
+    );
+  });
+
   it('builds processors and applies runtime replacement with evaluated values', () => {
     const result = collectOxcRuntime(
       dedent`
