@@ -1,8 +1,10 @@
 import type { IFileContext } from '@wyw-in-js/processor-utils';
+import { isFeatureEnabled } from '@wyw-in-js/shared';
 
 import type { EventEmitter } from '../EventEmitter';
 import { applyOxcProcessors } from '../applyOxcProcessors';
 import type { ApplyOxcProcessorsResult } from '../applyOxcProcessors/types';
+import { createDangerousCodePlanWithOxc } from '../dangerousCodeRemoval';
 import type { OxcPreevalOptions } from './types';
 
 type PreevalProcessorCollection = {
@@ -16,11 +18,28 @@ export const collectPreevalProcessors = (
   options: OxcPreevalOptions,
   eventEmitter: EventEmitter
 ): PreevalProcessorCollection => {
+  const filename = fileContext.filename ?? 'unknown.js';
+  const createEvaltimeCodePlan = isFeatureEnabled(
+    options.features,
+    'dangerousCodeRemover',
+    filename
+  )
+    ? (processorSpans: Array<{ end: number; start: number }>) =>
+        eventEmitter.perf('transform:preeval:removeDangerousCode', () =>
+          createDangerousCodePlanWithOxc(code, filename, options.codeRemover, {
+            ignoredSpans: processorSpans,
+            preserveImportMetaEnv: true,
+          })
+        )
+    : undefined;
   const processed = eventEmitter.perf('transform:preeval:processTemplate', () =>
     applyOxcProcessors(
       code,
       fileContext,
-      options,
+      {
+        ...options,
+        createEvaltimeCodePlan,
+      },
       (processor) => {
         processor.doEvaltimeReplacement();
       },

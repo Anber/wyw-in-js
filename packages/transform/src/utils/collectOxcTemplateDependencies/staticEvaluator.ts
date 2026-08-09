@@ -7,8 +7,14 @@ import {
   collectOxcPatternRuntimeExpressions,
 } from '../oxc/patterns';
 import { isOxcFunctionLike } from '../oxc/runtimeSemantics';
-import { findResolvedReferences as getReferences } from './bindingResolution';
 import { lookupStaticBinding } from './staticBindings';
+import { isReadOnlyOpaqueFunction } from './staticFunctionPurity';
+import {
+  hasBindingMutationBefore,
+  hasBindingMutationHazardBetween,
+  hasReferencedRootMutationBetween,
+  hasReferencedRootMutationHazardBefore,
+} from './staticMutationChecks';
 import * as timeline from './mutationTimeline';
 import * as recursiveProof from './recursiveProof';
 import { resolveBindingAt } from './scopeAnalysis';
@@ -52,39 +58,14 @@ import {
   type EvalEnv,
   type EvaluationStack,
 } from './staticEvaluationRuntime';
-import type { Binding, ExtractionContext } from './types';
+import type { ExtractionContext } from './types';
 
 export { createOxcStaticCallableValue } from './staticEvaluationRuntime';
 
-const hasReferencedRootMutationBetween = (
-  expression: Expression,
-  start: number,
-  end: number,
-  ctx: ExtractionContext
-): boolean =>
-  getReferences(expression, ctx.bindingIndex).some(({ binding }) => {
-    if (!binding) {
-      return false;
-    }
-
-    return (
-      timeline.hasTimelineStartInRange(
-        getBindingDirectTimeline(binding, ctx),
-        start,
-        end
-      ) ||
-      timeline.someTimelineFullyContained(
-        getBindingHazardTimeline(binding, ctx),
-        start,
-        end,
-        (hazard) => !isKnownPureStaticCall(hazard, ctx)
-      )
-    );
-  });
-
 export const isKnownPureStaticCall = (
   node: Node,
-  ctx: ExtractionContext
+  ctx: ExtractionContext,
+  env?: EvalEnv
 ): boolean => {
   // Tagged templates are classified more precisely by the destructuring
   // projection gate. Treating them as ordinary binding mutations here would
@@ -124,7 +105,18 @@ export const isKnownPureStaticCall = (
     return false;
   }
 
-  return recursiveProof.run(node, ctx.staticCallProof, () => {
+  // An opaque return value is distinct from an impure invocation. A helper
+  // that only returns a direct read cannot mutate sibling imports.
+  if (isReadOnlyOpaqueFunction(fn)) {
+    return true;
+  }
+
+  const proofEnv = env ?? new Map();
+  const proofState =
+    proofEnv.size === 0
+      ? ctx.staticCallProof
+      : recursiveProof.partial(ctx.staticCallProof);
+  return recursiveProof.run(node, proofState, () => {
     const proofCtx: ExtractionContext = {
       ...ctx,
       currentExpressionStart: node.start,
@@ -143,67 +135,14 @@ export const isKnownPureStaticCall = (
     const argumentsAreScalar = node.arguments.every(
       (argument) =>
         argument.type !== 'SpreadElement' &&
-        isScalar(evaluateStatic(argument, proofCtx))
+        isScalar(evaluateStatic(argument, proofCtx, proofEnv))
     );
 
-    return argumentsAreScalar && isScalar(evaluateStatic(node, proofCtx));
-  });
-};
-
-const hasReferencedRootMutationHazardBefore = (
-  expression: Expression,
-  end: number,
-  ctx: ExtractionContext,
-  ignoredHazard?: Node
-): boolean => {
-  if (ctx.rootMutationHazardsByBinding.size === 0) {
-    return false;
-  }
-
-  return getReferences(expression, ctx.bindingIndex).some(({ binding }) => {
-    if (!binding) {
-      return false;
-    }
-
-    return timeline.someTimelineEndAtOrBefore(
-      getBindingHazardTimeline(binding, ctx),
-      end,
-      (hazard) =>
-        !isKnownPureStaticCall(hazard, ctx) &&
-        (!ignoredHazard ||
-          hazard.start < ignoredHazard.start ||
-          ignoredHazard.end < hazard.end)
+    return (
+      argumentsAreScalar && isScalar(evaluateStatic(node, proofCtx, proofEnv))
     );
   });
 };
-
-const hasBindingMutationHazardBetween = (
-  binding: Binding,
-  start: number,
-  end: number,
-  ctx: ExtractionContext
-): boolean =>
-  timeline.someTimelineFullyContained(
-    getBindingHazardTimeline(binding, ctx),
-    start,
-    end,
-    (hazard) => !isKnownPureStaticCall(hazard, ctx)
-  );
-
-const hasBindingMutationBefore = (
-  binding: Binding,
-  end: number,
-  ctx: ExtractionContext
-): boolean =>
-  timeline.hasTimelineStartBefore(
-    getBindingDirectTimeline(binding, ctx),
-    end
-  ) ||
-  timeline.someTimelineEndAtOrBefore(
-    getBindingHazardTimeline(binding, ctx),
-    end,
-    (hazard) => !isKnownPureStaticCall(hazard, ctx)
-  );
 
 export const evaluateStatic = (
   expression: Expression,
@@ -370,7 +309,13 @@ export const evaluateStatic = (
 
       if (
         binding?.importedFrom &&
-        hasBindingMutationBefore(binding, ctx.currentExpressionStart, ctx)
+        hasBindingMutationBefore(
+          binding,
+          ctx.currentExpressionStart,
+          ctx,
+          env,
+          isKnownPureStaticCall
+        )
       ) {
         return undefined;
       }
@@ -379,7 +324,15 @@ export const evaluateStatic = (
     }
 
     if (binding?.importedFrom) {
-      if (hasBindingMutationBefore(binding, ctx.currentExpressionStart, ctx)) {
+      if (
+        hasBindingMutationBefore(
+          binding,
+          ctx.currentExpressionStart,
+          ctx,
+          env,
+          isKnownPureStaticCall
+        )
+      ) {
         return undefined;
       }
 
@@ -430,7 +383,7 @@ export const evaluateStatic = (
           ctx,
           bindingMutations,
           bindingMutationHazards,
-          isKnownPureStaticCall
+          (hazard, proofCtx) => isKnownPureStaticCall(hazard, proofCtx, env)
         )
       : null;
     if (valueCacheKey && env.has(valueCacheKey)) {
@@ -450,7 +403,9 @@ export const evaluateStatic = (
             init,
             ctx.currentExpressionStart,
             ctx,
-            declarator
+            declarator,
+            env,
+            isKnownPureStaticCall
           )
         ) {
           return undefined;
@@ -460,7 +415,14 @@ export const evaluateStatic = (
         if (
           binding.declarationKind !== 'const' ||
           expression.start < declarator.end ||
-          hasReferencedRootMutationHazardBefore(init, declarator.start, ctx)
+          hasReferencedRootMutationHazardBefore(
+            init,
+            declarator.start,
+            ctx,
+            undefined,
+            env,
+            isKnownPureStaticCall
+          )
         ) {
           return undefined;
         }
@@ -484,7 +446,10 @@ export const evaluateStatic = (
               hasReferencedRootMutationHazardBefore(
                 runtimeExpression,
                 declarator.start,
-                ctx
+                ctx,
+                undefined,
+                env,
+                isKnownPureStaticCall
               )
           )
         ) {
@@ -523,14 +488,18 @@ export const evaluateStatic = (
             init,
             declarator.end,
             ctx.currentExpressionStart,
-            ctx
+            ctx,
+            env,
+            isKnownPureStaticCall
           ) ||
           patternRuntimeExpressions.some((runtimeExpression) =>
             hasReferencedRootMutationBetween(
               runtimeExpression,
               declarator.end,
               ctx.currentExpressionStart,
-              ctx
+              ctx,
+              env,
+              isKnownPureStaticCall
             )
           );
         if (
@@ -541,7 +510,9 @@ export const evaluateStatic = (
               binding,
               declarator.end,
               ctx.currentExpressionStart,
-              ctx
+              ctx,
+              env,
+              isKnownPureStaticCall
             ))
         ) {
           return undefined;
@@ -572,7 +543,8 @@ export const evaluateStatic = (
                 ctx,
                 undefined,
                 undefined,
-                isKnownPureStaticCall
+                (hazard, proofCtx) =>
+                  isKnownPureStaticCall(hazard, proofCtx, env)
               ),
               siblingValue
             );
@@ -595,7 +567,7 @@ export const evaluateStatic = (
       ctx.currentExpressionStart
     );
     const isUnreplayedPriorHazard = (hazard: Node): boolean =>
-      !isKnownPureStaticCall(hazard, ctx) &&
+      !isKnownPureStaticCall(hazard, ctx, env) &&
       !timeline.timelineStartBeforeIncludes(
         bindingMutations,
         ctx.currentExpressionStart,
@@ -972,6 +944,28 @@ export const evaluateStatic = (
     }
 
     if (expression.callee.type === 'MemberExpression') {
+      if (
+        !expression.callee.computed &&
+        expression.callee.object.type === 'Identifier' &&
+        expression.callee.object.name === 'Math' &&
+        !resolveBindingAt(
+          ctx,
+          expression.callee.object.name,
+          expression.callee.object.start
+        ) &&
+        expression.callee.property.type === 'Identifier' &&
+        expression.callee.property.name === 'round' &&
+        expression.arguments.length === 1
+      ) {
+        const [argument] = expression.arguments;
+        if (argument?.type !== 'SpreadElement') {
+          const value = evaluateStatic(argument, ctx, env, stack);
+          if (typeof value === 'number') {
+            return Math.round(value);
+          }
+        }
+      }
+
       const objectValue = evaluateStatic(
         expression.callee.object,
         ctx,

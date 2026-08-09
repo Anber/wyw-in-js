@@ -3,7 +3,11 @@ import type { ExpressionValue, StrictOptions } from '@wyw-in-js/shared';
 
 import { collectOxcProcessorImportsFromProgram } from '../collectOxcExportsAndImports';
 import { collectOxcExpressionDependencies } from '../collectOxcTemplateDependencies';
-import type { OxcStaticValue } from '../collectOxcTemplateDependencies';
+import type {
+  OxcStaticValue,
+  OxcStaticValueCandidate,
+} from '../collectOxcTemplateDependencies';
+import type { DangerousCodePlan } from '../dangerousCodeRemoval';
 import {
   collectOxcExpressionDependenciesForEvalFallback,
   OxcSnapshotWriteUnsupportedError,
@@ -11,7 +15,7 @@ import {
 import { EventEmitter } from '../EventEmitter';
 import type { AddedImport } from '../oxcAstService';
 import { isOxcNode } from '../oxc/ast';
-import { applyOxcReplacements } from '../oxc/replacements';
+import { applyOxcReplacementLayers } from '../oxc/replacements';
 import {
   buildOxcCodeFrameError,
   createOxcLocationLookup,
@@ -47,9 +51,50 @@ import type {
   ApplyOxcProcessorsResult,
   CreatedProcessor,
   DefinedProcessor,
+  OxcProcessorAnalysisPlan,
+  ProcessorUsage,
   Replacement,
   SameFileProcessorObject,
+  StaticPlanFacts,
 } from './types';
+
+const EMPTY_STATIC_PLAN_FACTS: StaticPlanFacts = {
+  importedNeeds: [],
+  staticValueCount: 0,
+  unresolvedCount: 0,
+  usageCount: 0,
+};
+
+const collectStaticPlanFacts = (
+  usages: ProcessorUsage[],
+  staticValueCandidates: OxcStaticValueCandidate[],
+  staticValues: OxcStaticValue[]
+): StaticPlanFacts => {
+  const staticValueNames = new Set(staticValues.map(({ name }) => name));
+  const unresolvedNames = new Set<string>();
+  const importedNeeds: StaticPlanFacts['importedNeeds'] = [];
+
+  staticValueCandidates.forEach((candidate) => {
+    if (candidate.imports.length === 0) {
+      return;
+    }
+
+    if (!staticValueNames.has(candidate.name)) {
+      unresolvedNames.add(candidate.name);
+    }
+
+    candidate.imports.forEach(({ imported: name, source }) => {
+      importedNeeds.push({ name, source });
+    });
+  });
+
+  return {
+    importedNeeds,
+    staticValueCount: staticValueNames.size,
+    unresolvedCount: unresolvedNames.size,
+    usageCount: usages.length,
+  };
+};
 
 export const applyOxcProcessors = (
   code: string,
@@ -64,33 +109,61 @@ export const applyOxcProcessors = (
     | 'staticBindings'
     | 'tagResolver'
   > & {
+    createEvaltimeCodePlan?: (
+      processorSpans: Array<{ end: number; start: number }>
+    ) => DangerousCodePlan;
     eventEmitter?: EventEmitter;
+    perfPrefix?: string;
     preserveSideEffectImportOrderLocals?: Set<string>;
     preserveSideEffectImportLocals?: Set<string>;
   },
   callback: (processor: BaseProcessor) => void,
   cleanupUnused = false,
-  deferProcessorCallbacks = false
+  deferProcessorCallbacks = false,
+  runtimeProcessorPlan?: OxcProcessorAnalysisPlan
 ): ApplyOxcProcessorsResult => {
   const filename = fileContext.filename ?? 'unknown.js';
   const eventEmitter = options.eventEmitter ?? EventEmitter.dummy;
+  const perfPrefix = options.perfPrefix ?? 'transform:preeval:processTemplate';
+  const perfLabel = (suffix: string): string => `${perfPrefix}:${suffix}`;
   const collectStaticExpressionValues =
     shouldCollectStaticExpressionValues(options);
-  let workingCode = code;
-  let program = parseOxc(workingCode, filename);
+  const workingCode = code;
+  const reusablePlan =
+    runtimeProcessorPlan?.code === workingCode &&
+    runtimeProcessorPlan.filename === filename
+      ? runtimeProcessorPlan
+      : undefined;
+  const program = reusablePlan?.program ?? parseOxc(workingCode, filename);
+  let evaltimeCodePlan: DangerousCodePlan | null = null;
+  const getEvaltimeCodePlan = (
+    processorSpans: Array<{ end: number; start: number }> = []
+  ): DangerousCodePlan => {
+    evaltimeCodePlan ??= options.createEvaltimeCodePlan?.(processorSpans) ?? {
+      removedSpans: [],
+      replacements: [],
+      runtimeOnlyProcessorSpans: [],
+    };
+
+    return evaltimeCodePlan;
+  };
+  const buildUnprocessedCode = () =>
+    applyOxcReplacementLayers(workingCode, [
+      getEvaltimeCodePlan().replacements,
+    ]);
   const definedProcessors = new Map<string, DefinedProcessor>();
-  const removableImportLocals = new Set<string>();
+  const removableImportLocals = new Set(
+    reusablePlan?.removableImportLocals ?? []
+  );
   const removableExpressionRefs = new Set<string>();
 
-  eventEmitter.perf('transform:preeval:processTemplate:imports', () => {
-    const imports = eventEmitter.perf(
-      'transform:preeval:processTemplate:imports:analysis',
-      () => collectOxcProcessorImportsFromProgram(program, workingCode)
-    );
+  if (!reusablePlan) {
+    eventEmitter.perf(perfLabel('imports'), () => {
+      const imports = eventEmitter.perf(perfLabel('imports:analysis'), () =>
+        collectOxcProcessorImportsFromProgram(program, workingCode)
+      );
 
-    eventEmitter.perf(
-      'transform:preeval:processTemplate:imports:lookup',
-      () => {
+      eventEmitter.perf(perfLabel('imports:lookup'), () => {
         imports.forEach((item) => {
           const localName = item.local.name ?? item.local.code;
           if (item.imported === 'side-effect' || !localName) {
@@ -124,29 +197,34 @@ export const applyOxcProcessors = (
             }
           }
         });
-      }
-    );
-  });
+      });
+    });
+  }
 
-  if (definedProcessors.size === 0) {
+  if (!reusablePlan && definedProcessors.size === 0) {
     return {
-      code: workingCode,
+      code: buildUnprocessedCode(),
+      processorManagedExpressionSpans: [],
       processorClassNamesByLocal: new Map(),
       processors: [],
+      staticPlanFacts: EMPTY_STATIC_PLAN_FACTS,
       staticValueCandidates: [],
       staticValues: [],
     };
   }
 
-  let processorUsages = eventEmitter.perf(
-    'transform:preeval:processTemplate:usages',
-    () => collectProcessorUsages(program, definedProcessors)
-  );
+  const processorUsages =
+    reusablePlan?.processorUsages ??
+    eventEmitter.perf(perfLabel('usages'), () =>
+      collectProcessorUsages(program, definedProcessors)
+    );
   if (processorUsages.length === 0) {
     return {
-      code: workingCode,
+      code: buildUnprocessedCode(),
+      processorManagedExpressionSpans: [],
       processorClassNamesByLocal: new Map(),
       processors: [],
+      staticPlanFacts: EMPTY_STATIC_PLAN_FACTS,
       staticValueCandidates: [],
       staticValues: [],
     };
@@ -159,6 +237,11 @@ export const applyOxcProcessors = (
     end: usage.target.end,
     start: usage.target.start,
   }));
+  const {
+    removedSpans: evaltimeRemovedSpans,
+    replacements: evaltimeCodeReplacements,
+    runtimeOnlyProcessorSpans,
+  } = getEvaltimeCodePlan(processorManagedExpressionSpans);
   const extractDependencies = () => {
     try {
       return collectOxcExpressionDependencies(
@@ -167,7 +250,8 @@ export const applyOxcProcessors = (
         collectStaticExpressionValues,
         targetExpressionSpans,
         options.staticBindings,
-        processorManagedExpressionSpans
+        processorManagedExpressionSpans,
+        evaltimeRemovedSpans
       );
     } catch (error) {
       if (!(error instanceof OxcSnapshotWriteUnsupportedError)) {
@@ -178,35 +262,24 @@ export const applyOxcProcessors = (
         workingCode,
         filename,
         targetExpressionSpans,
-        processorManagedExpressionSpans
+        processorManagedExpressionSpans,
+        evaltimeRemovedSpans
       );
     }
   };
 
   const extracted =
-    targetExpressionSpans.length > 0
-      ? eventEmitter.perf('transform:preeval:processTemplate:deps', () =>
-          extractDependencies()
-        )
+    reusablePlan?.extracted ??
+    (targetExpressionSpans.length > 0
+      ? eventEmitter.perf(perfLabel('deps'), () => extractDependencies())
       : {
           code: workingCode,
           dependencyNames: [],
           expressionValues: [],
+          replacements: [],
           staticValueCandidates: [],
           staticValues: [],
-        };
-
-  if (extracted.code !== workingCode) {
-    workingCode = extracted.code;
-    program = eventEmitter.perf(
-      'transform:preeval:processTemplate:reparse',
-      () => parseOxc(workingCode, filename)
-    );
-    processorUsages = eventEmitter.perf(
-      'transform:preeval:processTemplate:usages',
-      () => collectProcessorUsages(program, definedProcessors)
-    );
-  }
+        });
 
   const templateExpressionValues = extracted.expressionValues.map(
     (value) =>
@@ -217,10 +290,9 @@ export const applyOxcProcessors = (
       }) as ExpressionValue
   );
   const loc = createOxcLocationLookup(workingCode);
-  const usedNames = eventEmitter.perf(
-    'transform:preeval:processTemplate:usedNames',
-    () => collectUsedNames(program)
-  );
+  const usedNames =
+    reusablePlan?.usedNames ??
+    eventEmitter.perf(perfLabel('usedNames'), () => collectUsedNames(program));
   const addedImports: AddedImport[] = [];
   const replacements: Replacement[] = [];
   const createdProcessors: CreatedProcessor[] = [];
@@ -234,8 +306,19 @@ export const applyOxcProcessors = (
   extracted.dependencyNames.forEach((name: string) =>
     removableImportLocals.add(name)
   );
+  const capturedRuntimeProcessorPlan = deferProcessorCallbacks
+    ? {
+        code: workingCode,
+        extracted,
+        filename,
+        processorUsages,
+        program,
+        removableImportLocals: new Set(removableImportLocals),
+        usedNames,
+      }
+    : undefined;
 
-  eventEmitter.perf('transform:preeval:processTemplate:processors', () => {
+  eventEmitter.perf(perfLabel('processors'), () => {
     processorUsages.forEach((usage, idx) => {
       const params = buildParams(
         usage,
@@ -260,6 +343,11 @@ export const applyOxcProcessors = (
         workingCode,
         loc,
         idx,
+        !runtimeOnlyProcessorSpans.some(
+          (span) =>
+            span.start <= usage.replacementTarget.start &&
+            span.end >= usage.replacementTarget.end
+        ),
         isTagReferenced(program, usage.ancestors),
         usedNames,
         replacements
@@ -319,7 +407,7 @@ export const applyOxcProcessors = (
 
       processors.push(processor);
       createdProcessors.push(created);
-      if (!deferProcessorCallbacks) {
+      if (!deferProcessorCallbacks && created.evaltimeLive) {
         callback(processor);
         addedImports.push(...astService.getAddedImports());
       }
@@ -377,7 +465,11 @@ export const applyOxcProcessors = (
   const currentSameFileProcessorStaticValues =
     collectCurrentSameFileProcessorStaticValues();
 
-  const replacedCode = applyOxcReplacements(workingCode, replacements);
+  const replacedCode = applyOxcReplacementLayers(workingCode, [
+    replacements,
+    evaltimeCodeReplacements,
+    extracted.replacements,
+  ]);
   const metadataExtendsHelperNames =
     collectWYWMetaExtendsHelperNames(replacedCode);
   const staticValueCandidates = extracted.staticValueCandidates.filter(
@@ -388,7 +480,11 @@ export const applyOxcProcessors = (
   let callbacksApplied = !deferProcessorCallbacks;
 
   const buildCode = (): string => {
-    const nextReplacedCode = applyOxcReplacements(workingCode, replacements);
+    const nextReplacedCode = applyOxcReplacementLayers(workingCode, [
+      replacements,
+      evaltimeCodeReplacements,
+      extracted.replacements,
+    ]);
     const codeWithAddedImports = insertAddedImports(
       nextReplacedCode,
       filename,
@@ -396,7 +492,7 @@ export const applyOxcProcessors = (
     );
 
     return cleanupUnused
-      ? eventEmitter.perf('transform:preeval:processTemplate:cleanup', () =>
+      ? eventEmitter.perf(perfLabel('cleanup'), () =>
           removeUnusedAfterReplacement(
             codeWithAddedImports,
             filename,
@@ -413,8 +509,15 @@ export const applyOxcProcessors = (
 
   const result: ApplyOxcProcessorsResult = {
     code: buildCode(),
+    processorManagedExpressionSpans,
     processorClassNamesByLocal,
     processors,
+    runtimeProcessorPlan: capturedRuntimeProcessorPlan,
+    staticPlanFacts: collectStaticPlanFacts(
+      processorUsages,
+      extracted.staticValueCandidates,
+      extracted.staticValues
+    ),
     staticValueCandidates: addCandidateInlineConstants(
       staticValueCandidates,
       currentSameFileProcessorStaticValues.byLocal
@@ -444,7 +547,11 @@ export const applyOxcProcessors = (
       staticValues.byLocal
     );
     result.staticValues = [...extracted.staticValues, ...staticValues.values];
-    createdProcessors.forEach(({ astService, processor }) => {
+    createdProcessors.forEach(({ astService, evaltimeLive, processor }) => {
+      if (!evaltimeLive) {
+        return;
+      }
+
       callback(processor);
       addedImports.push(...astService.getAddedImports());
     });

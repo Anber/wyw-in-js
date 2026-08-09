@@ -69,6 +69,7 @@ export type MutationTimelineLookup<T extends MutationSpan = Node> = Pick<
 
 export type Scope = {
   bindings: Map<string, Binding>;
+  deferredFunctionNode?: Node;
   depth: number;
   end: number;
   functionBoundary: boolean;
@@ -111,6 +112,7 @@ export type TemplateExtractionResult = {
   code: string;
   dependencyNames: string[];
   expressionValues: Omit<ExpressionValue, 'buildCodeFrameError'>[];
+  replacements: OxcValueReplacement[];
   staticValueCandidates: OxcStaticValueCandidate[];
   staticValues: OxcStaticValue[];
 };

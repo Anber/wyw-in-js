@@ -1,7 +1,9 @@
 import type { ValueCache } from '@wyw-in-js/processor-utils';
 import type { RawSourceMap } from 'source-map';
 
+import { EventEmitter } from './EventEmitter';
 import { applyOxcProcessors } from './applyOxcProcessors';
+import type { OxcProcessorAnalysisPlan } from './applyOxcProcessors/types';
 import { normalizeRuntimeCode } from './collectOxcRuntime/normalizeRuntimeCode';
 import { createComposedRuntimeSourceMap } from './collectOxcRuntime/sourceMap';
 import type {
@@ -15,27 +17,43 @@ export const collectOxcRuntime = (
   root: string,
   options: OxcCollectOptions,
   values: ValueCache,
-  inputSourceMap?: RawSourceMap
+  inputSourceMap?: RawSourceMap,
+  runtimeProcessorPlan?: OxcProcessorAnalysisPlan
 ): OxcCollectResult => {
-  const result = applyOxcProcessors(
-    code,
-    {
-      filename,
-      root,
-    },
-    options,
-    (processor) => {
-      processor.build(values);
-      processor.doRuntimeReplacement();
-    },
-    true
+  const { eventEmitter = EventEmitter.dummy, ...processorOptions } = options;
+  const result = eventEmitter.perf('transform:collect:applyProcessors', () =>
+    applyOxcProcessors(
+      code,
+      {
+        filename,
+        root,
+      },
+      {
+        ...processorOptions,
+        eventEmitter,
+        perfPrefix: 'transform:collect:applyProcessors',
+      },
+      (processor) => {
+        eventEmitter.perf('transform:collect:processorRuntime', () => {
+          processor.build(values);
+          processor.doRuntimeReplacement();
+        });
+      },
+      true,
+      false,
+      runtimeProcessorPlan
+    )
   );
-  const normalizedCode = normalizeRuntimeCode(result.code, filename);
-  const map = createComposedRuntimeSourceMap(
-    normalizedCode,
-    code,
-    filename,
-    inputSourceMap
+  const normalizedCode = eventEmitter.perf('transform:collect:normalize', () =>
+    normalizeRuntimeCode(result.code, filename)
+  );
+  const map = eventEmitter.perf('transform:collect:sourceMap', () =>
+    createComposedRuntimeSourceMap(
+      normalizedCode,
+      code,
+      filename,
+      inputSourceMap
+    )
   );
 
   if (result.processors.length === 0) {

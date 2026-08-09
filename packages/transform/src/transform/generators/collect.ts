@@ -32,6 +32,7 @@ export function* collect(
     options.root ?? process.cwd(),
     {
       ...options.pluginOptions,
+      eventEmitter: this.services.eventEmitter,
       preserveSideEffectImportOrderLocals: new Set(
         preevalResult?.staticImportLocals ?? []
       ),
@@ -40,7 +41,8 @@ export function* collect(
       ),
     },
     prevalPayload.values,
-    options.inputSourceMap
+    options.inputSourceMap,
+    preevalResult?.runtimeProcessorPlan
   );
 
   return {

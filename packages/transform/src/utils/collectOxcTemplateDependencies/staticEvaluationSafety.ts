@@ -19,8 +19,11 @@ import {
 import { getOxcSyntacticPropertyKey } from '../oxc/projections';
 import { findResolvedReferences as getReferences } from './bindingResolution';
 import {
+  getExecutionVisibleMutationTimeline,
+  someExecutionAncestorEffect,
+} from './mutationExecution';
+import {
   getMutationTimeline,
-  hasTimelineEndAtOrBefore,
   someTimelineEndAtOrBefore,
   someTimelineStartBefore,
   unknownAliasMutationBinding,
@@ -134,9 +137,10 @@ const someIntrinsicChangeEndAtOrBefore = (
     end,
     predicate
   ) ||
-  someTimelineEndAtOrBefore(
-    getMutationTimeline(ctx.rootMutationHazardsByBinding, binding),
+  someHazardTimelineEndAtOrBefore(
+    getHazardTimelineAt(binding, end, ctx),
     end,
+    ctx,
     predicate
   );
 
@@ -145,12 +149,11 @@ export const hasRelevantIntrinsicMutationBefore = (
   end: number,
   ctx: ExtractionContext
 ): boolean => {
-  const unknownAliasChangesBefore = hasTimelineEndAtOrBefore(
-    getMutationTimeline(
-      ctx.rootMutationHazardsByBinding,
-      unknownAliasMutationBinding
-    ),
-    end
+  const unknownAliasChangesBefore = someHazardTimelineEndAtOrBefore(
+    getHazardTimelineAt(unknownAliasMutationBinding, end, ctx),
+    end,
+    ctx,
+    () => true
   );
 
   if (
@@ -178,12 +181,11 @@ export const hasArrayIterationMutationBefore = (
   end: number,
   ctx: ExtractionContext
 ): boolean =>
-  hasTimelineEndAtOrBefore(
-    getMutationTimeline(
-      ctx.rootMutationHazardsByBinding,
-      unknownAliasMutationBinding
-    ),
-    end
+  someHazardTimelineEndAtOrBefore(
+    getHazardTimelineAt(unknownAliasMutationBinding, end, ctx),
+    end,
+    ctx,
+    () => true
   ) ||
   someIntrinsicChangeEndAtOrBefore(
     'Object',
@@ -224,13 +226,39 @@ export const getBindingDirectTimeline = (
     toMutationBindingKey(binding)
   );
 
+export const getHazardTimelineAt = (
+  binding: string,
+  targetStart: number,
+  ctx: ExtractionContext
+): MutationTimeline<Node> =>
+  getExecutionVisibleMutationTimeline(
+    ctx.bindingIndex,
+    getMutationTimeline(ctx.rootMutationHazardsByBinding, binding),
+    targetStart
+  );
+
+export const someHazardTimelineEndAtOrBefore = (
+  timeline: MutationTimeline<Node>,
+  targetStart: number,
+  ctx: ExtractionContext,
+  predicate: (hazard: Node) => boolean
+): boolean =>
+  someTimelineEndAtOrBefore(timeline, targetStart, predicate) ||
+  someExecutionAncestorEffect(
+    ctx.bindingIndex,
+    timeline,
+    targetStart,
+    predicate
+  );
+
 export const getBindingHazardTimeline = (
   binding: Binding,
   ctx: ExtractionContext
-) =>
-  getMutationTimeline(
-    ctx.rootMutationHazardsByBinding,
-    toMutationBindingKey(binding)
+): MutationTimeline<Node> =>
+  getHazardTimelineAt(
+    toMutationBindingKey(binding),
+    ctx.currentExpressionStart,
+    ctx
   );
 
 const assignmentTargetContainsBinding = (
@@ -277,9 +305,10 @@ export const hasDirectBindingMutationBefore = (
     end,
     (mutation) => mutationDirectlyTargetsBinding(mutation, binding, ctx)
   ) ||
-  someTimelineEndAtOrBefore(
+  someHazardTimelineEndAtOrBefore(
     getBindingHazardTimeline(binding, ctx),
     end,
+    ctx,
     (mutation) => mutationDirectlyTargetsBinding(mutation, binding, ctx)
   );
 

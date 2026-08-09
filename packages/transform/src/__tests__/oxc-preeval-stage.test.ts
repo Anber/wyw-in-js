@@ -90,6 +90,12 @@ describe('runOxcPreevalStage', () => {
     );
 
     expect(result.staticValueCache.get('_exp')).toBe('red');
+    expect(result.staticPlanFacts).toEqual({
+      importedNeeds: [],
+      staticValueCount: 1,
+      unresolvedCount: 0,
+      usageCount: 1,
+    });
     expect(result.code).toContain('export const __wywPreval = {};');
     expect(result.code).not.toContain('__wywPreval = { _exp: _exp }');
   });
@@ -229,6 +235,77 @@ describe('runOxcPreevalStage', () => {
     expect(result.code).not.toContain('__wywPreval = { _exp: _exp }');
   });
 
+  it('ignores deferred component hazards before dangerous code removal', () => {
+    const source = `
+      import { css } from 'test-package';
+      import { observer } from 'mobx-react-lite';
+      import * as tokens from './tokens';
+      import { jsx as _jsx } from 'react/jsx-runtime';
+
+      const Component = observer(() =>
+        _jsx('div', { children: tokens.runtime })
+      );
+
+      export const a = css\`
+        color: ${'${tokens.color}'};
+      \`;
+    `;
+    const enabled = runOxcPreevalStage(source, fileContext, options);
+    const disabled = runOxcPreevalStage(source, fileContext, {
+      ...options,
+      features: {
+        dangerousCodeRemover: false,
+      },
+    });
+
+    [enabled, disabled].forEach((result) => {
+      expect(result.staticValueCandidates).toEqual([
+        expect.objectContaining({
+          imports: [
+            expect.objectContaining({
+              imported: 'color',
+              source: './tokens',
+            }),
+          ],
+          source: expect.stringContaining('_wyw_static_tokens_color'),
+        }),
+      ]);
+    });
+  });
+
+  it('keeps processors in removed components runtime-only', () => {
+    const result = runOxcPreevalStage(
+      `
+        import { css } from 'test-package';
+        import { jsx as _jsx } from 'react/jsx-runtime';
+
+        const color = 'red';
+        export function Component() {
+          const className = css\`
+            color: ${'${color}'};
+          \`;
+
+          return _jsx('div', { className });
+        }
+      `,
+      fileContext,
+      options
+    );
+    const [processor] = result.metadata?.processors ?? [];
+    let evaltimeReplacementCalled = false;
+
+    expect(processor).toBeDefined();
+    processor!.doEvaltimeReplacement = () => {
+      evaltimeReplacementCalled = true;
+    };
+
+    result.finalizeEvaltimeReplacements?.(result.staticValueCache);
+
+    expect(evaltimeReplacementCalled).toBe(false);
+    expect(result.staticValueCache.get('_exp')).toBe('red');
+    expect(result.code).toContain('function Component() { return null; }');
+  });
+
   it('still applies preeval syntax rewrites when no processors are present', () => {
     const result = runOxcPreevalStage(
       `
@@ -260,7 +337,7 @@ describe('runOxcPreevalStage', () => {
       () => {}
     );
 
-    runOxcPreevalStage(
+    const result = runOxcPreevalStage(
       `
         import { css } from 'test-package';
         const href = window.location.href;
@@ -278,6 +355,7 @@ describe('runOxcPreevalStage', () => {
         eventEmitter,
       }
     );
+    result.finalizeEvaltimeReplacements?.(result.staticValueCache);
 
     expect(methods).toEqual(
       expect.arrayContaining([
@@ -295,6 +373,11 @@ describe('runOxcPreevalStage', () => {
         'transform:preeval:requireFallback',
       ])
     );
+    expect(
+      methods.filter(
+        (method) => method === 'transform:preeval:removeDangerousCode'
+      )
+    ).toHaveLength(1);
   });
 
   it('feeds Oxc shaker with __wywPreval-only prepared code', () => {

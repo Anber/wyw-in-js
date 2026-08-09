@@ -1,8 +1,5 @@
-import { isFeatureEnabled } from '@wyw-in-js/shared';
-
 import type { EventEmitter } from '../EventEmitter';
 import {
-  removeDangerousCodeWithOxc,
   replaceImportMetaEnvWithOxc,
   rewriteDynamicImportsAndAddRequireFallbackWithOxc,
 } from '../oxcPreevalTransforms';
@@ -20,12 +17,6 @@ export const prepareOxcPreevalCode = (
   let nextCode = eventEmitter.perf('transform:preeval:importMetaEnv', () =>
     replaceImportMetaEnvWithOxc(code, filename)
   );
-
-  if (isFeatureEnabled(options.features, 'dangerousCodeRemover', filename)) {
-    nextCode = eventEmitter.perf('transform:preeval:removeDangerousCode', () =>
-      removeDangerousCodeWithOxc(nextCode, filename, options.codeRemover)
-    );
-  }
 
   const shouldRewriteDynamicImports = DYNAMIC_IMPORT_RE.test(nextCode);
   const shouldAddRequireFallback = REQUIRE_CALL_RE.test(nextCode);

@@ -20,6 +20,7 @@ const createScope = (
   boundary: OxcLexicalScopeBoundary
 ): Scope => ({
   bindings: new Map(),
+  deferredFunctionNode: parent?.deferredFunctionNode,
   depth: parent ? parent.depth + 1 : 0,
   end: boundary.end,
   functionBoundary: boundary.functionBoundary,

@@ -10,10 +10,13 @@ import {
   forEachTimelineStartBefore,
   getMutationTimeline,
   resolveBindingAt,
-  someTimelineStartBefore,
   toMutationBindingKey,
 } from './scopeAnalysis';
 import { evaluateStatic } from './staticEvaluator';
+import {
+  getHazardTimelineAt,
+  someHazardTimelineEndAtOrBefore,
+} from './staticEvaluationSafety';
 import { toOxcBindingIdentity } from './bindingIdentity';
 import type { Binding, ExtractionContext } from './types';
 
@@ -658,7 +661,7 @@ function inferSnapshotBindingKind(
   const bindingKey = toMutationBindingKey(binding);
   forEachMergedTimelineStartBefore(
     getMutationTimeline(ctx.rootMutationsByBinding, bindingKey),
-    getMutationTimeline(ctx.rootMutationHazardsByBinding, bindingKey),
+    getHazardTimelineAt(bindingKey, ctx.currentExpressionStart, ctx),
     ctx.currentExpressionStart,
     (hazard) =>
       hazard.type === 'AssignmentExpression' ||
@@ -689,9 +692,10 @@ function inferSnapshotBindingKind(
     }
   );
 
-  const hasOpaqueCallHazard = someTimelineStartBefore(
-    getMutationTimeline(ctx.rootMutationHazardsByBinding, bindingKey),
+  const hasOpaqueCallHazard = someHazardTimelineEndAtOrBefore(
+    getHazardTimelineAt(bindingKey, ctx.currentExpressionStart, ctx),
     ctx.currentExpressionStart,
+    ctx,
     (hazard) => {
       if (
         hazard.type === 'CallExpression' &&

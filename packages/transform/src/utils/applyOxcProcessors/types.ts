@@ -3,6 +3,7 @@ import type {
   CallExpression,
   Expression,
   Node,
+  Program,
   TaggedTemplateExpression,
 } from 'oxc-parser';
 
@@ -10,6 +11,7 @@ import type {
   OxcStaticValue,
   OxcStaticValueCandidate,
 } from '../collectOxcTemplateDependencies';
+import type { TemplateExtractionResult } from '../collectOxcTemplateDependencies/types';
 import type { OxcAstService } from '../oxcAstService';
 import type { OxcValueReplacement } from '../oxc/replacements';
 import type { OxcLocationLookup } from '../oxc/sourceLocations';
@@ -24,16 +26,36 @@ export type DefinedProcessor = [
 
 export type Replacement = OxcValueReplacement;
 
+export type StaticPlanFacts = {
+  importedNeeds: Array<{ name: string; source: string }>;
+  staticValueCount: number;
+  unresolvedCount: number;
+  usageCount: number;
+};
+
+export type OxcProcessorAnalysisPlan = {
+  code: string;
+  extracted: TemplateExtractionResult;
+  filename: string;
+  processorUsages: ProcessorUsage[];
+  program: Program;
+  removableImportLocals: Set<string>;
+  usedNames: Set<string>;
+};
+
 export type ApplyOxcProcessorsResult = {
   code: string;
   finalizeProcessorCallbacks?: (
     staticValueCache?: Map<string, unknown>
   ) => ApplyOxcProcessorsResult;
+  processorManagedExpressionSpans: ExpressionSpan[];
   // Selector-only processor class names (css`...`-style). Safe to use as
   // a class-name fallback in cross-file static-export resolution because
   // the runtime value of the binding IS this string.
   processorClassNamesByLocal: Map<string, string>;
   processors: BaseProcessor[];
+  runtimeProcessorPlan?: OxcProcessorAnalysisPlan;
+  staticPlanFacts: StaticPlanFacts;
   staticValueCandidates: OxcStaticValueCandidate[];
   staticValues: OxcStaticValue[];
 };
@@ -72,6 +94,7 @@ export type ExpressionSpan = {
 
 export type CreatedProcessor = {
   astService: OxcAstService;
+  evaltimeLive: boolean;
   processor: BaseProcessor;
 };
 

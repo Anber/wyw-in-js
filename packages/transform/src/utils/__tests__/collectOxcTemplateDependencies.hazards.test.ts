@@ -4,6 +4,7 @@ import dedent from 'dedent';
 import {
   collectOxcExpressionDependencies,
   collectOxcTemplateDependencies,
+  evaluateOxcStaticExpressionAt,
 } from '../collectOxcTemplateDependencies';
 import {
   analyzeProgram,
@@ -650,29 +651,79 @@ describe('collectOxcTemplateDependencies mutation provenance', () => {
     ['a bare unresolved identifier', 'const alias = current;'],
     ['an identifier-free member root', 'const alias = ({}).current;'],
     ['a this member root', 'const alias = this.current;'],
-    [
-      'a super member root',
+  ])('treats %s as unproven alias provenance', (_description, declaration) => {
+    expectWidthFallback(dedent`
+        import { source } from './tokens';
+
+        ${declaration}
+        alias.width = 400;
+        const { width } = source;
+        const template = tag\`${'${width}'}\`;
+      `);
+  });
+
+  it('does not execute uncalled class method provenance', () => {
+    const result = collectOxcTemplateDependencies(
       dedent`
+        import { source } from './tokens';
+
         class Holder extends Base {
           mutate() {
             const alias = super.current;
             alias.width = 400;
           }
         }
-      `,
-    ],
-  ])('treats %s as unproven alias provenance', (_description, declaration) => {
-    const mutation = declaration.includes('class Holder')
-      ? ''
-      : 'alias.width = 400;';
-    expectWidthFallback(dedent`
-        import { source } from './tokens';
-
-        ${declaration}
-        ${mutation}
         const { width } = source;
         const template = tag\`${'${width}'}\`;
-      `);
+      `,
+      filename,
+      true
+    );
+
+    expect(result.staticValueCandidates).toEqual([
+      expect.objectContaining({
+        imports: [
+          {
+            imported: 'source',
+            local: 'source',
+            source: './tokens',
+          },
+        ],
+      }),
+    ]);
+  });
+
+  it('publishes unproven provenance when its function is called', () => {
+    expectWidthFallback(dedent`
+      import { source } from './tokens';
+
+      function mutate() {
+        const alias = registry.source;
+        alias.width = 400;
+      }
+      mutate();
+      const { width } = source;
+      const template = tag\`${'${width}'}\`;
+    `);
+  });
+
+  it('treats parent-container effects as possible before deferred reads', () => {
+    const result = collectOxcTemplateDependencies(
+      dedent`
+        import { source } from './tokens';
+
+        function render() {
+          return tag\`${'${source.width}'}\`;
+        }
+        mutate(source);
+        render();
+      `,
+      filename,
+      true
+    );
+
+    expect(result.staticValueCandidates).toEqual([]);
+    expect(result.dependencyNames).toEqual(['source']);
   });
 
   it.each(['holder.alias', 'holder[0]'])(
@@ -729,6 +780,18 @@ describe('collectOxcTemplateDependencies mutation provenance', () => {
     }
   );
 
+  it('propagates a sibling-import escape from a synchronous IIFE', () => {
+    expectLastWidthTemplateFallback(dedent`
+      import { alias, source } from './tokens';
+
+      (function mutateImmediately() {
+        mutate(alias);
+      })();
+      const { width } = source;
+      const template = tag\`${'${width}'}\`;
+    `);
+  });
+
   it('ignores interpolation provenance inside a processor-managed tag', () => {
     const code = dedent`
       import { alias, source } from './tokens';
@@ -762,6 +825,153 @@ describe('collectOxcTemplateDependencies mutation provenance', () => {
     expect(result.staticValues).toEqual([]);
     expect(result.staticValueCandidates).toHaveLength(1);
     expect(result.staticValueCandidates[0]?.source).toContain('=> width');
+  });
+
+  it('evaluates a later imported member after a processor-managed scalar interpolation', () => {
+    const code = dedent`
+      import { source } from './tokens';
+
+      processor\`${'${source.height}'}\`;
+      source.width;
+    `;
+    const processorStart = code.indexOf('processor`');
+    const processorEnd = code.indexOf('`;', processorStart) + 1;
+    const expressionStart = code.lastIndexOf('source.width');
+
+    expect(
+      evaluateOxcStaticExpressionAt(
+        code,
+        filename,
+        {
+          end: expressionStart + 'source.width'.length,
+          start: expressionStart,
+        },
+        new Map([['source', { height: 16, width: 304 }]]),
+        undefined,
+        [
+          {
+            end: processorEnd,
+            start: processorStart,
+          },
+        ]
+      )
+    ).toBe(304);
+  });
+
+  it('does not propagate a processor result escape back to its interpolation', () => {
+    const code = dedent`
+      import runtime from 'runtime-only';
+      import { source } from './tokens';
+
+      const className = processor\`${'${source.height}'}\`;
+      runtime(className);
+      source.width;
+    `;
+    const processorStart = code.indexOf('processor`');
+    const processorEnd = code.indexOf('`;', processorStart) + 1;
+    const expressionStart = code.lastIndexOf('source.width');
+
+    expect(
+      evaluateOxcStaticExpressionAt(
+        code,
+        filename,
+        {
+          end: expressionStart + 'source.width'.length,
+          start: expressionStart,
+        },
+        new Map([['source', { height: 16, width: 304 }]]),
+        undefined,
+        [
+          {
+            end: processorEnd,
+            start: processorStart,
+          },
+        ]
+      )
+    ).toBe(304);
+  });
+
+  it('uses resolved scalar imports to prove a local helper call pure', () => {
+    const code = dedent`
+      import { tokens } from './tokens';
+
+      function withAlpha(value, alpha) {
+        return value + ' ' + Math.round(alpha * 100) + '%';
+      }
+
+      withAlpha(tokens.accent, 0.7);
+      tokens.border;
+    `;
+    const expressionStart = code.lastIndexOf('tokens.border');
+
+    expect(
+      evaluateOxcStaticExpressionAt(
+        code,
+        filename,
+        {
+          end: expressionStart + 'tokens.border'.length,
+          start: expressionStart,
+        },
+        new Map([['tokens', { accent: 'purple', border: 'gray' }]])
+      )
+    ).toBe('gray');
+  });
+
+  it('classifies a referenced local function without evaluating its body', () => {
+    const code = dedent`
+      const resolve = (props) => runtime(props.value);
+      const callback = (props) => resolve(props);
+      processor\`${'${callback}'}\`;
+    `;
+    const processorStart = code.indexOf('processor`');
+    const templateStart = processorStart + 'processor'.length;
+    const processorEnd = code.indexOf('`;', processorStart) + 1;
+    const result = collectOxcTemplateDependencies(
+      code,
+      filename,
+      true,
+      [{ end: processorEnd, start: templateStart }],
+      undefined,
+      [{ end: processorEnd, start: processorStart }]
+    );
+
+    expect(result.staticValueCandidates).toEqual([
+      expect.objectContaining({
+        imports: [],
+        source: '(props) => resolve(props)',
+      }),
+    ]);
+  });
+
+  it('keeps a nested call hazardous while evaluating after a processor-managed interpolation', () => {
+    const code = dedent`
+      import { mutate, source } from './tokens';
+
+      processor\`${'${mutate(source)}'}\`;
+      source.width;
+    `;
+    const processorStart = code.indexOf('processor`');
+    const processorEnd = code.indexOf('`;', processorStart) + 1;
+    const expressionStart = code.lastIndexOf('source.width');
+
+    expect(
+      evaluateOxcStaticExpressionAt(
+        code,
+        filename,
+        {
+          end: expressionStart + 'source.width'.length,
+          start: expressionStart,
+        },
+        new Map([['source', { width: 304 }]]),
+        undefined,
+        [
+          {
+            end: processorEnd,
+            start: processorStart,
+          },
+        ]
+      )
+    ).toBeUndefined();
   });
 
   it('preserves a nested call hazard seed inside a processor-managed interpolation', () => {

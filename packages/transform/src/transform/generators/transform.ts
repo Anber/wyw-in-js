@@ -17,7 +17,7 @@ import type {
 } from '../types';
 
 import {
-  buildStaticPlan,
+  buildStaticPlanAttribution,
   emitStaticPlanDebug,
 } from '../static-plan/buildStaticPlan';
 import { rewriteOptimizedOxcBarrelImports } from './rewriteOxcBarrelImports';
@@ -79,21 +79,23 @@ export const emitCurrentStaticPlanDebug = (
   }
 
   const preevalResult = action.entrypoint.getPreevalResult();
-  if (!preevalResult) {
+  if (!preevalResult?.staticPlanFacts) {
     return;
   }
 
   const filename =
     loadedAndParsed.evalConfig.filename ?? action.entrypoint.name;
-  const plan = buildStaticPlan({
-    code: loadedAndParsed.code,
+  const attribution = buildStaticPlanAttribution({
     filename,
-    options: action.services.options.pluginOptions,
     preparedImports: imports,
     preevalResult,
+    staticPlanFacts: preevalResult.staticPlanFacts,
   });
 
-  emitStaticPlanDebug(action.services.eventEmitter, plan);
+  emitStaticPlanDebug(action.services.eventEmitter, {
+    attribution,
+    filename,
+  });
 };
 
 type PrepareCodeOptions = {
@@ -150,9 +152,11 @@ const ensureOxcPreevalResult = (
       evalCode: result.code,
       metadata: result.metadata,
       processorClassNames: result.processorClassNames,
+      runtimeProcessorPlan: result.runtimeProcessorPlan,
       staticImportLocals: [],
       staticSideEffectImportLocals: [],
       staticDependencies: result.staticDependencies,
+      staticPlanFacts: result.staticPlanFacts,
       staticValuesApplied: false,
       staticValueCache: result.staticValueCache,
       staticValueCandidates: result.staticValueCandidates,

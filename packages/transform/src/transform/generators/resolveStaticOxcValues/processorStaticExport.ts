@@ -3,6 +3,7 @@
 import type { Program } from 'oxc-parser';
 
 import {
+  createOxcStaticCallableValue,
   evaluateOxcStaticExpression,
   evaluateOxcStaticExpressionAt,
   isOxcStaticSerializableValue,
@@ -17,7 +18,10 @@ import {
   parseProgram,
 } from './environment';
 import { findExportTarget } from './exportTargets';
-import { collectOpaqueRuntimeImportProof } from './opaqueRuntime';
+import {
+  collectOpaqueRuntimeImportProof,
+  resolveImportAsOpaqueRuntime,
+} from './opaqueRuntime';
 import {
   mergeStaticObjectAssignAliases,
   objectAssignAliasExpressionsForTarget,
@@ -27,6 +31,7 @@ import {
 import { prepareProcessorTarget } from './processorTarget';
 import {
   collectProcessorImportLocals,
+  collectWYWMetaExtendsHelperNames,
   isKnownProcessorClassValue,
   isProcessorClassValue,
   isSelectorOnlyProcessorValue,
@@ -36,7 +41,11 @@ import {
   type StaticProcessorInstance,
 } from './processorStaticModel';
 import { bindStaticResolvedValue } from './staticExpression';
-import type { StaticExportResolverContext, StaticExportResult } from './types';
+import type {
+  OpaqueRuntimeImportProof,
+  StaticExportResolverContext,
+  StaticExportResult,
+} from './types';
 
 type StaticMetadataPreevalResult = NonNullable<
   ReturnType<typeof getStaticMetadataPreevalResult>
@@ -76,16 +85,58 @@ function* resolvePreevalStaticValueCandidates(
   preevalResult: StaticMetadataPreevalResult,
   stack: Set<string>,
   memo: Map<string, StaticExportResult | null>,
-  resolvers: StaticExportResolverContext
+  resolvers: StaticExportResolverContext,
+  opaqueRuntimeBaseHelpers: ReadonlySet<string> = new Set()
 ): SyncScenarioFor<StaticCandidateResolution> {
   const dependencies = new Set<string>();
   const sideEffectDependencies = new Set<string>();
   const staticValueCache =
     preevalResult.staticValueCache ?? new Map<string, unknown>();
+  const opaqueRuntimeMemo = new Map<string, OpaqueRuntimeImportProof | null>();
 
   for (const candidate of preevalResult.staticValueCandidates ?? []) {
     if (staticValueCache.has(candidate.name)) {
       continue;
+    }
+
+    if (
+      opaqueRuntimeBaseHelpers.has(candidate.name) &&
+      candidate.imports.length > 0
+    ) {
+      const opaqueDependencies = new Set<string>();
+      let resolvedOpaqueRuntimeBase = true;
+      for (const binding of candidate.imports) {
+        const proof = yield* resolveImportAsOpaqueRuntime(
+          action,
+          filename,
+          binding,
+          new Set(),
+          opaqueRuntimeMemo
+        );
+        if (!proof) {
+          resolvedOpaqueRuntimeBase = false;
+          break;
+        }
+
+        proof.dependencies.forEach((dependency) =>
+          opaqueDependencies.add(dependency)
+        );
+      }
+
+      if (resolvedOpaqueRuntimeBase) {
+        staticValueCache.set(candidate.name, null);
+        opaqueDependencies.forEach((dependency) =>
+          dependencies.add(dependency)
+        );
+        debugStaticResolve(action, {
+          candidate: candidate.name,
+          filename,
+          phase: 'candidate',
+          reason: 'opaque-runtime-component',
+          status: 'resolved',
+        });
+        continue;
+      }
     }
 
     const env = new Map<string, unknown>();
@@ -201,6 +252,26 @@ export function* resolveProcessorStaticExport(
     resolvers
   );
   preevalResult.finalizeEvaltimeReplacements?.(preevalResult.staticValueCache);
+
+  const opaqueRuntimeBaseHelpers = collectWYWMetaExtendsHelperNames(
+    parseProgram(preevalResult.baseCode, filename)
+  );
+  const finalizedCandidateResolution =
+    yield* resolvePreevalStaticValueCandidates(
+      action,
+      filename,
+      preevalResult,
+      stack,
+      memo,
+      resolvers,
+      opaqueRuntimeBaseHelpers
+    );
+  finalizedCandidateResolution.dependencies.forEach((dependency) =>
+    staticCandidateResolution.dependencies.add(dependency)
+  );
+  finalizedCandidateResolution.sideEffectDependencies.forEach((dependency) =>
+    staticCandidateResolution.sideEffectDependencies.add(dependency)
+  );
 
   if (!preevalResult.metadata) {
     debugStaticResolve(action, {
@@ -348,6 +419,15 @@ export function* resolveProcessorStaticExport(
       sideEffectDependencies.add(dependency)
     );
   }
+
+  opaqueRuntimeBaseHelpers.forEach((name) => {
+    if (preevalResult.staticValueCache?.has(name)) {
+      env.set(
+        name,
+        createOxcStaticCallableValue(preevalResult.staticValueCache.get(name))
+      );
+    }
+  });
 
   const value =
     preparedTarget.evaluationCode && preparedTarget.evaluationSpan

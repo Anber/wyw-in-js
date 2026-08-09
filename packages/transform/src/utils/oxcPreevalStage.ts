@@ -40,8 +40,11 @@ export const runOxcPreevalStage = (
       code: baseCode,
       dependencyNames: [],
       metadata: null,
+      processorManagedExpressionSpans: [],
       processorClassNames: {},
+      runtimeProcessorPlan: processed.runtimeProcessorPlan,
       staticDependencies: [],
+      staticPlanFacts: processed.staticPlanFacts,
       staticValueCandidates: [],
       staticValueCache: new Map(),
     };
@@ -61,10 +64,13 @@ export const runOxcPreevalStage = (
       replacements: [],
       rules: {},
     },
+    processorManagedExpressionSpans: processed.processorManagedExpressionSpans,
     processorClassNames: Object.fromEntries(
       processed.processorClassNamesByLocal
     ),
+    runtimeProcessorPlan: processed.runtimeProcessorPlan,
     staticDependencies: [],
+    staticPlanFacts: processed.staticPlanFacts,
     staticValueCache: staticOverlay.staticValueCache,
     staticValueCandidates: staticOverlay.staticValueCandidates,
   };

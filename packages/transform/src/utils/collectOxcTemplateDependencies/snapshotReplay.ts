@@ -15,11 +15,14 @@ import {
   forEachTimelineFullyContained,
   getMutationTimeline,
   resolveBindingAt,
-  someTimelineEndAtOrBefore,
   someTimelineStartBefore,
   toMutationBindingKey,
 } from './scopeAnalysis';
 import { isKnownPureStaticCall } from './staticEvaluator';
+import {
+  getHazardTimelineAt,
+  someHazardTimelineEndAtOrBefore,
+} from './staticEvaluationSafety';
 import type { Binding, ExpressionSpan, ExtractionContext } from './types';
 
 export const allocateHoistedBindingName = (
@@ -49,7 +52,8 @@ export const countPatternBindingNames = (pattern: Node): Map<string, number> =>
 export const hasDestructuringIntrinsicMutationBefore = (
   pattern: Node,
   referenceStart: number,
-  ctx: ExtractionContext
+  ctx: ExtractionContext,
+  targetStart = referenceStart
 ): boolean => {
   const intrinsicNames =
     pattern.type === 'ArrayPattern' ? ['Array', 'Object'] : ['Object', 'Array'];
@@ -64,9 +68,10 @@ export const hasDestructuringIntrinsicMutationBefore = (
         referenceStart,
         changesUnshadowedIntrinsic
       ) ||
-      someTimelineEndAtOrBefore(
-        getMutationTimeline(ctx.rootMutationHazardsByBinding, name),
+      someHazardTimelineEndAtOrBefore(
+        getHazardTimelineAt(name, targetStart, ctx),
         referenceStart,
+        ctx,
         changesUnshadowedIntrinsic
       )
     );
@@ -92,9 +97,10 @@ export const hasAnyBindingChange = (
   return (
     getMutationTimeline(ctx.rootMutationsByBinding, bindingKey).byStart.length >
       0 ||
-    getMutationTimeline(
-      ctx.rootMutationHazardsByBinding,
-      bindingKey
+    getHazardTimelineAt(
+      bindingKey,
+      ctx.currentExpressionStart,
+      ctx
     ).byStart.some((hazard) => isOpaqueDestructuringHazard(hazard, ctx))
   );
 };
@@ -303,7 +309,8 @@ const collectSnapshotStatements = (
     hasDestructuringIntrinsicMutationBefore(
       declarator.id,
       Number.POSITIVE_INFINITY,
-      ctx
+      ctx,
+      ctx.currentExpressionStart
     )
   ) {
     throw snapshotReplayError();
@@ -417,7 +424,7 @@ const collectSnapshotStatements = (
         includeChange
       );
       forEachTimelineFullyContained(
-        getMutationTimeline(ctx.rootMutationHazardsByBinding, dependencyKey),
+        getHazardTimelineAt(dependencyKey, ctx.currentExpressionStart, ctx),
         body.start,
         ctx.currentExpressionStart,
         (hazard) => {
@@ -479,9 +486,10 @@ const collectSnapshotStatements = (
         ctx.rootMutationsByBinding,
         toMutationBindingKey(dependency)
       ).byStart.length === 0 &&
-      getMutationTimeline(
-        ctx.rootMutationHazardsByBinding,
-        toMutationBindingKey(dependency)
+      getHazardTimelineAt(
+        toMutationBindingKey(dependency),
+        ctx.currentExpressionStart,
+        ctx
       ).byStart.every((hazard) => !isOpaqueDestructuringHazard(hazard, ctx))
     ) {
       return;
