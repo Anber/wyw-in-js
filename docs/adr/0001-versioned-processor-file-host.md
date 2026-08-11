@@ -1,20 +1,16 @@
-# Versioned synchronous processor file host
+# Processor-owned reads with host dependency registration
 
-Status: Accepted for upstream implementation; no capability is exposed by this
-spike.
+Status: Amended after the consumer custom-processor prototype; no new
+capability is exposed by this spike.
 
 ## Context
 
-`BaseProcessor` receives the transform caller through `IFileContext.filename`
-and the configured project root through `IFileContext.root`. Its `build()`
-lifecycle is synchronous and returns `void`. The legacy `preeval-call`
-manifest target receives only user arguments. A processor can currently use
-ambient Node authority to read a caller-relative file, but that read is not
-confined by the transform host and does not register a raw-file dependency.
-
+`BaseProcessor` already receives the transform caller through
+`IFileContext.filename` and the configured project root through
+`IFileContext.root`. Its `build()` lifecycle is synchronous and returns `void`.
 The executable spike in
 `packages/transform/src/__tests__/transform.processor-file-host-lifecycle-spike.test.ts`
-pins that baseline for both `static` and `execute` strategies:
+pins the current behavior for both `static` and `execute` strategies:
 
 - caller filename and project root reach the processor instance;
 - `build()` is invoked synchronously and a returned thenable is not observed;
@@ -22,65 +18,82 @@ pins that baseline for both `static` and `execute` strategies:
 - a processor-owned synchronous raw read does not enter transform
   dependencies.
 
-That last behavior is evidence of the missing host contract, not an approved
-implementation technique. The spike is removable once the confined host and
-dependency propagation tests replace it.
+A consumer prototype then proved that these existing custom-processor powers
+are sufficient for the DTCG data plane. The processor can validate a static
+descriptor, resolve it relative to the caller, confine real paths to the
+explicit project root, enforce file and byte limits, read config and token
+bytes synchronously, compile them, return a serializable static value, and emit
+CSS plus generic metadata artifacts. The same implementation works in the
+current `static` and `execute` strategies.
 
-## Decision
+The remaining defect is narrower: the successfully read config and token files
+are absent from transform dependencies. Consequently cache invalidation and
+watch/HMR cannot react to their change, deletion, or rename.
 
-WyW will own a generic, explicitly negotiated capability named
-`wyw-processor-file-host-v1`. It will be created per transform invocation and
-will not use an ambient global registry, `process.cwd()`, nearest-package
-discovery, or processor-owned filesystem access.
+## Amended decision
 
-The capability will use a host-mediated synchronous read, not an asynchronous
-read hidden behind the current `build(): void` lifecycle and not speculative
-host preload. The caller-relative descriptor is known only after processor-call
-analysis; speculative preload would duplicate processor semantics in the host.
-A synchronous host method preserves the existing lifecycle and makes it
-impossible to lose a `Promise`.
+WyW will not own a general file-reading capability for this use case. Reading,
+specifier policy, project/read-root confinement, realpath and symlink policy,
+byte limits, decoding, and domain-specific errors remain processor concerns.
+This avoids duplicating consumer semantics in the transform host and avoids
+granting new filesystem authority through WyW.
 
-The eventual capability must carry, at minimum:
+WyW will instead own one generic synchronous effect: a processor can register
+an already-resolved raw-file dependency with the current transform. The final
+API name and carrier are implementation details, but the contract is equivalent
+to:
 
-- the canonical caller filename;
-- explicit canonical `projectRoot` and `readRoots` supplied by the integration;
-- a caller-relative specifier and an explicit byte limit for each read;
-- a structured byte-exact success or error result;
-- the canonical dependency identity registered by a successful read.
+```ts
+registerFileDependency(canonicalAbsolutePath: string): void;
+```
 
-The exact TypeScript shape, realpath and symlink containment algorithm, path
-portability rules, byte-limit errors, and dependency deduplication belong to the
-confined-read and dependency-propagation follow-ups. They must not be inferred
-from this spike.
+The registration contract must:
 
-Both `static` and `execute` strategies will receive the same capability and
-caller identity. A successful host read will register its canonical raw-file
-dependency automatically, including when the processor emits no CSS. Repeated
-processor construction or `build()` calls must be idempotent at the dependency
-boundary.
+- reject non-absolute, empty, or malformed identities without consulting
+  `process.cwd()`;
+- be scoped to the current processor and transform invocation, with no ambient
+  global registry;
+- accept registration only after the processor has completed its own
+  successful read;
+- deduplicate repeated registration deterministically;
+- preserve the dependency through static, execute, native, and transform-result
+  paths, including when the processor emits no CSS;
+- participate in cache invalidation and Vite change/delete/rename recovery;
+- avoid reading, statting, canonicalizing, or otherwise interpreting the file
+  on behalf of the processor.
 
-Legacy `preeval-call` remains compatible and does not receive this capability.
-The later `preeval-call-v1` manifest semantics will require an exact supported
-capability version and fail closed before source access when negotiation fails.
-No DTCG-specific semantics kind, file-host wire name, or metadata transport will
-be added. Existing generic `Artifact[]` remains the processor metadata carrier.
+The processor is responsible for passing the canonical absolute identity that
+corresponds to the bytes it read. WyW owns propagation and lifecycle behavior,
+not filesystem authority or the consumer's trust policy.
+
+Legacy `preeval-call` remains compatible. Generic `preeval-call-v1` may still be
+useful for other processors, but it is no longer a prerequisite for the DTCG
+custom processor and must be qualified independently. No DTCG-specific
+semantics kind, dependency wire name, or metadata transport will be added.
+Existing generic `Artifact[]` remains the processor metadata carrier.
 
 ## Consequences
 
-- A source-descriptor processor cannot be activated by this spike.
-- Processor-owned `fs` reads remain outside the supported host contract.
+- The DTCG custom processor can be exercised before upstream dependency
+  registration lands, provided its draft metadata says dependency tracking is
+  unavailable and the package is not released as watch-safe.
+- Processor-owned reads remain trusted Node execution and are outside WyW's
+  hermetic guarantees.
 - Async file access is not added to `BaseProcessor.build()`.
-- Confined read and automatic dependency propagation must land before any
-  consumer adapter uses the capability.
-- Vite change/delete/rename behavior and `preeval-call-v1` activation remain
-  separate qualification work.
+- A raw dependency cannot be registered before or instead of a successful
+  consumer-owned read.
+- Watch/HMR qualification, minimum supported WyW versions, and consumer
+  activation remain blocked on the registration and propagation matrix.
 
 ## Follow-up ownership
 
-1. `wyw-in-js`: implement caller identity and confined raw-byte read.
-2. `wyw-in-js`: propagate successful raw reads as canonical dependencies across
-   static, execute, native, and empty-CSS paths.
-3. `wyw-in-js`: add generic `preeval-call-v1` and Vite lifecycle semantics.
-4. `wyw-in-js`: qualify and freeze the capability version and support matrix.
-5. Consumers: negotiate the exact version and keep source-descriptor mode
-   fail-closed until the upstream chain is complete.
+1. `wyw-in-js`: define the smallest processor dependency-registration API and
+   executable lifecycle tests.
+2. `wyw-in-js`: propagate registered dependencies through static, execute,
+   native, transform-result, cache, and empty-CSS paths.
+3. `wyw-in-js`: qualify Vite change/delete/rename invalidation and stale
+   metadata/CSS cleanup.
+4. `wyw-in-js`: freeze the capability/API version and support matrix.
+5. Consumers: keep read/confinement/compile semantics local, register every
+   successfully read input, and remove the untracked-dependency marker only
+   after the upstream matrix passes.
