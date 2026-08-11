@@ -270,6 +270,59 @@ describe('vite HMR', () => {
     });
   });
 
+  it('emits portable metadata dependencies without changing watched paths', async () => {
+    const { default: wywInJS } = await loadWywInJS();
+    const root = path.join(process.cwd(), 'metadata-project');
+    const entryId = path.join(root, 'src', 'entry.tsx');
+    const rawFile = path.join(root, 'tokens.json');
+    const addWatchFile = jest.fn();
+    const emitFile = jest.fn();
+
+    transformMock.mockResolvedValue({
+      code: 'export const x = 1;',
+      cssText: '',
+      cssSourceMapText: null,
+      dependencies: [rawFile],
+      metadata: {
+        dependencies: [rawFile],
+        processors: [],
+        replacements: [],
+        rules: {},
+      },
+      sourceMap: null,
+    });
+
+    const plugin = wywInJS({ outputMetadata: true });
+    plugin.configResolved?.({
+      root,
+      mode: 'production',
+      command: 'build',
+      base: '/',
+      createResolver: () => jest.fn().mockResolvedValue(undefined),
+      build: { cssCodeSplit: true, rollupOptions: {} },
+    } as any);
+
+    await plugin.transform?.call(
+      {
+        addWatchFile,
+        resolve: jest.fn().mockResolvedValue(undefined),
+      } as any,
+      'console.log("test")',
+      entryId
+    );
+    plugin.generateBundle?.call({ emitFile } as any, {} as any, {} as any);
+
+    expect(addWatchFile).toHaveBeenCalledWith(rawFile);
+    expect(emitFile).toHaveBeenCalledWith({
+      fileName: 'src/entry.wyw-in-js.json',
+      source: expect.stringContaining('"dependencies": [\n    "tokens.json"'),
+      type: 'asset',
+    });
+    expect(emitFile).not.toHaveBeenCalledWith(
+      expect.objectContaining({ source: expect.stringContaining(root) })
+    );
+  });
+
   it('reports structured diagnostics returned by transform()', async () => {
     const { default: wywInJS } = await loadWywInJS();
     const root = process.cwd();

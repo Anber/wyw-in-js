@@ -616,6 +616,10 @@ export default function wywInJS({
         .map((segment) => segment.replace(/:$/, ''))
     );
   };
+  const toMetadataDependency = (dependency: string) =>
+    path.isAbsolute(dependency) || isWindowsAbsolutePath(dependency)
+      ? toBundleRelativePath(dependency)
+      : dependency;
   const scheduleCssReload = (
     reloadTarget: CssReloadTarget,
     cssFilename: string
@@ -1132,9 +1136,13 @@ export default function wywInJS({
           typeof result.cssText === 'string' && result.cssText !== ''
             ? replaceModuleExtension(relativeId, '.wyw-in-js.css')
             : undefined;
+        const portableMetadata = {
+          ...result.metadata,
+          dependencies: result.metadata.dependencies.map(toMetadataDependency),
+        };
 
         metadataLookup[metadataRelativePath] = stringifyMetadataManifest(
-          createMetadataManifest(result.metadata, {
+          createMetadataManifest(portableMetadata, {
             cssFile,
             source: relativeId,
           })
