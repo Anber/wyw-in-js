@@ -1524,6 +1524,127 @@ describe('EvalBroker', () => {
     rmSync(root, { recursive: true, force: true });
   });
 
+  it('evaluates a barrel that wildcard re-exports a runtime-empty module', async () => {
+    // A module can be a real, resolvable ESM dependency edge while shaking
+    // down to zero runtime bytes (e.g. it only ever declared TypeScript
+    // types). `export * from './dep'` in a barrel can't be selectively
+    // pruned without knowing the wildcard target's exports, so the
+    // statement survives shaking and the runner's native ESM linker still
+    // requests `dep` on first load. The broker must ship the genuine empty
+    // string in that case rather than treating "no code" as license to
+    // reuse a cached module the runner has never seen.
+    const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
+    const entry = join(root, 'entry.ts');
+    const barrel = join(root, 'barrel.ts');
+    const dep = join(root, 'dep.ts');
+
+    writeFileSync(dep, 'export type Foo = string;\n');
+    writeFileSync(
+      barrel,
+      ["export * from './dep';", 'export const marker = 1;'].join('\n')
+    );
+    writeFileSync(
+      entry,
+      [
+        "import { marker } from './barrel';",
+        'export const __wywPreval = {',
+        '  value: () => marker,',
+        '};',
+      ].join('\n')
+    );
+
+    const asyncResolve = jest.fn(async (what: string, importer: string) => {
+      if (what.startsWith('.')) {
+        return resolve(dirname(importer), what);
+      }
+      return null;
+    });
+    const services = createServices(root, entry);
+    const broker = new EvalBroker(services, asyncResolve);
+    const entrypoint = Entrypoint.createRoot(
+      services,
+      entry,
+      ['__wywPreval'],
+      readFileSync(entry, 'utf-8')
+    );
+
+    const result = await broker.evaluate(entrypoint);
+
+    expect(result.values?.get('value')).toBe(1);
+
+    broker.dispose();
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('reuses a first-load runtime-empty module on a second request in the same session', async () => {
+    // Companion to the barrel test above: once the runner has actually seen
+    // (and cached) the empty module under its hash, a later request for the
+    // same id/hash must still short-circuit via the cache-reuse path instead
+    // of re-shipping — proving the fix doesn't just move the bug to the
+    // second load.
+    const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
+    const entryA = join(root, 'entry-a.ts');
+    const entryB = join(root, 'entry-b.ts');
+    const barrel = join(root, 'barrel.ts');
+    const dep = join(root, 'dep.ts');
+
+    writeFileSync(dep, 'export type Foo = string;\n');
+    writeFileSync(
+      barrel,
+      ["export * from './dep';", 'export const marker = 1;'].join('\n')
+    );
+    writeFileSync(
+      entryA,
+      [
+        "import { marker } from './barrel';",
+        'export const __wywPreval = {',
+        '  value: () => marker,',
+        '};',
+      ].join('\n')
+    );
+    writeFileSync(
+      entryB,
+      [
+        "import { marker } from './barrel';",
+        'export const __wywPreval = {',
+        '  value: () => marker + 1,',
+        '};',
+      ].join('\n')
+    );
+
+    const asyncResolve = jest.fn(async (what: string, importer: string) => {
+      if (what.startsWith('.')) {
+        return resolve(dirname(importer), what);
+      }
+      return null;
+    });
+    const services = createServices(root, entryA);
+    const broker = new EvalBroker(services, asyncResolve);
+
+    const first = await broker.evaluate(
+      Entrypoint.createRoot(
+        services,
+        entryA,
+        ['__wywPreval'],
+        readFileSync(entryA, 'utf-8')
+      )
+    );
+    expect(first.values?.get('value')).toBe(1);
+
+    const second = await broker.evaluate(
+      Entrypoint.createRoot(
+        services,
+        entryB,
+        ['__wywPreval'],
+        readFileSync(entryB, 'utf-8')
+      )
+    );
+    expect(second.values?.get('value')).toBe(2);
+
+    broker.dispose();
+    rmSync(root, { recursive: true, force: true });
+  });
+
   describe('eval.globals lifecycle', () => {
     it('re-evaluates when eval.globals value changes between runs', async () => {
       const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
@@ -4072,9 +4193,10 @@ describe('EvalBroker', () => {
   it('skips re-shipping LoadResult code when runner already has matching hash', async () => {
     // Multiple importers asking for the same dependency in one runner session
     // produce identical prepared variants (same hash, same `only`). The first
-    // LOAD must ship code; subsequent LOADs must ship `code: ''` so the
-    // runner's hash-match short-circuit (runner.js:1834) reuses its cached
-    // SourceTextModule instead of re-parsing identical bytes.
+    // LOAD must ship code; subsequent LOADs must omit `code` entirely (not
+    // ship `''` — that's a legitimate payload for a runtime-empty module) so
+    // the runner's hash-match short-circuit (runner.js:1834) reuses its
+    // cached SourceTextModule instead of re-parsing identical bytes.
     const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
     const importerA = join(root, 'a.js');
     const importerB = join(root, 'b.js');
@@ -4137,7 +4259,7 @@ describe('EvalBroker', () => {
     const [first, second] = captured;
     expect(first.payload.code).toBe('export const value = 1;');
     expect(first.payload.hash).toBeTruthy();
-    expect(second.payload.code).toBe('');
+    expect(second.payload.code).toBeUndefined();
     expect(second.payload.hash).toBe(first.payload.hash);
 
     // Third LOAD with a wider `only` (forces a new prepared variant via the
@@ -4350,7 +4472,7 @@ describe('EvalBroker', () => {
 
     expect(captured).toHaveLength(2);
     expect(captured[0].payload.code).toBe('export const value = 1;');
-    expect(captured[1].payload.code).toBe('');
+    expect(captured[1].payload.code).toBeUndefined();
     expect(captured[1].payload.hash).toBe(captured[0].payload.hash);
 
     broker.dispose();
