@@ -1,0 +1,9 @@
+---
+'@wyw-in-js/processor-utils': minor
+'@wyw-in-js/transform': minor
+'@wyw-in-js/vite': patch
+---
+
+Allow custom processors to register absolute file dependencies and propagate them through transform results.
+
+Vite now watches registered dependencies even when a transform emits no CSS and invalidates dependent modules during HMR.
