@@ -410,6 +410,43 @@ describe('vite HMR', () => {
     expect(mockInvalidateForFile).not.toHaveBeenCalled();
   });
 
+  it('uses the resolved Vite root as the processor project root', async () => {
+    const { default: wywInJS } = await loadWywInJS();
+    const root = path.join(process.cwd(), 'nested-project');
+    const entryId = path.join(root, 'src', 'tokens.ts');
+
+    transformMock.mockResolvedValue({
+      code: 'export const tokens = {};',
+      sourceMap: null,
+      cssText: '',
+      cssSourceMapText: null,
+      dependencies: [],
+    });
+
+    const plugin = wywInJS();
+    plugin.configResolved?.({
+      root,
+      mode: 'development',
+      command: 'serve',
+      base: '/',
+      createResolver: () => jest.fn().mockResolvedValue(undefined),
+    } as any);
+
+    await plugin.transform?.call(
+      { addWatchFile: jest.fn(), resolve: jest.fn() } as any,
+      'createTokens();',
+      entryId
+    );
+
+    expect(transformMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        options: expect.objectContaining({ root }),
+      }),
+      'createTokens();',
+      expect.any(Function)
+    );
+  });
+
   it('clears stale metadata sidecars when a file stops producing metadata', async () => {
     const { default: wywInJS } = await loadWywInJS();
     const root = process.cwd();

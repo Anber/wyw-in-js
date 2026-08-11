@@ -7,3 +7,5 @@
 Allow custom processors to register absolute file dependencies and propagate them through transform results.
 
 Vite now watches registered dependencies even when a transform emits no CSS and invalidates dependent modules during HMR.
+
+The Vite plugin now also uses the resolved Vite project root for processor context instead of the process working directory.

@@ -1080,7 +1080,7 @@ export default function wywInJS({
       const transformServices = {
         options: {
           filename: id,
-          root: process.cwd(),
+          root: config.root,
           prefixer,
           keepComments,
           preprocessor,
