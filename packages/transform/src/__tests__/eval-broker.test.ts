@@ -520,6 +520,101 @@ describe('EvalBroker', () => {
     rmSync(root, { recursive: true, force: true });
   });
 
+  it('does not silently drop exports a barrel needs via a wildcard re-export edge', async () => {
+    // collectImportsFromOxc (transform/generators/transform.ts) builds the
+    // eval import map from collectOxcExportsAndImports(...).imports only —
+    // it drops .reexports entirely, even though the same helper's reexports
+    // are already consulted elsewhere (hasPreparedExportKeys). A module
+    // shipped with `export * from './values.js'` keeps a real ESM
+    // dependency edge on values.js that never appears in the broker's
+    // import map for the barrel.
+    //
+    // Consequence: once some other importer has caused values.js to be
+    // cached under a narrow `only` within this session,
+    // mergeKnownDependencyOnly's per-module cache means a LOAD for
+    // values.js reached *through the barrel* reuses that same stale narrow
+    // `only` — because the barrel's own importsByModule entry for
+    // './values.js' doesn't exist to widen it — silently omitting exports
+    // the barrel's wildcard re-export needs. A consumer that reaches those
+    // exports only through the barrel gets an incomplete module.
+    const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
+    const values = join(root, 'values.js');
+    const barrel = join(root, 'barrel.js');
+    const consumerNarrow = join(root, 'consumer-narrow.js');
+
+    // Non-trivial computed exports, matching the barrel-pattern fixtures
+    // above — trivial re-exports get shipped in full regardless of `only`,
+    // which would mask this defect.
+    writeFileSync(
+      values,
+      [
+        'const base = 16;',
+        'export const namedValue = base * 25;',
+        'export const otherValue = base * 3;',
+      ].join('\n')
+    );
+    writeFileSync(
+      barrel,
+      ["export * from './values.js';", 'export const marker = 1;'].join('\n')
+    );
+
+    const services = createServices(root, consumerNarrow);
+    const broker = new EvalBroker(
+      services,
+      jest.fn(async () => null)
+    );
+    const privateBroker = broker as unknown as {
+      importsByModule: Map<string, Map<string, string[]>>;
+      onlyByModule: Map<string, string[]>;
+      sessionLinkGraph: Set<string>;
+      loadModule: (payload: {
+        id: string;
+        importerId?: string | null;
+        request?: string | null;
+      }) => Promise<{ code: string; only: string[]; hash?: string }>;
+    };
+
+    // consumer-narrow already resolved+loaded values.js narrowly, within
+    // this session, before the barrel ever needs it.
+    privateBroker.sessionLinkGraph.add(consumerNarrow);
+    privateBroker.importsByModule.set(
+      consumerNarrow,
+      new Map([['./values.js', ['namedValue']]])
+    );
+    privateBroker.onlyByModule.set(values, ['namedValue']);
+    await privateBroker.loadModule({
+      id: values,
+      importerId: consumerNarrow,
+      request: './values.js',
+    });
+
+    // Now load the barrel itself — through the real preparation path, not
+    // hand-seeded — so its importsByModule entry reflects whatever
+    // collectImportsFromOxc actually returns for
+    // `export * from "./values.js"`. This is the exact mechanism that's
+    // broken: the barrel's own compiled code keeps the statement verbatim
+    // (a wildcard target can't be selectively pruned), but the import map
+    // built for it must include the edge for the merge below to widen
+    // values.js's stale narrow `only`.
+    privateBroker.sessionLinkGraph.add(barrel);
+    await privateBroker.loadModule({
+      id: barrel,
+      importerId: consumerNarrow,
+      request: './barrel.js',
+    });
+
+    const wideLoad = await privateBroker.loadModule({
+      id: values,
+      importerId: barrel,
+      request: './values.js',
+    });
+
+    expect(wideLoad.code).toContain('otherValue');
+
+    broker.dispose();
+    rmSync(root, { recursive: true, force: true });
+  });
+
   it('dedupes in-flight resolve calls', async () => {
     const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
     const importer = join(root, 'entry.js');

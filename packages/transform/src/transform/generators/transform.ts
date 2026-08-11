@@ -25,7 +25,7 @@ import { resolveStaticOxcPreevalValues } from './resolveStaticOxcValues';
 
 const EMPTY_FILE = '=== empty file ===';
 
-const collectImportsFromOxc = (
+export const collectImportsFromOxc = (
   code: string,
   filename: string
 ): Map<string, string[]> => {
@@ -39,8 +39,20 @@ const collectImportsFromOxc = (
     imports.set(source, bucket);
   };
 
-  collectOxcExportsAndImports(code, filename).imports.forEach((item) => {
+  const collected = collectOxcExportsAndImports(code, filename);
+  collected.imports.forEach((item) => {
     addImport(item.source, item.imported || 'side-effect');
+  });
+  // `export { x } from './y'` and `export * from './y'` are real ESM
+  // dependency edges — the compiled code keeps the statement verbatim (a
+  // wildcard re-export can't be selectively pruned without knowing the
+  // target's exports) even though `.imports` never sees them. Skipping
+  // these leaves the eval import map blind to a dependency the runner's
+  // own linker will still resolve, so downstream `only`-merging
+  // (mergeKnownDependencyOnly) can silently reuse a narrower cached
+  // variant of the target than this module actually needs.
+  collected.reexports.forEach((item) => {
+    addImport(item.source, item.imported);
   });
 
   return imports;
