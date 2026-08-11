@@ -21,7 +21,7 @@ const processorUtilsAnchor = join(
   '__fixtures__',
   'test-css-processor.js'
 );
-const SPIKE_ARTIFACT = 'wyw-in-js:processor-file-host-lifecycle-spike-v1';
+const SPIKE_ARTIFACT = 'wyw-in-js:processor-file-dependency-lifecycle-spike-v1';
 const UNEXPECTED_ASYNC_ARTIFACT =
   'wyw-in-js:processor-file-host-lifecycle-spike-unexpected-async';
 
@@ -60,6 +60,8 @@ const processorSource = dedent`
 
       const rawPath = resolve(dirname(callerFilename), 'tokens.json');
       const bytes = readFileSync(rawPath);
+      this.registerFileDependency(rawPath);
+      this.registerFileDependency(rawPath);
       this.artifacts.push([
         ${JSON.stringify(SPIKE_ARTIFACT)},
         {
@@ -68,6 +70,7 @@ const processorSource = dedent`
           callerFilename,
           projectRoot,
           readMode: 'processor-owned-sync-baseline',
+          registrationMode: 'processor-file-dependency-v1',
           selector: this.asSelector,
         },
       ]);
@@ -160,9 +163,9 @@ const runTransform = (
     resolveFixtureImport(root)
   );
 
-describe('processor file-host lifecycle spike', () => {
+describe('processor file dependency lifecycle', () => {
   it.each(['static', 'execute'] as const)(
-    'pins the current %s lifecycle boundary before a file host exists',
+    'propagates a registered dependency through the %s lifecycle',
     async (strategy) => {
       const root = mkdtempSync(join(tmpdir(), 'wyw-processor-file-host-'));
       const packageName = writeProcessorPackage(root);
@@ -197,6 +200,7 @@ describe('processor file-host lifecycle spike', () => {
           callerFilename: entryFile,
           projectRoot: root,
           readMode: 'processor-owned-sync-baseline',
+          registrationMode: 'processor-file-dependency-v1',
           selector: '.host-probe',
         });
         const spikePayload = spikeArtifacts[0]?.[1] as {
@@ -209,7 +213,12 @@ describe('processor file-host lifecycle spike', () => {
         expect(artifacts.map(([name]) => name)).not.toContain(
           UNEXPECTED_ASYNC_ARTIFACT
         );
-        expect(result.dependencies ?? []).not.toContain(rawFile);
+        expect(result.dependencies ?? []).toContain(rawFile);
+        expect(
+          (result.dependencies ?? []).filter(
+            (dependency) => dependency === rawFile
+          )
+        ).toHaveLength(1);
         expect(result.cssText ?? '').toBe('');
         expect(result.code).toContain('export const probe = "host-probe";');
       } finally {

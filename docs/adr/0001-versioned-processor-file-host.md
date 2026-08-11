@@ -1,7 +1,7 @@
 # Processor-owned reads with host dependency registration
 
-Status: Amended after the consumer custom-processor prototype; no new
-capability is exposed by this spike.
+Status: Accepted for draft implementation after the consumer custom-processor
+prototype.
 
 ## Context
 
@@ -53,7 +53,7 @@ The registration contract must:
   `process.cwd()`;
 - be scoped to the current processor and transform invocation, with no ambient
   global registry;
-- accept registration only after the processor has completed its own
+- require the processor to register only after it has completed its own
   successful read;
 - deduplicate repeated registration deterministically;
 - preserve the dependency through static, execute, native, and transform-result

@@ -65,7 +65,7 @@ describe('workflow metadata output', () => {
       code,
       map: null,
       metadata: {
-        dependencies: [],
+        dependencies: ['/tokens.json', '/dep.ts'],
         processors: [
           {
             artifacts: [['meta', { className: 'entry_a' }]],
@@ -99,6 +99,7 @@ describe('workflow metadata output', () => {
     });
     expectIteratorReturnResult(finalResult);
     expect('metadata' in finalResult.value).toBe(false);
+    expect(finalResult.value.dependencies).toEqual(['/dep.ts', '/tokens.json']);
   });
 
   it('returns normalized metadata when outputMetadata is enabled', () => {
@@ -130,7 +131,7 @@ describe('workflow metadata output', () => {
         code,
         map: null,
         metadata: {
-          dependencies: [],
+          dependencies: ['/tokens.json', '/dep.ts'],
           processors: [
             {
               artifacts: [['meta', { className: 'entry_a' }]],
@@ -165,7 +166,7 @@ describe('workflow metadata output', () => {
     expect(
       'metadata' in finalResult.value ? finalResult.value.metadata : undefined
     ).toEqual({
-      dependencies: ['/dep.ts'],
+      dependencies: ['/dep.ts', '/tokens.json'],
       processors: [
         {
           artifacts: [['meta', { className: 'entry_a' }]],
@@ -184,5 +185,6 @@ describe('workflow metadata output', () => {
         },
       },
     });
+    expect(finalResult.value.dependencies).toEqual(['/dep.ts', '/tokens.json']);
   });
 });

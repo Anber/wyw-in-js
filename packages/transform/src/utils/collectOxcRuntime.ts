@@ -68,7 +68,11 @@ export const collectOxcRuntime = (
     code: normalizedCode,
     map,
     metadata: {
-      dependencies: [],
+      dependencies: [
+        ...new Set(
+          result.processors.flatMap((processor) => processor.fileDependencies)
+        ),
+      ],
       processors: result.processors,
       replacements: [],
       rules: {},

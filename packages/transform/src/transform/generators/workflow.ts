@@ -96,7 +96,7 @@ export function* workflow(
     }
 
     const prevalPayload = evalStageResult;
-    const { dependencies } = prevalPayload;
+    const dependencies = [...prevalPayload.dependencies];
 
     // *** 3rd stage ***
 
@@ -120,6 +120,12 @@ export function* workflow(
         sourceMap: collectStageResult.map,
       };
     }
+
+    collectStageResult.metadata.dependencies.forEach((dependency) => {
+      if (!dependencies.includes(dependency)) {
+        dependencies.push(dependency);
+      }
+    });
 
     const metadata = options.pluginOptions.outputMetadata
       ? toTransformResultMetadata(collectStageResult.metadata, dependencies)

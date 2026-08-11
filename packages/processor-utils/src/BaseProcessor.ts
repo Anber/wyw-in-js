@@ -1,4 +1,6 @@
 /* eslint-disable class-methods-use-this */
+import { isAbsolute } from 'node:path';
+
 import type { Artifact, ExpressionValue } from '@wyw-in-js/shared';
 import { hasEvalMeta } from '@wyw-in-js/shared';
 
@@ -44,6 +46,8 @@ export abstract class BaseProcessor {
   public readonly className: string;
 
   public readonly dependencies: ExpressionValue[] = [];
+
+  public readonly fileDependencies: string[] = [];
 
   public interpolations: IInterpolation[] = [];
 
@@ -136,6 +140,27 @@ export abstract class BaseProcessor {
 
   public toString(): string {
     return this.tagSourceCode();
+  }
+
+  /**
+   * Registers a canonical file identity that the processor has already read.
+   * The transform host propagates the identity but does not read or interpret it.
+   */
+  protected registerFileDependency(filename: string): void {
+    if (
+      typeof filename !== 'string' ||
+      filename.length === 0 ||
+      filename.includes('\0') ||
+      !isAbsolute(filename)
+    ) {
+      throw new Error(
+        '[wyw-in-js] Processor file dependencies must be absolute paths without NUL bytes.'
+      );
+    }
+
+    if (!this.fileDependencies.includes(filename)) {
+      this.fileDependencies.push(filename);
+    }
   }
 
   protected tagSourceCode(): string {
