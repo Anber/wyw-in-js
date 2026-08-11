@@ -122,8 +122,8 @@ describe('static strategy with a css class imported from another module', () => 
     await expect(run(root, entryFile)).resolves.toBeDefined();
   });
 
-  // The @fibery/ui-kit hints.tsx shape: the later tag is at module scope
-  // rather than inside a component.
+  // A real-world shape where the later tag is at module scope rather than
+  // inside a component.
   it('resolves a later module-scope tag after a cx()-wrapped tag', async () => {
     const entryFile = join(root, 'module-scope-after.ts');
     writeFileSync(
@@ -147,5 +147,60 @@ describe('static strategy with a css class imported from another module', () => 
     );
 
     await expect(run(root, entryFile)).resolves.toBeDefined();
+  });
+
+  it('keeps mutation hazards from non-processor wrapper arguments', async () => {
+    const entryFile = join(root, 'mutating-wrapper.ts');
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { css } from 'test-css-processor';
+        import { space } from './tokens';
+
+        const mutate = (value, className) => {
+          value.s2 = 99;
+          return className;
+        };
+
+        export const first = mutate(
+          space,
+          css\`
+            padding: ${'${space.s18}'}px;
+          \`
+        );
+
+        export const second = css\`
+          gap: ${'${space.s2}'}px;
+        \`;
+      `
+    );
+
+    await expect(run(root, entryFile)).rejects.toBeDefined();
+  });
+
+  it('keeps mutation hazards nested inside a processor argument', async () => {
+    const entryFile = join(root, 'mutating-interpolation.ts');
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { css, cx } from 'test-css-processor';
+        import { space } from './tokens';
+
+        const mutate = (value) => {
+          value.s2 = 99;
+          return value.s18;
+        };
+
+        export const first = cx(css\`
+          padding: ${'${mutate(space)}'}px;
+        \`);
+
+        export const second = css\`
+          gap: ${'${space.s2}'}px;
+        \`;
+      `
+    );
+
+    await expect(run(root, entryFile)).rejects.toBeDefined();
   });
 });

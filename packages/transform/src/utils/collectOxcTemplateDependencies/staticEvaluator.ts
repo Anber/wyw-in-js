@@ -62,33 +62,6 @@ import type { ExtractionContext } from './types';
 
 export { createOxcStaticCallableValue } from './staticEvaluationRuntime';
 
-// A processor tag is replaced by its own value (a class name) before the
-// enclosing call runs, so passing one cannot expose the bindings interpolated
-// inside it. Literals and plain identifier/member reads are inert for the same
-// reason: they hand the callee a value, not a route to the tag's bindings.
-const isProcessorManagedArgument = (
-  argument: Node,
-  ctx: ExtractionContext
-): boolean => {
-  if (argument.type === 'TaggedTemplateExpression') {
-    return ctx.processorManagedExpressionSpans.has(
-      `${argument.start}:${argument.end}`
-    );
-  }
-
-  if (argument.type === 'Identifier' || argument.type === 'Literal') {
-    return true;
-  }
-
-  // Only static, non-computed property reads: `a.b.c` cannot run user code,
-  // while `a[fn()]` can.
-  return (
-    argument.type === 'MemberExpression' &&
-    !argument.computed &&
-    isProcessorManagedArgument(argument.object, ctx)
-  );
-};
-
 export const isKnownPureStaticCall = (
   node: Node,
   ctx: ExtractionContext,
@@ -110,25 +83,6 @@ export const isKnownPureStaticCall = (
 
   if (node.type !== 'CallExpression' || node.callee.type !== 'Identifier') {
     return false;
-  }
-
-  // A class-name combiner such as `cx(a, css`…`)` only ever receives the
-  // processor's already-substituted result, so it cannot reach the bindings
-  // interpolated inside the tag. Without this, the wrapping call is an opaque
-  // hazard that invalidates those imports for every later deferred reference.
-  // Restricted to calls that actually wrap a processor tag so ordinary calls
-  // keep their conservative classification.
-  if (
-    node.arguments.some(
-      (argument) =>
-        argument.type === 'TaggedTemplateExpression' &&
-        ctx.processorManagedExpressionSpans.has(
-          `${argument.start}:${argument.end}`
-        )
-    ) &&
-    node.arguments.every((argument) => isProcessorManagedArgument(argument, ctx))
-  ) {
-    return true;
   }
 
   const binding = resolveBindingAt(ctx, node.callee.name, node.callee.start);

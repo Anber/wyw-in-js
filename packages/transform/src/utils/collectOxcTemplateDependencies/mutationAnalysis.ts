@@ -256,7 +256,7 @@ const collectRootMutationHazards = (
     createDeferredReferencePolicyCollector(bindingIndex);
   const collectEagerReferenceKeys = (
     node: Node,
-    includeBinding: (binding: Binding | null) => boolean = () => true
+    includeReference?: (start: number, end: number) => boolean
   ): string[] => {
     const { ignoredStarts } = collectDeferredReferencePolicy(node);
     return collectMutationReferenceKeys(
@@ -264,7 +264,8 @@ const collectRootMutationHazards = (
       bindingIndex,
       [ignoredHazardTreeReferenceStarts, ignoredStarts],
       toReferenceKey,
-      includeBinding
+      undefined,
+      includeReference
     );
   };
 
@@ -413,9 +414,10 @@ const collectRootMutationHazards = (
   const addReferences = (
     node: Node,
     hazard: Node,
-    canAffectSiblingImport = false
+    canAffectSiblingImport = false,
+    includeReference?: (start: number, end: number) => boolean
   ): void => {
-    collectEagerReferenceKeys(node).forEach((key) => {
+    collectEagerReferenceKeys(node, includeReference).forEach((key) => {
       addHazard(key, hazard, canAffectSiblingImport);
     });
   };
@@ -489,12 +491,27 @@ const collectRootMutationHazards = (
       // Any object passed to unknown code, or used as a method receiver, can
       // be mutated. Pure calls are intentionally rejected here rather than
       // risking a stale static snapshot.
+      // Processor-managed arguments are replaced before this invocation, so
+      // their internal references cannot escape through the outer call. Keep
+      // the call hazardous for its callee and every other argument.
       // Starting at the invocation keeps an inline IIFE body eager while the
       // deferred-reference policy still skips callback arguments.
-      addReferences(node, node, true);
+      const processorArguments = node.arguments.filter((argument) =>
+        ignoredHazardNodes.has(argument)
+      );
+      const includeOuterCallReference =
+        processorArguments.length === 0
+          ? undefined
+          : (start: number, end: number): boolean =>
+              !processorArguments.some(
+                (argument) => argument.start <= start && end <= argument.end
+              );
+      addReferences(node, node, true, includeOuterCallReference);
       addExecutionUnknownAliasHazard(node.callee, node);
       node.arguments.forEach((argument) => {
-        addExecutionUnknownAliasHazard(argument, node);
+        if (!ignoredHazardNodes.has(argument)) {
+          addExecutionUnknownAliasHazard(argument, node);
+        }
       });
       return;
     }

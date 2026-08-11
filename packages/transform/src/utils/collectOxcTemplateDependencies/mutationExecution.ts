@@ -230,14 +230,16 @@ export const collectMutationReferenceKeys = (
   bindingIndex: BindingIndex,
   ignoredStarts: readonly ReadonlySet<number>[],
   toKey: (binding: Binding | null, name: string) => string,
-  includeBinding: (binding: Binding | null) => boolean = () => true
+  includeBinding: (binding: Binding | null) => boolean = () => true,
+  includeReference: (start: number, end: number) => boolean = () => true
 ): string[] => [
   ...new Set(
     getReferences(node, bindingIndex)
       .filter(
         (reference) =>
           ignoredStarts.every((starts) => !starts.has(reference.start)) &&
-          includeBinding(reference.binding)
+          includeBinding(reference.binding) &&
+          includeReference(reference.start, reference.end)
       )
       .map(({ binding, name }) => toKey(binding, name))
   ),
