@@ -2,4 +2,4 @@
 '@wyw-in-js/transform': patch
 ---
 
-Preserve static values when a processor tag is wrapped in a class-name combiner such as `cx(css`…`)`. The wrapping call is no longer treated as a mutation hazard for the bindings interpolated inside the tag.
+Preserve static values when processor expressions are nested inside opaque wrappers. Mutation analysis now projects their eval-time replacements through surrounding containers while retaining hazards from other wrapper inputs and processor interpolations.

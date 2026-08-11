@@ -827,6 +827,54 @@ describe('collectOxcTemplateDependencies mutation provenance', () => {
     expect(result.staticValueCandidates[0]?.source).toContain('=> width');
   });
 
+  it.each([
+    ['an array', 'wrapper([PROCESSOR]);', 'processor`${alias}`'],
+    ['an object', 'wrapper({ className: PROCESSOR });', 'processor`${alias}`'],
+    ['a conditional', "wrapper(true ? PROCESSOR : '');", 'processor`${alias}`'],
+    [
+      'a managed call',
+      'wrapper({ className: PROCESSOR });',
+      'processor(alias)',
+    ],
+  ])(
+    'projects processor provenance through %s wrapper argument',
+    (_description, wrapperSource, processorSource) => {
+      const code = dedent`
+        import { alias, source } from './tokens';
+
+        const wrapper = (value) => value;
+
+        ${wrapperSource.replace('PROCESSOR', processorSource)}
+        const { width } = source;
+        width;
+      `;
+      const processorStart = code.indexOf(processorSource);
+      const expressionStart = code.lastIndexOf('width');
+      const result = collectOxcExpressionDependencies(
+        code,
+        filename,
+        true,
+        [
+          {
+            end: expressionStart + 'width'.length,
+            start: expressionStart,
+          },
+        ],
+        undefined,
+        [
+          {
+            end: processorStart + processorSource.length,
+            start: processorStart,
+          },
+        ]
+      );
+
+      expect(result.staticValues).toEqual([]);
+      expect(result.staticValueCandidates).toHaveLength(1);
+      expect(result.staticValueCandidates[0]?.source).toContain('=> width');
+    }
+  );
+
   it('evaluates a later imported member after a processor-managed scalar interpolation', () => {
     const code = dedent`
       import { source } from './tokens';

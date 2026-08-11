@@ -214,6 +214,7 @@ type RequestAnalysis = Pick<
   hasEffectiveMutationHazardSeed: boolean;
   ignoredMutationHazardNodes: Set<Node>;
   ignoredMutationHazardTreeNodes: Set<Node>;
+  processorManagedExpressionNodes: Set<Node>;
 };
 
 const programScopeFacts = new WeakMap<Program, ProgramScopeFacts>();
@@ -340,6 +341,7 @@ const createRequestAnalysis = ({
     hasEffectiveMutationHazardSeed: false,
     ignoredMutationHazardNodes: new Set(),
     ignoredMutationHazardTreeNodes: new Set(),
+    processorManagedExpressionNodes: new Set(),
     targetExpressions: [],
     templateLiterals: [],
   };
@@ -350,6 +352,7 @@ const createRequestAnalysis = ({
         node,
         mutationHazardIgnoreLookup,
         mutationHazardIgnoreTreeLookup,
+        result.processorManagedExpressionNodes,
         result.ignoredMutationHazardNodes,
         result.ignoredMutationHazardTreeNodes
       );
@@ -358,6 +361,7 @@ const createRequestAnalysis = ({
         node,
         null,
         mutationHazardIgnoreTreeLookup,
+        result.processorManagedExpressionNodes,
         result.ignoredMutationHazardNodes,
         result.ignoredMutationHazardTreeNodes
       );
@@ -625,6 +629,7 @@ export const analyzeProgram = (
     const mutationAnalysis = collectProgramMutationAnalysis(
       program,
       scopeFacts.bindingIndex,
+      request.result.processorManagedExpressionNodes,
       request.result.ignoredMutationHazardNodes,
       request.result.ignoredMutationHazardTreeNodes,
       request.result.hasEffectiveMutationHazardSeed

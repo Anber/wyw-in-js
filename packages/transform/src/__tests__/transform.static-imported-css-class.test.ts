@@ -149,6 +149,32 @@ describe('static strategy with a css class imported from another module', () => 
     await expect(run(root, entryFile)).resolves.toBeDefined();
   });
 
+  it.each([
+    ['array', '[css`padding: ${space.s18}px;`]'],
+    ['object', '{ className: css`padding: ${space.s18}px;` }'],
+    ['conditional', "true ? css`padding: ${space.s18}px;` : ''"],
+  ])(
+    'resolves a processor nested in a %s wrapper argument',
+    async (_description, wrappedProcessor) => {
+      const entryFile = join(root, 'nested-wrapper.ts');
+      writeFileSync(
+        entryFile,
+        dedent`
+          import { css, cx } from 'test-css-processor';
+          import { space } from './tokens';
+
+          export const first = cx(${wrappedProcessor});
+
+          export const second = css\`
+            gap: ${'${space.s2}'}px;
+          \`;
+        `
+      );
+
+      await expect(run(root, entryFile)).resolves.toBeDefined();
+    }
+  );
+
   it('keeps mutation hazards from non-processor wrapper arguments', async () => {
     const entryFile = join(root, 'mutating-wrapper.ts');
     writeFileSync(
@@ -168,6 +194,35 @@ describe('static strategy with a css class imported from another module', () => 
             padding: ${'${space.s18}'}px;
           \`
         );
+
+        export const second = css\`
+          gap: ${'${space.s2}'}px;
+        \`;
+      `
+    );
+
+    await expect(run(root, entryFile)).rejects.toBeDefined();
+  });
+
+  it('keeps hazards beside a nested processor in the same argument', async () => {
+    const entryFile = join(root, 'mutating-nested-wrapper.ts');
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { css } from 'test-css-processor';
+        import { space } from './tokens';
+
+        const mutate = (value) => {
+          value.tokens.s2 = 99;
+          return value.className;
+        };
+
+        export const first = mutate({
+          tokens: space,
+          className: css\`
+            padding: ${'${space.s18}'}px;
+          \`,
+        });
 
         export const second = css\`
           gap: ${'${space.s2}'}px;
