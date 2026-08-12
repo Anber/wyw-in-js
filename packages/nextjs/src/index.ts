@@ -101,7 +101,6 @@ function isWywLoaderPath(loader: string) {
 
 function convertLoaderRuleToUseRule(
   rule: RuleSetRule,
-  wywLoaderItem: RuleSetUseItem
 ) {
   const { loader } = rule as { loader?: unknown };
   if (typeof loader !== 'string') return;
@@ -129,8 +128,7 @@ function convertLoaderRuleToUseRule(
   // Loader order is right-to-left. We want WyW to run first, so it should be last.
   Object.assign(nextRule, {
     use: [
-      { loader, ...(options !== undefined ? { options } : {}) },
-      wywLoaderItem,
+      { loader, ...(options !== undefined ? { options } : {}) }
     ],
   });
 }
@@ -334,14 +332,8 @@ function injectWywLoader(
     sourceMap: wywNext.loaderOptions?.sourceMap ?? nextOptions.dev,
   } satisfies WywWebpackLoaderOptions;
 
-  const wywLoaderItem: RuleSetUseItem = {
-    loader,
-    options: loaderOptions,
-  };
-  const wywLoaderUse = createWywLoaderUseFunction(loader, wywLoaderItem);
-
   traverseRules(config.module?.rules ?? [], (rule) => {
-    convertLoaderRuleToUseRule(rule, wywLoaderUse);
+    convertLoaderRuleToUseRule(rule);
 
     const use = normalizeUseItems(rule.use);
     if (!use) return;
@@ -360,8 +352,14 @@ function injectWywLoader(
     );
     if (!isNextJsTranspileRule) return;
 
+    const wywLoaderItem: RuleSetUseItem = {
+      loader,
+      options: loaderOptions,
+    };
+    const wywLoaderUse = createWywLoaderUseFunction(loader, wywLoaderItem);
+
     // Loader order is right-to-left. We want WyW to run first, so it should be last.
-    Object.assign(rule, { use: [...use, wywLoaderUse] });
+    Object.assign(rule, { use: (data) => [...use, wywLoaderUse(data)].flat() });
   });
 
   ensureWywCssModuleRules(config, extension);
