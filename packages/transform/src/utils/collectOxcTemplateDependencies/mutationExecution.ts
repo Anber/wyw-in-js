@@ -306,10 +306,13 @@ const containsOpaqueAliasConstruct = (
   bindingIndex: BindingIndex,
   ignoredTreeNodes: ReadonlySet<Node>,
   ignoredReferenceStarts: ReadonlySet<number>,
-  ignoredSubtreeRoots?: ReadonlySet<Node>,
-  ignoredExtraReferenceStarts?: ReadonlySet<number>
+  ignoredSubtreeRootSets: readonly ReadonlySet<Node>[] = [],
+  ignoredExtraReferenceStartSets: readonly ReadonlySet<number>[] = []
 ): boolean => {
-  if (ignoredTreeNodes.has(node) || ignoredSubtreeRoots?.has(node)) {
+  if (
+    ignoredTreeNodes.has(node) ||
+    ignoredSubtreeRootSets.some((roots) => roots.has(node))
+  ) {
     return false;
   }
 
@@ -324,7 +327,9 @@ const containsOpaqueAliasConstruct = (
       getReferences(node, bindingIndex).every(
         (reference) =>
           ignoredReferenceStarts.has(reference.start) ||
-          ignoredExtraReferenceStarts?.has(reference.start)
+          ignoredExtraReferenceStartSets.some((starts) =>
+            starts.has(reference.start)
+          )
       )) ||
     getOxcNodeChildren(node).some((child) =>
       containsOpaqueAliasConstruct(
@@ -332,8 +337,8 @@ const containsOpaqueAliasConstruct = (
         bindingIndex,
         ignoredTreeNodes,
         ignoredReferenceStarts,
-        ignoredSubtreeRoots,
-        ignoredExtraReferenceStarts
+        ignoredSubtreeRootSets,
+        ignoredExtraReferenceStartSets
       )
     )
   );
@@ -344,15 +349,17 @@ export const containsUnprovenAliasSource = (
   bindingIndex: BindingIndex,
   ignoredTreeNodes: ReadonlySet<Node>,
   ignoredReferenceStarts: ReadonlySet<number>,
-  ignoredSubtreeRoots?: ReadonlySet<Node>,
-  ignoredExtraReferenceStarts?: ReadonlySet<number>
+  ignoredSubtreeRootSets: readonly ReadonlySet<Node>[] = [],
+  ignoredExtraReferenceStartSets: readonly ReadonlySet<number>[] = []
 ): boolean =>
   !ignoredTreeNodes.has(node) &&
-  !ignoredSubtreeRoots?.has(node) &&
+  !ignoredSubtreeRootSets.some((roots) => roots.has(node)) &&
   (getReferences(node, bindingIndex).some(
     (reference) =>
       !ignoredReferenceStarts.has(reference.start) &&
-      !ignoredExtraReferenceStarts?.has(reference.start) &&
+      ignoredExtraReferenceStartSets.every(
+        (starts) => !starts.has(reference.start)
+      ) &&
       reference.binding === null
   ) ||
     containsOpaqueAliasConstruct(
@@ -360,8 +367,8 @@ export const containsUnprovenAliasSource = (
       bindingIndex,
       ignoredTreeNodes,
       ignoredReferenceStarts,
-      ignoredSubtreeRoots,
-      ignoredExtraReferenceStarts
+      ignoredSubtreeRootSets,
+      ignoredExtraReferenceStartSets
     ));
 
 export const collectThrownExpressions = (

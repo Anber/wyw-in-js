@@ -66,6 +66,7 @@ export const registerMutationHazardNode = (
   node: Node,
   ignoreLookup: SpanLookup,
   ignoreTreeLookup: SpanLookup,
+  processorManagedExpressionNodes: Set<Node>,
   ignoredHazardNodes: Set<Node>,
   ignoredHazardTreeNodes: Set<Node>
 ): void => {
@@ -79,6 +80,7 @@ export const registerMutationHazardNode = (
     return;
   }
 
+  processorManagedExpressionNodes.add(node);
   ignoredHazardNodes.add(node);
   if (node.type === 'TaggedTemplateExpression') {
     // Suppress the processor tag construction/invocation itself. Quasi
@@ -193,6 +195,7 @@ const collectRootMutationHazards = (
   program: Program,
   mutations: Map<string, Array<AssignmentExpression | UpdateExpression>>,
   bindingIndex: BindingIndex,
+  processorManagedExpressionNodes: ReadonlySet<Node>,
   ignoredHazardNodes: ReadonlySet<Node>,
   ignoredHazardTreeNodes: ReadonlySet<Node>
 ): Map<string, Node[]> => {
@@ -244,50 +247,110 @@ const collectRootMutationHazards = (
 
   const toReferenceKey = (binding: Binding | null, name: string): string =>
     binding ? toMutationBindingKey(binding) : name;
-  const collectReferenceKeys = (node: Node): string[] =>
-    collectMutationReferenceKeys(
-      node,
-      bindingIndex,
-      [ignoredHazardTreeReferenceStarts],
-      toReferenceKey
-    );
+  type ProcessorProjection = {
+    referenceStarts: ReadonlySet<number>;
+    roots: ReadonlySet<Node>;
+  };
+  const processorManagedRoots = [...processorManagedExpressionNodes].sort(
+    (left, right) => left.start - right.start || left.end - right.end
+  );
+  const processorReferenceStarts = new WeakMap<Node, readonly number[]>();
+  const processorProjectionCache = new WeakMap<
+    Node,
+    ProcessorProjection | null
+  >();
+  const findFirstProcessorRootAtOrAfter = (start: number): number => {
+    let low = 0;
+    let high = processorManagedRoots.length;
+    while (low < high) {
+      const middle = low + Math.floor((high - low) / 2);
+      if (processorManagedRoots[middle]!.start < start) {
+        low = middle + 1;
+      } else {
+        high = middle;
+      }
+    }
+    return low;
+  };
+  const getProcessorProjection = (node: Node): ProcessorProjection | null => {
+    const cached = processorProjectionCache.get(node);
+    if (cached !== undefined) {
+      return cached;
+    }
 
-  const collectDeferredReferencePolicy =
-    createDeferredReferencePolicyCollector(bindingIndex);
-  const collectEagerReferenceKeys = (
-    node: Node,
-    includeBinding: (binding: Binding | null) => boolean = () => true
-  ): string[] => {
-    const { ignoredStarts } = collectDeferredReferencePolicy(node);
+    const roots = new Set<Node>();
+    const referenceStarts = new Set<number>();
+    const first = findFirstProcessorRootAtOrAfter(node.start);
+    for (let index = first; index < processorManagedRoots.length; index += 1) {
+      const root = processorManagedRoots[index]!;
+      if (root.start > node.end) {
+        break;
+      }
+      if (root.end > node.end) {
+        continue;
+      }
+
+      roots.add(root);
+      let starts = processorReferenceStarts.get(root);
+      if (!starts) {
+        starts = getReferences(root, bindingIndex).map(
+          (reference) => reference.start
+        );
+        processorReferenceStarts.set(root, starts);
+      }
+      starts.forEach((start) => referenceStarts.add(start));
+    }
+
+    const projection = roots.size === 0 ? null : { referenceStarts, roots };
+    processorProjectionCache.set(node, projection);
+    return projection;
+  };
+  const collectReferenceKeys = (node: Node): string[] => {
+    const projection = getProcessorProjection(node);
     return collectMutationReferenceKeys(
       node,
       bindingIndex,
-      [ignoredHazardTreeReferenceStarts, ignoredStarts],
+      [
+        ignoredHazardTreeReferenceStarts,
+        ...(projection ? [projection.referenceStarts] : []),
+      ],
+      toReferenceKey
+    );
+  };
+
+  const collectDeferredReferencePolicy =
+    createDeferredReferencePolicyCollector(bindingIndex);
+  const collectEagerReferenceKeys = (node: Node): string[] => {
+    const { ignoredStarts } = collectDeferredReferencePolicy(node);
+    const projection = getProcessorProjection(node);
+    return collectMutationReferenceKeys(
+      node,
+      bindingIndex,
+      [
+        ignoredHazardTreeReferenceStarts,
+        ignoredStarts,
+        ...(projection ? [projection.referenceStarts] : []),
+      ],
+      toReferenceKey
+    );
+  };
+
+  const collectAliasReferenceKeys = (
+    node: Node,
+    includeBinding: (binding: Binding | null) => boolean = () => true
+  ): string[] => {
+    const projection = getProcessorProjection(node);
+    return collectMutationReferenceKeys(
+      node,
+      bindingIndex,
+      [
+        ignoredHazardTreeReferenceStarts,
+        ...(projection ? [projection.referenceStarts] : []),
+      ],
       toReferenceKey,
       includeBinding
     );
   };
-
-  const processorManagedAliasReferenceStarts = new Set<number>();
-  ignoredHazardNodes.forEach((node) => {
-    if (node.type !== 'TaggedTemplateExpression') {
-      return;
-    }
-    getReferences(node, bindingIndex).forEach(({ start }) =>
-      processorManagedAliasReferenceStarts.add(start)
-    );
-  });
-  const collectAliasReferenceKeys = (
-    node: Node,
-    includeBinding: (binding: Binding | null) => boolean = () => true
-  ): string[] =>
-    collectMutationReferenceKeys(
-      node,
-      bindingIndex,
-      [processorManagedAliasReferenceStarts, ignoredHazardTreeReferenceStarts],
-      toReferenceKey,
-      includeBinding
-    );
   const collectCapturedAliasReferenceKeys = (node: Node): string[] =>
     collectAliasReferenceKeys(
       node,
@@ -297,23 +360,28 @@ const collectRootMutationHazards = (
         node.end <= binding.declaredAt
     );
 
-  const containsUnprovenAlias = (node: Node): boolean =>
-    containsUnprovenAliasSource(
-      node,
-      bindingIndex,
-      ignoredHazardTreeNodes,
-      ignoredHazardTreeReferenceStarts
-    );
-  const containsEagerUnprovenAlias = (node: Node): boolean => {
-    const { ignoredRoots, ignoredStarts } =
-      collectDeferredReferencePolicy(node);
+  const containsUnprovenAlias = (node: Node): boolean => {
+    const projection = getProcessorProjection(node);
     return containsUnprovenAliasSource(
       node,
       bindingIndex,
       ignoredHazardTreeNodes,
       ignoredHazardTreeReferenceStarts,
-      ignoredRoots,
-      ignoredStarts
+      projection ? [projection.roots] : [],
+      projection ? [projection.referenceStarts] : []
+    );
+  };
+  const containsEagerUnprovenAlias = (node: Node): boolean => {
+    const { ignoredRoots, ignoredStarts } =
+      collectDeferredReferencePolicy(node);
+    const projection = getProcessorProjection(node);
+    return containsUnprovenAliasSource(
+      node,
+      bindingIndex,
+      ignoredHazardTreeNodes,
+      ignoredHazardTreeReferenceStarts,
+      [ignoredRoots, ...(projection ? [projection.roots] : [])],
+      [ignoredStarts, ...(projection ? [projection.referenceStarts] : [])]
     );
   };
 
@@ -489,6 +557,9 @@ const collectRootMutationHazards = (
       // Any object passed to unknown code, or used as a method receiver, can
       // be mutated. Pure calls are intentionally rejected here rather than
       // risking a stale static snapshot.
+      // References inside nested processor-managed expressions are projected
+      // out by addReferences because the outer invocation receives their
+      // evaltime replacements, not their original interpolation inputs.
       // Starting at the invocation keeps an inline IIFE body eager while the
       // deferred-reference policy still skips callback arguments.
       addReferences(node, node, true);
@@ -975,6 +1046,7 @@ const collectRootMutationHazards = (
 export const collectProgramMutationAnalysis = (
   program: Program,
   bindingIndex: BindingIndex,
+  processorManagedExpressionNodes: ReadonlySet<Node>,
   ignoredMutationHazardNodes: ReadonlySet<Node>,
   ignoredMutationHazardTreeNodes: ReadonlySet<Node>,
   hasEffectiveMutationHazardSeed: boolean
@@ -990,6 +1062,7 @@ export const collectProgramMutationAnalysis = (
           program,
           rootMutationsByBinding,
           bindingIndex,
+          processorManagedExpressionNodes,
           ignoredMutationHazardNodes,
           ignoredMutationHazardTreeNodes
         );
