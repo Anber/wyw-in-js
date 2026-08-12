@@ -43,11 +43,25 @@ describe('withWyw', () => {
     return tsRule.loaders[0].options;
   };
 
-  const getWebpackLoaderForResource = (use: any[], resource: string): any => {
-    const resolvedUse = use.flatMap((item) => {
-      const resolved = typeof item === 'function' ? item({ resource }) : item;
-      return Array.isArray(resolved) ? resolved : [resolved];
-    });
+  const resolveWebpackUse = (
+    use: RuleSetRule['use'],
+    resource: string
+  ): any[] => {
+    if (!use) return [];
+
+    const resolved =
+      typeof use === 'function'
+        ? use({ resource, realResource: resource } as any)
+        : use;
+
+    return (Array.isArray(resolved) ? resolved : [resolved]).filter(Boolean);
+  };
+
+  const getWebpackLoaderForResource = (
+    use: RuleSetRule['use'],
+    resource: string
+  ): any => {
+    const resolvedUse = resolveWebpackUse(use, resource);
 
     return resolvedUse.find((item) => item?.loader?.includes('webpack-loader'));
   };
@@ -196,9 +210,12 @@ describe('withWyw', () => {
     const nextConfig = withWyw();
 
     const result = nextConfig.webpack!(config, { dev: true } as any);
-    const use = (result.module!.rules![0] as RuleSetRule).use as any[];
+    const { use } = result.module!.rules![0] as RuleSetRule;
 
-    expect(use).toHaveLength(2);
+    expect(typeof use).toBe('function');
+    const localUse = resolveWebpackUse(use, '/project/app/page.tsx');
+    expect(localUse).toHaveLength(2);
+    expect(localUse.every((item) => typeof item !== 'function')).toBe(true);
     const localLoader = getWebpackLoaderForResource(
       use,
       '/project/app/page.tsx'
@@ -215,6 +232,15 @@ describe('withWyw', () => {
         '/project/node_modules/swr/dist/index.mjs'
       )
     ).toBeUndefined();
+    const nodeModulesUse = resolveWebpackUse(
+      use,
+      '/project/node_modules/swr/dist/index.mjs'
+    );
+    expect(nodeModulesUse).toHaveLength(1);
+    expect(nodeModulesUse[0].loader).toContain('next-swc-loader');
+    expect(nodeModulesUse.every((item) => typeof item !== 'function')).toBe(
+      true
+    );
     expect(
       getWebpackLoaderForResource(
         use,
@@ -246,7 +272,7 @@ describe('withWyw', () => {
     );
 
     const result = nextConfig.webpack!(config, { dev: true } as any);
-    const use = (result.module!.rules![0] as RuleSetRule).use as any[];
+    const { use } = result.module!.rules![0] as RuleSetRule;
     const localLoader = getWebpackLoaderForResource(
       use,
       '/project/pages/index.tsx'
@@ -259,7 +285,7 @@ describe('withWyw', () => {
     });
   });
 
-  it('converts loader+options rules to use[] when injecting', () => {
+  it('converts loader+options rules to functional use when injecting', () => {
     const config: Configuration = {
       module: {
         rules: [
@@ -280,11 +306,14 @@ describe('withWyw', () => {
 
     expect(rule.loader).toBeUndefined();
     expect(rule.options).toBeUndefined();
-    expect(rule.use).toHaveLength(2);
-    expect(rule.use[0].loader).toContain('next-swc-loader');
-    expect(rule.use[0].options).toEqual({ some: 'option' });
+    expect(typeof rule.use).toBe('function');
+    const use = resolveWebpackUse(rule.use, '/project/pages/index.tsx');
+    expect(use).toHaveLength(2);
+    expect(use.every((item) => typeof item !== 'function')).toBe(true);
+    expect(use[0].loader).toContain('next-swc-loader');
+    expect(use[0].options).toEqual({ some: 'option' });
     expect(
-      getWebpackLoaderForResource(rule.use, '/project/pages/index.tsx').loader
+      getWebpackLoaderForResource(use, '/project/pages/index.tsx').loader
     ).toContain('webpack-loader');
   });
 
