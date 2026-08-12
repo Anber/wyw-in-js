@@ -457,21 +457,39 @@ export class TransformCacheCollection<
           return true;
         }
 
-        // A cached file without a cached entrypoint was invalidated earlier.
-        // If the caller forced a content check and the content hash is stable,
-        // the missing entrypoint is only cache churn and must not invalidate
-        // output-dependent parents.
+        // A cached file without a cached entrypoint was invalidated earlier --
+        // e.g. by `workflow()` evicting a plain bundler-root dependency
+        // (`cache.delete('entrypoints', ...)`), or by a bundler's HMR handler
+        // invalidating every dependency of an affected module regardless of
+        // whether that particular one changed (`cache.invalidateForFile`).
+        // If its recorded `fs` content hash is still stable, the missing
+        // entrypoint is only cache churn, not a real change, and must not
+        // invalidate output-dependent parents -- regardless of whether the
+        // caller happens to force a content check for this dependency.
+        // `forceContentCheck` is only set for `invalidateOnDependencyChange`
+        // entries; an ordinary dependency must get the same protection, or it
+        // is reported "changed" on every check, forever, once its entrypoint
+        // is evicted.
         if (!cachedEntrypoint && nestedDependencies.size === 0) {
-          if (
-            forceContentCheck &&
-            this.contentHashes.get(dependencyFilename)?.fs !== undefined
-          ) {
-            dependencyChangeMemo.set(dependencyFilename, false);
-            return false;
+          if (this.contentHashes.get(dependencyFilename)?.fs === undefined) {
+            // No recorded content hash to compare against: genuinely unknown.
+            dependencyChangeMemo.set(dependencyFilename, true);
+            return true;
           }
 
-          dependencyChangeMemo.set(dependencyFilename, true);
-          return true;
+          // If `forceContentCheck` is true, the `didFileContentHashChange`
+          // call above already established the content is unchanged (a
+          // change would have returned `true` before reaching here).
+          const changed =
+            !forceContentCheck &&
+            this.didFileContentHashChange(
+              dependencyFilename,
+              strippedDependencyFilename,
+              changedFiles
+            );
+
+          dependencyChangeMemo.set(dependencyFilename, changed);
+          return changed;
         }
 
         if (nestedDependencies.size === 0) {
