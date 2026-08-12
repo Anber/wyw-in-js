@@ -1,6 +1,7 @@
 import { oxcShaker } from '../shaker';
 import type { Services } from '../transform/types';
 import { Entrypoint } from '../transform/Entrypoint';
+import { collectOxcImportMap } from '../utils/oxcImportMap';
 import { prepareCodeForEvalRuntime } from '../transform/generators/transform';
 
 export type PreparedModule = {
@@ -19,9 +20,26 @@ export function prepareModuleOnDemand(
   });
 
   if (entrypoint.ignored) {
+    const code = entrypoint.loadedAndParsed.code ?? '';
+    // An ignored module is shipped verbatim, not shaken — its import and
+    // re-export statements are still real dependency edges the runner's
+    // linker will resolve, so the broker needs them for the same
+    // `only`-merging reasons as a normal module (see collectOxcImportMap).
+    // "Ignored" also covers genuinely non-JS content (CSS, assets) that
+    // oxc's parser can't handle — a parse failure here must leave `imports`
+    // at its previous, safe default rather than throwing.
+    let imports: ReturnType<typeof collectOxcImportMap> | null = null;
+    if (code) {
+      try {
+        imports = collectOxcImportMap(code, id);
+      } catch {
+        imports = null;
+      }
+    }
+
     return {
-      code: entrypoint.loadedAndParsed.code ?? '',
-      imports: null,
+      code,
+      imports,
       only: entrypoint.only,
     };
   }

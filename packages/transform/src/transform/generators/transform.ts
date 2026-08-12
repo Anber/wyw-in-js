@@ -1,6 +1,7 @@
 import { oxcShaker } from '../../shaker';
 import type { WYWTransformMetadata } from '../../utils/TransformMetadata';
 import { collectOxcExportsAndImports } from '../../utils/collectOxcExportsAndImports';
+import { collectOxcImportMap } from '../../utils/oxcImportMap';
 import { emitOxcCommonJS, stripTypesAndJsxWithOxc } from '../../utils/oxcEmit';
 import { runOxcPreevalStage } from '../../utils/oxcPreevalStage';
 import { shakeOxcToESM } from '../../utils/oxcShaker';
@@ -24,27 +25,6 @@ import { rewriteOptimizedOxcBarrelImports } from './rewriteOxcBarrelImports';
 import { resolveStaticOxcPreevalValues } from './resolveStaticOxcValues';
 
 const EMPTY_FILE = '=== empty file ===';
-
-const collectImportsFromOxc = (
-  code: string,
-  filename: string
-): Map<string, string[]> => {
-  const imports = new Map<string, string[]>();
-  const addImport = (source: string, imported: string) => {
-    const bucket = imports.get(source) ?? [];
-    if (!bucket.includes(imported)) {
-      bucket.push(imported);
-    }
-
-    imports.set(source, bucket);
-  };
-
-  collectOxcExportsAndImports(code, filename).imports.forEach((item) => {
-    addImport(item.source, item.imported || 'side-effect');
-  });
-
-  return imports;
-};
 
 type PrepareCodeFn = (
   services: Services,
@@ -235,7 +215,7 @@ const prepareOxcCodeImpl = (
 
     return [
       normalizeOxcPreparedESM(strippedCode),
-      collectImportsFromOxc(strippedCode, filename),
+      collectOxcImportMap(strippedCode, filename),
       null,
     ];
   }
@@ -262,7 +242,7 @@ const prepareOxcCodeImpl = (
     return [
       normalizeOxcPreparedESM(preparedCode),
       options.stripForEvalRuntime
-        ? collectImportsFromOxc(preparedCode, filename)
+        ? collectOxcImportMap(preparedCode, filename)
         : shaken.imports,
       transformMetadata ?? null,
     ];

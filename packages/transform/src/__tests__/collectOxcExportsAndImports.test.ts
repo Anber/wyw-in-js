@@ -8,6 +8,7 @@ import {
   collectOxcExportsAndImports,
   type OxcCollectedState,
 } from '../utils/collectOxcExportsAndImports';
+import { collectOxcImportMap, toOxcImportMap } from '../utils/oxcImportMap';
 
 const fixturesFolder = join(
   __dirname,
@@ -67,6 +68,29 @@ const runFixture = (relativePath: string): ComparableResults => {
 };
 
 describe('collectOxcExportsAndImports', () => {
+  it('builds one dependency map from imports and reexports', () => {
+    const code = [
+      "import { alpha, beta } from './values';",
+      "import './side-effect';",
+      "export { alpha, gamma as renamed } from './values';",
+      "export * from './wildcard';",
+    ].join('\n');
+    const expected = [
+      ['./values', ['alpha', 'beta', 'gamma']],
+      ['./side-effect', ['side-effect']],
+      ['./wildcard', ['*']],
+    ];
+
+    expect(
+      Array.from(
+        toOxcImportMap(collectOxcExportsAndImports(code, 'imports.ts'))
+      )
+    ).toEqual(expected);
+    expect(Array.from(collectOxcImportMap(code, 'imports.ts'))).toEqual(
+      expected
+    );
+  });
+
   it('collects ESM imports, exports, reexports, and type-only statements', () => {
     expect(runFixture('import_named.input.ts').imports).toMatchObject([
       { imported: 'named', source: 'unknown-package' },

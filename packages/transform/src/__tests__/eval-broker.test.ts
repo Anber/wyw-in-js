@@ -21,6 +21,7 @@ import {
   EvalBroker,
   stripEntrypointGlobalsFromRunnerContext,
 } from '../eval/broker';
+import { prepareModuleOnDemand } from '../eval/prepareModuleOnDemand';
 import { serializeValue } from '../eval/serialize';
 import { EventEmitter } from '../utils/EventEmitter';
 
@@ -140,6 +141,33 @@ describe('EvalBroker', () => {
       __dirname: '/tmp/example',
       __filename: entry,
     });
+  });
+
+  it('collects dependency edges from ignored modules shipped verbatim', () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
+    const barrel = join(root, 'barrel.js');
+    writeFileSync(
+      barrel,
+      [
+        "import { localValue } from './values.js';",
+        "export { reexportedValue } from './values.js';",
+        "export * from './wildcard.js';",
+      ].join('\n')
+    );
+    const services = createServices(root, barrel, {
+      rules: [{ test: () => true, action: 'ignore' }],
+    });
+
+    try {
+      const result = prepareModuleOnDemand(services, barrel, ['*']);
+
+      expect(Array.from(result.imports ?? [])).toEqual([
+        ['./values.js', ['localValue', 'reexportedValue']],
+        ['./wildcard.js', ['*']],
+      ]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it('prefers custom resolver over bundler resolver', async () => {
@@ -518,6 +546,187 @@ describe('EvalBroker', () => {
 
     broker.dispose();
     rmSync(root, { recursive: true, force: true });
+  });
+
+  it('does not silently drop exports a barrel needs via a wildcard re-export edge', async () => {
+    // The eval path used to build its import map from
+    // collectOxcExportsAndImports(...).imports only, dropping .reexports
+    // entirely — even though the shaker's separate mapper included them. A
+    // module shipped with `export * from './values.js'` keeps a real ESM
+    // dependency edge on values.js that never appeared in the broker's
+    // import map for the barrel.
+    //
+    // Consequence: once some other importer has caused values.js to be
+    // cached under a narrow `only` within this session,
+    // mergeKnownDependencyOnly's per-module cache means a LOAD for
+    // values.js reached *through the barrel* reuses that same stale narrow
+    // `only` — because the barrel's own importsByModule entry for
+    // './values.js' doesn't exist to widen it — silently omitting exports
+    // the barrel's wildcard re-export needs. A consumer that reaches those
+    // exports only through the barrel gets an incomplete module.
+    const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
+    const values = join(root, 'values.js');
+    const barrel = join(root, 'barrel.js');
+    const consumerNarrow = join(root, 'consumer-narrow.js');
+
+    // Non-trivial computed exports, matching the barrel-pattern fixtures
+    // above — trivial re-exports get shipped in full regardless of `only`,
+    // which would mask this defect.
+    writeFileSync(
+      values,
+      [
+        'const base = 16;',
+        'export const namedValue = base * 25;',
+        'export const otherValue = base * 3;',
+      ].join('\n')
+    );
+    writeFileSync(
+      barrel,
+      ["export * from './values.js';", 'export const marker = 1;'].join('\n')
+    );
+
+    const services = createServices(root, consumerNarrow);
+    const broker = new EvalBroker(
+      services,
+      jest.fn(async () => null)
+    );
+    const privateBroker = broker as unknown as {
+      importsByModule: Map<string, Map<string, string[]>>;
+      onlyByModule: Map<string, string[]>;
+      sessionLinkGraph: Set<string>;
+      loadModule: (payload: {
+        id: string;
+        importerId?: string | null;
+        request?: string | null;
+      }) => Promise<{ code: string; only: string[]; hash?: string }>;
+    };
+
+    // consumer-narrow already resolved+loaded values.js narrowly, within
+    // this session, before the barrel ever needs it.
+    privateBroker.sessionLinkGraph.add(consumerNarrow);
+    privateBroker.importsByModule.set(
+      consumerNarrow,
+      new Map([['./values.js', ['namedValue']]])
+    );
+    privateBroker.onlyByModule.set(values, ['namedValue']);
+    await privateBroker.loadModule({
+      id: values,
+      importerId: consumerNarrow,
+      request: './values.js',
+    });
+
+    // Now load the barrel itself — through the real preparation path, not
+    // hand-seeded — so its importsByModule entry reflects whatever
+    // collectOxcImportMap actually returns for
+    // `export * from "./values.js"`. This is the exact mechanism that's
+    // broken: the barrel's own compiled code keeps the statement verbatim
+    // (a wildcard target can't be selectively pruned), but the import map
+    // built for it must include the edge for the merge below to widen
+    // values.js's stale narrow `only`.
+    privateBroker.sessionLinkGraph.add(barrel);
+    await privateBroker.loadModule({
+      id: barrel,
+      importerId: consumerNarrow,
+      request: './barrel.js',
+    });
+
+    const wideLoad = await privateBroker.loadModule({
+      id: values,
+      importerId: barrel,
+      request: './values.js',
+    });
+
+    expect(wideLoad.code).toContain('otherValue');
+
+    broker.dispose();
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('links a real module graph that needs a barrel-reexported export outside a narrower named import', async () => {
+    // End-to-end version of the test above: drives a real broker.evaluate()
+    // through the real child-process runner (no hand-seeded broker state),
+    // and shows the missing re-export edge can produce an actual
+    // vm.SourceTextModule.link failure, not just a stale internal `only`.
+    //
+    // For the missing edge to crash rather than just over-fetch, the
+    // barrel's importsByModule entry for './values.js' must exist but be
+    // missing the needed name — total absence of an entry falls back to
+    // requesting everything (getImportOnly's `?? ['*']`), which fails safe.
+    // So the barrel below carries *both* a narrow named import (which
+    // creates the entry) and a wildcard re-export (which the entry then
+    // fails to widen for, pre-fix):
+    //
+    //   import { namedValue } from './values.js';
+    //   export * from './values.js';
+    //   export const derived = namedValue * 2;
+    //
+    // Pre-fix, the eval import map for barrel.js is
+    // {'./values.js': ['namedValue']} — the reexport is dropped — so
+    // values.js gets prepared with only `namedValue`, `otherValue` is
+    // shaken out, and the barrel's `export *` can no longer supply it to
+    // entry.js. entry.js's link then throws "does not provide an export
+    // named 'otherValue'". Post-fix the map entry is
+    // ['namedValue', '*'], values.js is prepared wide, and the graph links.
+    const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
+    const values = join(root, 'values.js');
+    const barrel = join(root, 'barrel.js');
+    const entry = join(root, 'entry.js');
+
+    // Computed (not literal) exports keep values.js out of
+    // isStaticallyEvaluatableModule — an Identifier operand (`base`) makes
+    // it unsafe — otherwise the broker force-widens it to only:['*'] and
+    // the defect is masked regardless of the import map.
+    writeFileSync(
+      values,
+      [
+        'const base = 16;',
+        'export const namedValue = base * 25;',
+        'export const otherValue = base * 3;',
+      ].join('\n')
+    );
+    writeFileSync(
+      barrel,
+      [
+        "import { namedValue } from './values.js';",
+        "export * from './values.js';",
+        'export const derived = namedValue * 2;',
+      ].join('\n')
+    );
+    writeFileSync(
+      entry,
+      [
+        "import { derived, otherValue } from './barrel.js';",
+        'export const __wywPreval = {',
+        '  total: () => derived + otherValue,',
+        '};',
+      ].join('\n')
+    );
+
+    const asyncResolve = jest.fn(async (what: string, importer: string) => {
+      if (what.startsWith('.')) {
+        return resolve(dirname(importer), what);
+      }
+      return null;
+    });
+    const services = createServices(root, entry);
+    const broker = new EvalBroker(services, asyncResolve);
+
+    try {
+      const entrypoint = Entrypoint.createRoot(
+        services,
+        entry,
+        ['__wywPreval'],
+        readFileSync(entry, 'utf-8')
+      );
+
+      const result = await broker.evaluate(entrypoint);
+
+      // derived = (16 * 25) * 2 = 800, otherValue = 16 * 3 = 48
+      expect(result.values?.get('total')).toBe(848);
+    } finally {
+      broker.dispose();
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it('dedupes in-flight resolve calls', async () => {
