@@ -2905,8 +2905,16 @@ export class EvalBroker {
         sameStorageShape &&
         isSuperSet(previouslySent.only, prepared.only)
     );
+    // `prepared.code` is a plain string, never absent — a module whose
+    // runtime footprint is genuinely nothing (types-only, or a barrel's
+    // `export *` target that shakes to zero bytes) legitimately prepares to
+    // ''. Gating on its truthiness treated that real payload the same as
+    // "nothing to ship", so the first request for such a module shipped ''
+    // with no prior variant for the runner to fall back on. Ship whenever
+    // the runner doesn't already have an equivalent variant cached; only
+    // omit the field (see the LoadResult below) when it does.
     const shouldShipCode = Boolean(
-      prepared.code && !prepared.exports && !runnerHasCachedVariant
+      !prepared.exports && !runnerHasCachedVariant
     );
 
     if (debugEvalDir) {
@@ -2938,7 +2946,10 @@ export class EvalBroker {
 
     await this.sendLoadResult(id, {
       id: payload.id,
-      code: shouldShipCode ? prepared.code : '',
+      // Omit `code` entirely — rather than sending '' — when we're not
+      // shipping. '' is a legitimate LoadResult for a runtime-empty module;
+      // only an *absent* field means "reuse what you already have".
+      ...(shouldShipCode ? { code: prepared.code } : {}),
       map: null,
       hash: prepared.hash,
       only: prepared.only,

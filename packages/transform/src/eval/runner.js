@@ -1980,14 +1980,18 @@ loadModule = async (id, importer, requestSpec) => {
       }
     }
 
-    // The broker only ships empty `code` when it expects the runner to reuse
-    // a cached module via the hash-match short-circuit above. Reaching this
-    // point with no code means the broker's "what runner has" mirror is out
-    // of sync with our actual moduleCache/moduleVariants — fail loudly rather
-    // than feeding empty source into vm.SourceTextModule.
-    if (loaded.code == null || loaded.code === '') {
+    // The broker omits `code` entirely when it expects the runner to reuse a
+    // cached module via the hash-match short-circuit above — an empty
+    // string is a legitimate LoadResult in its own right (a module whose
+    // runtime footprint genuinely shakes down to zero bytes, e.g. a
+    // types-only module reached through a barrel's `export *`). Reaching
+    // this point with `code` truly absent means the broker's "what runner
+    // has" mirror is out of sync with our actual moduleCache/moduleVariants
+    // — fail loudly rather than feeding undefined source into
+    // vm.SourceTextModule.
+    if (loaded.code == null) {
       throw new Error(
-        `[wyw-in-js] LoadResult for ${id} has empty code but no cached module ` +
+        `[wyw-in-js] LoadResult for ${id} has no code but no cached module ` +
           `matched hash ${loaded.hash ?? '(none)'}. ` +
           `This indicates a broker/runner cache desync.`
       );
