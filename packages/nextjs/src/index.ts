@@ -18,7 +18,6 @@ const DEFAULT_EXTENSION = '.wyw-in-js.module.css';
 const CSS_OUTPUT_QUERY = '__wyw_css';
 const CSS_OUTPUT_QUERY_RE = new RegExp(`^\\??${CSS_OUTPUT_QUERY}$`);
 const NODE_MODULES_RE = /[\\/]node_modules[\\/]/;
-const WYW_LOADER_USE = Symbol('wywLoaderUse');
 
 const DEFAULT_TURBO_RULE_KEYS = ['*.js', '*.jsx', '*.ts', '*.tsx'];
 
@@ -42,10 +41,6 @@ type NextVersion = {
   major: number;
   minor: number;
 };
-type WywLoaderUseFunction = RuleSetUseFunction & {
-  [WYW_LOADER_USE]: string;
-};
-
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
@@ -67,29 +62,22 @@ function normalizeUseItems(use: RuleSetRule['use']): RuleSetUseItem[] | null {
   return list.length ? (list as RuleSetUseItem[]) : null;
 }
 
-function isWywLoaderUseFunction(
-  item: RuleSetUseItem
-): item is WywLoaderUseFunction {
-  return typeof item === 'function' && WYW_LOADER_USE in item;
-}
-
 function getLoaderName(item: RuleSetUseItem): string {
   if (typeof item === 'string') return item;
-  if (isWywLoaderUseFunction(item)) return item[WYW_LOADER_USE];
   if (isUseLoaderObject(item)) return item.loader;
   return '';
 }
 
 function createWywLoaderUseFunction(
-  loader: string,
+  use: RuleSetUseItem[],
   loaderItem: RuleSetUseItem
-): WywLoaderUseFunction {
-  const use: RuleSetUseFunction = ({ realResource, resource }) => {
+): RuleSetUseFunction {
+  return ({ realResource, resource }) => {
     const resourcePath = realResource ?? resource;
-    return resourcePath && NODE_MODULES_RE.test(resourcePath) ? [] : loaderItem;
+    return resourcePath && NODE_MODULES_RE.test(resourcePath)
+      ? use
+      : [...use, loaderItem];
   };
-
-  return Object.assign(use, { [WYW_LOADER_USE]: loader });
 }
 
 function isWywLoaderPath(loader: string) {
@@ -99,9 +87,7 @@ function isWywLoaderPath(loader: string) {
   );
 }
 
-function convertLoaderRuleToUseRule(
-  rule: RuleSetRule,
-) {
+function convertLoaderRuleToUseRule(rule: RuleSetRule) {
   const { loader } = rule as { loader?: unknown };
   if (typeof loader !== 'string') return;
 
@@ -127,9 +113,7 @@ function convertLoaderRuleToUseRule(
 
   // Loader order is right-to-left. We want WyW to run first, so it should be last.
   Object.assign(nextRule, {
-    use: [
-      { loader, ...(options !== undefined ? { options } : {}) }
-    ],
+    use: [{ loader, ...(options !== undefined ? { options } : {}) }],
   });
 }
 
@@ -356,10 +340,10 @@ function injectWywLoader(
       loader,
       options: loaderOptions,
     };
-    const wywLoaderUse = createWywLoaderUseFunction(loader, wywLoaderItem);
+    const wywLoaderUse = createWywLoaderUseFunction(use, wywLoaderItem);
 
     // Loader order is right-to-left. We want WyW to run first, so it should be last.
-    Object.assign(rule, { use: (data) => [...use, wywLoaderUse(data)].flat() });
+    Object.assign(rule, { use: wywLoaderUse });
   });
 
   ensureWywCssModuleRules(config, extension);
