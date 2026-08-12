@@ -8,12 +8,10 @@ import type { Node, Program } from 'oxc-parser';
 import { syncResolve, type ImportOverrides } from '@wyw-in-js/shared';
 
 import { collectOxcExportsAndImportsFromProgram } from '../collectOxcExportsAndImports';
-import type {
-  collectOxcExportsAndImports,
-  OxcCollectedImport,
-} from '../collectOxcExportsAndImports';
+import type { OxcCollectedImport } from '../collectOxcExportsAndImports';
 import { getImportOverride, toImportKey } from '../importOverrides';
 import { isOxcNode as isNode } from '../oxc/ast';
+import { toOxcImportMap } from '../oxcImportMap';
 import { collectOxcPatternIdentifierNames as collectPatternNames } from '../oxc/patterns';
 import { parseOxcCached } from '../parseOxc';
 import { stripQueryAndHash } from '../parseRequest';
@@ -328,32 +326,6 @@ export const hasImportOverride = (
   return false;
 };
 
-const importsToMap = (
-  collected: ReturnType<typeof collectOxcExportsAndImports>
-): Map<string, string[]> => {
-  const result = new Map<string, string[]>();
-
-  const add = (source: string, imported: string): void => {
-    const bucket = result.get(source) ?? [];
-    if (!bucket.includes(imported)) {
-      bucket.push(imported);
-    }
-
-    result.set(source, bucket);
-  };
-
-  collected.imports.forEach((item) => {
-    const imported = item.imported || 'side-effect';
-    add(item.source, imported);
-  });
-
-  collected.reexports.forEach((item) => {
-    add(item.source, item.imported || 'side-effect');
-  });
-
-  return result;
-};
-
 const dynamicImportWarningsEnabled = (): boolean =>
   Boolean(process.env.WYW_WARN_DYNAMIC_IMPORTS) &&
   process.env.WYW_WARN_DYNAMIC_IMPORTS !== '0' &&
@@ -572,6 +544,6 @@ export const finalizeShakenModule = (
 
   return {
     code: nextCode,
-    imports: importsToMap(nextCollected),
+    imports: toOxcImportMap(nextCollected),
   };
 };

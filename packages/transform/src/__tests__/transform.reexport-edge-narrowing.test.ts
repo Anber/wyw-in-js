@@ -17,7 +17,7 @@ describe('transform() reexport edge narrowing', () => {
     // that static discovery runs the barrel through the real
     // resolveImports/processImports pipeline before the eval broker ever
     // sees it. That pipeline records the barrel's dependency on values.js
-    // using the shaker's own importsToMap, which has always included
+    // using the shaker's mapper, which has always included
     // re-exports — so it widens values.js to include `otherValue` before
     // mergeKnownDependencyOnly gets a chance to reuse a narrow cached
     // variant. The bug is real (see eval-broker.test.ts) but masked here by
@@ -31,7 +31,7 @@ describe('transform() reexport edge narrowing', () => {
     // `import(barrelPath)` — isn't one, so `getStringConstant` returns
     // null and the import is invisible to BOTH resolveImports (no
     // dependency ever recorded for './barrel.js') and
-    // collectImportsFromOxc (no entry in the broker's import map either).
+    // the eval import-map collection (no broker entry either).
     // The barrel is then discovered for the first time entirely inside the
     // eval broker's own module preparation, which — unlike the static
     // pipeline — does not eagerly resolve reexports to concrete names, so

@@ -1,6 +1,7 @@
 import { oxcShaker } from '../../shaker';
 import type { WYWTransformMetadata } from '../../utils/TransformMetadata';
 import { collectOxcExportsAndImports } from '../../utils/collectOxcExportsAndImports';
+import { collectOxcImportMap } from '../../utils/oxcImportMap';
 import { emitOxcCommonJS, stripTypesAndJsxWithOxc } from '../../utils/oxcEmit';
 import { runOxcPreevalStage } from '../../utils/oxcPreevalStage';
 import { shakeOxcToESM } from '../../utils/oxcShaker';
@@ -24,39 +25,6 @@ import { rewriteOptimizedOxcBarrelImports } from './rewriteOxcBarrelImports';
 import { resolveStaticOxcPreevalValues } from './resolveStaticOxcValues';
 
 const EMPTY_FILE = '=== empty file ===';
-
-export const collectImportsFromOxc = (
-  code: string,
-  filename: string
-): Map<string, string[]> => {
-  const imports = new Map<string, string[]>();
-  const addImport = (source: string, imported: string) => {
-    const bucket = imports.get(source) ?? [];
-    if (!bucket.includes(imported)) {
-      bucket.push(imported);
-    }
-
-    imports.set(source, bucket);
-  };
-
-  const collected = collectOxcExportsAndImports(code, filename);
-  collected.imports.forEach((item) => {
-    addImport(item.source, item.imported || 'side-effect');
-  });
-  // `export { x } from './y'` and `export * from './y'` are real ESM
-  // dependency edges — the compiled code keeps the statement verbatim (a
-  // wildcard re-export can't be selectively pruned without knowing the
-  // target's exports) even though `.imports` never sees them. Skipping
-  // these leaves the eval import map blind to a dependency the runner's
-  // own linker will still resolve, so downstream `only`-merging
-  // (mergeKnownDependencyOnly) can silently reuse a narrower cached
-  // variant of the target than this module actually needs.
-  collected.reexports.forEach((item) => {
-    addImport(item.source, item.imported);
-  });
-
-  return imports;
-};
 
 type PrepareCodeFn = (
   services: Services,
@@ -247,7 +215,7 @@ const prepareOxcCodeImpl = (
 
     return [
       normalizeOxcPreparedESM(strippedCode),
-      collectImportsFromOxc(strippedCode, filename),
+      collectOxcImportMap(strippedCode, filename),
       null,
     ];
   }
@@ -274,7 +242,7 @@ const prepareOxcCodeImpl = (
     return [
       normalizeOxcPreparedESM(preparedCode),
       options.stripForEvalRuntime
-        ? collectImportsFromOxc(preparedCode, filename)
+        ? collectOxcImportMap(preparedCode, filename)
         : shaken.imports,
       transformMetadata ?? null,
     ];

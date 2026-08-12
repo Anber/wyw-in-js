@@ -21,6 +21,7 @@ import {
   EvalBroker,
   stripEntrypointGlobalsFromRunnerContext,
 } from '../eval/broker';
+import { prepareModuleOnDemand } from '../eval/prepareModuleOnDemand';
 import { serializeValue } from '../eval/serialize';
 import { EventEmitter } from '../utils/EventEmitter';
 
@@ -140,6 +141,33 @@ describe('EvalBroker', () => {
       __dirname: '/tmp/example',
       __filename: entry,
     });
+  });
+
+  it('collects dependency edges from ignored modules shipped verbatim', () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
+    const barrel = join(root, 'barrel.js');
+    writeFileSync(
+      barrel,
+      [
+        "import { localValue } from './values.js';",
+        "export { reexportedValue } from './values.js';",
+        "export * from './wildcard.js';",
+      ].join('\n')
+    );
+    const services = createServices(root, barrel, {
+      rules: [{ test: () => true, action: 'ignore' }],
+    });
+
+    try {
+      const result = prepareModuleOnDemand(services, barrel, ['*']);
+
+      expect(Array.from(result.imports ?? [])).toEqual([
+        ['./values.js', ['localValue', 'reexportedValue']],
+        ['./wildcard.js', ['*']],
+      ]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it('prefers custom resolver over bundler resolver', async () => {
@@ -521,11 +549,9 @@ describe('EvalBroker', () => {
   });
 
   it('does not silently drop exports a barrel needs via a wildcard re-export edge', async () => {
-    // collectImportsFromOxc (transform/generators/transform.ts) used to
-    // build the eval import map from
+    // The eval path used to build its import map from
     // collectOxcExportsAndImports(...).imports only, dropping .reexports
-    // entirely — even though the shaker's own equivalent, importsToMap
-    // (utils/oxcShaker/moduleRewrites.ts), has always included them. A
+    // entirely — even though the shaker's separate mapper included them. A
     // module shipped with `export * from './values.js'` keeps a real ESM
     // dependency edge on values.js that never appeared in the broker's
     // import map for the barrel.
@@ -591,7 +617,7 @@ describe('EvalBroker', () => {
 
     // Now load the barrel itself — through the real preparation path, not
     // hand-seeded — so its importsByModule entry reflects whatever
-    // collectImportsFromOxc actually returns for
+    // collectOxcImportMap actually returns for
     // `export * from "./values.js"`. This is the exact mechanism that's
     // broken: the barrel's own compiled code keeps the statement verbatim
     // (a wildcard target can't be selectively pruned), but the import map
@@ -634,7 +660,7 @@ describe('EvalBroker', () => {
     //   export * from './values.js';
     //   export const derived = namedValue * 2;
     //
-    // Pre-fix, collectImportsFromOxc's map for barrel.js is
+    // Pre-fix, the eval import map for barrel.js is
     // {'./values.js': ['namedValue']} — the reexport is dropped — so
     // values.js gets prepared with only `namedValue`, `otherValue` is
     // shaken out, and the barrel's `export *` can no longer supply it to
