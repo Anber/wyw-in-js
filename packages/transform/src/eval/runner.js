@@ -336,6 +336,16 @@ const getEnumerableSymbolKeys = (value) =>
     Object.prototype.propertyIsEnumerable.call(value, key)
   );
 
+const IPC_SERIALIZATION_ERROR = Symbol('wyw.ipcSerializationError');
+
+const createIpcSerializationError = (message) =>
+  Object.assign(new Error(message), { [IPC_SERIALIZATION_ERROR]: true });
+
+const isIpcSerializationError = (error) =>
+  typeof error === 'object' &&
+  error !== null &&
+  IPC_SERIALIZATION_ERROR in error;
+
 const isLikeError = (value) =>
   typeof value === 'object' &&
   value !== null &&
@@ -345,12 +355,83 @@ const isLikeError = (value) =>
   ('stack' in value || 'name' in value);
 
 const throwUnsupportedIpcValue = (rootLabel, pathSegments, description) => {
-  throw new Error(
+  throw createIpcSerializationError(
     `[wyw-in-js] ${rootLabel} contains ${description} at ${formatPath(
       rootLabel,
       pathSegments
     )}. ${IPC_SUPPORTED_VALUE_HINT}`
   );
+};
+
+const serializeUnavailableError = (error) => {
+  if (typeof error === 'object' && error !== null) {
+    try {
+      const { message, name, stack } = error;
+      if (typeof message === 'string') {
+        return {
+          message,
+          name: typeof name === 'string' ? name : undefined,
+          stack: typeof stack === 'string' ? stack : undefined,
+        };
+      }
+    } catch {
+      // Fall through to the guarded string representation below. Errors may
+      // come from another VM context or even be proxy-like thrown values.
+    }
+  }
+
+  try {
+    return { message: String(error) };
+  } catch {
+    return { message: 'Unknown error' };
+  }
+};
+
+const serializeNestedValue = (
+  readValue,
+  rootLabel,
+  pathSegments,
+  seen,
+  allowFunctions,
+  allowSymbols,
+  ignoreSymbolKeys,
+  serialize
+) => {
+  // Processor values are demand-driven: a processor may inspect one metadata
+  // field without observing unrelated runtime state on the same object. Keep
+  // the serializable shell usable, but preserve failures at the exact property
+  // so data consumers still fail when they actually read it.
+  let value;
+  try {
+    value = readValue();
+  } catch (error) {
+    return {
+      kind: 'unavailable',
+      error: serializeUnavailableError(error),
+    };
+  }
+
+  try {
+    return serialize(
+      value,
+      rootLabel,
+      pathSegments,
+      seen,
+      allowFunctions,
+      allowSymbols,
+      true,
+      ignoreSymbolKeys
+    );
+  } catch (error) {
+    if (!isIpcSerializationError(error)) {
+      throw error;
+    }
+
+    return {
+      kind: 'unavailable',
+      error: serializeUnavailableError(error),
+    };
+  }
 };
 
 const serializeValueAtPath = (
@@ -360,6 +441,7 @@ const serializeValueAtPath = (
   seen,
   allowFunctions,
   allowSymbols,
+  deferNestedFailures,
   ignoreSymbolKeys
 ) => {
   if (value === null) {
@@ -428,7 +510,7 @@ const serializeValueAtPath = (
   const currentPath = formatPath(rootLabel, pathSegments);
   const seenAt = seen.get(value);
   if (seenAt) {
-    throw new Error(
+    throw createIpcSerializationError(
       `[wyw-in-js] ${rootLabel} contains a circular reference at ${currentPath} (from ${seenAt}). ${IPC_SUPPORTED_VALUE_HINT}`
     );
   }
@@ -459,15 +541,27 @@ const serializeValueAtPath = (
       return {
         kind: 'array',
         items: Array.from({ length: value.length }, (_, index) =>
-          serializeValueAtPath(
-            value[index],
-            rootLabel,
-            [...pathSegments, index],
-            seen,
-            allowFunctions,
-            allowSymbols,
-            ignoreSymbolKeys
-          )
+          deferNestedFailures
+            ? serializeNestedValue(
+                () => value[index],
+                rootLabel,
+                [...pathSegments, index],
+                seen,
+                allowFunctions,
+                allowSymbols,
+                ignoreSymbolKeys,
+                serializeValueAtPath
+              )
+            : serializeValueAtPath(
+                value[index],
+                rootLabel,
+                [...pathSegments, index],
+                seen,
+                allowFunctions,
+                allowSymbols,
+                false,
+                ignoreSymbolKeys
+              )
         ),
       };
     } finally {
@@ -497,18 +591,33 @@ const serializeValueAtPath = (
     return {
       kind: 'object',
       entries: Object.fromEntries(
-        Object.entries(value).map(([key, item]) => [
-          key,
-          serializeValueAtPath(
-            item,
-            rootLabel,
-            [...pathSegments, key],
-            seen,
-            allowFunctions,
-            allowSymbols,
-            ignoreSymbolKeys
-          ),
-        ])
+        deferNestedFailures
+          ? Object.keys(value).map((key) => [
+              key,
+              serializeNestedValue(
+                () => value[key],
+                rootLabel,
+                [...pathSegments, key],
+                seen,
+                allowFunctions,
+                allowSymbols,
+                ignoreSymbolKeys,
+                serializeValueAtPath
+              ),
+            ])
+          : Object.entries(value).map(([key, item]) => [
+              key,
+              serializeValueAtPath(
+                item,
+                rootLabel,
+                [...pathSegments, key],
+                seen,
+                allowFunctions,
+                allowSymbols,
+                false,
+                ignoreSymbolKeys
+              ),
+            ])
       ),
     };
   } finally {
@@ -530,8 +639,48 @@ const serializeValue = (value, options = {}) =>
     new WeakMap(),
     options.allowFunctions ?? false,
     options.allowSymbols ?? false,
+    options.deferNestedFailures ?? false,
     options.ignoreSymbolKeys ?? false
   );
+
+const deserializeError = (value) => {
+  const error = new Error(value?.message ?? '');
+  if (value?.name) {
+    error.name = value.name;
+  }
+  if (value?.stack) {
+    error.stack = value.stack;
+  }
+  return error;
+};
+
+const defineDeserializedProperty = (target, key, value, deserialize) => {
+  if (value?.kind === 'unavailable') {
+    Object.defineProperty(target, key, {
+      configurable: true,
+      enumerable: true,
+      get() {
+        throw deserializeError(value.error);
+      },
+      set(replacement) {
+        Object.defineProperty(this, key, {
+          configurable: true,
+          enumerable: true,
+          value: replacement,
+          writable: true,
+        });
+      },
+    });
+    return;
+  }
+
+  Object.defineProperty(target, key, {
+    configurable: true,
+    enumerable: true,
+    value: deserialize(value),
+    writable: true,
+  });
+};
 
 const deserializeValue = (value) => {
   switch (value?.kind) {
@@ -556,25 +705,25 @@ const deserializeValue = (value) => {
     case 'symbol':
       // eslint-disable-next-line symbol-description
       return value.description ? Symbol.for(value.description) : Symbol();
+    case 'unavailable':
+      throw deserializeError(value.error);
     case 'error': {
-      const error = new Error(value.error?.message ?? '');
-      if (value.error?.name) {
-        error.name = value.error.name;
-      }
-      if (value.error?.stack) {
-        error.stack = value.error.stack;
-      }
-      return error;
+      return deserializeError(value.error);
     }
-    case 'array':
-      return value.items.map((item) => deserializeValue(item));
-    case 'object':
-      return Object.fromEntries(
-        Object.entries(value.entries).map(([key, item]) => [
-          key,
-          deserializeValue(item),
-        ])
-      );
+    case 'array': {
+      const result = new Array(value.items.length);
+      value.items.forEach((item, index) => {
+        defineDeserializedProperty(result, index, item, deserializeValue);
+      });
+      return result;
+    }
+    case 'object': {
+      const result = {};
+      Object.entries(value.entries).forEach(([key, item]) => {
+        defineDeserializedProperty(result, key, item, deserializeValue);
+      });
+      return result;
+    }
     case 'value':
     default:
       return value?.value;
@@ -2282,6 +2431,7 @@ async function evaluateEntrypoint(id) {
     values[key] = serializeValue(value, {
       allowFunctions: true,
       allowSymbols: true,
+      deferNestedFailures: true,
       ignoreSymbolKeys: true,
       rootLabel: '__wywPreval',
       path: [key],

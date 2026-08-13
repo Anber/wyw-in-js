@@ -2373,12 +2373,67 @@ describe('EvalBroker', () => {
       );
 
       try {
-        await broker.evaluate(entrypoint);
-        throw new Error('Expected broker.evaluate() to reject');
-      } catch (error) {
-        expect(String(error)).toContain('[wyw-in-js] __wywPreval');
-        expect(String(error)).toContain('__wywPreval.value.nested');
-        expect(String(error)).toContain('unsupported non-plain object (Map)');
+        const result = await broker.evaluate(entrypoint);
+        const value = result.values?.get('value') as { nested: unknown };
+
+        expect(() => value.nested).toThrow('[wyw-in-js] __wywPreval');
+        expect(() => value.nested).toThrow('__wywPreval.value.nested');
+        expect(() => value.nested).toThrow(
+          'unsupported non-plain object (Map)'
+        );
+      } finally {
+        broker.dispose();
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+
+    it('preserves deferred getter errors from the eval VM context', async () => {
+      const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
+      const entry = join(root, 'entry.js');
+
+      writeFileSync(
+        entry,
+        [
+          'const value = { usable: true };',
+          "Object.defineProperty(value, 'runtimeOnly', {",
+          '  enumerable: true,',
+          '  get() {',
+          "    throw new TypeError('runtime getter failed');",
+          '  },',
+          '});',
+          'export const __wywPreval = { value: () => value };',
+        ].join('\n')
+      );
+
+      const services = createServices(root, entry);
+      const broker = new EvalBroker(
+        services,
+        jest.fn(async () => null)
+      );
+      const entrypoint = Entrypoint.createRoot(
+        services,
+        entry,
+        ['__wywPreval'],
+        readFileSync(entry, 'utf-8')
+      );
+
+      try {
+        const result = await broker.evaluate(entrypoint);
+        const value = result.values?.get('value') as {
+          runtimeOnly: unknown;
+          usable: boolean;
+        };
+
+        expect(value.usable).toBe(true);
+        try {
+          Reflect.get(value, 'runtimeOnly');
+          throw new Error('Expected runtimeOnly to throw');
+        } catch (error) {
+          expect(error).toMatchObject({
+            message: 'runtime getter failed',
+            name: 'TypeError',
+          });
+        }
       } finally {
         broker.dispose();
         rmSync(root, { recursive: true, force: true });

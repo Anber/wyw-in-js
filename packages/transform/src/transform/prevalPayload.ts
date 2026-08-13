@@ -26,6 +26,25 @@ const addUnique = <T>(target: T[], value: T): void => {
   }
 };
 
+const isSafelyDeepStrictEqual = (left: unknown, right: unknown): boolean => {
+  try {
+    return isDeepStrictEqual(left, right);
+  } catch {
+    // Deferred eval fields throw when observed. A value that cannot be fully
+    // compared is not proven equal, so preserve the existing disagreement
+    // handling and static-value precedence.
+    return false;
+  }
+};
+
+const formatDiagnosticValue = (value: unknown): string => {
+  try {
+    return String(value);
+  } catch {
+    return '<unprintable>';
+  }
+};
+
 const emitProductionWarning = (
   emitWarning: ((message: string) => void) | undefined,
   message: string
@@ -49,8 +68,8 @@ const handleDisagreement = (
   const message = [
     `[wyw-in-js] PrevalPayload disagreement for "${name}" in ${filename}.`,
     'Static and evaluated values differ; keeping the static value to preserve baseline precedence.',
-    `eval: ${String(evalValue)}`,
-    `static: ${String(staticValue)}`,
+    `eval: ${formatDiagnosticValue(evalValue)}`,
+    `static: ${formatDiagnosticValue(staticValue)}`,
   ].join(' ');
 
   if (process.env.NODE_ENV === 'production') {
@@ -89,7 +108,10 @@ export const createPrevalPayload = ({
       addUnique(dependencies, dependency)
     );
     staticValues?.forEach((value, name) => {
-      if (values.has(name) && !isDeepStrictEqual(values.get(name), value)) {
+      if (
+        values.has(name) &&
+        !isSafelyDeepStrictEqual(values.get(name), value)
+      ) {
         handleDisagreement(
           filename,
           String(name),

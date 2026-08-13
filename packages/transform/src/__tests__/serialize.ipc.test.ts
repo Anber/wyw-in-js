@@ -4,6 +4,10 @@ import {
   serializeValue,
 } from '../eval/serialize';
 
+class ComponentStyle {
+  public readonly current = 1;
+}
+
 describe('eval IPC serialization', () => {
   it('round-trips nested plain data without JSON coercion', () => {
     const boom = new TypeError('boom');
@@ -85,6 +89,128 @@ describe('eval IPC serialization', () => {
     expect(roundTripped.nested.marker).toBe(Symbol.for('react.forward_ref'));
   });
 
+  it('defers unsupported nested properties until they are read', () => {
+    const descriptor = {
+      kind: 'foreign-descriptor',
+      marker: Symbol.for('acme.handle'),
+      metadata: {
+        className: 'base',
+      },
+      runtimeState: new ComponentStyle(),
+    };
+    const serialized = serializePreval({ descriptor }).descriptor;
+    const roundTripped = deserializeValue(serialized) as {
+      kind: string;
+      marker: symbol;
+      metadata: { className: string };
+      runtimeState: ComponentStyle;
+    };
+
+    expect(roundTripped.kind).toBe('foreign-descriptor');
+    expect(roundTripped.marker).toBe(Symbol.for('acme.handle'));
+    expect(roundTripped.metadata).toEqual({ className: 'base' });
+    expect(Object.keys(roundTripped)).toEqual([
+      'kind',
+      'marker',
+      'metadata',
+      'runtimeState',
+    ]);
+    expect(() => roundTripped.runtimeState).toThrow(
+      'unsupported non-plain object (ComponentStyle)'
+    );
+    expect(() => roundTripped.runtimeState).toThrow(
+      '__wywPreval.descriptor.runtimeState'
+    );
+
+    roundTripped.runtimeState = {
+      normalized: true,
+    } as unknown as ComponentStyle;
+    expect(roundTripped.runtimeState).toEqual({ normalized: true });
+
+    expect(() =>
+      serializeValue(descriptor, {
+        allowFunctions: true,
+        allowSymbols: true,
+      })
+    ).toThrow('unsupported non-plain object (ComponentStyle)');
+  });
+
+  it('preserves the serializable surface of a foreign component descriptor', () => {
+    const descriptor = {
+      $$typeof: Symbol.for('react.forward_ref'),
+      attrs: [],
+      componentStyle: new ComponentStyle(),
+      foldedComponentIds: '',
+      render: () => null,
+      shouldForwardProp: () => true,
+      styledComponentId: 'sc-example',
+      target: 'div',
+      warnTooManyClasses: () => undefined,
+    };
+    const roundTripped = deserializeValue(
+      serializePreval({ descriptor }).descriptor
+    ) as typeof descriptor;
+
+    expect(roundTripped.$$typeof).toBe(Symbol.for('react.forward_ref'));
+    expect(roundTripped.attrs).toEqual([]);
+    expect(roundTripped.foldedComponentIds).toBe('');
+    expect(roundTripped.styledComponentId).toBe('sc-example');
+    expect(roundTripped.target).toBe('div');
+    expect(typeof roundTripped.render).toBe('function');
+    expect(typeof roundTripped.shouldForwardProp).toBe('function');
+    expect(typeof roundTripped.warnTooManyClasses).toBe('function');
+    expect(() => roundTripped.componentStyle).toThrow(
+      '__wywPreval.descriptor.componentStyle'
+    );
+    expect(() => roundTripped.componentStyle).toThrow(
+      'unsupported non-plain object (ComponentStyle)'
+    );
+  });
+
+  it('defers circular branches without losing their serializable siblings', () => {
+    const descriptor: { label: string; runtime?: unknown } = {
+      label: 'safe',
+    };
+    descriptor.runtime = descriptor;
+
+    const roundTripped = deserializeValue(
+      serializePreval({ descriptor }).descriptor
+    ) as typeof descriptor;
+
+    expect(roundTripped.label).toBe('safe');
+    expect(() => roundTripped.runtime).toThrow(
+      'contains a circular reference at __wywPreval.descriptor.runtime'
+    );
+  });
+
+  it('defers a nested getter failure but not an unexpected traversal failure', () => {
+    const getterFailure = deserializeValue(
+      serializePreval({
+        value: {
+          get unused() {
+            throw new Error('unused getter failed');
+          },
+          usable: true,
+        },
+      }).value
+    ) as { unused: unknown; usable: boolean };
+
+    expect(getterFailure.usable).toBe(true);
+    expect(() => getterFailure.unused).toThrow('unused getter failed');
+
+    const traversalFailure = new Proxy(
+      {},
+      {
+        ownKeys() {
+          throw new Error('proxy traversal failed');
+        },
+      }
+    );
+    expect(() =>
+      serializePreval({ value: { nested: traversalFailure } })
+    ).toThrow('proxy traversal failed');
+  });
+
   it('drops symbol-keyed properties only when serializing __wywPreval values', () => {
     const marker = Symbol('runtimeMetadata');
     const input = {
@@ -126,11 +252,23 @@ describe('eval IPC serialization', () => {
     });
   });
 
+  it('defers unsupported values nested inside serializable containers', () => {
+    const roundTripped = deserializeValue(
+      serializePreval({ value: { nested: [new Date(0)], usable: true } }).value
+    ) as { nested: Date[]; usable: boolean };
+
+    expect(roundTripped.usable).toBe(true);
+    expect(() => roundTripped.nested[0]).toThrow('__wywPreval.value.nested[0]');
+    expect(() => roundTripped.nested[0]).toThrow(
+      'unsupported non-plain object (Date)'
+    );
+  });
+
   it.each([
     {
       label: 'Date',
-      value: { value: { nested: [new Date(0)] } },
-      path: '__wywPreval.value.nested[0]',
+      value: { value: new Date(0) },
+      path: '__wywPreval.value',
       detail: 'unsupported non-plain object (Date)',
     },
     {
@@ -148,12 +286,10 @@ describe('eval IPC serialization', () => {
     {
       label: 'class instance',
       value: {
-        value: new (class Box {
-          public readonly current = 1;
-        })(),
+        value: new ComponentStyle(),
       },
       path: '__wywPreval.value',
-      detail: 'unsupported non-plain object (Box)',
+      detail: 'unsupported non-plain object (ComponentStyle)',
     },
   ])(
     'reports path-aware failures for $label values',

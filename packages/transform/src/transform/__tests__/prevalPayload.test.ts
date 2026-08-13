@@ -118,6 +118,26 @@ describe('createPrevalPayload', () => {
     ).toThrow('[wyw-in-js] PrevalPayload disagreement');
   });
 
+  it('treats values that throw during comparison as disagreements', () => {
+    process.env.NODE_ENV = 'test';
+    const evaluated = {};
+    Object.defineProperty(evaluated, 'unavailable', {
+      enumerable: true,
+      get() {
+        throw new Error('unavailable eval field');
+      },
+    });
+
+    expect(() =>
+      createPrevalPayload({
+        evalValues: new Map([['_exp', evaluated]]),
+        filename,
+        staticValues: new Map([['_exp', { unavailable: 'static' }]]),
+        strategy: 'hybrid',
+      })
+    ).toThrow('[wyw-in-js] PrevalPayload disagreement');
+  });
+
   it('warns and keeps static precedence on hybrid disagreement in production', () => {
     process.env.NODE_ENV = 'production';
     const warnings: string[] = [];
@@ -133,6 +153,39 @@ describe('createPrevalPayload', () => {
     expect(warnings[0]).toContain('PrevalPayload disagreement');
     expect(payload.values).toEqual(new Map([['_exp', 'static-red']]));
     expect(payload.sources).toEqual(new Map([['_exp', 'static']]));
+  });
+
+  it('warns once and keeps static precedence when a value cannot be formatted', () => {
+    process.env.NODE_ENV = 'production';
+    const warnings: string[] = [];
+    const evaluated = {};
+    Object.defineProperties(evaluated, {
+      unavailable: {
+        enumerable: true,
+        get() {
+          throw new Error('unavailable eval field');
+        },
+      },
+      toString: {
+        get() {
+          throw new Error('cannot format eval value');
+        },
+      },
+    });
+    const staticValue = { unavailable: 'static' };
+
+    const payload = createPrevalPayload({
+      emitWarning: (message) => warnings.push(message),
+      evalValues: new Map([['_exp', evaluated]]),
+      filename,
+      staticValues: new Map([['_exp', staticValue]]),
+      strategy: 'hybrid',
+    });
+
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain('eval: <unprintable>');
+    expect(payload.values.get('_exp')).toBe(staticValue);
+    expect(payload.sources.get('_exp')).toBe('static');
   });
 
   it('deduplicates selected dependencies in hybrid mode', () => {
