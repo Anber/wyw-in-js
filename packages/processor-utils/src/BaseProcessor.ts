@@ -129,7 +129,7 @@ export abstract class BaseProcessor {
 
   public isValidValue(value: unknown): value is Value {
     return (
-      typeof value === 'function' || isCSSable(value) || hasEvalMeta(value)
+      typeof value === 'function' || hasEvalMeta(value) || isCSSable(value)
     );
   }
   /* eslint-enable @typescript-eslint/member-ordering */

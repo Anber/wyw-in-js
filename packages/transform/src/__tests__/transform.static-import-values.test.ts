@@ -4309,6 +4309,298 @@ describe('transform static import value inlining', () => {
     }
   });
 
+  it.each(['hybrid', 'execute'] as const)(
+    'wraps a styled-components-shaped imported target in %s mode',
+    async (strategy) => {
+      const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
+      const entryFile = join(root, 'entry.js');
+      const baseFile = join(root, 'ForeignDescriptor.js');
+      const cache = new TransformCacheCollection();
+      const perf = createPerfEventRecorder();
+
+      writeFileSync(
+        baseFile,
+        dedent`
+          class ComponentStyle {
+            constructor() {
+              this.rules = ['color: red;'];
+            }
+          }
+
+          const RuntimeTarget = () => null;
+
+          export const Base = {
+            $$typeof: Symbol.for('react.forward_ref'),
+            render: () => null,
+            attrs: [],
+            componentStyle: new ComponentStyle(),
+            shouldForwardProp: (prop) => prop !== 'hidden',
+            foldedComponentIds: 'sc-foreign-base ',
+            styledComponentId: 'sc-foreign-base',
+            target: RuntimeTarget,
+            warnTooManyClasses: () => {},
+          };
+        `
+      );
+      writeFileSync(
+        entryFile,
+        dedent`
+          import { styled } from 'test-styled-processor';
+          import { Base } from './ForeignDescriptor.js';
+
+          export const Derived = styled(Base)\`
+            font-weight: bold;
+          \`;
+        `
+      );
+
+      try {
+        const result = await runTransform(
+          root,
+          entryFile,
+          cache,
+          perf.eventEmitter,
+          { eval: { strategy } }
+        );
+
+        expect(result.cssText).toContain('font-weight:bold');
+        expect(result.dependencies).toContain('./ForeignDescriptor.js');
+        if (strategy === 'hybrid') {
+          expect(perf.counts.get('transform:evalFile') ?? 0).toBeGreaterThan(0);
+        }
+      } finally {
+        disposeEvalBroker(cache);
+        rmSync(root, { recursive: true, force: true });
+      }
+    }
+  );
+
+  it.each(['hybrid', 'execute'] as const)(
+    'preserves styled-components-shaped selector metadata beside opaque runtime fields in %s mode',
+    async (strategy) => {
+      const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
+      const entryFile = join(root, 'entry.js');
+      const baseFile = join(root, 'ForeignDescriptor.js');
+      const cache = new TransformCacheCollection();
+      const perf = createPerfEventRecorder();
+
+      writeFileSync(
+        baseFile,
+        dedent`
+          class ComponentStyle {
+            constructor() {
+              this.rules = ['color: red;'];
+            }
+          }
+
+          const RuntimeTarget = () => null;
+
+          export const Base = {
+            $$typeof: Symbol.for('react.forward_ref'),
+            render: () => null,
+            attrs: [],
+            componentStyle: new ComponentStyle(),
+            shouldForwardProp: (prop) => prop !== 'hidden',
+            foldedComponentIds: 'sc-foreign-base ',
+            styledComponentId: 'sc-foreign-base',
+            target: RuntimeTarget,
+            warnTooManyClasses: () => {},
+            __wyw_meta: {
+              className: 'foreign-base',
+              extends: null,
+            },
+          };
+        `
+      );
+      writeFileSync(
+        entryFile,
+        dedent`
+          import { styled } from 'test-styled-processor';
+          import { Base } from './ForeignDescriptor.js';
+
+          export const Derived = styled.div\`
+            ${'${Base}'} {
+              font-weight: bold;
+            }
+          \`;
+        `
+      );
+
+      try {
+        const result = await runTransform(
+          root,
+          entryFile,
+          cache,
+          perf.eventEmitter,
+          { eval: { strategy } }
+        );
+
+        expect(result.cssText).toContain('font-weight:bold');
+        expect(result.cssText).toContain('.foreign-base');
+        expect(result.dependencies).toContain('./ForeignDescriptor.js');
+        if (strategy === 'hybrid') {
+          expect(perf.counts.get('transform:evalFile') ?? 0).toBeGreaterThan(0);
+        }
+      } finally {
+        disposeEvalBroker(cache);
+        rmSync(root, { recursive: true, force: true });
+      }
+    }
+  );
+
+  it.each(['hybrid', 'execute'] as const)(
+    'keeps imported foreign descriptor targets in runtime styled output in %s mode',
+    async (strategy) => {
+      const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
+      const entryFile = join(root, 'entry.js');
+      const baseFile = join(root, 'ForeignDescriptor.js');
+      const cache = new TransformCacheCollection();
+
+      writeFileSync(
+        baseFile,
+        dedent`
+          class ComponentStyle {}
+
+          const RuntimeTarget = () => 'runtime target';
+
+          export const Base = {
+            $$typeof: Symbol.for('react.forward_ref'),
+            render: RuntimeTarget,
+            attrs: [],
+            componentStyle: new ComponentStyle(),
+            shouldForwardProp: (prop) => prop !== 'hidden',
+            foldedComponentIds: 'sc-foreign-base ',
+            styledComponentId: 'sc-foreign-base',
+            target: RuntimeTarget,
+            warnTooManyClasses: () => {},
+            __wyw_meta: {
+              className: 'foreign-base',
+              extends: null,
+            },
+          };
+        `
+      );
+      writeFileSync(
+        entryFile,
+        dedent`
+          import { styled } from 'test-runtime-styled-processor';
+          import { Base } from './ForeignDescriptor.js';
+
+          export const Wrapped = styled(Base)\`
+            color: red;
+          \`;
+        `
+      );
+
+      try {
+        const result = await runTransform(root, entryFile, cache, undefined, {
+          eval: { strategy },
+        });
+
+        expect(result.cssText).toContain('color:red');
+        expect(result.code).toMatch(
+          /import\s*\{\s*Base\s*\}\s*from\s*['"]\.\/ForeignDescriptor\.js['"]/
+        );
+        expect(result.code).toContain('const _exp = () => (Base);');
+        expect(result.code).toContain('styled(_exp())');
+        expect(result.code).not.toContain('styled(() => {})');
+        expect(result.code).not.toContain('styled(null)');
+        expect(result.dependencies).toContain('./ForeignDescriptor.js');
+      } finally {
+        disposeEvalBroker(cache);
+        rmSync(root, { recursive: true, force: true });
+      }
+    }
+  );
+
+  it('preserves readable metadata beside unreadable runtime fields', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
+    const entryFile = join(root, 'entry.js');
+    const baseFile = join(root, 'ForeignDescriptor.js');
+    const cache = new TransformCacheCollection();
+
+    writeFileSync(
+      baseFile,
+      dedent`
+        class RuntimeState {}
+
+        const RuntimeBase = {
+          kind: 'runtime-base',
+          runtimeState: new RuntimeState(),
+        };
+
+        export const Base = {
+          __wyw_meta: {
+            className: 'foreign-base',
+            extends: RuntimeBase,
+          },
+          runtimeState: new RuntimeState(),
+        };
+      `
+    );
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { styled } from 'test-styled-processor';
+        import { Base } from './ForeignDescriptor.js';
+
+        export const Derived = styled(Base)\`
+          font-weight: bold;
+        \`;
+      `
+    );
+
+    try {
+      const result = await runTransform(root, entryFile, cache, undefined, {
+        eval: { strategy: 'execute' },
+      });
+
+      expect(result.cssText).toContain('font-weight:bold');
+      expect(result.cssText).toContain('.foreign-base');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('still rejects unreadable runtime fields used as CSS data', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
+    const entryFile = join(root, 'entry.js');
+    const baseFile = join(root, 'ForeignDescriptor.js');
+    const cache = new TransformCacheCollection();
+
+    writeFileSync(
+      baseFile,
+      dedent`
+        class RuntimeState {}
+
+        export const Base = {
+          kind: 'foreign-descriptor',
+          render: () => null,
+          runtimeState: new RuntimeState(),
+        };
+      `
+    );
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { css } from 'test-css-processor';
+        import { Base } from './ForeignDescriptor.js';
+
+        export const className = css\`
+          ${'${Base}'}
+        \`;
+      `
+    );
+
+    try {
+      await expect(runTransform(root, entryFile, cache)).rejects.toThrow(
+        '__wywPreval._exp.runtimeState'
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('inlines nested styled metadata object values with runtime bases without eval', async () => {
     const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
     const entryFile = join(root, 'entry.js');
