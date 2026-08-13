@@ -24,9 +24,15 @@ function isMissingFileError(error: unknown): boolean {
 interface IBaseCachedEntrypoint {
   dependencies: Map<string, { resolved: string | null }>;
   initialCode?: string;
+  isProcessing?: boolean;
   invalidateOnDependencyChange?: Set<string>;
   invalidationDependencies?: Map<string, { resolved: string | null }>;
 }
+
+type EntrypointDependencySnapshot = Pick<
+  IBaseCachedEntrypoint,
+  'dependencies' | 'invalidationDependencies'
+>;
 
 interface ICaches<TEntrypoint extends IBaseCachedEntrypoint> {
   barrelManifests: Map<string, BarrelManifestCacheEntry>;
@@ -66,6 +72,11 @@ export class TransformCacheCollection<
 
   private readonly exportDependencies = new Map<string, Set<string>>();
 
+  private readonly entrypointDependencySnapshots = new Map<
+    string,
+    EntrypointDependencySnapshot
+  >();
+
   private keySalt: string | null = null;
 
   private invalidatedFiles = new Map<string, number>();
@@ -97,6 +108,7 @@ export class TransformCacheCollection<
       migrate(this.entrypoints);
       migrate(this.exports);
       migrate(this.barrelManifestDependencies);
+      migrate(this.entrypointDependencySnapshots);
       migrate(this.exportDependencies);
       return;
     }
@@ -104,6 +116,7 @@ export class TransformCacheCollection<
     this.barrelManifests.clear();
     this.entrypoints.clear();
     this.exports.clear();
+    this.entrypointDependencySnapshots.clear();
     this.clearCacheDependencies('all');
   }
 
@@ -137,12 +150,22 @@ export class TransformCacheCollection<
     if (value === undefined) {
       cache.delete(cacheKey);
       this.contentHashes.delete(key);
+      if (cacheName === 'entrypoints') {
+        this.entrypointDependencySnapshots.delete(cacheKey);
+      }
       this.clearCacheDependencies(cacheName, key);
       return;
     }
 
     this.clearCacheDependencies(cacheName, key);
     cache.set(cacheKey, value);
+
+    if (cacheName === 'entrypoints') {
+      // A live entrypoint is authoritative. If it is evicted later, its
+      // dependency graph will be snapshotted at that point, after processing
+      // has had a chance to populate the mutable dependency maps.
+      this.entrypointDependencySnapshots.delete(cacheKey);
+    }
 
     if ('initialCode' in value) {
       const maybeOriginalCode = (value as unknown as { originalCode?: unknown })
@@ -195,6 +218,9 @@ export class TransformCacheCollection<
     const cache = this[cacheName] as Map<string, unknown>;
 
     cache.clear();
+    if (cacheName === 'entrypoints') {
+      this.entrypointDependencySnapshots.clear();
+    }
     this.clearCacheDependencies(cacheName);
   }
 
@@ -230,6 +256,13 @@ export class TransformCacheCollection<
     }
 
     loggers[cacheName]('invalidate', key);
+
+    if (cacheName === 'entrypoints') {
+      this.snapshotEntrypointDependencies(
+        key,
+        cache.get(cacheKey) as TEntrypoint
+      );
+    }
 
     cache.delete(cacheKey);
     this.clearCacheDependencies(cacheName, key);
@@ -334,31 +367,32 @@ export class TransformCacheCollection<
     if (previousHash === undefined) {
       const otherSource = source === 'fs' ? 'loaded' : 'fs';
       const otherHash = existing?.[otherSource];
+      const contentChanged = otherHash !== undefined && otherHash !== newHash;
 
-      if ((otherHash !== undefined && otherHash !== newHash) || anyDepChanged) {
+      if (contentChanged || anyDepChanged) {
         cacheLogger('content has changed, invalidate all for %s', filename);
         this.setContentHash(filename, source, newHash);
         this.invalidateForFile(filename);
+        if (contentChanged) {
+          this.forgetEntrypointDependencySnapshot(filename);
+        }
         changedFiles.add(filename);
 
         return true;
       }
 
       this.setContentHash(filename, source, newHash);
-
-      if (anyDepChanged) {
-        this.invalidateForFile(filename);
-        changedFiles.add(filename);
-        return true;
-      }
-
       return false;
     }
 
-    if (previousHash !== newHash || anyDepChanged) {
+    const contentChanged = previousHash !== newHash;
+    if (contentChanged || anyDepChanged) {
       cacheLogger('content has changed, invalidate all for %s', filename);
       this.setContentHash(filename, source, newHash);
       this.invalidateForFile(filename);
+      if (contentChanged) {
+        this.forgetEntrypointDependencySnapshot(filename);
+      }
       changedFiles.add(filename);
 
       return true;
@@ -372,13 +406,18 @@ export class TransformCacheCollection<
     fileEntrypoint?: TEntrypoint
   ): Map<string, { resolved: string | null }> {
     const dependenciesToCheck = new Map<string, { resolved: string | null }>();
+    const dependencySource =
+      fileEntrypoint ??
+      this.entrypointDependencySnapshots.get(this.getKey(filename));
 
-    for (const [key, dependency] of fileEntrypoint?.dependencies ?? []) {
+    for (const [key, dependency] of dependencySource?.dependencies ?? []) {
       dependenciesToCheck.set(key, dependency);
     }
 
-    for (const [key, dependency] of fileEntrypoint?.invalidationDependencies ??
-      []) {
+    for (const [
+      key,
+      dependency,
+    ] of dependencySource?.invalidationDependencies ?? []) {
       if (!dependenciesToCheck.has(key)) {
         dependenciesToCheck.set(key, dependency);
       }
@@ -434,6 +473,7 @@ export class TransformCacheCollection<
         }
 
         this.invalidateForFile(dependencyFilename);
+        this.forgetEntrypointDependencySnapshot(dependencyFilename);
         changedFiles.add(dependencyFilename);
         dependencyChangeMemo.set(dependencyFilename, true);
         return true;
@@ -457,39 +497,36 @@ export class TransformCacheCollection<
           return true;
         }
 
-        // A cached file without a cached entrypoint was invalidated earlier --
-        // e.g. by `workflow()` evicting a plain bundler-root dependency
-        // (`cache.delete('entrypoints', ...)`), or by a bundler's HMR handler
-        // invalidating every dependency of an affected module regardless of
-        // whether that particular one changed (`cache.invalidateForFile`).
-        // If its recorded `fs` content hash is still stable, the missing
-        // entrypoint is only cache churn, not a real change, and must not
-        // invalidate output-dependent parents -- regardless of whether the
-        // caller happens to force a content check for this dependency.
-        // `forceContentCheck` is only set for `invalidateOnDependencyChange`
-        // entries; an ordinary dependency must get the same protection, or it
-        // is reported "changed" on every check, forever, once its entrypoint
-        // is evicted.
-        if (!cachedEntrypoint && nestedDependencies.size === 0) {
-          if (this.contentHashes.get(dependencyFilename)?.fs === undefined) {
-            // No recorded content hash to compare against: genuinely unknown.
+        if (!cachedEntrypoint) {
+          const hasKnownDependencyGraph =
+            this.entrypointDependencySnapshots.has(
+              this.getKey(dependencyFilename)
+            ) || this.hasCachedDependencies(dependencyFilename);
+          if (
+            !hasKnownDependencyGraph ||
+            this.contentHashes.get(dependencyFilename)?.fs === undefined
+          ) {
+            // A content hash only proves that this file is unchanged. Without
+            // a retained graph, an evicted entrypoint may still hide a changed
+            // transitive dependency, so the state remains unknown.
             dependencyChangeMemo.set(dependencyFilename, true);
             return true;
           }
 
-          // If `forceContentCheck` is true, the `didFileContentHashChange`
-          // call above already established the content is unchanged (a
-          // change would have returned `true` before reaching here).
-          const changed =
+          // A missing entrypoint can be cache churn. Verify its own source,
+          // then continue through the lightweight dependency snapshot taken
+          // when the entrypoint was evicted.
+          if (
             !forceContentCheck &&
             this.didFileContentHashChange(
               dependencyFilename,
               strippedDependencyFilename,
               changedFiles
-            );
-
-          dependencyChangeMemo.set(dependencyFilename, changed);
-          return changed;
+            )
+          ) {
+            dependencyChangeMemo.set(dependencyFilename, true);
+            return true;
+          }
         }
 
         if (nestedDependencies.size === 0) {
@@ -533,6 +570,7 @@ export class TransformCacheCollection<
       }
 
       this.invalidateForFile(dependencyFilename);
+      this.forgetEntrypointDependencySnapshot(dependencyFilename);
       changedFiles.add(dependencyFilename);
       dependencyChangeMemo.set(dependencyFilename, true);
       return true;
@@ -571,6 +609,7 @@ export class TransformCacheCollection<
       }
 
       this.invalidateForFile(filename);
+      this.forgetEntrypointDependencySnapshot(filename);
       changedFiles.add(filename);
       return true;
     }
@@ -582,6 +621,7 @@ export class TransformCacheCollection<
 
     this.setContentHash(filename, 'fs', nextHash);
     this.invalidateForFile(filename);
+    this.forgetEntrypointDependencySnapshot(filename);
     changedFiles.add(filename);
     return true;
   }
@@ -632,6 +672,7 @@ export class TransformCacheCollection<
       }
 
       this.invalidateForFile(filename);
+      this.forgetEntrypointDependencySnapshot(filename);
       return true;
     }
   }
@@ -678,6 +719,35 @@ export class TransformCacheCollection<
 
   private hasCachedDependencies(filename: string): boolean {
     return this.getCachedDependencies(filename).size > 0;
+  }
+
+  private snapshotEntrypointDependencies(
+    filename: string,
+    entrypoint: TEntrypoint
+  ): void {
+    if (entrypoint.isProcessing) {
+      this.forgetEntrypointDependencySnapshot(filename);
+      return;
+    }
+
+    const copy = (
+      dependencies: Map<string, { resolved: string | null }> | undefined
+    ): Map<string, { resolved: string | null }> =>
+      new Map(
+        Array.from(dependencies ?? [], ([key, dependency]) => [
+          key,
+          { resolved: dependency.resolved },
+        ])
+      );
+
+    this.entrypointDependencySnapshots.set(this.getKey(filename), {
+      dependencies: copy(entrypoint.dependencies),
+      invalidationDependencies: copy(entrypoint.invalidationDependencies),
+    });
+  }
+
+  private forgetEntrypointDependencySnapshot(filename: string): void {
+    this.entrypointDependencySnapshots.delete(this.getKey(filename));
   }
 
   private setContentHash(

@@ -70,18 +70,12 @@ const createServices = (
   };
 };
 
-// This is the "prove the loop end-to-end" half of the reproduction for
-// pr-description-3-restart-cap.md. cache.evicted-dependency-loop.test.ts
-// proves the fixed point exists in `TransformCacheCollection` in isolation;
-// this test drives the real production entrypoint-creation path
-// (`Entrypoint.createRoot` / `Entrypoint.innerCreate`) to show it reaches
-// that same fixed point reaches the production entrypoint-creation code path,
-// and pins the fix: once `didDependencyChange` gets the same content-hash
-// escape hatch for ordinary dependencies, repeated requests for the parent
-// converge and stop regenerating it.
+// The cache-level tests prove the fixed point in
+// `TransformCacheCollection`; this test drives the production
+// `Entrypoint.createRoot` / `Entrypoint.innerCreate` path and verifies that
+// repeated requests for the parent converge instead of regenerating it.
 //
-// `cache.invalidateForFile()` below is exactly what two call sites on `main`
-// do to a dependency that hasn't changed:
+// The eviction below models the states produced by two call sites:
 //   - packages/transform/src/transform/generators/workflow.ts:71/:115
 //     (`cache.delete('entrypoints', ...)`, a root bundler pass over a plain
 //     dependency)
@@ -179,17 +173,3 @@ describe('evicted-but-unchanged dependency no longer defeats entrypoint caching'
     }
   });
 });
-
-// Note: an additional attempt to reproduce this same defect through the
-// public `transform()` entrypoint (as a bundler plugin would call it,
-// combined with a genuine `cache.invalidateForFile` HMR-style eviction) was
-// made and abandoned -- not because the defect doesn't reach that far, but
-// because `dangerousCodeRemover` shakes out any dependency that isn't
-// actually required to compute the css tag's evaluated value in this
-// minimal fixture, and the fixture's `TaggedTemplateProcessor` throws on
-// interpolated values, making it impractical to keep the dependency alive
-// without a heavier evaluation-capable processor fixture. The test above,
-// which drives the identical `Entrypoint.createRoot` / `innerCreate`
-// production code path directly, is the reproduction for this defect; see
-// pr-description-3-restart-cap.md and cache.evicted-dependency-loop.test.ts
-// for the full chain of evidence.
