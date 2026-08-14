@@ -1,5 +1,17 @@
 # @wyw-in-js/transform
 
+## 2.4.1
+
+### Patch Changes
+
+- f1a3a2e: Preserve serializable fields of evaluated objects when unrelated nested fields cannot cross the eval IPC boundary, and prioritize processor metadata before treating objects as CSS data. Unsupported nested fields remain strict errors when accessed, while direct unsupported values are still rejected.
+- aa5ec73: Fix a broker/runner cache desync error thrown for the first eval-time load of a module that legitimately shakes down to zero runtime bytes (e.g. a types-only module reached through a barrel's `export *`). The broker previously used an empty `code` string to mean both "here is real, empty content" and "nothing to ship, reuse your cache," so genuinely empty modules were misread as the latter and rejected by the runner on first load. `code` is now omitted from the LoadResult when nothing should be shipped, and only that omission is treated as a signal to reuse a cached variant.
+- 349e39b: Include named and wildcard re-export edges (`export { x } from './y'`, `export * from './y'`) in the eval import map, and compute that map for ignored (verbatim-shipped) modules too instead of always returning `null`. The compiled code for a re-exporting barrel keeps these statements verbatim — a wildcard target can't be selectively pruned without knowing its exports — but the import map built from it previously only tracked `import` declarations. Downstream `only`-merging could silently reuse a narrower cached variant of the re-exported target than the barrel actually needs, dropping exports a consumer reaches only through the barrel. Eval preparation and the shaker now share the same import-map conversion so those dependency views cannot diverge again.
+- 3c260a5: Stop repeatedly invalidating cached transforms after an unchanged dependency entrypoint is evicted. Retain a lightweight dependency graph snapshot so transitive file changes are still detected without keeping the full entrypoint alive.
+- e525ac6: Preserve static values when processor expressions are nested inside opaque wrappers. Mutation analysis now projects their eval-time replacements through surrounding containers while retaining hazards from other wrapper inputs and processor interpolations.
+- Updated dependencies
+  - @wyw-in-js/processor-utils@2.4.1
+
 ## 2.4.0
 
 ### Minor Changes

@@ -1,5 +1,11 @@
 # @wyw-in-js/processor-utils
 
+## 2.4.1
+
+### Patch Changes
+
+- f1a3a2e: Preserve serializable fields of evaluated objects when unrelated nested fields cannot cross the eval IPC boundary, and prioritize processor metadata before treating objects as CSS data. Unsupported nested fields remain strict errors when accessed, while direct unsupported values are still rejected.
+
 ## 2.4.0
 
 ### Minor Changes

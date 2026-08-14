@@ -1,5 +1,14 @@
 # @wyw-in-js/nextjs
 
+## 2.4.1
+
+### Patch Changes
+
+- 9a2f01a: Fix Next.js builds with `next-rspack` by keeping conditional loader selection at the `use` rule level instead of placing a function inside the loader array.
+- Updated dependencies
+  - @wyw-in-js/turbopack-loader@2.4.1
+  - @wyw-in-js/webpack-loader@2.4.1
+
 ## 2.4.0
 
 ### Minor Changes
