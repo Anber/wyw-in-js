@@ -2,6 +2,7 @@ import { EventEmitter } from 'events';
 import path from 'path';
 
 const transformMock = jest.fn();
+const mockInvalidateForFile = jest.fn();
 
 const createReloadTarget = () => ({
   moduleGraph: { getModuleById: jest.fn() },
@@ -31,7 +32,9 @@ jest.mock('@wyw-in-js/transform', () => {
     getFileIdx: () => '1',
     stringifyTransformManifest: (manifest: unknown) =>
       JSON.stringify(manifest, null, 2),
-    TransformCacheCollection: class TransformCacheCollection {},
+    TransformCacheCollection: class TransformCacheCollection {
+      public invalidateForFile = mockInvalidateForFile;
+    },
     transform: (...args: unknown[]) => transformMock(...args),
     disposeEvalBroker: jest.fn(),
   };
@@ -40,6 +43,7 @@ jest.mock('@wyw-in-js/transform', () => {
 describe('vite HMR', () => {
   beforeEach(() => {
     transformMock.mockReset();
+    mockInvalidateForFile.mockReset();
     jest.useFakeTimers();
   });
 
@@ -266,6 +270,59 @@ describe('vite HMR', () => {
     });
   });
 
+  it('emits portable metadata dependencies without changing watched paths', async () => {
+    const { default: wywInJS } = await loadWywInJS();
+    const root = path.join(process.cwd(), 'metadata-project');
+    const entryId = path.join(root, 'src', 'entry.tsx');
+    const rawFile = path.join(root, 'tokens.json');
+    const addWatchFile = jest.fn();
+    const emitFile = jest.fn();
+
+    transformMock.mockResolvedValue({
+      code: 'export const x = 1;',
+      cssText: '',
+      cssSourceMapText: null,
+      dependencies: [rawFile],
+      metadata: {
+        dependencies: [rawFile],
+        processors: [],
+        replacements: [],
+        rules: {},
+      },
+      sourceMap: null,
+    });
+
+    const plugin = wywInJS({ outputMetadata: true });
+    plugin.configResolved?.({
+      root,
+      mode: 'production',
+      command: 'build',
+      base: '/',
+      createResolver: () => jest.fn().mockResolvedValue(undefined),
+      build: { cssCodeSplit: true, rollupOptions: {} },
+    } as any);
+
+    await plugin.transform?.call(
+      {
+        addWatchFile,
+        resolve: jest.fn().mockResolvedValue(undefined),
+      } as any,
+      'console.log("test")',
+      entryId
+    );
+    plugin.generateBundle?.call({ emitFile } as any, {} as any, {} as any);
+
+    expect(addWatchFile).toHaveBeenCalledWith(rawFile);
+    expect(emitFile).toHaveBeenCalledWith({
+      fileName: 'src/entry.wyw-in-js.json',
+      source: expect.stringContaining('"dependencies": [\n    "tokens.json"'),
+      type: 'asset',
+    });
+    expect(emitFile).not.toHaveBeenCalledWith(
+      expect.objectContaining({ source: expect.stringContaining(root) })
+    );
+  });
+
   it('reports structured diagnostics returned by transform()', async () => {
     const { default: wywInJS } = await loadWywInJS();
     const root = process.cwd();
@@ -317,6 +374,130 @@ describe('vite HMR', () => {
         '[wyw-in-js] warning [dx-style/raw-color] Use a design token instead of a raw color.',
       pluginCode: 'dx-style/raw-color',
     });
+  });
+
+  it('watches raw dependencies and invalidates empty-CSS transforms', async () => {
+    const { default: wywInJS } = await loadWywInJS();
+    const root = process.cwd();
+    const entryId = path.join(root, 'src', 'tokens.ts');
+    const rawFile = path.join(root, 'tokens.json');
+    const entryModule = { file: entryId, id: entryId };
+    const rawModule = { file: rawFile, id: rawFile };
+    const addWatchFile = jest.fn();
+    const resolve = jest.fn(async (id: string) => ({ id }));
+    const getModuleById = jest.fn((id: string) =>
+      id === entryId ? entryModule : undefined
+    );
+
+    transformMock.mockResolvedValue({
+      code: 'export const tokens = {};',
+      sourceMap: null,
+      cssText: '',
+      cssSourceMapText: null,
+      dependencies: [rawFile],
+    });
+
+    const plugin = wywInJS();
+    plugin.configResolved?.({
+      root,
+      mode: 'development',
+      command: 'serve',
+      base: '/',
+      createResolver: () => jest.fn().mockResolvedValue(undefined),
+    } as any);
+    plugin.configureServer?.({
+      moduleGraph: { getModuleById },
+    } as any);
+
+    const transformed = await plugin.transform?.call(
+      { addWatchFile, resolve } as any,
+      'createTokens();',
+      entryId
+    );
+
+    expect(transformed).toEqual({
+      code: 'export const tokens = {};',
+      map: null,
+    });
+    expect(addWatchFile).toHaveBeenCalledWith(rawFile);
+
+    const { handleHotUpdate } = plugin;
+    if (typeof handleHotUpdate !== 'function') {
+      throw new Error('Expected a Vite handleHotUpdate hook');
+    }
+
+    const affected = await handleHotUpdate.call(
+      {} as any,
+      {
+        file: rawFile,
+        modules: [rawModule],
+      } as any
+    );
+
+    expect(affected).toEqual([entryModule, rawModule]);
+    expect(mockInvalidateForFile).toHaveBeenCalledWith(rawFile);
+
+    transformMock.mockResolvedValue({
+      code: 'export const tokens = {};',
+      sourceMap: null,
+      cssText: undefined,
+      cssSourceMapText: null,
+      dependencies: [],
+    });
+    await plugin.transform?.call(
+      { addWatchFile, resolve } as any,
+      'export const tokens = {};',
+      entryId
+    );
+    mockInvalidateForFile.mockClear();
+
+    const afterCleanup = await handleHotUpdate.call(
+      {} as any,
+      {
+        file: rawFile,
+        modules: [rawModule],
+      } as any
+    );
+
+    expect(afterCleanup).toEqual([rawModule]);
+    expect(mockInvalidateForFile).not.toHaveBeenCalled();
+  });
+
+  it('uses the resolved Vite root as the processor project root', async () => {
+    const { default: wywInJS } = await loadWywInJS();
+    const root = path.join(process.cwd(), 'nested-project');
+    const entryId = path.join(root, 'src', 'tokens.ts');
+
+    transformMock.mockResolvedValue({
+      code: 'export const tokens = {};',
+      sourceMap: null,
+      cssText: '',
+      cssSourceMapText: null,
+      dependencies: [],
+    });
+
+    const plugin = wywInJS();
+    plugin.configResolved?.({
+      root,
+      mode: 'development',
+      command: 'serve',
+      base: '/',
+      createResolver: () => jest.fn().mockResolvedValue(undefined),
+    } as any);
+
+    await plugin.transform?.call(
+      { addWatchFile: jest.fn(), resolve: jest.fn() } as any,
+      'createTokens();',
+      entryId
+    );
+
+    expect(transformMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        options: expect.objectContaining({ root }),
+      }),
+      'createTokens();',
+      expect.any(Function)
+    );
   });
 
   it('clears stale metadata sidecars when a file stops producing metadata', async () => {

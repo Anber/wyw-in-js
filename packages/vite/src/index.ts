@@ -616,6 +616,10 @@ export default function wywInJS({
         .map((segment) => segment.replace(/:$/, ''))
     );
   };
+  const toMetadataDependency = (dependency: string) =>
+    path.isAbsolute(dependency) || isWindowsAbsolutePath(dependency)
+      ? toBundleRelativePath(dependency)
+      : dependency;
   const scheduleCssReload = (
     reloadTarget: CssReloadTarget,
     cssFilename: string
@@ -958,9 +962,6 @@ export default function wywInJS({
       return cssFileLookup[id];
     },
     handleHotUpdate(ctx) {
-      // it's module, so just transform it
-      if (ctx.modules.length) return ctx.modules;
-
       // Select affected modules of changed dependency
       const affected = targets.filter(
         (x) =>
@@ -969,6 +970,11 @@ export default function wywInJS({
           // or changed module is a dependency of any target
           x.dependencies.some((dep) => ctx.modules.some((m) => m.file === dep))
       );
+
+      // A watched raw file can also have a Vite module. In that case both the
+      // module itself and every WyW transform that registered it must update.
+      if (affected.length === 0) return ctx.modules;
+
       const deps = affected.flatMap((target) => target.dependencies);
 
       // eslint-disable-next-line no-restricted-syntax
@@ -978,10 +984,14 @@ export default function wywInJS({
         }
       }
 
-      return affected
-        .map((target) => devServer.moduleGraph.getModuleById(target.id))
-        .concat(ctx.modules)
-        .filter((m): m is ModuleNode => !!m);
+      return [
+        ...new Set(
+          affected
+            .map((target) => devServer.moduleGraph.getModuleById(target.id))
+            .concat(ctx.modules)
+            .filter((m): m is ModuleNode => !!m)
+        ),
+      ];
     },
     generateBundle(outputOptions, bundle) {
       Object.entries(metadataLookup).forEach(([fileName, source]) => {
@@ -1074,7 +1084,7 @@ export default function wywInJS({
       const transformServices = {
         options: {
           filename: id,
-          root: process.cwd(),
+          root: config.root,
           prefixer,
           keepComments,
           preprocessor,
@@ -1126,16 +1136,40 @@ export default function wywInJS({
           typeof result.cssText === 'string' && result.cssText !== ''
             ? replaceModuleExtension(relativeId, '.wyw-in-js.css')
             : undefined;
+        const portableMetadata = {
+          ...result.metadata,
+          dependencies: result.metadata.dependencies.map(toMetadataDependency),
+        };
 
         metadataLookup[metadataRelativePath] = stringifyMetadataManifest(
-          createMetadataManifest(result.metadata, {
+          createMetadataManifest(portableMetadata, {
             cssFile,
             source: relativeId,
           })
         );
       }
 
-      let { cssText, dependencies } = result;
+      let { cssText } = result;
+      const dependencies = [...(result.dependencies ?? [])];
+
+      for (let i = 0, end = dependencies.length; i < end; i++) {
+        const registeredDependency = dependencies[i];
+        this.addWatchFile(registeredDependency);
+        // eslint-disable-next-line no-await-in-loop
+        const depModule = await this.resolve(registeredDependency, url, {
+          isEntry: false,
+        });
+        if (depModule) dependencies[i] = depModule.id;
+      }
+
+      const targetIndex = targets.findIndex((target) => target.id === id);
+      if (dependencies.length === 0) {
+        if (targetIndex >= 0) targets.splice(targetIndex, 1);
+      } else if (targetIndex < 0) {
+        targets.push({ id, dependencies });
+      } else {
+        targets[targetIndex].dependencies = dependencies;
+      }
 
       // Heads up, there are three cases:
       // 1. cssText is undefined, it means that file was not transformed
@@ -1155,8 +1189,6 @@ export default function wywInJS({
           map: result.sourceMap,
         };
       }
-
-      dependencies ??= [];
 
       const cssFilename = normalizeToPosix(
         replaceModuleExtension(id, '.wyw-in-js.css')
@@ -1179,17 +1211,6 @@ export default function wywInJS({
       cssFileLookup[cssId] = cssFilename;
 
       result.code += `\nimport ${JSON.stringify(cssFilename)};\n`;
-
-      for (let i = 0, end = dependencies.length; i < end; i++) {
-        // eslint-disable-next-line no-await-in-loop
-        const depModule = await this.resolve(dependencies[i], url, {
-          isEntry: false,
-        });
-        if (depModule) dependencies[i] = depModule.id;
-      }
-      const target = targets.find((t) => t.id === id);
-      if (!target) targets.push({ id, dependencies });
-      else target.dependencies = dependencies;
 
       if (didCssChange) {
         const reloadTarget = getCssReloadTarget(
