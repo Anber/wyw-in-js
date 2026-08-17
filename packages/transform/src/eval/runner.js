@@ -1766,11 +1766,14 @@ const loadExternalModule = async (resolvedId, importer, specifier, kind) => {
       const extension = resolvedFile ? path.extname(resolvedFile) : '';
       const isImportKind = kind === 'import' || kind === 'dynamic-import';
       const isRequireOnlyAsset = extension === '.json' || extension === '.node';
+      // Builtins have dedicated handling in createRequireFn and should not be
+      // reclassified as eval-time require fallbacks on an import edge.
+      const isBuiltin = isBuiltinSpecifier(specifier);
 
       if (shouldPreferImport(resolvedFile)) {
         value = await import(importTarget);
         hasValue = true;
-      } else if (isImportKind && !isRequireOnlyAsset) {
+      } else if (isImportKind && !isRequireOnlyAsset && !isBuiltin) {
         // A failed link elsewhere in the graph can leave an uninstantiated job
         // in Node's ESM registry (for example a barrel that the broker had to
         // take over after an unsupported sibling threw). require() then trips

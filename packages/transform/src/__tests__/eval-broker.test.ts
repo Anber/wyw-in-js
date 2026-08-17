@@ -3257,6 +3257,49 @@ describe('EvalBroker', () => {
     }
   });
 
+  it('does not apply eval.require policy to builtin imports', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
+    const entry = join(root, 'entry.js');
+    writeFileSync(
+      entry,
+      [
+        "import { basename } from 'node:path';",
+        'export const __wywPreval = { value: () => basename("/tmp/file.txt") };',
+      ].join('\n')
+    );
+
+    const customResolver = jest.fn(async (specifier: string) =>
+      specifier === 'node:path' ? { id: 'node:path' } : null
+    );
+    let broker: EvalBroker | undefined;
+    try {
+      const services = createServices(root, entry, {
+        eval: {
+          customResolver,
+          require: 'error',
+          resolver: 'custom',
+        },
+      });
+      broker = new EvalBroker(
+        services,
+        jest.fn(async () => null)
+      );
+      const entrypoint = Entrypoint.createRoot(
+        services,
+        entry,
+        ['__wywPreval'],
+        readFileSync(entry, 'utf-8')
+      );
+
+      const result = await broker.evaluate(entrypoint);
+
+      expect(result.values?.get('value')).toBe('file.txt');
+    } finally {
+      broker?.dispose();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('loads direct node_modules asset imports through the broker', async () => {
     const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
     const entry = join(root, 'entry.js');
