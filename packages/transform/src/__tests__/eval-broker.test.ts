@@ -3076,6 +3076,88 @@ describe('EvalBroker', () => {
     rmSync(root, { recursive: true, force: true });
   });
 
+  it('loads ESM children of broker-fallback barrels without synchronous require', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
+    const entry = join(root, 'entry.js');
+    const nodeModulesDir = join(root, 'node_modules', 'barrel-package');
+    const esmRoot = join(nodeModulesDir, 'lib');
+    const cjsRoot = join(nodeModulesDir, 'lib-commonjs');
+    const barrel = join(esmRoot, 'index.js');
+    const child = join(esmRoot, 'child', 'index.js');
+
+    mkdirSync(join(esmRoot, 'child'), { recursive: true });
+    mkdirSync(cjsRoot, { recursive: true });
+    writeFileSync(
+      join(nodeModulesDir, 'package.json'),
+      JSON.stringify({
+        name: 'barrel-package',
+        exports: {
+          '.': {
+            import: './lib/index.js',
+            require: './lib-commonjs/index.js',
+          },
+        },
+        main: './lib-commonjs/index.js',
+      })
+    );
+    writeFileSync(
+      barrel,
+      [
+        "export { value } from './child/index.js';",
+        // Force the initial native load to fail so the runner falls back to
+        // its broker path; the requested named export can still be proxied.
+        "export { unsupported } from './unsupported.css';",
+      ].join('\n')
+    );
+    writeFileSync(child, 'export const value = 42;\n');
+    writeFileSync(join(esmRoot, 'unsupported.css'), '.unsupported {}\n');
+    writeFileSync(
+      join(cjsRoot, 'index.js'),
+      'module.exports = { value: 42 };\n'
+    );
+    writeFileSync(
+      entry,
+      [
+        "import { value } from 'barrel-package';",
+        'export const __wywPreval = { value: () => value };',
+      ].join('\n')
+    );
+
+    let broker: EvalBroker | undefined;
+    try {
+      const services = createServices(root, entry, {
+        eval: { resolver: 'hybrid' },
+      });
+      const loadAndParse = services.loadAndParseFn;
+      const loadedIds: string[] = [];
+      services.loadAndParseFn = (nextServices, id, ...rest) => {
+        loadedIds.push(id);
+        return loadAndParse(nextServices, id, ...rest);
+      };
+
+      broker = new EvalBroker(
+        services,
+        jest.fn(async () => null)
+      );
+      const entrypoint = Entrypoint.createRoot(
+        services,
+        entry,
+        ['__wywPreval'],
+        readFileSync(entry, 'utf-8')
+      );
+
+      const result = await broker.evaluate(entrypoint);
+
+      expect(result.values?.get('value')).toBe(42);
+      expect(loadedIds.map((id) => realpathSync(id))).toContain(
+        realpathSync(barrel)
+      );
+    } finally {
+      broker?.dispose();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('loads direct node_modules asset imports through the broker', async () => {
     const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
     const entry = join(root, 'entry.js');

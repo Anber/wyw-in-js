@@ -1703,7 +1703,7 @@ const isUnknownFileExtensionError = (error) => {
   return false;
 };
 
-const loadExternalModule = async (resolvedId, importer, specifier) => {
+const loadExternalModule = async (resolvedId, importer, specifier, kind) => {
   const cacheId = resolvedId ?? specifier;
   const cached = moduleCache.get(cacheId);
   if (cached) return cached;
@@ -1725,7 +1725,18 @@ const loadExternalModule = async (resolvedId, importer, specifier) => {
       let value;
       let hasValue = false;
 
-      if (shouldPreferImport(resolvedFile)) {
+      const extension = resolvedFile ? path.extname(resolvedFile) : '';
+      const isImportKind = kind === 'import' || kind === 'dynamic-import';
+      const isRequireOnlyAsset = extension === '.json' || extension === '.node';
+      // A broker-loaded VM module can still be linking when it requests an
+      // external ESM child. Synchronously requiring that child makes Node's
+      // require-ESM bridge observe the in-progress module and throw status 0.
+      // Keep JSON/native assets on require because import() needs different
+      // assertion/loader semantics for those formats.
+      if (
+        (isImportKind && !isRequireOnlyAsset) ||
+        shouldPreferImport(resolvedFile)
+      ) {
         value = await import(importTarget);
         hasValue = true;
       }
@@ -1932,7 +1943,8 @@ resolveModule = async (specifier, importer, kind) => {
       const externalModule = await loadExternalModule(
         normalized,
         importerId,
-        specifier
+        specifier,
+        kind
       );
       return externalModule;
     }
@@ -2000,7 +2012,7 @@ resolveModule = async (specifier, importer, kind) => {
     );
 
     if (treatExternal) {
-      return loadExternalModule(normalized, importerId, specifier);
+      return loadExternalModule(normalized, importerId, specifier, kind);
     }
 
     return loadModule(normalized, importerId, specifier);
