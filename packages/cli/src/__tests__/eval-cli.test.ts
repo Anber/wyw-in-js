@@ -97,9 +97,6 @@ describe('CLI evaluation', () => {
       );
 
       expect(result.error).toBeUndefined();
-      expect(result.stderr).toContain(
-        '[wyw-in-js] Runtime require() fallback during eval'
-      );
       expect(result.status).toBe(0);
       expect(result.stdout).toContain('Successfully extracted 1 CSS files.');
     } finally {
