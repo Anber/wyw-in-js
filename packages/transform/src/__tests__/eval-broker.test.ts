@@ -3158,6 +3158,105 @@ describe('EvalBroker', () => {
     }
   });
 
+  it('keeps dynamically assigned exports of a CommonJS external importable', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
+    const entry = join(root, 'entry.js');
+    const packageDir = join(root, 'node_modules', 'dyn-theme');
+
+    mkdirSync(packageDir, { recursive: true });
+    writeFileSync(
+      join(packageDir, 'package.json'),
+      JSON.stringify({ name: 'dyn-theme', main: 'index.js' })
+    );
+    // cjs-module-lexer cannot see these names, so import()'s namespace only
+    // carries `default` — the real module.exports has to be used instead.
+    writeFileSync(
+      join(packageDir, 'index.js'),
+      [
+        "const names = ['primaryColor'];",
+        'names.forEach((name) => {',
+        "  module.exports[name] = 'red';",
+        '});',
+        '',
+      ].join('\n')
+    );
+    writeFileSync(
+      entry,
+      [
+        "import { primaryColor } from 'dyn-theme';",
+        'export const __wywPreval = { primaryColor: () => primaryColor };',
+      ].join('\n')
+    );
+
+    let broker: EvalBroker | undefined;
+    try {
+      const services = createServices(root, entry, {
+        eval: { resolver: 'hybrid' },
+      });
+      broker = new EvalBroker(
+        services,
+        jest.fn(async () => null)
+      );
+      const entrypoint = Entrypoint.createRoot(
+        services,
+        entry,
+        ['__wywPreval'],
+        readFileSync(entry, 'utf-8')
+      );
+
+      const result = await broker.evaluate(entrypoint);
+
+      expect(result.values?.get('primaryColor')).toBe('red');
+    } finally {
+      broker?.dispose();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('still enforces eval.require for CommonJS externals reached by import', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
+    const entry = join(root, 'entry.js');
+    const packageDir = join(root, 'node_modules', 'cjs-theme');
+
+    mkdirSync(packageDir, { recursive: true });
+    writeFileSync(
+      join(packageDir, 'package.json'),
+      JSON.stringify({ name: 'cjs-theme', main: 'index.js' })
+    );
+    writeFileSync(join(packageDir, 'index.js'), "exports.color = 'red';\n");
+    writeFileSync(
+      entry,
+      [
+        "import { color } from 'cjs-theme';",
+        'export const __wywPreval = { color: () => color };',
+      ].join('\n')
+    );
+
+    let broker: EvalBroker | undefined;
+    try {
+      const services = createServices(root, entry, {
+        eval: { resolver: 'hybrid', require: 'error' },
+      });
+      broker = new EvalBroker(
+        services,
+        jest.fn(async () => null)
+      );
+      const entrypoint = Entrypoint.createRoot(
+        services,
+        entry,
+        ['__wywPreval'],
+        readFileSync(entry, 'utf-8')
+      );
+
+      await expect(broker.evaluate(entrypoint)).rejects.toThrow(
+        /eval\.require='error'/
+      );
+    } finally {
+      broker?.dispose();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('loads direct node_modules asset imports through the broker', async () => {
     const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
     const entry = join(root, 'entry.js');

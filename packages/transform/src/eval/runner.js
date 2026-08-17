@@ -1484,6 +1484,70 @@ const getImporterPackage = (importer) => {
 
 const warnedRequires = new Set();
 
+const getEvalRequireOverride = (specifier, resolved) => {
+  const keyInfo = toImportKey({
+    source: specifier,
+    resolved,
+    root: state.evalOptions.root,
+  });
+  return getImportOverride(state.evalOptions.importOverrides, keyInfo.key);
+};
+
+// Decides whether eval is allowed to pull a real runtime dependency in, and
+// reports it when it is. Shared by the require() fallback and by the import()
+// path that replaces it for `import` edges, so eval.require keeps the same
+// meaning no matter which loader ends up doing the work.
+const enforceEvalRequirePolicy = ({
+  importerFile,
+  specifier,
+  resolved,
+  override,
+  mockTarget = null,
+}) => {
+  const basePolicy =
+    state.evalOptions.require === 'warn-and-run' ? 'warn' : 'error';
+  let policy = override?.unknown ?? (override ? 'allow' : basePolicy);
+  if (state.evalOptions.require === 'off' && policy !== 'error') {
+    policy = 'error';
+  }
+
+  if (policy === 'error') {
+    throw new Error(
+      [
+        `[wyw-in-js] require() fallback reached during eval but eval.require='error'.`,
+        ``,
+        `importer: ${importerFile}`,
+        `source:   ${specifier}`,
+        `hint: add importOverrides or set eval.require to "warn-and-run".`,
+      ].join('\n')
+    );
+  }
+
+  if (policy !== 'warn') return;
+
+  const key = `${specifier}::${getImporterPackage(importerFile)}`;
+  if (warnedRequires.has(key)) return;
+  warnedRequires.add(key);
+  sendWarn({
+    code: 'require-fallback',
+    message: [
+      `[wyw-in-js] Runtime require() fallback during eval`,
+      ``,
+      `importer: ${importerFile}`,
+      `source:   ${specifier}`,
+      `resolved: ${resolved}`,
+      mockTarget ? `mock:     ${override.mock} -> ${mockTarget}` : ``,
+      ``,
+      `hint: use importOverrides to mock runtime-only deps and avoid eval-time requires.`,
+    ]
+      .filter(Boolean)
+      .join('\n'),
+    importer: importerFile,
+    specifier,
+    resolved,
+  });
+};
+
 const createRequireFn = (importer) => {
   const importerFile = stripQueryAndHash(importer);
   const nodeRequire = createRequire(pathToFileURL(importerFile).href);
@@ -1574,15 +1638,7 @@ const createRequireFn = (importer) => {
         }
       }
 
-      const keyInfo = toImportKey({
-        source: specifier,
-        resolved,
-        root: state.evalOptions.root,
-      });
-      const override = getImportOverride(
-        state.evalOptions.importOverrides,
-        keyInfo.key
-      );
+      const override = getEvalRequireOverride(specifier, resolved);
 
       let finalResolved = resolved;
       if (override?.mock) {
@@ -1594,51 +1650,13 @@ const createRequireFn = (importer) => {
         });
       }
 
-      const basePolicy =
-        state.evalOptions.require === 'warn-and-run' ? 'warn' : 'error';
-      let policy = override?.unknown ?? (override ? 'allow' : basePolicy);
-      if (state.evalOptions.require === 'off' && policy !== 'error') {
-        policy = 'error';
-      }
-
-      if (policy === 'error') {
-        throw new Error(
-          [
-            `[wyw-in-js] require() fallback reached during eval but eval.require='error'.`,
-            ``,
-            `importer: ${importerFile}`,
-            `source:   ${specifier}`,
-            `hint: add importOverrides or set eval.require to "warn-and-run".`,
-          ].join('\n')
-        );
-      }
-
-      if (policy === 'warn') {
-        const key = `${specifier}::${getImporterPackage(importerFile)}`;
-        if (!warnedRequires.has(key)) {
-          warnedRequires.add(key);
-          sendWarn({
-            code: 'require-fallback',
-            message: [
-              `[wyw-in-js] Runtime require() fallback during eval`,
-              ``,
-              `importer: ${importerFile}`,
-              `source:   ${specifier}`,
-              `resolved: ${resolved}`,
-              override?.mock
-                ? `mock:     ${override.mock} -> ${finalResolved}`
-                : ``,
-              ``,
-              `hint: use importOverrides to mock runtime-only deps and avoid eval-time requires.`,
-            ]
-              .filter(Boolean)
-              .join('\n'),
-            importer: importerFile,
-            specifier,
-            resolved,
-          });
-        }
-      }
+      enforceEvalRequirePolicy({
+        importerFile,
+        specifier,
+        resolved,
+        override,
+        mockTarget: override?.mock ? finalResolved : null,
+      });
 
       return nodeRequire(finalResolved);
     } finally {
@@ -1703,6 +1721,26 @@ const isUnknownFileExtensionError = (error) => {
   return false;
 };
 
+// import() of a CommonJS file only exposes the named exports that
+// cjs-module-lexer can find statically, so anything assigned dynamically is
+// missing from the namespace. Node routes such a file through the CJS loader,
+// which leaves the real module.exports in the require cache — prefer that so
+// dynamically built exports keep working.
+const unwrapCjsNamespace = (namespace, resolvedFile) => {
+  if (!resolvedFile || !path.isAbsolute(resolvedFile)) return namespace;
+
+  const candidates = [resolvedFile];
+  try {
+    candidates.push(fs.realpathSync(resolvedFile));
+  } catch {
+    // The file may have disappeared; the unresolved path is still worth a try.
+  }
+
+  const cache = NativeModule._cache ?? {};
+  const hit = candidates.map((file) => cache[file]).find(Boolean);
+  return hit ? hit.exports : namespace;
+};
+
 const loadExternalModule = async (resolvedId, importer, specifier, kind) => {
   const cacheId = resolvedId ?? specifier;
   const cached = moduleCache.get(cacheId);
@@ -1728,16 +1766,27 @@ const loadExternalModule = async (resolvedId, importer, specifier, kind) => {
       const extension = resolvedFile ? path.extname(resolvedFile) : '';
       const isImportKind = kind === 'import' || kind === 'dynamic-import';
       const isRequireOnlyAsset = extension === '.json' || extension === '.node';
-      // A broker-loaded VM module can still be linking when it requests an
-      // external ESM child. Synchronously requiring that child makes Node's
-      // require-ESM bridge observe the in-progress module and throw status 0.
-      // Keep JSON/native assets on require because import() needs different
-      // assertion/loader semantics for those formats.
-      if (
-        (isImportKind && !isRequireOnlyAsset) ||
-        shouldPreferImport(resolvedFile)
-      ) {
+
+      if (shouldPreferImport(resolvedFile)) {
         value = await import(importTarget);
+        hasValue = true;
+      } else if (isImportKind && !isRequireOnlyAsset) {
+        // A failed link elsewhere in the graph can leave an uninstantiated job
+        // in Node's ESM registry (for example a barrel that the broker had to
+        // take over after an unsupported sibling threw). require() then trips
+        // the require-ESM bridge assertion "Unexpected module status 0", and
+        // that require() also poisons the entry for any later import(), so the
+        // sync attempt has to be skipped rather than retried. JSON and native
+        // assets stay on require() because import() needs different
+        // assertion/loader semantics for them.
+        const importerFile = stripQueryAndHash(importer);
+        enforceEvalRequirePolicy({
+          importerFile,
+          specifier,
+          resolved: resolvedFile,
+          override: getEvalRequireOverride(specifier, resolvedFile),
+        });
+        value = unwrapCjsNamespace(await import(importTarget), resolvedFile);
         hasValue = true;
       }
       if (!hasValue) {
