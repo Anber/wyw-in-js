@@ -15,6 +15,7 @@ import {
   type OxcRuntimePropertyPathKey,
 } from '../oxc/projections';
 import {
+  aliasesImportedRootCohortInState,
   aliasesImportedRootInState,
   collectAssignedAliasRoots,
   collectTopLevelAccessors,
@@ -148,10 +149,26 @@ export const createCallableProvenanceIndex = ({
   const classes = collectTopLevelClasses(program);
   const createCatalogResolver = <T>(
     catalog: ReadonlyMap<string, T>
-  ): ((binding: string) => Set<T>) =>
-    createNormalizedCatalogResolver(catalog, (path) =>
+  ): ((binding: string) => Set<T>) => {
+    const resolveNormalized = createNormalizedCatalogResolver(catalog, (path) =>
       normalizeProvenancePath(path as OxcRuntimePropertyPathKey)
     );
+    return (binding) => {
+      const path = binding as OxcRuntimePropertyPathKey;
+      const root = getOxcRuntimePropertyPathKeyRoot(path);
+      // A bare imported binding (or direct alias) is opaque to this module.
+      // Only an imported member path or an alias of an imported result can
+      // match a callable in the virtual imported-result cohort.
+      if (
+        root === path &&
+        aliasesImportedRoot(root) &&
+        !aliasesImportedRootCohortInState(topLevelAliasState, root)
+      ) {
+        return new Set<T>();
+      }
+      return resolveNormalized(binding);
+    };
+  };
   const resolveCallable = createCatalogResolver<CallableNode>(callables);
   const resolveAccessor = createCatalogResolver<CallableNode>(accessors);
   const resolveClass = createCatalogResolver<ClassNode>(classes);

@@ -176,7 +176,7 @@ const markImportedRootCohort = (
   metadata.importedRootCohort = true;
 };
 
-const aliasesImportedRootCohort = (
+export const aliasesImportedRootCohortInState = (
   state: AliasProvenanceState,
   binding: string
 ): boolean =>
@@ -199,7 +199,7 @@ const appendAliasRoots = (
   switch (current.type) {
     case 'Identifier':
       bindings.add(current.name);
-      return aliasesImportedRootCohort(state, current.name);
+      return aliasesImportedRootCohortInState(state, current.name);
     case 'MemberExpression':
       return appendAliasRoots(current.object, state, bindings);
     case 'ConditionalExpression': {

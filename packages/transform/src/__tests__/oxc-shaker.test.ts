@@ -966,6 +966,42 @@ describe('shakeOxcToESM', () => {
     expect(opaque.imports.get('./dependency')).toEqual(['a', 'b', 'make']);
   });
 
+  it('does not resolve a direct imported call through the imported-result cohort', () => {
+    const { program, provenance } = createTestProvenance(`
+      import { run, getA, getB } from './dependency';
+      const source = { width: 1 };
+      let first = () => { source.width = 401; };
+      first = getA();
+      let second = () => { source.width = 402; };
+      second = getB();
+
+      run();
+    `);
+    const runStatement = program.body.find(
+      (node) =>
+        node.type === 'ExpressionStatement' &&
+        node.expression.type === 'CallExpression' &&
+        node.expression.callee.type === 'Identifier' &&
+        node.expression.callee.name === 'run'
+    );
+
+    expect(runStatement?.type).toBe('ExpressionStatement');
+    if (runStatement?.type !== 'ExpressionStatement') {
+      return;
+    }
+    expect(runStatement.expression.type).toBe('CallExpression');
+    if (runStatement.expression.type !== 'CallExpression') {
+      return;
+    }
+    expect(
+      provenance.resolveCalleeCallables(
+        runStatement.expression.callee,
+        new Map(),
+        new Map()
+      )
+    ).toHaveLength(0);
+  });
+
   it('unions normalized catalog candidates without collapsing suffixes', () => {
     const aDeep = appendOxcRuntimePropertyPath(
       createOxcRuntimePropertyPath('a'),
