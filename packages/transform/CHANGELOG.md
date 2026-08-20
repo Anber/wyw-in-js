@@ -1,5 +1,16 @@
 # @wyw-in-js/transform
 
+## 2.4.2
+
+### Patch Changes
+
+- 73f5ed6: Bound OXC invocation analysis and conservatively retain statement-local effects when callable provenance exceeds its work budget.
+- 1dbff79: Include extracted CSS rules in transform metadata.
+- aefa541: Avoid expanding direct imported calls through the opaque imported-result callable cohort during OXC shaking.
+- 2898739: Fix an `Unexpected module status 0` assertion thrown while evaluating a re-export barrel that the broker had to take over. When a barrel's native load fails part-way — for example because one of its re-exported siblings is an unsupported asset — Node's ESM registry is left holding an uninstantiated job for the children that were already resolved during linking. The runner then loaded those children with a synchronous `require()`, which trips Node's require-ESM bridge assertion, and that failed `require()` also poisons the entry for any later `import()`, so it cannot be retried. External modules reached through an `import` or `dynamic-import` edge are now loaded with `import()` instead, while JSON and native `.node` assets stay on `require()`. `eval.require` policy and its `require-fallback` diagnostic still apply to those loads, CommonJS externals keep exposing exports that are assigned dynamically (which `import()` alone cannot see), and Node builtin imports continue through the existing builtin path.
+- 12cbf6d: Handle compact `:global()` values in animation declarations.
+- 201aa13: Preserve CSS-producing module imports with execute evaluation.
+
 ## 2.4.1
 
 ### Patch Changes
