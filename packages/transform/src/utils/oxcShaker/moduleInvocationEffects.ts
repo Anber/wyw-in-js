@@ -37,11 +37,40 @@ type ModuleInvocationEffects = {
   opaqueImportedCall: boolean;
 };
 
+export type ModuleInvocationAnalysisState = {
+  consumeWork: (work: number) => boolean;
+  isExhausted: () => boolean;
+};
+
+// Work shared by the whole module prevents many individually expensive
+// statements from multiplying the same callable/alias expansion cost.
+const MAX_MODULE_INVOCATION_WORK = 8192;
+// This bounded leaf check avoids widening tiny, obviously effect-free calls
+// after the module budget is spent without starting another unbounded pass.
+const MAX_TRIVIAL_CALLABLE_SIZE = 64;
+
+export const createModuleInvocationAnalysisState =
+  (): ModuleInvocationAnalysisState => {
+    let remainingWork = MAX_MODULE_INVOCATION_WORK;
+    return {
+      consumeWork: (work) => {
+        if (work <= remainingWork) {
+          remainingWork -= work;
+          return true;
+        }
+        remainingWork = -1;
+        return false;
+      },
+      isExhausted: () => remainingWork < 0,
+    };
+  };
+
 export const collectModuleInvocationEffects = (
   node: Node,
   provenance: CallableProvenanceIndex,
   isReceiverOperationProvenInert: (operation: ReceiverOperation) => boolean,
-  resolveReceiverOperationRoots: (binding: string) => ReadonlySet<string>
+  resolveReceiverOperationRoots: (binding: string) => ReadonlySet<string>,
+  analysisState: ModuleInvocationAnalysisState
 ): ModuleInvocationEffects => {
   if (!hasModuleInvocationCandidate(node)) {
     return {
@@ -75,7 +104,10 @@ export const collectModuleInvocationEffects = (
     effectOrigins.add(binding);
   };
   let opaqueImportedCall = false;
+  let widened = false;
+  const { consumeWork } = analysisState;
   const emptyAliases: AliasEnvironment = new Map();
+  const activeCallableAliases = new Map<CallableNode, AliasEnvironment>();
   const hasImportedCallee = (
     candidates: ReadonlySet<string>,
     aliases: AliasEnvironment
@@ -83,6 +115,27 @@ export const collectModuleInvocationEffects = (
     [...candidates].some((binding) =>
       [...resolveAliasBinding(binding, aliases)].some(aliasesImportedRoot)
     );
+  const addFallbackRoot = (
+    binding: string,
+    aliases: AliasEnvironment
+  ): void => {
+    resolveAliasBinding(binding, aliases).forEach((root) => {
+      addEffectOrigin(root);
+      if (aliasesImportedRoot(root)) {
+        opaqueImportedCall = true;
+      }
+    });
+  };
+  const addCallableFallbackRoots = (
+    callable: CallableNode,
+    aliases: AliasEnvironment
+  ): void => {
+    // Arguments are recorded before descent. Captures cover effects that do
+    // not flow through those arguments, including transitive local wrappers.
+    collectInlineCallableCaptureRoots(callable).forEach((root) =>
+      addFallbackRoot(root, aliases)
+    );
+  };
 
   const addResultPaths = (
     binding: OxcRuntimePropertyPathKey,
@@ -510,9 +563,52 @@ export const collectModuleInvocationEffects = (
     if (visiting.has(callable)) {
       return;
     }
+    if (widened) {
+      addCallableFallbackRoots(callable, callerAliases);
+      return;
+    }
+    if (
+      analysisState.isExhausted() &&
+      callable.params.length === 0 &&
+      callable.body.end - callable.body.start <= MAX_TRIVIAL_CALLABLE_SIZE
+    ) {
+      const facts = getCallableSyntaxFacts(callable.body);
+      if (
+        facts.mutationBindings.size === 0 &&
+        !hasModuleInvocationCandidate(callable.body)
+      ) {
+        return;
+      }
+    }
+    const widenFrom = (): void => {
+      widened = true;
+      const affected = new Set(visiting).add(callable);
+      affected.forEach((active) => {
+        const aliases =
+          active === callable
+            ? callerAliases
+            : activeCallableAliases.get(active) ?? emptyAliases;
+        addCallableFallbackRoots(active, aliases);
+      });
+    };
+    if (!consumeWork(1)) {
+      widenFrom();
+      return;
+    }
     visiting.add(callable);
 
-    const aliases = collectCallableAliases(callable, args, callerAliases);
+    const aliases = collectCallableAliases(
+      callable,
+      args,
+      callerAliases,
+      consumeWork
+    );
+    if (!aliases) {
+      widenFrom();
+      visiting.delete(callable);
+      return;
+    }
+    activeCallableAliases.set(callable, aliases);
     const facts = getCallableSyntaxFacts(callable.body);
     const {
       accessors: scopedAccessors,
@@ -646,6 +742,7 @@ export const collectModuleInvocationEffects = (
       }
     });
 
+    activeCallableAliases.delete(callable);
     visiting.delete(callable);
   };
 
@@ -661,6 +758,9 @@ export const collectModuleInvocationEffects = (
   ): void => {
     if (visitingClasses.has(classNode)) {
       return;
+    }
+    if (!widened && !consumeWork(1)) {
+      widened = true;
     }
     visitingClasses.add(classNode);
 
@@ -926,5 +1026,10 @@ export const collectModuleInvocationEffects = (
     }
   });
 
-  return { bindings, callableResultPaths, effectOrigins, opaqueImportedCall };
+  return {
+    bindings,
+    callableResultPaths,
+    effectOrigins,
+    opaqueImportedCall,
+  };
 };

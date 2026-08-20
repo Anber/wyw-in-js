@@ -210,7 +210,12 @@ export const createCallableProvenanceIndex = ({
     externalReferencesByStatement.set(statement, references);
     return references;
   };
-  const collectReachableFactoryReferences = (binding: string): Set<string> => {
+  const reachableBindingReferences = new Map<string, Set<string>>();
+  const collectReachableBindingReferences = (binding: string): Set<string> => {
+    const cached = reachableBindingReferences.get(binding);
+    if (cached) {
+      return cached;
+    }
     const references = new Set<string>();
     const visited = new Set<string>();
     const pending = [binding];
@@ -234,6 +239,7 @@ export const createCallableProvenanceIndex = ({
         });
       });
     }
+    reachableBindingReferences.set(binding, references);
     return references;
   };
   const callableCaptureRoots = new Map<CallableNode, Set<string>>();
@@ -246,7 +252,7 @@ export const createCallableProvenanceIndex = ({
     }
     const roots = collectExternalReferences(callable);
     [...roots].forEach((root) => {
-      collectReachableFactoryReferences(root).forEach((reference) =>
+      collectReachableBindingReferences(root).forEach((reference) =>
         roots.add(reference)
       );
     });
@@ -320,7 +326,7 @@ export const createCallableProvenanceIndex = ({
       }
       const factoryBinding = getCalleeBinding(current.callee);
       if (factoryBinding) {
-        collectReachableFactoryReferences(factoryBinding).forEach((root) =>
+        collectReachableBindingReferences(factoryBinding).forEach((root) =>
           roots.bindings.add(root)
         );
       }
@@ -739,47 +745,61 @@ export const createCallableProvenanceIndex = ({
 
     return new Set();
   };
+  // A null result asks invocation analysis to use its conservative capture
+  // summary instead of materializing more alias roots.
   const collectCallableAliases = (
     callable: CallableNode,
     args: readonly (Node | null)[],
-    callerAliases: AliasEnvironment
-  ): Map<string, Set<string>> => {
+    callerAliases: AliasEnvironment,
+    consumeWork: (work: number) => boolean
+  ): Map<string, Set<string>> | null => {
     const aliases = new Map<string, Set<string>>();
     const addBindingRoots = (
       pattern: Node,
       roots: ReadonlySet<string>
-    ): boolean => {
+    ): boolean | null => {
       let changed = false;
-      collectPatternNames(pattern).forEach((binding) => {
+      for (const binding of collectPatternNames(pattern)) {
+        if (!consumeWork(Math.max(1, roots.size))) {
+          return null;
+        }
         const previous = aliases.get(binding);
         if (!previous) {
           aliases.set(binding, new Set(roots));
           changed = true;
-          return;
-        }
-        roots.forEach((root) => {
-          if (!previous.has(root)) {
-            previous.add(root);
-            changed = true;
+        } else {
+          for (const root of roots) {
+            if (!previous.has(root)) {
+              previous.add(root);
+              changed = true;
+            }
           }
-        });
-      });
+        }
+      }
       return changed;
     };
 
-    callable.params.forEach((parameter, index) => {
+    for (let index = 0; index < callable.params.length; index += 1) {
+      const parameter = callable.params[index]!;
       const argument = args[index];
       const roots =
         argument && argument.type !== 'SpreadElement'
           ? collectContextualRoots(argument, callerAliases, false)
           : new Set<string>();
-      if (parameter.type === 'AssignmentPattern') {
-        collectContextualRoots(parameter.right, aliases).forEach((root) =>
-          roots.add(root)
-        );
+      if (!consumeWork(Math.max(1, roots.size))) {
+        return null;
       }
-      addBindingRoots(parameter, roots);
-    });
+      if (parameter.type === 'AssignmentPattern') {
+        const defaultRoots = collectContextualRoots(parameter.right, aliases);
+        if (!consumeWork(Math.max(1, defaultRoots.size))) {
+          return null;
+        }
+        defaultRoots.forEach((root) => roots.add(root));
+      }
+      if (addBindingRoots(parameter, roots) === null) {
+        return null;
+      }
+    }
 
     const { assignmentPairs } = getCallableSyntaxFacts(callable.body);
 
@@ -787,11 +807,20 @@ export const createCallableProvenanceIndex = ({
     let passes = assignmentPairs.length + 1;
     while (changed && passes > 0) {
       passes -= 1;
-      changed = assignmentPairs
-        .map(({ pattern, value }) =>
-          addBindingRoots(pattern, collectContextualRoots(value, aliases))
-        )
-        .some(Boolean);
+      changed = false;
+      for (const { pattern, value } of assignmentPairs) {
+        const roots = collectContextualRoots(value, aliases);
+        if (!consumeWork(Math.max(1, roots.size))) {
+          return null;
+        }
+        const added = addBindingRoots(pattern, roots);
+        if (added === null) {
+          return null;
+        }
+        if (added) {
+          changed = true;
+        }
+      }
     }
 
     return aliases;
