@@ -966,6 +966,84 @@ describe('shakeOxcToESM', () => {
     expect(opaque.imports.get('./dependency')).toEqual(['a', 'b', 'make']);
   });
 
+  it('does not resolve a direct imported call through the imported-result cohort', () => {
+    const { program, provenance } = createTestProvenance(`
+      import { run, getA, getB } from './dependency';
+      const source = { width: 1 };
+      let first = () => { source.width = 401; };
+      first = getA();
+      let second = () => { source.width = 402; };
+      second = getB();
+
+      run();
+    `);
+    const runStatement = program.body.find(
+      (node) =>
+        node.type === 'ExpressionStatement' &&
+        node.expression.type === 'CallExpression' &&
+        node.expression.callee.type === 'Identifier' &&
+        node.expression.callee.name === 'run'
+    );
+
+    expect(runStatement?.type).toBe('ExpressionStatement');
+    if (runStatement?.type !== 'ExpressionStatement') {
+      return;
+    }
+    expect(runStatement.expression.type).toBe('CallExpression');
+    if (runStatement.expression.type !== 'CallExpression') {
+      return;
+    }
+    expect(
+      provenance.resolveCalleeCallables(
+        runStatement.expression.callee,
+        new Map(),
+        new Map()
+      )
+    ).toHaveLength(0);
+  });
+
+  it('keeps a local callable reached through an imported alias component', () => {
+    const { code } = run(
+      ['source'],
+      `
+        import { dependency } from './dependency';
+        const source = { width: 1 };
+        function local() { source.width = 401; }
+        let invoke = dependency;
+        invoke = local;
+        invoke();
+        export { source };
+      `
+    );
+
+    expect(code).toContain('function local()');
+    expect(code).toContain('source.width = 401');
+    expect(code).toContain('invoke = local');
+    expect(code).toContain('invoke()');
+  });
+
+  it('keeps a local class reached through an imported alias component', () => {
+    const { code } = run(
+      ['source'],
+      `
+        import { Imported } from './dependency';
+        const source = { width: 1 };
+        class Local {
+          constructor() { source.width = 402; }
+        }
+        let Current = Imported;
+        Current = Local;
+        new Current();
+        export { source };
+      `
+    );
+
+    expect(code).toContain('class Local');
+    expect(code).toContain('source.width = 402');
+    expect(code).toContain('Current = Local');
+    expect(code).toContain('new Current()');
+  });
+
   it('unions normalized catalog candidates without collapsing suffixes', () => {
     const aDeep = appendOxcRuntimePropertyPath(
       createOxcRuntimePropertyPath('a'),

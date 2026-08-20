@@ -15,6 +15,7 @@ import {
   type OxcRuntimePropertyPathKey,
 } from '../oxc/projections';
 import {
+  aliasesImportedRootCohortInState,
   aliasesImportedRootInState,
   collectAssignedAliasRoots,
   collectTopLevelAccessors,
@@ -148,10 +149,46 @@ export const createCallableProvenanceIndex = ({
   const classes = collectTopLevelClasses(program);
   const createCatalogResolver = <T>(
     catalog: ReadonlyMap<string, T>
-  ): ((binding: string) => Set<T>) =>
-    createNormalizedCatalogResolver(catalog, (path) =>
+  ): ((binding: string) => Set<T>) => {
+    const resolveNormalized = createNormalizedCatalogResolver(catalog, (path) =>
       normalizeProvenancePath(path as OxcRuntimePropertyPathKey)
     );
+    const componentCandidates = new Map<string, Set<T>>();
+    const resolveComponentCandidates = (binding: string): Set<T> => {
+      const componentId = aliasComponentId(binding);
+      const cached = componentCandidates.get(componentId);
+      if (cached) {
+        return new Set(cached);
+      }
+
+      const candidates = new Set<T>();
+      getAliasComponentMembers(topLevelAliasState, binding).forEach(
+        (member) => {
+          const candidate = catalog.get(member);
+          if (candidate) {
+            candidates.add(candidate);
+          }
+        }
+      );
+      componentCandidates.set(componentId, candidates);
+      return new Set(candidates);
+    };
+    return (binding) => {
+      const path = binding as OxcRuntimePropertyPathKey;
+      const root = getOxcRuntimePropertyPathKeyRoot(path);
+      // A bare imported binding cannot have a local declaration, but a direct
+      // alias can share its component with local callables or classes. Keep
+      // those candidates without widening to the imported-result cohort.
+      if (
+        root === path &&
+        aliasesImportedRoot(root) &&
+        !aliasesImportedRootCohortInState(topLevelAliasState, root)
+      ) {
+        return resolveComponentCandidates(root);
+      }
+      return resolveNormalized(binding);
+    };
+  };
   const resolveCallable = createCatalogResolver<CallableNode>(callables);
   const resolveAccessor = createCatalogResolver<CallableNode>(accessors);
   const resolveClass = createCatalogResolver<ClassNode>(classes);
