@@ -1741,6 +1741,29 @@ const unwrapCjsNamespace = (namespace, resolvedFile) => {
   return hit ? hit.exports : namespace;
 };
 
+const resolveExternalImportTarget = (resolvedFile, importer, specifier) => {
+  const target = resolvedFile ?? specifier;
+  if (path.isAbsolute(target)) {
+    return { target: pathToFileURL(target).href, resolvedFile: target };
+  }
+
+  // A custom or bundler resolver may deliberately leave an external package
+  // as a bare id. Dynamic import resolves bare ids relative to this runner,
+  // unlike the old createRequire(importer) path, so resolve the id from the
+  // evaluated importer before switching loaders.
+  const importerFile = stripQueryAndHash(importer);
+  const importerRequire = createRequire(pathToFileURL(importerFile).href);
+  const importerResolved = importerRequire.resolve(target);
+  if (path.isAbsolute(importerResolved)) {
+    return {
+      target: pathToFileURL(importerResolved).href,
+      resolvedFile: importerResolved,
+    };
+  }
+
+  return { target: importerResolved, resolvedFile: null };
+};
+
 const loadExternalModule = async (resolvedId, importer, specifier, kind) => {
   const cacheId = resolvedId ?? specifier;
   const cached = moduleCache.get(cacheId);
@@ -1789,7 +1812,15 @@ const loadExternalModule = async (resolvedId, importer, specifier, kind) => {
           resolved: resolvedFile,
           override: getEvalRequireOverride(specifier, resolvedFile),
         });
-        value = unwrapCjsNamespace(await import(importTarget), resolvedFile);
+        const resolvedImport = resolveExternalImportTarget(
+          resolvedFile,
+          importer,
+          specifier
+        );
+        value = unwrapCjsNamespace(
+          await import(resolvedImport.target),
+          resolvedImport.resolvedFile
+        );
         hasValue = true;
       }
       if (!hasValue) {

@@ -3213,6 +3213,54 @@ describe('EvalBroker', () => {
     }
   });
 
+  it('resolves bare external ids from the importing module', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
+    const entry = join(root, 'entry.js');
+    const packageDir = join(root, 'node_modules', 'external-theme');
+
+    mkdirSync(packageDir, { recursive: true });
+    writeFileSync(
+      join(packageDir, 'package.json'),
+      JSON.stringify({ name: 'external-theme', main: 'index.js' })
+    );
+    writeFileSync(join(packageDir, 'index.js'), "exports.color = 'red';\n");
+    writeFileSync(
+      entry,
+      [
+        "import { color } from 'theme-alias';",
+        'export const __wywPreval = { color: () => color };',
+      ].join('\n')
+    );
+
+    const customResolver = jest.fn(async () => ({
+      id: 'external-theme',
+      external: true,
+    }));
+    let broker: EvalBroker | undefined;
+    try {
+      const services = createServices(root, entry, {
+        eval: { customResolver, resolver: 'custom' },
+      });
+      broker = new EvalBroker(
+        services,
+        jest.fn(async () => null)
+      );
+      const entrypoint = Entrypoint.createRoot(
+        services,
+        entry,
+        ['__wywPreval'],
+        readFileSync(entry, 'utf-8')
+      );
+
+      const result = await broker.evaluate(entrypoint);
+
+      expect(result.values?.get('color')).toBe('red');
+    } finally {
+      broker?.dispose();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('still enforces eval.require for CommonJS externals reached by import', async () => {
     const root = mkdtempSync(join(tmpdir(), 'wyw-eval-broker-'));
     const entry = join(root, 'entry.js');
