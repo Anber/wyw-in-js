@@ -153,18 +153,38 @@ export const createCallableProvenanceIndex = ({
     const resolveNormalized = createNormalizedCatalogResolver(catalog, (path) =>
       normalizeProvenancePath(path as OxcRuntimePropertyPathKey)
     );
+    const componentCandidates = new Map<string, Set<T>>();
+    const resolveComponentCandidates = (binding: string): Set<T> => {
+      const componentId = aliasComponentId(binding);
+      const cached = componentCandidates.get(componentId);
+      if (cached) {
+        return new Set(cached);
+      }
+
+      const candidates = new Set<T>();
+      getAliasComponentMembers(topLevelAliasState, binding).forEach(
+        (member) => {
+          const candidate = catalog.get(member);
+          if (candidate) {
+            candidates.add(candidate);
+          }
+        }
+      );
+      componentCandidates.set(componentId, candidates);
+      return new Set(candidates);
+    };
     return (binding) => {
       const path = binding as OxcRuntimePropertyPathKey;
       const root = getOxcRuntimePropertyPathKeyRoot(path);
-      // A bare imported binding (or direct alias) is opaque to this module.
-      // Only an imported member path or an alias of an imported result can
-      // match a callable in the virtual imported-result cohort.
+      // A bare imported binding cannot have a local declaration, but a direct
+      // alias can share its component with local callables or classes. Keep
+      // those candidates without widening to the imported-result cohort.
       if (
         root === path &&
         aliasesImportedRoot(root) &&
         !aliasesImportedRootCohortInState(topLevelAliasState, root)
       ) {
-        return new Set<T>();
+        return resolveComponentCandidates(root);
       }
       return resolveNormalized(binding);
     };

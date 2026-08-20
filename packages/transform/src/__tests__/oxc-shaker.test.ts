@@ -1002,6 +1002,48 @@ describe('shakeOxcToESM', () => {
     ).toHaveLength(0);
   });
 
+  it('keeps a local callable reached through an imported alias component', () => {
+    const { code } = run(
+      ['source'],
+      `
+        import { dependency } from './dependency';
+        const source = { width: 1 };
+        function local() { source.width = 401; }
+        let invoke = dependency;
+        invoke = local;
+        invoke();
+        export { source };
+      `
+    );
+
+    expect(code).toContain('function local()');
+    expect(code).toContain('source.width = 401');
+    expect(code).toContain('invoke = local');
+    expect(code).toContain('invoke()');
+  });
+
+  it('keeps a local class reached through an imported alias component', () => {
+    const { code } = run(
+      ['source'],
+      `
+        import { Imported } from './dependency';
+        const source = { width: 1 };
+        class Local {
+          constructor() { source.width = 402; }
+        }
+        let Current = Imported;
+        Current = Local;
+        new Current();
+        export { source };
+      `
+    );
+
+    expect(code).toContain('class Local');
+    expect(code).toContain('source.width = 402');
+    expect(code).toContain('Current = Local');
+    expect(code).toContain('new Current()');
+  });
+
   it('unions normalized catalog candidates without collapsing suffixes', () => {
     const aDeep = appendOxcRuntimePropertyPath(
       createOxcRuntimePropertyPath('a'),
