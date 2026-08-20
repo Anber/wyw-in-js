@@ -24,6 +24,7 @@ import {
   createSameFileStaticWYWMetaHelperResolver,
 } from './processorStaticModel';
 import { pruneStaticPreevalCode } from './prune';
+import { resolveExecuteOxcSideEffectProvenance } from './resolveExecuteOxcSideEffectProvenance';
 import { runtimeCallbackPlaceholder } from './staticExpression';
 import type { StaticExportResult } from './types';
 
@@ -36,14 +37,16 @@ export function* resolveStaticOxcPreevalValues(
   }
 
   let candidates = preevalResult.staticValueCandidates ?? [];
-  const evalDependencyNames = new Set(preevalResult.dependencyNames ?? []);
   const staticValueCache =
     preevalResult.staticValueCache ?? new Map<string, unknown>();
   const finalizeEvaltimeReplacements = (): void => {
     preevalResult.finalizeEvaltimeReplacements?.(staticValueCache);
   };
 
-  if (candidates.length === 0 && evalDependencyNames.size === 0) {
+  if (
+    candidates.length === 0 &&
+    (preevalResult.dependencyNames?.length ?? 0) === 0
+  ) {
     finalizeEvaltimeReplacements();
     return false;
   }
@@ -56,8 +59,12 @@ export function* resolveStaticOxcPreevalValues(
   const evalStrategy = getEvalStrategy(this);
   if (evalStrategy === 'execute') {
     finalizeEvaltimeReplacements();
+    candidates = preevalResult.staticValueCandidates ?? candidates;
+    yield* resolveExecuteOxcSideEffectProvenance(this, candidates, filename);
+
     return false;
   }
+  const evalDependencyNames = new Set(preevalResult.dependencyNames ?? []);
   const staticOnly = evalStrategy === 'static';
 
   // candidate name -> why it was rejected, populated by the resolvers below.

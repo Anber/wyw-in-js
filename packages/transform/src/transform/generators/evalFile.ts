@@ -24,6 +24,7 @@ export async function* evalFile(
   if (preevalResult && (preevalResult.dependencyNames?.length ?? 0) === 0) {
     const prevalPayload = createPrevalPayload({
       emitWarning: this.services.emitWarning,
+      evalDependencies: preevalResult.executeSideEffectDependencies,
       filename,
       strategy,
       staticDependencies: preevalResult.staticDependencies,
@@ -63,7 +64,10 @@ export async function* evalFile(
 
   const prevalPayload = createPrevalPayload({
     emitWarning: this.services.emitWarning,
-    evalDependencies: evaluated.dependencies,
+    evalDependencies: [
+      ...evaluated.dependencies,
+      ...(preevalResult?.executeSideEffectDependencies ?? []),
+    ],
     evalValues: evaluated.values,
     filename,
     strategy,
