@@ -143,14 +143,7 @@ describe('workflow metadata output', () => {
             },
           ],
           replacements: [],
-          rules: {
-            '.entry_a': {
-              className: 'entry_a',
-              cssText: 'color:red;',
-              displayName: 'entry',
-              start: { column: 0, line: 1 },
-            },
-          },
+          rules: {},
         },
       })
     );
@@ -159,7 +152,14 @@ describe('workflow metadata output', () => {
       cssSourceMapText: '',
       cssText: '.entry_a{color:red;}',
       replacements: [],
-      rules: {},
+      rules: {
+        '.entry_a': {
+          className: 'entry_a',
+          cssText: 'color:red;',
+          displayName: 'entry',
+          start: { column: 0, line: 1 },
+        },
+      },
     });
     expectIteratorReturnResult(finalResult);
     expect(
