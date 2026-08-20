@@ -121,9 +121,6 @@ export function* workflow(
       };
     }
 
-    const metadata = options.pluginOptions.outputMetadata
-      ? toTransformResultMetadata(collectStageResult.metadata, dependencies)
-      : null;
     const diagnostics = collectTransformDiagnostics(
       entrypoint.name,
       collectStageResult.metadata.processors
@@ -140,6 +137,16 @@ export function* workflow(
       null
     );
     entrypoint.assertNotSuperseded();
+
+    const metadata = options.pluginOptions.outputMetadata
+      ? toTransformResultMetadata(
+          {
+            ...collectStageResult.metadata,
+            rules: extractStageResult.rules,
+          },
+          dependencies
+        )
+      : null;
 
     return {
       ...extractStageResult,

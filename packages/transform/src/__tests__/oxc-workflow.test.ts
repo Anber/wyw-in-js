@@ -274,6 +274,7 @@ describe('explicit Oxc workflow', () => {
         cssText: expect.stringContaining('color: red'),
       })
     );
+    expect(result.metadata?.rules).toEqual(result.rules);
   });
 
   it('loads imported interpolation dependencies through the Oxc prepare path', async () => {
