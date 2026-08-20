@@ -24,6 +24,7 @@ import {
   createSameFileStaticWYWMetaHelperResolver,
 } from './processorStaticModel';
 import { pruneStaticPreevalCode } from './prune';
+import { resolveExecuteOxcSideEffectProvenance } from './resolveExecuteOxcSideEffectProvenance';
 import { runtimeCallbackPlaceholder } from './staticExpression';
 import type { StaticExportResult } from './types';
 
@@ -58,73 +59,8 @@ export function* resolveStaticOxcPreevalValues(
   const evalStrategy = getEvalStrategy(this);
   if (evalStrategy === 'execute') {
     finalizeEvaltimeReplacements();
-    if (preevalResult.executeSideEffectImportsResolved) {
-      return false;
-    }
-
-    const executeDependencyNames = new Set(preevalResult.dependencyNames ?? []);
-    const executeSideEffectImportLocals = new Set(
-      preevalResult.staticSideEffectImportLocals ?? []
-    );
-    const executeSideEffectDependencies = new Set(
-      preevalResult.executeSideEffectDependencies ?? []
-    );
-    const executeMemo = new Map<string, StaticExportResult | null>();
-
     candidates = preevalResult.staticValueCandidates ?? candidates;
-    for (const candidate of candidates) {
-      if (
-        !executeDependencyNames.has(candidate.name) ||
-        candidate.imports.length === 0
-      ) {
-        continue;
-      }
-
-      const resolved = yield* resolveCandidateValue(
-        this,
-        candidate,
-        filename,
-        executeMemo
-      );
-      if (!resolved?.sideEffectImportLocals?.length) {
-        continue;
-      }
-
-      resolved.sideEffectImportLocals.forEach((local) =>
-        executeSideEffectImportLocals.add(local)
-      );
-      resolved.sideEffectDependencies?.forEach((dependency) =>
-        executeSideEffectDependencies.add(dependency)
-      );
-    }
-
-    preevalResult.staticImportLocals = [
-      ...new Set([
-        ...(preevalResult.staticImportLocals ?? []),
-        ...executeSideEffectImportLocals,
-      ]),
-    ];
-    preevalResult.staticSideEffectImportLocals = [
-      ...executeSideEffectImportLocals,
-    ];
-    preevalResult.executeSideEffectDependencies = [
-      ...executeSideEffectDependencies,
-    ];
-    preevalResult.executeSideEffectImportsResolved = true;
-
-    for (const dependency of executeSideEffectDependencies) {
-      const strippedDependency = stripQueryAndHash(dependency);
-      if (isAbsolute(strippedDependency)) {
-        this.services.cache.checkFreshness(dependency, strippedDependency);
-      }
-
-      this.entrypoint.addInvalidationDependency({
-        only: ['*'],
-        resolved: dependency,
-        source: dependency,
-      });
-      this.entrypoint.markInvalidateOnDependencyChange(dependency);
-    }
+    yield* resolveExecuteOxcSideEffectProvenance(this, candidates, filename);
 
     return false;
   }

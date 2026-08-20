@@ -24,6 +24,52 @@ import {
 } from './staticExpression';
 import type { OpaqueRuntimeImportProof, StaticExportResult } from './types';
 
+export type CandidateSideEffectProvenance = {
+  dependencies: string[];
+  importLocals: string[];
+};
+
+/**
+ * Proves which imports must remain for CSS artifacts produced by the import
+ * graph. The execute evaluator remains the sole owner of the candidate value.
+ */
+export function* resolveCandidateSideEffectProvenance(
+  action: ITransformAction,
+  candidate: OxcStaticValueCandidate,
+  filename: string,
+  memo: Map<string, StaticExportResult | null>
+): SyncScenarioFor<CandidateSideEffectProvenance | null> {
+  const dependencies = new Set<string>();
+  const importLocals = new Set<string>();
+
+  for (const item of candidate.imports) {
+    const resolved = yield* resolveImportValue(
+      action,
+      filename,
+      item,
+      new Set(),
+      memo
+    );
+    if (!resolved?.sideEffectDependencies?.length) {
+      continue;
+    }
+
+    resolved.sideEffectDependencies.forEach((dependency) =>
+      dependencies.add(dependency)
+    );
+    importLocals.add(item.importLocal ?? item.local);
+  }
+
+  if (importLocals.size === 0) {
+    return null;
+  }
+
+  return {
+    dependencies: [...dependencies],
+    importLocals: [...importLocals],
+  };
+}
+
 export function* resolveCandidateValue(
   action: ITransformAction,
   candidate: OxcStaticValueCandidate,

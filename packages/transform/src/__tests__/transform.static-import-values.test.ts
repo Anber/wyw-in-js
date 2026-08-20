@@ -2232,7 +2232,7 @@ describe('transform static import value inlining', () => {
     }
   });
 
-  it('does not emit static resolve debug events when eval.strategy uses execute', async () => {
+  it('keeps execute values on the evaluator while reporting provenance resolution', async () => {
     const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
     const entryFile = join(root, 'entry.js');
     const depFile = join(root, 'unsafe.js');
@@ -2259,13 +2259,31 @@ describe('transform static import value inlining', () => {
     );
 
     try {
-      await runTransformWithOptions(root, entryFile, cache, perf.eventEmitter, {
-        eval: { strategy: 'execute' },
-      });
+      const result = await runTransformWithOptions(
+        root,
+        entryFile,
+        cache,
+        perf.eventEmitter,
+        {
+          eval: { strategy: 'execute' },
+        }
+      );
 
+      expect(result.cssText).toContain('color:red');
+      expect(perf.counts.get('transform:evalFile') ?? 0).toBeGreaterThan(0);
       expect(
         perf.events.filter((event) => event.type === 'staticResolve')
-      ).toEqual([]);
+      ).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            exported: 'color',
+            filename: depFile,
+            phase: 'export',
+            reason: 'unsupported-expression',
+            status: 'rejected',
+          }),
+        ])
+      );
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -3280,16 +3298,25 @@ describe('transform static import value inlining', () => {
     const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
     const entryFile = join(root, 'entry.js');
     const classesFile = join(root, 'classes.js');
+    const helperFile = join(root, 'helper.js');
     const cache = new TransformCacheCollection();
+    const perf = createPerfEventRecorder();
 
     writeFileSync(
       classesFile,
       dedent`
         import { css } from 'test-css-processor';
 
+        const color = String('blue');
         export const marker = css\`
-          color: blue;
+          color: ${'${color}'};
         \`;
+      `
+    );
+    writeFileSync(
+      helperFile,
+      dedent`
+        export const select = (value) => value;
       `
     );
     writeFileSync(
@@ -3297,9 +3324,10 @@ describe('transform static import value inlining', () => {
       dedent`
         import { css } from 'test-css-processor';
         import { marker } from './classes.js';
+        import { select } from './helper.js';
 
         export const className = css\`
-          .${'${marker}'} {
+          .${'${select(marker)}'} {
             color: red;
           }
         \`;
@@ -3307,15 +3335,36 @@ describe('transform static import value inlining', () => {
     );
 
     try {
-      const result = await runTransform(root, entryFile, cache, undefined, {
-        eval: { strategy: 'execute' },
-      });
+      const result = await runTransform(
+        root,
+        entryFile,
+        cache,
+        perf.eventEmitter,
+        {
+          eval: { strategy: 'execute' },
+        }
+      );
 
       expect(result.cssText).toContain('color:red');
       expect(result.cssText).not.toContain('color:blue');
       expect(result.code).toContain("import './classes.js';");
       expect(result.code).not.toContain('import { marker }');
+      expect(result.code).not.toContain('./helper.js');
       expect(result.dependencies).toContain(classesFile);
+      expect(perf.counts.get('transform:evalFile') ?? 0).toBeGreaterThan(0);
+      expect(
+        perf.events.filter((event) => event.type === 'staticResolve')
+      ).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            exported: 'marker',
+            filename: classesFile,
+            phase: 'processor-metadata',
+            reason: 'non-empty-css-artifact-side-effect',
+            status: 'resolved',
+          }),
+        ])
+      );
     } finally {
       disposeEvalBroker(cache);
       rmSync(root, { recursive: true, force: true });

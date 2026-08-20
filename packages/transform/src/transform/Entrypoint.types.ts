@@ -41,7 +41,7 @@ export interface IPreevalResult {
   dependencyNames?: string[];
   evalCode?: string;
   executeSideEffectDependencies?: string[];
-  executeSideEffectImportsResolved?: boolean;
+  executeSideEffectProvenanceResolved?: boolean;
   finalizeEvaltimeReplacements?: (
     staticValueCache?: Map<string, unknown>
   ) => void;
