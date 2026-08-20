@@ -287,6 +287,29 @@ describe('createStylisPreprocessor', () => {
         ).toMatchInlineSnapshot(`".foo{animation-name:bar;}"`);
       });
 
+      it('with no whitespace after an animation property colon', () => {
+        expect(
+          compileRule('& { animation::global(bar) 0s forwards; }')
+        ).toEqual(compileRule('& { animation: :global(bar) 0s forwards; }'));
+        expect(compileRule('& { animation-name::global(bar); }')).toEqual(
+          compileRule('& { animation-name: :global(bar); }')
+        );
+      });
+
+      it('with no whitespace and prefixing disabled', () => {
+        const preprocessorWithoutPrefixer = createStylisPreprocessor({
+          ...baseOptions,
+          prefixer: false,
+        });
+
+        expect(
+          preprocessorWithoutPrefixer(
+            '.foo',
+            '& { animation::global(bar) 0s forwards; }'
+          )
+        ).toBe('.foo{animation:bar 0s forwards;}');
+      });
+
       it('in @keyframes and animation-name simultaneously', () => {
         expect(
           compileRule(
