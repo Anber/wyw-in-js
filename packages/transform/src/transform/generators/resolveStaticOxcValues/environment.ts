@@ -155,6 +155,10 @@ export const debugStaticResolve = (
   action: ITransformAction,
   event: StaticResolveDebugEvent
 ): void => {
+  if (getEvalStrategy(action) === 'execute') {
+    return;
+  }
+
   const labels = Object.fromEntries(
     Object.entries({
       ...event,

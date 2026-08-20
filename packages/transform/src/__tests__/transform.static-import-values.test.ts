@@ -1120,6 +1120,7 @@ describe('transform static import value inlining', () => {
       );
 
       expect(result.cssText).toContain('color:red');
+      expect(result.code).not.toContain('./tokens.js');
       expect(result.dependencies).toContain('./tokens.js');
       expect(perf.counts.get('transform:evalFile') ?? 0).toBeGreaterThan(0);
     } finally {
@@ -3271,6 +3272,52 @@ describe('transform static import value inlining', () => {
       expect(result.dependencies).toContain(classesFile);
       expect(perf.counts.get('transform:evalFile') ?? 0).toBe(0);
     } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('preserves imported processor CSS side effects with execute evaluation', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wyw-static-import-'));
+    const entryFile = join(root, 'entry.js');
+    const classesFile = join(root, 'classes.js');
+    const cache = new TransformCacheCollection();
+
+    writeFileSync(
+      classesFile,
+      dedent`
+        import { css } from 'test-css-processor';
+
+        export const marker = css\`
+          color: blue;
+        \`;
+      `
+    );
+    writeFileSync(
+      entryFile,
+      dedent`
+        import { css } from 'test-css-processor';
+        import { marker } from './classes.js';
+
+        export const className = css\`
+          .${'${marker}'} {
+            color: red;
+          }
+        \`;
+      `
+    );
+
+    try {
+      const result = await runTransform(root, entryFile, cache, undefined, {
+        eval: { strategy: 'execute' },
+      });
+
+      expect(result.cssText).toContain('color:red');
+      expect(result.cssText).not.toContain('color:blue');
+      expect(result.code).toContain("import './classes.js';");
+      expect(result.code).not.toContain('import { marker }');
+      expect(result.dependencies).toContain(classesFile);
+    } finally {
+      disposeEvalBroker(cache);
       rmSync(root, { recursive: true, force: true });
     }
   });
