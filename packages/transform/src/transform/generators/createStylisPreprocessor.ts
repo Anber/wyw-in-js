@@ -47,6 +47,17 @@ const DEFINED_KEYFRAMES = Symbol('definedKeyframes');
 const ORIGINAL_KEYFRAME_NAME = Symbol('originalKeyframeName');
 const ORIGINAL_VALUE_KEY = Symbol('originalValue');
 const IS_GLOBAL_KEYFRAMES = Symbol('isGlobalKeyframes');
+const vendorPrefixes = ['webkit', 'moz', 'ms', 'o', ''].map((prefix) =>
+  prefix ? `-${prefix}-` : ''
+);
+
+const getPrefixedProp = (prop: string): string[] =>
+  vendorPrefixes.map((prefix) => `${prefix}${prop}`);
+
+const animationProps = new Set([
+  ...getPrefixedProp('animation'),
+  ...getPrefixedProp('animation-name'),
+]);
 
 const getOriginalElementValue = (
   element: (Element & { [ORIGINAL_VALUE_KEY]?: string }) | null
@@ -244,13 +255,6 @@ export function createStylisUrlReplacePlugin(
 }
 
 export function createKeyframeSuffixerPlugin(): Middleware {
-  const prefixes = ['webkit', 'moz', 'ms', 'o', ''].map((i) =>
-    i ? `-${i}-` : ''
-  );
-
-  const getPrefixedProp = (prop: string): string[] =>
-    prefixes.map((prefix) => `${prefix}${prop}`);
-
   const buildPropsRegexp = (prop: string, isAtRule: boolean) => {
     const [at, colon] = isAtRule ? ['@', ''] : ['', ':'];
     return new RegExp(
@@ -283,11 +287,6 @@ export function createKeyframeSuffixerPlugin(): Middleware {
 
     return el.value.replaceAll(/[^a-zA-Z0-9_-]/g, '');
   };
-
-  const animationPropsSet = new Set([
-    ...getPrefixedProp('animation'),
-    ...getPrefixedProp('animation-name'),
-  ]);
 
   const getDefinedKeyframes = (
     element: Element & {
@@ -367,7 +366,7 @@ export function createKeyframeSuffixerPlugin(): Middleware {
         'value',
       ] satisfies (keyof Declaration)[];
 
-      if (animationPropsSet.has(element.props)) {
+      if (animationProps.has(element.props)) {
         const scopedKeyframes = getDefinedKeyframes(element);
         const patch = Object.fromEntries(
           keys.map((key) => {
@@ -386,7 +385,7 @@ export function createKeyframeSuffixerPlugin(): Middleware {
                 i += 2;
 
                 result += globalName;
-                if (tokens[i + 1] !== ';') {
+                if (tokens[i + 1] !== ';' && tokens[i + 1] !== ' ') {
                   result += ' ';
                 }
                 continue;
@@ -407,6 +406,28 @@ export function createKeyframeSuffixerPlugin(): Middleware {
         Object.assign(element, patch);
       }
     }
+  };
+}
+
+function createCompactGlobalAnimationNormalizationPlugin(): Middleware {
+  return (element) => {
+    if (!isDeclaration(element) || !element.props.endsWith(':')) {
+      return;
+    }
+
+    const prop = element.props.slice(0, -1);
+    if (!animationProps.has(prop) || !element.children.startsWith('global(')) {
+      return;
+    }
+
+    // Stylis parses `animation::global(...)` as the property `animation:` and
+    // the value `global(...)`. Restore the same declaration shape produced by
+    // `animation: :global(...)` before prefixing and keyframe rewriting.
+    Object.assign(element, {
+      children: `:${element.children}`,
+      length: prop.length,
+      props: prop,
+    });
   };
 }
 
@@ -601,6 +622,7 @@ export function createStylisPreprocessor(
             options.outputFilename
           ),
           stylisGlobalPlugin,
+          createCompactGlobalAnimationNormalizationPlugin(),
           options.prefixer === false
             ? null
             : createStylisDisplayNormalizationPlugin(),
