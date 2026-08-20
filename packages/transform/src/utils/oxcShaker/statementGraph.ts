@@ -26,7 +26,10 @@ import {
   splitExportedVariableDeclaration,
   type Replacement,
 } from './moduleRewrites';
-import { collectModuleInvocationEffects } from './moduleInvocationEffects';
+import {
+  collectModuleInvocationEffects,
+  createModuleInvocationAnalysisState,
+} from './moduleInvocationEffects';
 import {
   isPattern,
   isProvenNonAbruptPatternEvaluation,
@@ -563,6 +566,7 @@ const buildShakerProgramFacts = (
     return roots;
   };
 
+  const invocationAnalysisState = createModuleInvocationAnalysisState();
   statements.forEach((statement) => {
     if ([...statement.mutations].some(callableProvenance.aliasesImportedRoot)) {
       importedEffects.add(statement);
@@ -611,7 +615,8 @@ const buildShakerProgramFacts = (
             resolveStableInitializer(statement, name),
         }),
       (binding) =>
-        resolveReceiverOperationRoots(binding, statement, receiverRootDemands)
+        resolveReceiverOperationRoots(binding, statement, receiverRootDemands),
+      invocationAnalysisState
     );
     if (invocation.opaqueImportedCall) {
       importedEffects.add(statement);

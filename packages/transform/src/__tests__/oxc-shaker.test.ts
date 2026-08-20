@@ -3904,6 +3904,116 @@ describe('shakeOxcToESM', () => {
     }
   );
 
+  it('widens a shared call graph without widening later statements', () => {
+    const depth = 20;
+    const callables = ['function level0(value) { value.width = 400; }'];
+    for (let index = 1; index <= depth; index += 1) {
+      callables.push(
+        `function level${index}(value) { ` +
+          `level${index - 1}(value); level${index - 1}(value); }`
+      );
+    }
+
+    const { code, width } = runSourceWidth(`
+      const source = { width: 304 };
+      const hardTarget = { width: 320 };
+      const dead = { width: 330 };
+      ${callables.join('\n')}
+      function mutateCapturedSource() { source.width = 401; }
+      class BaseWriter {
+        constructor() { source.width = 402; }
+      }
+      class Writer extends BaseWriter {}
+      const holder = {
+        get value() { source.width = 403; return source.width; }
+      };
+      function makeWriter() {
+        return () => { source.width = 404; };
+      }
+      function readSource() { return source; }
+      function mutateDead() { dead.width = 500; }
+      (level${depth}(hardTarget), mutateCapturedSource());
+      new Writer();
+      holder.value;
+      makeWriter()();
+      readSource();
+      mutateDead();
+      export { source };
+    `);
+
+    expect(code).toContain('function level0(value)');
+    expect(code).toContain(`level${depth}(hardTarget)`);
+    expect(code).toContain('mutateCapturedSource()');
+    expect(code).toContain('class Writer extends BaseWriter');
+    expect(code).toContain('holder.value');
+    expect(code).toContain('makeWriter()()');
+    expect(code).not.toContain('readSource');
+    expect(code).not.toContain('mutateDead');
+    expect(code).not.toContain('dead');
+    expect(width).toBe(404);
+  });
+
+  it('widens broad callable provenance without losing later effects', () => {
+    const declarations = Array.from(
+      { length: 900 },
+      (_value, index) => `const value${index} = { width: ${index} };`
+    );
+    const values = Array.from(
+      { length: 900 },
+      (_value, index) => `value${index}`
+    );
+
+    const { code, width } = runSourceWidth(`
+      const source = { width: 304 };
+      ${declarations.join('\n')}
+      function mutate(items) {
+        const alias = items;
+        const forwarded = alias;
+        forwarded[0].width = 400;
+      }
+      function mutateLater() {
+        source.width = 401;
+      }
+      mutate([source, ${values.join(', ')}]);
+      mutateLater();
+      export { source };
+    `);
+
+    expect(code).toContain('mutate([source, value0');
+    expect(code).toContain('forwarded[0].width = 400');
+    expect(code).toContain('mutateLater()');
+    expect(width).toBe(401);
+  });
+
+  it('keeps imported effects reached after the invocation budget is spent', () => {
+    const depth = 20;
+    const callables = ['function level0(value) { value.width = 400; }'];
+    for (let index = 1; index <= depth; index += 1) {
+      callables.push(
+        `function level${index}(value) { ` +
+          `level${index - 1}(value); level${index - 1}(value); }`
+      );
+    }
+
+    const { code, imports } = run(
+      ['__wywPreval'],
+      `
+        import { mutate, source } from './tokens';
+        const hardTarget = { width: 320 };
+        ${callables.join('\n')}
+        function wrapper() { mutate(source); }
+        level${depth}(hardTarget);
+        wrapper();
+        export const __wywPreval = { source };
+      `
+    );
+
+    expect(code).toContain('function wrapper()');
+    expect(code).toContain('mutate(source)');
+    expect(code).toContain('wrapper()');
+    expect(imports.get('./tokens')).toEqual(['mutate', 'source']);
+  });
+
   it('keeps an imported callable alias invoked inside a local wrapper', () => {
     const { code, imports } = run(
       ['__wywPreval'],
