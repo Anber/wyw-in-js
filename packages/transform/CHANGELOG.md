@@ -1,5 +1,11 @@
 # @wyw-in-js/transform
 
+## 2.4.3
+
+### Patch Changes
+
+- 00eb7c3: Preserve resolved transform dependency paths so the Turbopack loader can register them without resolving package specifiers a second time.
+
 ## 2.4.2
 
 ### Patch Changes
