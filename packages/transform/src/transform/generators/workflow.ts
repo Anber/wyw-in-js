@@ -9,6 +9,15 @@ const isLoadedEntrypointWithoutArtifacts = (
   entrypoint.initialCode !== undefined &&
   entrypoint.only.includes('__wywPreval');
 
+const collectDependencyResolutions = (
+  entrypoint: IWorkflowAction['entrypoint'],
+  dependencies: readonly string[]
+) =>
+  dependencies.flatMap((source) => {
+    const resolved = entrypoint.dependencies.get(source)?.resolved;
+    return resolved ? [{ resolved, source }] : [];
+  });
+
 /**
  * The entry point for file processing. Sequentially calls `processEntrypoint`,
  * `evalFile`, `collect`, and `extract`. Returns the result of transforming
@@ -97,6 +106,10 @@ export function* workflow(
 
     const prevalPayload = evalStageResult;
     const { dependencies } = prevalPayload;
+    const dependencyResolutions = collectDependencyResolutions(
+      entrypoint,
+      dependencies
+    );
 
     // *** 3rd stage ***
 
@@ -152,6 +165,7 @@ export function* workflow(
       ...extractStageResult,
       code: collectStageResult.code ?? '',
       dependencies,
+      ...(dependencyResolutions.length > 0 ? { dependencyResolutions } : {}),
       ...(diagnostics.length > 0 ? { diagnostics } : {}),
       ...(metadata ? { metadata } : {}),
       replacements: [
