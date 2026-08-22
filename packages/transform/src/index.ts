@@ -26,6 +26,7 @@ export {
   UnprocessedEntrypointError,
 } from './transform/actions/UnprocessedEntrypointError';
 export type {
+  DependencyResolution,
   Dependencies,
   ITransformFileResult,
   JSONArray,

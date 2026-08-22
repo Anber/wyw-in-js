@@ -31,6 +31,11 @@ export type ParentEntrypoint = {
 
 export type Dependencies = string[];
 
+export type DependencyResolution = {
+  resolved: string;
+  source: string;
+};
+
 export interface ITransformFileResult {
   code: string;
   metadata: WYWTransformMetadata | null;
@@ -43,6 +48,7 @@ export type Result = {
   cssSourceMapText?: string;
   cssText?: string;
   dependencies?: string[];
+  dependencyResolutions?: DependencyResolution[];
   diagnostics?: WYWTransformDiagnostic[];
   metadata?: WYWTransformResultMetadata;
   replacements?: Replacement[];

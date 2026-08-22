@@ -33,6 +33,11 @@ describe('workflow metadata output', () => {
 
   it('omits metadata when outputMetadata is disabled', () => {
     const entrypoint = createEntrypoint(services, '/src/entry.tsx', [], code);
+    entrypoint.addDependency({
+      only: ['*'],
+      resolved: '/resolved/dep.ts',
+      source: '/dep.ts',
+    });
     entrypoint.setTransformResult({
       code,
       metadata: {
@@ -99,6 +104,12 @@ describe('workflow metadata output', () => {
     });
     expectIteratorReturnResult(finalResult);
     expect('metadata' in finalResult.value).toBe(false);
+    expect(finalResult.value).toMatchObject({
+      dependencies: ['/dep.ts'],
+      dependencyResolutions: [
+        { resolved: '/resolved/dep.ts', source: '/dep.ts' },
+      ],
+    });
   });
 
   it('returns normalized metadata when outputMetadata is enabled', () => {

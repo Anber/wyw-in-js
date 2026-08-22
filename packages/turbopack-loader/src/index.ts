@@ -5,7 +5,11 @@ import type { RawSourceMap } from 'source-map';
 import type { LoaderContext, RawLoaderDefinitionFunction } from 'webpack';
 
 import { logger } from '@wyw-in-js/shared';
-import type { PluginOptions, Result } from '@wyw-in-js/transform';
+import type {
+  DependencyResolution,
+  PluginOptions,
+  Result,
+} from '@wyw-in-js/transform';
 import { transform, TransformCacheCollection } from '@wyw-in-js/transform';
 
 import { makeCssModuleGlobal } from './css-modules';
@@ -25,49 +29,6 @@ const stripQueryAndHash = (request: string) => {
   if (hashIdx === -1) return request.slice(0, queryIdx);
 
   return request.slice(0, Math.min(queryIdx, hashIdx));
-};
-
-const getPackageNameForSubpath = (request: string) => {
-  const fileRequest = stripQueryAndHash(request);
-  if (
-    fileRequest.startsWith('.') ||
-    path.isAbsolute(fileRequest) ||
-    path.win32.isAbsolute(fileRequest)
-  ) {
-    return null;
-  }
-
-  const parts = fileRequest.split('/');
-
-  if (fileRequest.startsWith('@')) {
-    const [scope, name] = parts;
-    if (parts.length <= 2 || scope.length <= 1 || !name) {
-      return null;
-    }
-
-    return `${scope}/${name}`;
-  }
-
-  if (fileRequest.startsWith('#') || parts.length <= 1 || !parts[0]) {
-    return null;
-  }
-
-  return parts[0];
-};
-
-const isTurbopackPackageSubpathResolveError = (
-  request: string,
-  error: unknown
-) => {
-  const packageName = getPackageNameForSubpath(request);
-
-  return (
-    packageName !== null &&
-    error instanceof Error &&
-    error.message.includes(
-      `Unable to resolve module '${packageName}' with subpath`
-    )
-  );
 };
 
 export type LoaderOptions = {
@@ -191,14 +152,20 @@ const turbopackLoader: Loader = function turbopackLoader(
     return result;
   };
 
-  const addResolvedDependency = async (dependency: string) => {
-    try {
-      await asyncResolve(dependency, this.resourcePath);
-    } catch (error) {
-      if (!isTurbopackPackageSubpathResolveError(dependency, error)) {
-        throw error;
+  const addResolvedDependency = async (
+    dependency: string,
+    dependencyResolutions: ReadonlyMap<string, string>
+  ) => {
+    const resolved = dependencyResolutions.get(dependency);
+    if (resolved) {
+      const filePath = stripQueryAndHash(resolved);
+      if (path.isAbsolute(filePath)) {
+        this.addDependency(filePath);
+        return;
       }
     }
+
+    await asyncResolve(dependency, this.resourcePath);
   };
 
   const transformServices = {
@@ -226,6 +193,11 @@ const turbopackLoader: Loader = function turbopackLoader(
 
       if (rawCssText.trim()) {
         let cssText = makeCssModuleGlobal(rawCssText);
+        const dependencyResolutions = new Map(
+          (result.dependencyResolutions ?? []).map(
+            ({ resolved, source }: DependencyResolution) => [source, resolved]
+          )
+        );
 
         if (sourceMap && typeof result.cssSourceMapText !== 'undefined') {
           cssText += `\n/*# sourceMappingURL=data:application/json;base64,${Buffer.from(
@@ -234,7 +206,9 @@ const turbopackLoader: Loader = function turbopackLoader(
         }
 
         await Promise.all(
-          (result.dependencies ?? []).map((dep) => addResolvedDependency(dep))
+          (result.dependencies ?? []).map((dep) =>
+            addResolvedDependency(dep, dependencyResolutions)
+          )
         );
 
         if (outputCss) {

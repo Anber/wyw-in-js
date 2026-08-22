@@ -3,6 +3,7 @@ import type { RawSourceMap } from 'source-map';
 
 import type { WYWTransformDiagnostic } from '../../utils/TransformDiagnostics';
 import type { WYWTransformResultMetadata } from '../../utils/TransformMetadata';
+import type { DependencyResolution } from '../../types';
 
 export interface IExtracted {
   cssSourceMapText: string;
@@ -20,6 +21,7 @@ export interface IWorkflowActionLinariaResult
   extends IExtracted,
     IWorkflowActionNonLinariaResult {
   dependencies: string[];
+  dependencyResolutions?: DependencyResolution[];
   diagnostics?: WYWTransformDiagnostic[];
   metadata?: WYWTransformResultMetadata;
 }

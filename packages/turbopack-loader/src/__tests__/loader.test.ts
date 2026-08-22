@@ -160,12 +160,14 @@ describe('turbopack-loader', () => {
     expect(emitted.code).toBe(':global(.a){color:red}');
   });
 
-  it('keeps CSS output when Turbopack cannot post-resolve a package dependency', async () => {
+  it('registers resolved transform dependencies without resolving them again', async () => {
     const { default: turbopackLoader } = await import('../index');
 
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wyw-turbo-'));
     const resourcePath = path.join(tmpDir, 'entry.tsx');
     const depPath = path.join(tmpDir, 'dep.tsx');
+    const zodPath = path.join(tmpDir, 'node_modules', 'zod', 'index.js');
+    const motionPath = path.join(tmpDir, 'node_modules', 'motion', 'react.js');
     fs.writeFileSync(resourcePath, 'export const x = 1;\n');
     fs.writeFileSync(depPath, 'export const y = 1;\n');
 
@@ -174,7 +176,11 @@ describe('turbopack-loader', () => {
         code,
         sourceMap: null,
         cssText: '.a{color:red}',
-        dependencies: ['motion/react', './dep'],
+        dependencies: ['zod', 'motion/react', './dep'],
+        dependencyResolutions: [
+          { resolved: `${zodPath}?esm`, source: 'zod' },
+          { resolved: motionPath, source: 'motion/react' },
+        ],
       };
     });
 
@@ -199,12 +205,6 @@ describe('turbopack-loader', () => {
           getResolve: () => async (_context: string, request: string) => {
             resolveRequests.push(request);
 
-            if (request === 'motion/react') {
-              throw new Error(
-                "Unable to resolve module 'motion' with subpath '/react'"
-              );
-            }
-
             if (request === './dep') {
               return `${depPath}?compiled`;
             }
@@ -218,8 +218,53 @@ describe('turbopack-loader', () => {
       );
     });
 
-    expect(resolveRequests).toEqual(['motion/react', './dep']);
+    expect(resolveRequests).toEqual(['./dep']);
+    expect(addDependency).toHaveBeenCalledWith(zodPath);
+    expect(addDependency).toHaveBeenCalledWith(motionPath);
     expect(addDependency).toHaveBeenCalledWith(depPath);
     expect(emitted.code).toContain('import "./entry.wyw-in-js.module.css";');
+  });
+
+  it('keeps resolution failures fatal when the transform has no resolved path', async () => {
+    const { default: turbopackLoader } = await import('../index');
+
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wyw-turbo-'));
+    const resourcePath = path.join(tmpDir, 'entry.tsx');
+    const resolutionError = new Error(
+      'Unable to resolve module "\'zod\'" in [project]/pages'
+    );
+    fs.writeFileSync(resourcePath, 'export const x = 1;\n');
+
+    transformMock.mockImplementation(async (_services, code) => {
+      return {
+        code,
+        sourceMap: null,
+        cssText: '.a{color:red}',
+        dependencies: ['zod'],
+      };
+    });
+
+    const runLoader = new Promise<void>((resolve, reject) => {
+      turbopackLoader.call(
+        {
+          addDependency: jest.fn(),
+          async: jest.fn(),
+          callback: (err: Error | null) => {
+            if (err) reject(err);
+            else resolve();
+          },
+          emitWarning: jest.fn(),
+          getOptions: () => ({}),
+          getResolve: () => async () => {
+            throw resolutionError;
+          },
+          resourcePath,
+        } as any,
+        fs.readFileSync(resourcePath, 'utf8'),
+        null
+      );
+    });
+
+    await expect(runLoader).rejects.toBe(resolutionError);
   });
 });
